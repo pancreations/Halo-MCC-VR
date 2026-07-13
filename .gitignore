@@ -1,0 +1,27 @@
+# Build output
+build/
+out/
+bin/
+obj/
+dist/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Local-only files
+*.log
+local/
