@@ -24,7 +24,7 @@ A native OpenXR VR mod for **Halo 3** and **Halo 3: ODST** in *Halo: The Master 
 | Stage | What you get | Status |
 |---|---|---|
 | M0 | Mod injects into the game, .bat install/uninstall works, game shows on a giant virtual screen in the headset, in-headset menu opens | **working** |
-| M1 | Your head controls the in-game camera (look around for real) | **head rotation working; positional + robustness next** |
+| M1 | Your head controls the in-game camera (look around for real) | **working** (rotation + leaning, camera found by signature) |
 | M2 | True stereoscopic 3D rendering | not started |
 | M3 | 6DOF motion controls — aim your weapon with your hands | not started |
 | M4 | HUD projected into 3D space, comfort options, ODST verification, polish | not started |

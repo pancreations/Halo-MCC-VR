@@ -16,9 +16,15 @@ Last updated: 2026-07-13 (M0 built, entering headset testing)
     where external pokes only flickered.
   - Mapping: yaw relative + recenter (F3), pitch absolute (head-level = game-level) + F8/F9 trim.
     Live-tuning hotkeys F2–F9. Defaults (yaw sign, trim 0) validated with no in-headset tweaks.
-  - **Still open for M1:** positional/leaning (rotation only so far); convert the build-specific
-    RVAs to AOB signatures (hard rule — must survive MCC updates or fail gracefully); decide
-    whether the mono screen should head-lock so it stays in front during big turns.
+  - Screen head-locks to the head while tracking is on (F10) so it stays in front on big turns.
+  - **Positional/leaning (F6):** camera position offset from headset room-space movement. Works,
+    but subtle on a flat mono screen (no depth to parallax against) — real payoff is M2 stereo.
+    Off by default; Page Up/Down tunes strength.
+  - **Robustness done:** the camera-copy function is now located by a unique AOB signature (see
+    `kCamCopySig`), not a hardcoded RVA — verified with `tools/verify_sig.py`. If a future MCC
+    update changes it, the mod logs a clear message and leaves the game/VR-screen working.
+  - **M1 acceptance met:** AOB scan finds the camera (graceful failure), head rotation drives the
+    view 1:1, leaning works. Mono flat frame, as planned. On to M2 (true stereo).
 
 
 - **2026-07-13 — M0 WORKING IN HEADSET.** User loaded a Halo 3 level and played it on the
