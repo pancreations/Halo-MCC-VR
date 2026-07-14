@@ -13,6 +13,6 @@ void Game_ToggleHeadTracking(); // F2
 void Game_Recenter();           // F3
 void Game_FlipYaw();            // F4
 void Game_FlipPitch();          // F5
-void Game_CycleTarget();        // F6
+void Game_TogglePositional();   // F6: leaning / positional tracking on/off
 void Game_ToggleUp();           // F7
 void Game_PitchTrim(int dir);   // F8 (down) / F9 (up): nudge pitch offset

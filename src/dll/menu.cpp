@@ -52,7 +52,8 @@ namespace
             return MA_ACTIVATE;
         }
 
-        if (msg == WM_KEYDOWN && !(lp & (1 << 30))) // ignore key auto-repeat
+        // F10 (and Alt combos) arrive as WM_SYSKEYDOWN, not WM_KEYDOWN.
+        if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && !(lp & (1 << 30))) // ignore auto-repeat
         {
             switch (wp)
             {
@@ -61,7 +62,7 @@ namespace
             case VK_F3: Game_Recenter(); return 0;
             case VK_F4: Game_FlipYaw(); return 0;
             case VK_F5: Game_FlipPitch(); return 0;
-            case VK_F6: Game_CycleTarget(); return 0;
+            case VK_F6: Game_TogglePositional(); return 0;
             case VK_F7: Game_ToggleUp(); return 0;
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
