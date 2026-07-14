@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstdarg>
+#include <share.h>
 #include <string>
 #include "log.h"
 
@@ -15,7 +16,9 @@ void LogInit(const wchar_t* filePath)
     std::wstring prev(filePath);
     prev += L".prev";
     MoveFileExW(filePath, prev.c_str(), MOVEFILE_REPLACE_EXISTING);
-    _wfopen_s(&g_file, filePath, L"wt");
+    // Open with shared read/write so the log can be read live while the game
+    // runs (otherwise it stays locked until the game exits).
+    g_file = _wfsopen(filePath, L"wt", _SH_DENYNO);
 }
 
 void Logf(const char* fmt, ...)

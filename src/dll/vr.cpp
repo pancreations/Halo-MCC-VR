@@ -70,9 +70,11 @@ namespace
     XrVector3f g_centerPos{0, 0, 0};
     bool g_haveCenter = false;
 
-    // When head tracking is on, the flat screen follows the head (stays in
-    // front) so the in-game camera does the looking-around. Toggle with F10.
-    std::atomic<bool> g_screenFollow{true};
+    // Screen placement while head tracking is on. World-locked (default) reads
+    // as natural because turning your head shifts the screen in your view to
+    // match your head motion; head-locked keeps it pinned in front but feels
+    // disconnected. Toggle with F10.
+    std::atomic<bool> g_screenFollow{false};
 
     // Latest head pose in the LOCAL space, captured every frame on the render
     // thread and read by the game camera hook (M1) on the game thread — hence
