@@ -6,6 +6,7 @@
 #include <imgui_impl_dx11.h>
 #include "menu.h"
 #include "vr.h"
+#include "game.h"
 #include "d3d_state.h"
 #include "../common/log.h"
 #include "../common/config.h"
@@ -51,11 +52,20 @@ namespace
             return MA_ACTIVATE;
         }
 
-        if (msg == WM_KEYDOWN && wp == VK_F1 && !(lp & (1 << 30))) // ignore key auto-repeat
+        if (msg == WM_KEYDOWN && !(lp & (1 << 30))) // ignore key auto-repeat
         {
-            g_open = !g_open;
-            LOG("menu %s", g_open ? "opened" : "closed");
-            return 0;
+            switch (wp)
+            {
+            case VK_F1: g_open = !g_open; LOG("menu %s", g_open ? "opened" : "closed"); return 0;
+            case VK_F2: Game_ToggleHeadTracking(); return 0;
+            case VK_F3: Game_Recenter(); return 0;
+            case VK_F4: Game_FlipYaw(); return 0;
+            case VK_F5: Game_FlipPitch(); return 0;
+            case VK_F6: Game_CycleTarget(); return 0;
+            case VK_F7: Game_ToggleUp(); return 0;
+            case VK_F8: Game_PitchTrim(-1); return 0;
+            case VK_F9: Game_PitchTrim(+1); return 0;
+            }
         }
         if (g_ready && g_open)
         {

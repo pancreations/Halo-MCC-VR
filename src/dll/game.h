@@ -1,11 +1,17 @@
 #pragma once
 
-// The Halo 3 engine (halo3.dll) is loaded by MCC only once you actually enter
-// a Halo 3 / ODST level — not at the main menu. This module waits for it to
-// appear, then (in M1+) signature-scans it for the camera so head tracking can
-// drive the in-game view. It runs on its own thread and never blocks rendering.
+// The Halo 3 engine (halo3.dll) loads only once you enter a level. This module
+// waits for it, then (M1) drives the in-game camera from the headset. Runs on
+// its own threads and never blocks rendering.
 
 void Game_Init();
-
-// True once halo3.dll is loaded and we've located what we need in it.
 bool Game_IsHooked();
+
+// Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
+void Game_ToggleHeadTracking(); // F2
+void Game_Recenter();           // F3
+void Game_FlipYaw();            // F4
+void Game_FlipPitch();          // F5
+void Game_CycleTarget();        // F6
+void Game_ToggleUp();           // F7
+void Game_PitchTrim(int dir);   // F8 (down) / F9 (up): nudge pitch offset
