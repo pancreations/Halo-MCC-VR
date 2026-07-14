@@ -115,6 +115,15 @@ and FOV. VR needs two images with the headset's asymmetric per-eye projection an
    not the game's; screen-space effects/HUD may need per-eye handling (see HaloCEVR for the categories
    of fixes). MCC already supports arbitrary FOV/resolution, which helps.
 
+**Data captured so far (2026-07-14):**
+- PSVR2 via SteamVR: per-eye recommended render **2720x2772**; per-eye FOV is **asymmetric/canted**
+  (left eye L61.5° R43.4° U53° D53°, right eye mirrored) → total ~105° H; **IPD 67.5 mm**.
+  Logged by `vr.cpp` (`xrLocateViews`) each session as `M2: eye ...`.
+- Projection block shape confirmed in the gun/overlay camera at `0x2D2F680`: `+0x30/+0x34` are
+  the H/V FOV tangents (~0.857/0.875 ≈ 81° FOV). The **world-render projection is a separate
+  struct still to be located** (trace it like the camera: `findwrite`/`xref` from the world
+  render camera, or capture the projection matrix from the VS constant buffers).
+
 **Suggested first M2 steps:**
 - In `vr.cpp`: call `xrLocateViews` each frame to get per-eye pose + FOV; create two per-eye
   projection swapchains; build the `XrCompositionLayerProjection` submission path (currently we only
