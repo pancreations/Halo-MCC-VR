@@ -5,6 +5,7 @@
 #include "../common/config.h"
 #include "d3d11_hook.h"
 #include "vr.h"
+#include "game.h"
 
 // Entry point of the injected DLL. DllMain itself must do almost nothing
 // (Windows holds a global "loader lock" while it runs), so we immediately
@@ -38,6 +39,10 @@ static DWORD WINAPI InitThread(LPVOID)
     // Start OpenXR now, on this background thread, so the slow instance
     // creation overlaps game loading instead of stalling the render thread.
     VR_InitInstance();
+
+    // Start watching for halo3.dll (loads when a level begins) so we can find
+    // the camera for head tracking. Runs on its own thread.
+    Game_Init();
     return 0;
 }
 

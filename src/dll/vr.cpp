@@ -65,6 +65,14 @@ namespace
     XrVector3f g_centerPos{0, 0, 0};
     bool g_haveCenter = false;
 
+    // Latest head pose in the LOCAL space, captured every frame on the render
+    // thread and read by the game camera hook (M1) on the game thread — hence
+    // the lock. Orientation is a quaternion, position is in meters.
+    CRITICAL_SECTION g_headCs;
+    bool g_headCsInit = false;
+    XrPosef g_headPose{{0, 0, 0, 1}, {0, 0, 0}};
+    bool g_headPoseValid = false;
+
     // Blit (copy-with-format-conversion) resources, created on demand
     ID3D11VertexShader* g_blitVs = nullptr;
     ID3D11PixelShader* g_blitPsLinearize = nullptr; // sRGB-decodes in the shader
@@ -514,6 +522,23 @@ float4 ps_pass(VSOut i) : SV_Target
         return true;
     }
 
+    // Store the current head pose for the game camera hook to read. Called
+    // once per frame on the render thread with the frame's predicted time.
+    void CaptureHeadPose(XrTime time)
+    {
+        XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
+        if (XR_FAILED(xrLocateSpace(g_viewSpace, g_localSpace, time, &loc)))
+            return;
+        constexpr XrSpaceLocationFlags need =
+            XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+        if ((loc.locationFlags & need) != need)
+            return;
+        EnterCriticalSection(&g_headCs);
+        g_headPose = loc.pose;
+        g_headPoseValid = true;
+        LeaveCriticalSection(&g_headCs);
+    }
+
     XrCompositionLayerQuad MakeQuad(XrSwapchain chain, int32_t imgW, int32_t imgH,
                                     float widthMeters, float distMeters, float yOffset,
                                     XrCompositionLayerFlags flags)
@@ -726,6 +751,7 @@ float4 ps_pass(VSOut i) : SV_Target
             {
                 D3D11_TEXTURE2D_DESC bd{};
                 backbuffer->GetDesc(&bd);
+                CaptureHeadPose(fs.predictedDisplayTime);
                 if (!g_haveCenter)
                     TryRecenter(fs.predictedDisplayTime);
                 if (g_haveCenter && EnsureScreenChain(bd.Width, bd.Height))
@@ -820,6 +846,11 @@ float4 ps_pass(VSOut i) : SV_Target
 
 void VR_InitInstance()
 {
+    if (!g_headCsInit)
+    {
+        InitializeCriticalSection(&g_headCs);
+        g_headCsInit = true;
+    }
     // Runs on the DLL's background init thread, in parallel with the game
     // loading. Never touches the render thread or the game's D3D device.
     if (InitInstance())
@@ -885,6 +916,26 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
 void VR_RequestRecenter()
 {
     g_haveCenter = false;
+}
+
+bool VR_GetHeadPose(float outQuat[4], float outPos[3])
+{
+    if (!g_headCsInit)
+        return false;
+    EnterCriticalSection(&g_headCs);
+    const bool ok = g_headPoseValid;
+    if (ok)
+    {
+        outQuat[0] = g_headPose.orientation.x;
+        outQuat[1] = g_headPose.orientation.y;
+        outQuat[2] = g_headPose.orientation.z;
+        outQuat[3] = g_headPose.orientation.w;
+        outPos[0] = g_headPose.position.x;
+        outPos[1] = g_headPose.position.y;
+        outPos[2] = g_headPose.position.z;
+    }
+    LeaveCriticalSection(&g_headCs);
+    return ok;
 }
 
 void VR_GetStatus(VrStatus& out)

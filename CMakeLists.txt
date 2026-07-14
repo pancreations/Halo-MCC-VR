@@ -53,7 +53,9 @@ add_library(halo3xr SHARED
     src/dll/dllmain.cpp
     src/dll/d3d11_hook.cpp
     src/dll/vr.cpp
-    src/dll/menu.cpp)
+    src/dll/menu.cpp
+    src/dll/sigscan.cpp
+    src/dll/game.cpp)
 target_compile_definitions(halo3xr PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
     XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32)
@@ -65,6 +67,11 @@ target_link_libraries(halo3xr PRIVATE
 add_executable(halo3xr_launcher WIN32 src/launcher/launcher.cpp)
 target_compile_definitions(halo3xr_launcher PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+# --- Dev-only: read-only memory finder for locating the camera (not shipped) ---
+add_executable(camscan tools/camscan.cpp)
+target_compile_definitions(camscan PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(camscan PRIVATE psapi)
 
 # --- "dist" layout: everything a user needs, in one folder ---
 # (installed via:  cmake --install build --config Release --prefix dist --component dist

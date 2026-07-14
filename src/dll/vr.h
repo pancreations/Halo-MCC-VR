@@ -14,6 +14,11 @@ void VR_OnResizeBuffers(IDXGISwapChain* swapchain);
 // user is currently looking.
 void VR_RequestRecenter();
 
+// Latest head pose in the VR "local" space (captured each frame). Orientation
+// is a quaternion (x,y,z,w), position is meters (x,y,z). Returns false until a
+// valid pose has been read. Thread-safe; the game camera hook (M1) reads this.
+bool VR_GetHeadPose(float outQuat[4], float outPos[3]);
+
 struct VrStatus
 {
     char runtime[128];
