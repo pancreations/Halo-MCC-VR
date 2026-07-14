@@ -16,3 +16,4 @@ void Game_FlipPitch();          // F5
 void Game_TogglePositional();   // F6: leaning / positional tracking on/off
 void Game_ToggleUp();           // F7
 void Game_PitchTrim(int dir);   // F8 (down) / F9 (up): nudge pitch offset
+void Game_LeanScale(int dir);   // PageDown / PageUp: leaning strength

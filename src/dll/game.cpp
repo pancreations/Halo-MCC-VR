@@ -30,7 +30,8 @@ namespace
 
     std::atomic<bool> g_hooked{false};
     std::atomic<bool> g_enabled{false};      // F2
-    std::atomic<bool> g_needRecenter{true};   // F3
+    std::atomic<bool> g_needRecenter{true};   // F3 (yaw + position)
+    std::atomic<bool> g_needPosRecenter{false}; // enabling leaning: position only, no yaw snap
     std::atomic<float> g_yawSign{-1.0f};       // F4  (default matches PSVR2 mapping)
     std::atomic<float> g_pitchSign{1.0f};      // F5
     std::atomic<float> g_pitchTrim{0.0f};      // F8/F9, radians
@@ -80,7 +81,14 @@ namespace
             g_gameYawRef = atan2f(fwd[1], fwd[0]); // align current head to current heading
             g_headYawRef = hy;
             g_headPosRef[0] = hpos[0]; g_headPosRef[1] = hpos[1]; g_headPosRef[2] = hpos[2];
+            g_needPosRecenter = false;
             LOG("head tracking recentered (game yaw %.1f deg)", g_gameYawRef * 57.2958f);
+        }
+        else if (g_needPosRecenter.exchange(false))
+        {
+            // Enabling leaning: capture the neutral head position only, so the
+            // aim/yaw baseline is left untouched (no view snap).
+            g_headPosRef[0] = hpos[0]; g_headPosRef[1] = hpos[1]; g_headPosRef[2] = hpos[2];
         }
 
         // Rotation: yaw relative + recenter, pitch absolute + trim.
@@ -113,7 +121,7 @@ namespace
             float ox = (cgy * fwdComp + sgy * rightComp) * s;  // game forward/right at gy
             float oy = (sgy * fwdComp - cgy * rightComp) * s;
             float oz = dy * s;
-            ox = Clamp(ox, -0.4f, 0.4f); oy = Clamp(oy, -0.4f, 0.4f); oz = Clamp(oz, -0.4f, 0.4f);
+            ox = Clamp(ox, -1.5f, 1.5f); oy = Clamp(oy, -1.5f, 1.5f); oz = Clamp(oz, -1.5f, 1.5f);
             pos[0] += ox; pos[1] += oy; pos[2] += oz;
         }
     }
@@ -125,9 +133,31 @@ namespace
         return g_origCamCopy(dst, src);
     }
 
-    void InstallHook(uintptr_t base)
+    // Byte pattern of the camera-copy function's prologue, with the RIP
+    // displacement and the short-jump offset wildcarded. Found by signature so
+    // the mod survives MCC updates that shift addresses (per the project rules).
+    //   mov [rsp+8],rbx; push rdi; sub rsp,0x30; movaps [rsp+0x20],xmm6;
+    //   mov rdi,rdx; mov rbx,rcx; test rdx,rdx; je short ??; movss xmm3,[rip+??]
+    const char* kCamCopySig =
+        "48 89 5C 24 08 57 48 83 EC 30 0F 29 74 24 20 48 8B FA 48 8B D9 48 85 D2 74 ?? F3 0F 10 1D ?? ?? ?? ??";
+
+    void InstallHook(uintptr_t base, size_t size)
     {
-        void* target = reinterpret_cast<void*>(base + kCamCopyRva);
+        uintptr_t hit = sig::Find(base, size, kCamCopySig);
+        if (!hit)
+        {
+            LOG("M1: camera signature NOT FOUND — MCC may have updated. Head tracking is");
+            LOG("M1: disabled; the game and the VR screen still work normally.");
+            return;
+        }
+        // Uniqueness check — if the pattern matched twice we can't trust it.
+        const uintptr_t after = hit + 1;
+        if (sig::Find(after, base + size - after, kCamCopySig))
+            LOG("M1: WARNING camera signature is not unique; using the first match");
+        LOG("M1: camera-copy found by signature at halo3.dll+0x%llX (expected 0x%llX for build 1.3528)",
+            (unsigned long long)(hit - base), (unsigned long long)kCamCopyRva);
+
+        void* target = reinterpret_cast<void*>(hit);
         if (MH_CreateHook(target, reinterpret_cast<void*>(&CamCopyHook),
                           reinterpret_cast<void**>(&g_origCamCopy)) != MH_OK ||
             MH_EnableHook(target) != MH_OK)
@@ -135,8 +165,7 @@ namespace
             LOG("M1: FAILED to hook camera-copy at %p; head tracking unavailable", target);
             return;
         }
-        LOG("M1: camera-copy hooked at %p (halo3.dll+0x%llX)", target, (unsigned long long)kCamCopyRva);
-        LOG("M1: F2 head tracking, F3 recenter, F4/F5 flip yaw/pitch, F6 leaning, F7 up, F8/F9 pitch trim, F10 screen-follow");
+        LOG("M1: camera hooked. F2 head tracking, F3 recenter, F4/F5 flip yaw/pitch, F6 leaning, F7 up, F8/F9 pitch trim, F10 screen-follow");
     }
 
     DWORD WINAPI WaitThread(LPVOID)
@@ -148,7 +177,7 @@ namespace
             if (sig::ModuleRange(L"halo3.dll", base, size))
             {
                 LOG("halo3.dll loaded at %p, size 0x%zX", (void*)base, size);
-                InstallHook(base);
+                InstallHook(base, size);
                 g_hooked = true;
                 return 0;
             }
@@ -184,7 +213,7 @@ void Game_TogglePositional()
     const bool on = !g_positional.load();
     g_positional = on;
     if (on)
-        g_needRecenter = true; // capture head position reference
+        g_needPosRecenter = true; // capture neutral head position, no yaw snap
     LOG("positional (leaning) %s", on ? "ON" : "OFF");
 }
 
@@ -193,4 +222,11 @@ void Game_PitchTrim(int dir)
     const float t = Clamp(g_pitchTrim.load() + dir * 0.035f, -0.8f, 0.8f); // ~2 deg steps
     g_pitchTrim = t;
     LOG("pitch trim %.1f deg", t * 57.2958f);
+}
+
+void Game_LeanScale(int dir)
+{
+    const float s = Clamp(g_worldScale.load() + dir * 0.5f, 0.0f, 8.0f);
+    g_worldScale = s;
+    LOG("lean scale %.2f (game units per meter)", s);
 }
