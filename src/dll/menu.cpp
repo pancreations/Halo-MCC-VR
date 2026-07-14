@@ -65,6 +65,7 @@ namespace
             case VK_F7: Game_ToggleUp(); return 0;
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
+            case VK_F10: VR_ToggleScreenFollow(); return 0;
             }
         }
         if (g_ready && g_open)

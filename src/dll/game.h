@@ -6,6 +6,7 @@
 
 void Game_Init();
 bool Game_IsHooked();
+bool Game_IsHeadTracking(); // true while F2 head tracking is on
 
 // Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
 void Game_ToggleHeadTracking(); // F2

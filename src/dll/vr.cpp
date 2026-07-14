@@ -12,6 +12,7 @@
 #include <cstring>
 #include "vr.h"
 #include "menu.h"
+#include "game.h"
 #include "d3d_state.h"
 #include "../common/log.h"
 #include "../common/config.h"
@@ -64,6 +65,10 @@ namespace
     XrQuaternionf g_centerRot{0, 0, 0, 1};
     XrVector3f g_centerPos{0, 0, 0};
     bool g_haveCenter = false;
+
+    // When head tracking is on, the flat screen follows the head (stays in
+    // front) so the in-game camera does the looking-around. Toggle with F10.
+    std::atomic<bool> g_screenFollow{true};
 
     // Latest head pose in the LOCAL space, captured every frame on the render
     // thread and read by the game camera hook (M1) on the game thread — hence
@@ -541,18 +546,28 @@ float4 ps_pass(VSOut i) : SV_Target
 
     XrCompositionLayerQuad MakeQuad(XrSwapchain chain, int32_t imgW, int32_t imgH,
                                     float widthMeters, float distMeters, float yOffset,
-                                    XrCompositionLayerFlags flags)
+                                    XrCompositionLayerFlags flags, bool headLocked)
     {
         XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
         q.layerFlags = flags;
-        q.space = g_localSpace;
         q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         q.subImage.swapchain = chain;
         q.subImage.imageRect = {{0, 0}, {imgW, imgH}};
         q.subImage.imageArrayIndex = 0;
-        q.pose.orientation = g_centerRot;
-        const XrVector3f off = Rotate(g_centerRot, {0, yOffset, -distMeters});
-        q.pose.position = {g_centerPos.x + off.x, g_centerPos.y + off.y, g_centerPos.z + off.z};
+        if (headLocked)
+        {
+            // Pinned in front of the head (VIEW space); the game camera looks around.
+            q.space = g_viewSpace;
+            q.pose.orientation = {0, 0, 0, 1};
+            q.pose.position = {0, yOffset, -distMeters};
+        }
+        else
+        {
+            q.space = g_localSpace;
+            q.pose.orientation = g_centerRot;
+            const XrVector3f off = Rotate(g_centerRot, {0, yOffset, -distMeters});
+            q.pose.position = {g_centerPos.x + off.x, g_centerPos.y + off.y, g_centerPos.z + off.z};
+        }
         q.size = {widthMeters, widthMeters * (float)imgH / (float)imgW};
         return q;
     }
@@ -770,8 +785,10 @@ float4 ps_pass(VSOut i) : SV_Target
                              GetRtv(g_screenImages, g_screenRtvs, idx));
                         xrReleaseSwapchainImage(g_screenChain, &ri);
                         FLog("screen image released");
+                        const bool headLock = g_screenFollow.load() && Game_IsHeadTracking();
                         screenQuad = MakeQuad(g_screenChain, (int32_t)g_screenW, (int32_t)g_screenH,
-                                              g_config.screen_width_m, g_config.screen_distance_m, 0.0f, 0);
+                                              g_config.screen_width_m, g_config.screen_distance_m, 0.0f, 0,
+                                              headLock);
                         layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&screenQuad));
                     }
 
@@ -789,7 +806,8 @@ float4 ps_pass(VSOut i) : SV_Target
                                 xrReleaseSwapchainImage(g_menuChain, &ri);
                                 menuQuad = MakeQuad(g_menuChain, MENU_W, MENU_H, 1.1f, 1.2f, -0.08f,
                                                     XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
-                                                        XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT);
+                                                        XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT,
+                                                    g_screenFollow.load() && Game_IsHeadTracking());
                                 layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&menuQuad));
                             }
                         }
@@ -916,6 +934,13 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
 void VR_RequestRecenter()
 {
     g_haveCenter = false;
+}
+
+void VR_ToggleScreenFollow()
+{
+    const bool on = !g_screenFollow.load();
+    g_screenFollow = on;
+    LOG("screen-follow %s", on ? "on (screen follows head)" : "off (screen world-locked)");
 }
 
 bool VR_GetHeadPose(float outQuat[4], float outPos[3])

@@ -4,6 +4,23 @@ Last updated: 2026-07-13 (M0 built, entering headset testing)
 
 ## Progress log
 
+- **2026-07-14 — M1 head rotation WORKING in headset.** Turning your head looks around the Halo
+  world (correct direction, level horizon, no flicker). How we got there:
+  - Built our own read-only RE toolkit instead of Cheat Engine (AV-blocked): `tools/camscan.cpp`
+    (differential scan, live watch, write/spin test, `xref`, hardware-watchpoint `findwrite`, hex
+    dump) + `tools/disasm.py` (capstone). Full method + addresses in `docs/RE-notes.md`.
+  - The camera lives in **double-buffered heap game state**; the authoritative forward/up are
+    copied into a static gun-camera each frame by `halo3.dll+0x2A628C` (`__fastcall(dst, src)`,
+    src+0x28 = forward, src+0x34 = up). We **MinHook that function** and overwrite src's
+    forward/up from the head pose before the copy — writing inside the game's frame holds steady
+    where external pokes only flickered.
+  - Mapping: yaw relative + recenter (F3), pitch absolute (head-level = game-level) + F8/F9 trim.
+    Live-tuning hotkeys F2–F9. Defaults (yaw sign, trim 0) validated with no in-headset tweaks.
+  - **Still open for M1:** positional/leaning (rotation only so far); convert the build-specific
+    RVAs to AOB signatures (hard rule — must survive MCC updates or fail gracefully); decide
+    whether the mono screen should head-lock so it stays in front during big turns.
+
+
 - **2026-07-13 — M0 WORKING IN HEADSET.** User loaded a Halo 3 level and played it on the
   virtual theatre screen via PSVR2. Debugging findings from the three test iterations, in order:
   1. **Steam relaunch bounce:** launching `MCC-Win64-Shipping.exe` directly makes Steamworks

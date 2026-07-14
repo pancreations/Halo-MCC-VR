@@ -136,6 +136,7 @@ void Game_Init()
 }
 
 bool Game_IsHooked() { return g_hooked; }
+bool Game_IsHeadTracking() { return g_enabled.load(); }
 
 void Game_ToggleHeadTracking()
 {

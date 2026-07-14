@@ -14,6 +14,10 @@ void VR_OnResizeBuffers(IDXGISwapChain* swapchain);
 // user is currently looking.
 void VR_RequestRecenter();
 
+// F10: toggle whether the flat screen follows the head (vs. staying pinned in
+// the world). Only matters while head tracking is on.
+void VR_ToggleScreenFollow();
+
 // Latest head pose in the VR "local" space (captured each frame). Orientation
 // is a quaternion (x,y,z,w), position is meters (x,y,z). Returns false until a
 // valid pose has been read. Thread-safe; the game camera hook (M1) reads this.
