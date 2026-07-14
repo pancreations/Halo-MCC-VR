@@ -46,6 +46,10 @@ namespace
     bool g_sessionRunning = false;
     XrSessionState g_sessionState = XR_SESSION_STATE_UNKNOWN;
 
+    // M2 stereo: per-eye recommended render size and per-eye pose/FOV.
+    std::vector<XrViewConfigurationView> g_viewConfigs;
+    std::vector<XrView> g_views;
+
     // D3D11 (the game's device — we never create our own for rendering)
     ID3D11Device* g_device = nullptr;
     ID3D11DeviceContext* g_context = nullptr;
@@ -692,6 +696,19 @@ float4 ps_pass(VSOut i) : SV_Target
         xrEnumerateEnvironmentBlendModes(g_instance, g_systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
                                          1, &modeCount, &g_blendMode);
 
+        // M2: the headset's two eyes — recommended per-eye render size. We'll
+        // render the game once per eye into swapchains of this size.
+        uint32_t viewCount = 0;
+        xrEnumerateViewConfigurationViews(g_instance, g_systemId,
+                                          XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr);
+        g_viewConfigs.assign(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+        xrEnumerateViewConfigurationViews(g_instance, g_systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                          viewCount, &viewCount, g_viewConfigs.data());
+        g_views.assign(viewCount, {XR_TYPE_VIEW});
+        for (uint32_t i = 0; i < viewCount; i++)
+            LOG("M2: eye %u recommended render size %ux%u", i,
+                g_viewConfigs[i].recommendedImageRectWidth, g_viewConfigs[i].recommendedImageRectHeight);
+
         // Pick the image format for our XR swapchains, preferring sRGB
         // variants so colors in the headset match the monitor.
         uint32_t fmtCount = 0;
@@ -754,6 +771,36 @@ float4 ps_pass(VSOut i) : SV_Target
         XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
         if (XR_FAILED(xrBeginFrame(g_session, &bi)))
             return;
+
+        // M2: per-eye pose + field of view for this frame (foundation for
+        // stereo rendering — not used to render yet).
+        if (!g_views.empty())
+        {
+            XrViewLocateInfo vli{XR_TYPE_VIEW_LOCATE_INFO};
+            vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+            vli.displayTime = fs.predictedDisplayTime;
+            vli.space = g_localSpace;
+            XrViewState vs{XR_TYPE_VIEW_STATE};
+            uint32_t n = 0;
+            if (XR_SUCCEEDED(xrLocateViews(g_session, &vli, &vs, (uint32_t)g_views.size(), &n, g_views.data())) &&
+                (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
+            {
+                static bool loggedEyes = false;
+                if (!loggedEyes)
+                {
+                    for (uint32_t i = 0; i < n; i++)
+                        LOG("M2: eye %u pose(%.3f,%.3f,%.3f) fov L%.1f R%.1f U%.1f D%.1f deg", i,
+                            g_views[i].pose.position.x, g_views[i].pose.position.y, g_views[i].pose.position.z,
+                            g_views[i].fov.angleLeft * 57.2958f, g_views[i].fov.angleRight * 57.2958f,
+                            g_views[i].fov.angleUp * 57.2958f, g_views[i].fov.angleDown * 57.2958f);
+                    // Interpupillary distance = horizontal gap between the eye poses.
+                    if (n >= 2)
+                        LOG("M2: eye separation (IPD) = %.1f mm",
+                            (g_views[1].pose.position.x - g_views[0].pose.position.x) * 1000.0f);
+                    loggedEyes = true;
+                }
+            }
+        }
 
         XrCompositionLayerQuad screenQuad, menuQuad;
         std::vector<XrCompositionLayerBaseHeader*> layers;
