@@ -570,12 +570,36 @@ memory `best-working-build`. dst-only substitution: ghost persisted. dst+src sub
 (`55ca9f0`): ghost STILL persisted; capture pipeline verified healthy (no `refusing` lines).
 Conclusion: every texture-level channel is exhausted; the poison must travel as a **shader
 constant** (per-frame single-viewpoint param consumed by both eyes — the old PARAM-census plan).
-Shipped `3cd1644` (22:24): census-only hooks on UpdateSubresource + Map/Unmap (vtable 48/14/15)
-that self-filter suspects — `M2 PARAM SUSPECT caller=halo3+0xRVA size=N eq=X diff=Y f=[...]`
-lines every 10 s for uploads IDENTICAL across eyes but time-varying. Next session: user plays
-1-2 min in canopy with head motion → read suspects → intercept that caller's upload during eye
-passes and substitute per-eye values (we build per-eye matrices already; if the block matches a
-prev-frame VP, swap in the eye's own). That is the surgical 2-render ghost fix.
+Shipped `3cd1644` (22:24): census-only hooks on UpdateSubresource + Map/Unmap (vtable 48/14/15).
+**Census result:** all constant uploads funnel through ONE call site (`halo3+0x2AF8C1`,
+~100k/s), so caller-RVA cannot discriminate effects; the census itself sagged fps 117→92 over a
+minute. Follow-up `da5a168` (22:31): exact-match matcher — swap any 64-byte block equal to the
+OTHER eye's derived matrices (view+0x98, built by g_buildMatrices, current+prev frame) for this
+eye's. **Result: ZERO hits in a full session** — the engine does NOT reuse our built matrices
+verbatim in any constant upload; its per-frame effect params are computed from its own camera
+state (game-thread side, the CamCopy source buffers), not from the render-thread matrix block.
+`47a35aa` (22:38) removed all three hot-path hooks entirely; baseline perf restored.
+
+**NIGHT-END STATE (2026-07-14 ~22:40): baseline intact** — 120 fps, controls great, stereo,
+full sharpness; left-eye ghosting remains (trailing after-images of bright pixels, follows the
+first-rendered eye, also on the desktop mirror). Warm-up (3 renders) remains the only proven
+remover and remains BANNED (halves fps).
+
+**NEXT SESSION PLAN — no more headset-guessing; understand first (user-directed):**
+1. **Study `reference/UEVR` (praydog)** — the user explicitly asked to learn from it. Focus:
+   how UEVR handles per-eye temporal state at the D3D11 level (its stereo submission,
+   AFR-vs-sequential handling, ghosting mitigations), and its general pattern of giving each eye
+   a complete private view state rather than chasing individual buffers.
+2. **Offline RE, no headset needed:** the ghost's effect params are computed game-thread-side
+   from the authoritative camera. Anchors already known: camera-copy fn `halo3+0x2A628C` and its
+   src buffers (logged每 session as `src=`), inner renderer `0x286A14`, prepare `kPrepareViewSig`,
+   central constant-upload funnel `0x2AF8C1`. Use `tools/disasm.py` (live) / capstone on-disk to
+   trace what reads the camera src buffers besides CamCopy (camscan `xref`/`findwrite` on
+   `src+0x28` READS was never done — the M3 hunt watched WRITES). Identify the per-frame effect
+   param computation (sun screen pos / prev-frame reprojection), then re-run or patch it per eye
+   inside RenderViewHook exactly like g_prepareView.
+3. Only then ship a fix build. All five ordering fixes, six buffer fixes, and two constant-level
+   fixes are catalogued above — none of them may be repeated.
 
 **Answer to "would disabling the desktop view help?" — no, effectively nothing.** The desktop
 image is Halo's own frame: the engine runs its frame-level post + HUD + Present regardless of
