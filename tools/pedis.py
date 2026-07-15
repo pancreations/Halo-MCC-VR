@@ -76,6 +76,50 @@ def scan(offsets):
             pos = last + 1 if last <= pos else last
     print("== total hits: %d" % hits)
 
+def xref(targets):
+    """Find direct branches and RIP-relative memory operands resolving to RVAs."""
+    want = set(targets)
+    hits = 0
+    for s in [x for x in secs if x["exec"]]:
+        code = data[s["raw"]:s["raw"]+s["rawsize"]]
+        pos = 0
+        while pos < len(code):
+            last = pos
+            for i in md.disasm(code[pos:], s["va"] + pos):
+                last = i.address - s["va"] + i.size
+                found = False
+                for op in i.operands:
+                    if op.type == 2 and op.imm in want:
+                        found = True
+                    elif op.type == 3 and op.mem.base == 41:  # X86_REG_RIP
+                        resolved = i.address + i.size + op.mem.disp
+                        if resolved in want:
+                            found = True
+                if found:
+                    print("%08X  %-20s %s %s" %
+                          (i.address, i.bytes.hex(), i.mnemonic, i.op_str))
+                    hits += 1
+            pos = last + 1 if last <= pos else last
+    print("== total hits: %d" % hits)
+
+def imm(values):
+    """Find instructions containing one of the requested immediate values."""
+    want = set(values)
+    hits = 0
+    for s in [x for x in secs if x["exec"]]:
+        code = data[s["raw"]:s["raw"]+s["rawsize"]]
+        pos = 0
+        while pos < len(code):
+            last = pos
+            for i in md.disasm(code[pos:], s["va"] + pos):
+                last = i.address - s["va"] + i.size
+                if any(op.type == 2 and op.imm in want for op in i.operands):
+                    print("%08X  %-20s %s %s" %
+                          (i.address, i.bytes.hex(), i.mnemonic, i.op_str))
+                    hits += 1
+            pos = last + 1 if last <= pos else last
+    print("== total hits: %d" % hits)
+
 def off2rva(secs, off):
     for s in secs:
         if s["raw"] <= off < s["raw"] + s["rawsize"]:
@@ -92,6 +136,56 @@ def sig(pattern):
     for h in hits:
         print("  file 0x%X  rva 0x%X" % (h, off2rva(secs, h)))
 
+def rtti(text):
+    """Trace an MSVC x64 RTTI type name to COLs/vftables and raw references."""
+    needle = text.encode("ascii")
+    names = []
+    pos = 0
+    while True:
+        pos = data.find(needle, pos)
+        if pos < 0:
+            break
+        names.append(pos)
+        pos += 1
+    print("name matches: %d" % len(names))
+    for name_off in names:
+        td_off = name_off - 16
+        td_rva = off2rva(secs, td_off)
+        print("name file=0x%X rva=0x%X TypeDescriptor rva=0x%X" %
+              (name_off, off2rva(secs, name_off), td_rva))
+        ref = struct.pack("<I", td_rva)
+        p = 0
+        while True:
+            p = data.find(ref, p)
+            if p < 0:
+                break
+            if p >= 12:
+                col_off = p - 12
+                col_rva = off2rva(secs, col_off)
+                if (col_rva is not None and
+                    struct.unpack_from("<I", data, col_off)[0] == 1 and
+                    struct.unpack_from("<I", data, col_off + 20)[0] == col_rva):
+                    print("  COL rva=0x%X" % col_rva)
+                    absolute = struct.pack("<Q", imgbase + col_rva)
+                    q = 0
+                    while True:
+                        q = data.find(absolute, q)
+                        if q < 0:
+                            break
+                        q_rva = off2rva(secs, q)
+                        print("    COL pointer rva=0x%X -> vftable rva=0x%X" %
+                              (q_rva, q_rva + 8))
+                        vftable_va = struct.pack("<Q", imgbase + q_rva + 8)
+                        v = 0
+                        while True:
+                            v = data.find(vftable_va, v)
+                            if v < 0:
+                                break
+                            print("      vftable absolute ref rva=0x%X" % off2rva(secs, v))
+                            v += 1
+                        q += 1
+            p += 1
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "sig":
@@ -100,3 +194,9 @@ if __name__ == "__main__":
         fn(int(sys.argv[2], 16), int(sys.argv[3]) if len(sys.argv) > 3 else 1400)
     elif cmd == "scan":
         scan([int(x, 16) for x in sys.argv[2:]])
+    elif cmd == "rtti":
+        rtti(sys.argv[2])
+    elif cmd == "xref":
+        xref([int(x, 16) for x in sys.argv[2:]])
+    elif cmd == "imm":
+        imm([int(x, 16) for x in sys.argv[2:]])

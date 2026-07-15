@@ -21,7 +21,7 @@ float Game_GetPitchSign();
 bool Game_GetWriteUp();
 void Game_PitchTrim(int dir);   // F8 (down) / F9 (up): nudge pitch offset
 void Game_LeanScale(int dir);   // PageDown / PageUp: leaning strength
-void Game_GunFovScale(int dir); // Home (bigger) / End (smaller): weapon/HUD size in stereo
+void Game_GunScale(int dir); // Home (bigger) / End (smaller): hand-anchored weapon mesh size
 void Game_ToggleVrAim();        // Insert: right controller steers the weapon aim
 
 // M3 VR aim: called by the XInput hook on the game's input thread. Returns

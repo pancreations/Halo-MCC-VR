@@ -60,6 +60,23 @@ two renders, no fps cost. Related unfollowed note: RE-notes records the world re
 
 ---
 
+## BREAKTHROUGH 2026-07-15 ~04:20 — the gun mesh finally tracks the controller
+
+The working lever, after every other one was falsified in-headset: **write the controller pose
+(quat i,j,k,w + translation + scale, 0x20 bytes) into the orientation-bank record of the wrist's
+ancestor node directly under the skeleton root** (index found by walking the tag node table's
+parent words), inside the compose hooks before the original runs. The renderer rebuilds the mesh
+from the bank's child records under its own AIM-camera root — it replaces record 0 (why bank-root
+writes only nudged the camera) and keeps children. Composed-output/defaults-root writes reach
+ONLY markers/effects + a camera_control readback that nudges the camera with the wrist (the
+"wrist moves the world/body" reports, and the illusion behind 01:55's "gun follows both").
+
+Confirmed in-headset: gun AND bullets track the right controller. Same-session tuning shipped
+(04:29 build): aim-frame anchoring (kills the inverse-head drift — the render root is the AIM
+camera, not the head), mounting-angle sliders (barrel authored ~90 deg off; default pitch -90),
+reticle 2.25 deg, gun_scale 0.75 + Home/End, experimental HUD-size slider (scales overlay
+cameras 1-3 only; weapon camera 0 stays world-matched for registration). Awaiting headset pass.
+
 ## Current state: M0, M1, M2, M3 all working
 
 - **M0** — inject, launch EAC-off, D3D11 Present hook, OpenXR session, in-headset ImGui menu (F1).
@@ -71,8 +88,109 @@ two renders, no fps cost. Related unfollowed note: RE-notes records the world re
 
 **Known open issues:** the left-eye ghost above; mono screen mode runs ~62-67 fps while stereo
 runs 117-118 (not investigated; only matters as the fallback view); the gun MODEL is still
-camera-glued (only aim follows the hand); no hand-ray crosshair; HUD elements split between the
-eyes (grenades+radar left, ammo right).
+camera-glued (only aim follows the hand); HUD elements split between the eyes (grenades+radar
+left, ammo right).
+
+## 2026-07-14 hands/guns + crosshair handoff
+
+- Implemented an OpenXR quad-layer aim crosshair using the game's actual aim direction mapped
+  back into LOCAL space. It is a 64x64 static alpha reticle, submitted after the stereo projection
+  and before the F1 menu, so it adds no third game render.
+- Added F1 settings and config persistence: `crosshair`, `crosshair_distance_m`, and
+  `crosshair_size_deg`. Defaults: on, 10 m, 1.2 degrees.
+- Added AOB-located hooks at the proven first-person global-bone composition boundary. The full
+  animated hands + gun assembly is moved from its selected weapon anchor to the tracked controller:
+  primary/right slot to the right controller, dual/left slot to the left controller. This happens
+  before Halo copies matrices into the render packet, so the visible model receives the pose.
+- Headset acceptance check: right hand and gun stay at the right controller while the head moves;
+  reload/recoil remain animated; dual-wield left gun follows the left controller; the crosshair
+  follows the actual bullet direction. Confirm baseline remains 117-120 fps and controls unchanged.
+- The prior user test used the older installed DLL (its timestamp/size preceded the crosshair
+  build), so it did not test the OpenXR crosshair or these first-person matrix hooks.
+
+### First hands/guns headset result and correction
+
+- Report: the weapon moved, but pieces separated; bullet/gun/crosshair tracking all worked but
+  were unsynchronized, and the crosshair had substantial input lag.
+- Root cause 1 is proven and fixed: Halo's 0x34 matrix starts with scale, not rotation. The bad
+  declaration shifted every basis vector.
+- The attempted direct-angle resolver found zero candidates and never activated. It is removed;
+  do not describe that path as a working synchronization fix.
+- First direct-aim resolver build froze the game thread after F2 while XInput continued. Runtime
+  timing proved the initial scan had not reached its first completion log. Cause: `VirtualQuery`
+  was called for every 4-byte candidate (hundreds of thousands of kernel calls). Fixed by checking
+  each allocation once, then comparing its already-validated float range directly.
+- Next headset report: cursor and muzzle flash followed the hand, while visible gun and bullets
+  followed the head. This proves composed matrices feed markers/effects but mesh skinning consumes
+  the local orientation bank. The hook now transforms only the bank root and recomposes, instead
+  of editing every completed matrix.
+
+### 2026-07-15 headset result and the three-part correction
+
+Report: gun followed **both** head and hand; bullets shot **from the head** (called a
+regression); gun barely visible, size unverifiable. All three were diagnosed offline from the
+logs + statics and fixed in one build:
+
+1. **Head/hand mixing was caused by the camera-copy "scoping" experiment** (save/restore of the
+   authoritative camera around the copy so gameplay would keep the aim pose). The first-person
+   bone rewrite expresses the controller **relative to the head camera**, and every proven-good
+   result (muzzle flash at the hand) was measured with the head pose living permanently in that
+   camera. Splitting the frames made the FP assembly consume the aim pose while our math
+   subtracted the head. The scoping is reverted — the M3 regime (head pose stays in `src`) is
+   load-bearing for the FP frame; a comment in `CamCopyHook` now says so.
+2. **"Bullets from the head" is origin parallax made visible, not a steering failure.** Halo
+   spawns first-person projectiles at the camera (the head); no stick steering can move that
+   origin. It became conspicuous because (a) the gun now sits in your hand and (b) the crosshair
+   was switched to the raw controller ray *from the controller*, so head-origin shots visibly
+   missed the reticle. Fix shipped: `Game_ComputeAimStick` now steers the head-origin bullet ray
+   **through the point the hand ray reaches at `crosshair_distance_m`** — every shot passes
+   exactly through the floating reticle (exact at that distance, negligible error beyond it).
+   The complete fix remains a weapon-fire hook that swaps origin+direction around the call
+   (HaloCEVR's pattern); the offline hunt for H3's fire function is still open (see RE-notes).
+3. **The gun was shrunk twice**: overlay frustum scale 2.0 (draws at half size) x mesh scale
+   0.33 = ~1/6 apparent size. Now the overlay tangents are **pinned to the exact world match**
+   (required anyway so the weapon projects at the controller's true position) and weapon size is
+   a single mesh scale `gun_scale` (config + F1 slider), default 1.0 = authored size,
+   **Home/End** adjust it live around the wrist anchor.
+
+### Result of that build: (1) FAILED, (3) untested, and a process failure
+
+Headset report: **gun and bullets follow the head; reticle and muzzle flash follow the hand.**
+That is verbatim the *earlier* report — so reverting the scoping moved us backwards, and item (1)
+above was wrong. Worse, the RE-notes "correction" that justified it (blaming the r_hand string
+index) was **a theory written into the docs as a finding**. It has been retracted there. This is
+the "understand offline first / do not ship theories" rule being broken twice in a row, at the
+cost of two play sessions. **Do not ship another weapon-frame theory.**
+
+What the follow-up offline pass DID establish (all in RE-notes, all real):
+- The composed FP bones are **camera-space, proven** from the composer's root transform
+  (scale 1, identity rotation, ~zero translation; the offset divisor is literally 1000.0).
+  So the *space* our hook writes in is correct.
+- There are only **two composers and four callers** binary-wide; we hook the only two
+  first-person ones; argument orders verified register-by-register; the nesting guard is right.
+- Our edits provably reach BOTH the effects anchor (muzzle flash — observed) AND the mesh's own
+  render packet (`memcpy` at `0x2C490F`, sharing its gate with the effects publish).
+
+### SOLVED — the head-stuck gun (2026-07-15, proven in the disassembly)
+
+The contradiction above resolved: **the engine undoes our pose one instruction after we write
+it.** At `0x2C4843-0x2C486A` the first-person evaluator rotates every composed bone by Halo's
+camera-driven weapon-lag matrix, **skipping only `camera_control`** — which is cached earlier at
+`0x2C4695` and is exactly what feeds the muzzle flash. Hence, verbatim, both headset reports:
+flash follows the hand, mesh rides the head. In VR the head drives that camera constantly, so the
+lag rotation *is* the head-stick. Full instruction-level trace in RE-notes.
+
+**Fix:** hook the shared applier `0x120DF8` (unique AOB) and skip it for exactly the bone range
+we re-anchored, armed by a thread-local set only on a successful transform. The engine already
+skips that rotation for one bone, so this is a state the pipeline supports.
+
+**Guard rail:** `0x120DF8` has ~121 call sites and is hot. The hook must remain a range compare +
+tail call. Do not add logging, atomics, or math there — a comparable-frequency hook (the constant-
+upload census) cost ~25% fps.
+
+The `weapon_probe` flag (F1 checkbox / config, default OFF) stays: it pushes every composed bone
+0.3 wu left with no controller input, and is the fastest way to re-confirm the mesh consumes
+`weapon+0x4A4` if this area ever regresses.
 
 ## Key paths / environment
 
@@ -126,7 +244,7 @@ The user's AV blocks Cheat Engine, so we built our own **read-only** tools.
 ## Hotkeys
 
 F1 menu · F2 head-tracking · F3 recenter · F6 leaning · F8/F9 pitch trim · F10 screen-follow ·
-F11 stereo · PgUp/PgDn lean strength · Home/End weapon+HUD size (stereo only).
+F11 stereo · PgUp/PgDn lean strength · Home/End hand-held weapon size.
 Yaw/pitch/up calibration flips are **F1-menu-only** (a stray Alt+F4 from SteamVR's exit path
 used to hit the old F4 binding and invert head-turn + hand-aim — it read as "controls completely
 broken". Fixed: hotkeys act on `WM_KEYDOWN` only and Alt+F4 passes through to the game).

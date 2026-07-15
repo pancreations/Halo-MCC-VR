@@ -73,6 +73,14 @@ namespace
     std::vector<ID3D11Texture2D*> g_menuImages;
     std::vector<ID3D11RenderTargetView*> g_menuRtvs;
 
+    // M3 aim crosshair: a tiny static reticle image floated as a quad layer
+    // along the weapon's true aim ray. Drawn once; the compositor keeps
+    // re-showing the last released image, so it costs nothing per frame.
+    XrSwapchain g_reticleChain = XR_NULL_HANDLE;
+    std::vector<ID3D11Texture2D*> g_reticleImages;
+    std::vector<ID3D11RenderTargetView*> g_reticleRtvs;
+    constexpr uint32_t kReticleSize = 64;
+
     // M2 eye targets. Each eye is a separate swapchain because the headset may
     // recommend a different size for each view. They are allocated now so the
     // later render hook can draw directly into them; the mono quad remains the
@@ -800,6 +808,72 @@ float4 ps_pass(VSOut i) : SV_Target
         LeaveCriticalSection(&g_headCs);
     }
 
+    // Create the crosshair swapchain on first use (lazily, once the session is
+    // running — SteamVR presented pre-session eye chains black) and paint the
+    // reticle into it a single time.  Four cyan arc segments and short inner
+    // ticks echo Halo 3's original blue CHUD reticle, but at a VR-friendly
+    // angular size. A dark-blue outline keeps it legible without a black disc.
+    bool EnsureReticleChain()
+    {
+        if (g_reticleChain != XR_NULL_HANDLE)
+            return true;
+        static bool failed = false;
+        if (failed)
+            return false;
+        if (!CreateChain(kReticleSize, kReticleSize, g_reticleChain, g_reticleImages,
+                         g_reticleRtvs, "crosshair"))
+        {
+            failed = true;
+            return false;
+        }
+        std::vector<uint32_t> px(kReticleSize * kReticleSize);
+        const float c = (kReticleSize - 1) * 0.5f;
+        // coverage: 1 inside the shape, 0 outside, ~1px linear edge for AA
+        auto cov = [](float d, float halfWidth) {
+            const float v = halfWidth - d + 0.5f;
+            return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+        };
+        for (uint32_t y = 0; y < kReticleSize; ++y)
+            for (uint32_t x = 0; x < kReticleSize; ++x)
+            {
+                const float dx = x - c, dy = y - c;
+                const float r = sqrtf(dx * dx + dy * dy);
+                const float ax=fabsf(dx), ay=fabsf(dy);
+                const bool cardinal=ax>ay*1.22f || ay>ax*1.22f;
+                const float dRing=fabsf(r-19.0f);
+                const float arc=cardinal?cov(dRing,1.55f):0.0f;
+                const float arcOutline=cardinal?cov(dRing,3.0f):0.0f;
+                const float tickDistance=(ax>ay)?ax:ay;
+                const float tickWidth=(ax>ay)?ay:ax;
+                const float tick=(tickDistance>=7.0f && tickDistance<=11.5f)?cov(tickWidth,1.2f):0.0f;
+                const float tickOutline=(tickDistance>=5.8f && tickDistance<=12.7f)?cov(tickWidth,2.6f):0.0f;
+                const float bright=fmaxf(arc,tick);
+                const float outline=fmaxf(arcOutline,tickOutline);
+                const uint32_t r8=(uint32_t)(fminf(255.0f,12.0f*outline+62.0f*bright)+0.5f);
+                const uint32_t g8=(uint32_t)(fminf(255.0f,55.0f*outline+185.0f*bright)+0.5f);
+                const uint32_t b8=(uint32_t)(fminf(255.0f,125.0f*outline+130.0f*bright)+0.5f);
+                const uint32_t a8=(uint32_t)(outline*255.0f+0.5f);
+                // OpenXR's preferred swapchain is RGBA8 on this runtime.
+                px[y*kReticleSize+x]=(a8<<24)|(b8<<16)|(g8<<8)|r8;
+            }
+        uint32_t idx = 0;
+        XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+        wi.timeout = 1000000000;
+        XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        if (XR_FAILED(xrAcquireSwapchainImage(g_reticleChain, &ai, &idx)) ||
+            XR_FAILED(xrWaitSwapchainImage(g_reticleChain, &wi)))
+        {
+            failed = true;
+            return false;
+        }
+        g_context->UpdateSubresource(g_reticleImages[idx], 0, nullptr, px.data(),
+                                     kReticleSize * 4, 0);
+        xrReleaseSwapchainImage(g_reticleChain, &ri);
+        LOG("M3: crosshair reticle drawn (%ux%u)", kReticleSize, kReticleSize);
+        return true;
+    }
+
     XrCompositionLayerQuad MakeQuad(XrSwapchain chain, int32_t imgW, int32_t imgH,
                                     float widthMeters, float distMeters, float yOffset,
                                     XrCompositionLayerFlags flags, bool headLocked)
@@ -1364,7 +1438,7 @@ float4 ps_pass(VSOut i) : SV_Target
             }
         }
 
-        XrCompositionLayerQuad screenQuad, menuQuad;
+        XrCompositionLayerQuad screenQuad, menuQuad, reticleQuad;
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         std::vector<XrCompositionLayerProjectionView> projectionViews;
         std::vector<XrCompositionLayerBaseHeader*> layers;
@@ -1450,7 +1524,53 @@ float4 ps_pass(VSOut i) : SV_Target
                     }
 
                     if (g_eyeHasImage[0] && g_eyeHasImage[1] && projection.viewCount == 2)
+                    {
                         layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&projection));
+
+                        // Use the same predicted OpenXR controller pose captured
+                        // for this displayed frame. Routing the quad through
+                        // Halo's virtual-stick aim introduced visible catch-up
+                        // lag and placed its ray origin at the player's head.
+                        const XrVector3f aimRay=Rotate(g_rightAimPose.orientation,{0,0,-1});
+                        const float aimDir[3]={aimRay.x,aimRay.y,aimRay.z};
+                        if (g_config.crosshair && g_rightAimPoseValid && EnsureReticleChain())
+                        {
+                            const float dist = g_config.crosshair_distance_m;
+                            const float yaw = atan2f(aimDir[0], -aimDir[2]);
+                            const float sp = fminf(fmaxf(aimDir[1], -1.0f), 1.0f);
+                            const float pitch = asinf(sp);
+                            // Orientation whose local -Z runs along the ray
+                            // (quad faces the player): global yaw about +Y
+                            // (angle -yaw, same convention as TryRecenter),
+                            // then local pitch about +X.
+                            const XrQuaternionf qy{0, sinf(-yaw * 0.5f), 0, cosf(-yaw * 0.5f)};
+                            const XrQuaternionf qp{sinf(pitch * 0.5f), 0, 0, cosf(pitch * 0.5f)};
+                            const XrQuaternionf q{
+                                qy.w * qp.x + qy.x * qp.w + qy.y * qp.z - qy.z * qp.y,
+                                qy.w * qp.y - qy.x * qp.z + qy.y * qp.w + qy.z * qp.x,
+                                qy.w * qp.z + qy.x * qp.y - qy.y * qp.x + qy.z * qp.w,
+                                qy.w * qp.w - qy.x * qp.x - qy.y * qp.y - qy.z * qp.z};
+                            reticleQuad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+                            reticleQuad.layerFlags =
+                                XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+                                XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+                            reticleQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                            reticleQuad.space = g_localSpace;
+                            reticleQuad.subImage.swapchain = g_reticleChain;
+                            reticleQuad.subImage.imageRect =
+                                {{0, 0}, {(int32_t)kReticleSize, (int32_t)kReticleSize}};
+                            reticleQuad.subImage.imageArrayIndex = 0;
+                            reticleQuad.pose.orientation = q;
+                            reticleQuad.pose.position = {g_rightAimPose.position.x + aimDir[0] * dist,
+                                                         g_rightAimPose.position.y + aimDir[1] * dist,
+                                                         g_rightAimPose.position.z + aimDir[2] * dist};
+                            const float w = 2.0f * dist *
+                                tanf(g_config.crosshair_size_deg * 0.5f * 0.0174533f);
+                            reticleQuad.size = {w, w};
+                            layers.push_back(
+                                reinterpret_cast<XrCompositionLayerBaseHeader*>(&reticleQuad));
+                        }
+                    }
                 }
                 else if (g_haveCenter && EnsureScreenChain(bd.Width, bd.Height))
                 {

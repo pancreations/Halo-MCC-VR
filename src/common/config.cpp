@@ -17,6 +17,13 @@ static void Clamp()
     g_config.screen_distance_m = std::clamp(g_config.screen_distance_m, 0.3f, 20.0f);
     g_config.turn_snap_deg = std::clamp(g_config.turn_snap_deg, 5.0f, 90.0f);
     g_config.turn_smooth_deg_s = std::clamp(g_config.turn_smooth_deg_s, 30.0f, 360.0f);
+    g_config.crosshair_distance_m = std::clamp(g_config.crosshair_distance_m, 2.0f, 50.0f);
+    g_config.crosshair_size_deg = std::clamp(g_config.crosshair_size_deg, 0.3f, 5.0f);
+    g_config.gun_scale = std::clamp(g_config.gun_scale, 0.3f, 3.0f);
+    g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
+    g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
+    g_config.gun_roll_deg = std::clamp(g_config.gun_roll_deg, -180.0f, 180.0f);
+    g_config.hud_scale = std::clamp(g_config.hud_scale, 0.5f, 3.0f);
 }
 
 void ConfigLoad(const wchar_t* path)
@@ -63,6 +70,24 @@ void ConfigLoad(const wchar_t* path)
             continue; // retired ghost-fix switches; accept old config files quietly
         else if (!strcmp(key, "dpad_hand"))
             g_config.dpad_hand = atoi(val) != 0 ? 1 : 0;
+        else if (!strcmp(key, "crosshair"))
+            g_config.crosshair = atoi(val) != 0;
+        else if (!strcmp(key, "crosshair_distance_m"))
+            g_config.crosshair_distance_m = (float)atof(val);
+        else if (!strcmp(key, "crosshair_size_deg"))
+            g_config.crosshair_size_deg = (float)atof(val);
+        else if (!strcmp(key, "gun_scale"))
+            g_config.gun_scale = (float)atof(val);
+        else if (!strcmp(key, "weapon_probe"))
+            g_config.weapon_probe = atoi(val) != 0;
+        else if (!strcmp(key, "gun_pitch_deg"))
+            g_config.gun_pitch_deg = (float)atof(val);
+        else if (!strcmp(key, "gun_yaw_deg"))
+            g_config.gun_yaw_deg = (float)atof(val);
+        else if (!strcmp(key, "gun_roll_deg"))
+            g_config.gun_roll_deg = (float)atof(val);
+        else if (!strcmp(key, "hud_scale"))
+            g_config.hud_scale = (float)atof(val);
         else if (!strcmp(key, "right_eye_first"))
             g_config.right_eye_first = atoi(val) != 0;
         else if (*key)
@@ -100,6 +125,25 @@ void ConfigSave()
     fprintf(f, "# Hold this controller next to your head to use the left stick as D-pad:\n");
     fprintf(f, "# 0 = left controller, 1 = right controller.\n");
     fprintf(f, "dpad_hand = %d\n\n", g_config.dpad_hand);
+    fprintf(f, "# Aim crosshair in stereo: a floating reticle where the weapon actually\n");
+    fprintf(f, "# shoots (the game's own reticle follows your head, not your hand).\n");
+    fprintf(f, "crosshair = %d\n\n", g_config.crosshair ? 1 : 0);
+    fprintf(f, "# How far away the crosshair floats, in meters (2-50).\n");
+    fprintf(f, "crosshair_distance_m = %.1f\n\n", g_config.crosshair_distance_m);
+    fprintf(f, "# Apparent size of the crosshair, in degrees (0.3-5).\n");
+    fprintf(f, "crosshair_size_deg = %.1f\n\n", g_config.crosshair_size_deg);
+    fprintf(f, "# Size of the hand-held weapon and arms (0.3-3). 1 = authored size;\n");
+    fprintf(f, "# Home/End adjust this in-game.\n");
+    fprintf(f, "gun_scale = %.2f\n\n", g_config.gun_scale);
+    fprintf(f, "# Weapon mounting rotation on the controller, in degrees.\n");
+    fprintf(f, "gun_pitch_deg = %.0f\n", g_config.gun_pitch_deg);
+    fprintf(f, "gun_yaw_deg = %.0f\n", g_config.gun_yaw_deg);
+    fprintf(f, "gun_roll_deg = %.0f\n\n", g_config.gun_roll_deg);
+    fprintf(f, "# HUD size (experimental): >1 draws the game HUD smaller/toward center.\n");
+    fprintf(f, "hud_scale = %.2f\n\n", g_config.hud_scale);
+    fprintf(f, "# Diagnostic: 1 ignores the controller and pushes the weapon a fixed\n");
+    fprintf(f, "# distance left, to test whether the gun mesh reads our matrices.\n");
+    fprintf(f, "weapon_probe = %d\n\n", g_config.weapon_probe ? 1 : 0);
     fprintf(f, "# Ghosting diagnostic: 1 renders the right eye first.\n");
     fprintf(f, "right_eye_first = %d\n", g_config.right_eye_first ? 1 : 0);
     fclose(f);

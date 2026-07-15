@@ -78,8 +78,8 @@ namespace
             case VK_F11: VR_ToggleStereo(); return 0;
             case VK_PRIOR: Game_LeanScale(+1); return 0; // Page Up
             case VK_NEXT:  Game_LeanScale(-1); return 0; // Page Down
-            case VK_HOME: Game_GunFovScale(-1); return 0; // bigger weapon/HUD
-            case VK_END:  Game_GunFovScale(+1); return 0; // smaller weapon/HUD
+            case VK_HOME: Game_GunScale(+1); return 0; // bigger hand-held weapon
+            case VK_END:  Game_GunScale(-1); return 0; // smaller hand-held weapon
             case VK_INSERT: Game_ToggleVrAim(); return 0; // controller steers aim
             }
         }
@@ -163,6 +163,33 @@ namespace
             g_config.dpad_hand = 1;
             changed = true;
         }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Hand-held weapon");
+        changed |= ImGui::SliderFloat("Weapon size", &g_config.gun_scale, 0.3f, 3.0f, "%.2fx");
+        ImGui::TextDisabled("Size is NOT applied yet (the scale path zoomed the camera; lever pending).");
+        changed |= ImGui::SliderFloat("Weapon pitch (deg)", &g_config.gun_pitch_deg, -180.0f, 180.0f, "%.0f");
+        changed |= ImGui::SliderFloat("Weapon yaw (deg)", &g_config.gun_yaw_deg, -180.0f, 180.0f, "%.0f");
+        changed |= ImGui::SliderFloat("Weapon roll (deg)", &g_config.gun_roll_deg, -180.0f, 180.0f, "%.0f");
+        ImGui::TextDisabled("Mounting angle on the controller. If the gun points up/sideways, tune these.");
+        changed |= ImGui::SliderFloat("HUD size (experimental)", &g_config.hud_scale, 0.5f, 3.0f, "%.2f");
+        changed |= ImGui::Checkbox("Weapon probe (diagnostic)", &g_config.weapon_probe);
+        ImGui::TextDisabled("Ignores your hand and pushes the gun 1m left. Does the GUN move,\n"
+                            "or only the muzzle flash? That answers why the gun follows your head.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Aim crosshair (stereo)");
+        changed |= ImGui::Checkbox("Show a crosshair where the weapon shoots", &g_config.crosshair);
+        if (g_config.crosshair)
+        {
+            changed |= ImGui::SliderFloat("Crosshair size (deg)", &g_config.crosshair_size_deg,
+                                          0.3f, 5.0f, "%.1f");
+            changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
+                                          2.0f, 50.0f, "%.0f");
+        }
+        ImGui::TextDisabled("The game's own reticle follows your head, not your hand; this one is true.");
 
         ImGui::Spacing();
         changed |= ImGui::Checkbox("Render right eye first (diagnostic)",
