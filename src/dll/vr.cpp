@@ -2249,113 +2249,111 @@ void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what)
 
 namespace
 {
-    // Constant-upload census. One record per unique (caller, size); tracks
-    // the last value seen from each eye. Suspects = seen by both eyes with
-    // identical bytes while the value changes over time (a static value can't
-    // ghost; a per-eye-different value is already correct).
-    struct ParamRecord
-    {
-        void* caller = nullptr;
-        UINT size = 0;
-        unsigned char value[2][64] = {};
-        bool seen[2] = {};
-        bool changes = false;      // value varies over time
-        unsigned equalAcross = 0;  // times both eyes carried identical bytes
-        unsigned diffAcross = 0;
-    };
-    constexpr unsigned kParamMax = 256;
-    ParamRecord g_params[kParamMax];
-    unsigned g_paramCount = 0;
+    // Per-eye derived camera/matrix snapshots (view+0x98, 0xC0 bytes: view
+    // matrix + projection as built by g_buildMatrices), current [0] and
+    // previous [1] frame. These are the reference blocks the constant-level
+    // ghost fix matches against.
+    unsigned char g_eyeDerivedSnap[2][2][0xC0];
+    bool g_eyeDerivedValid[2][2] = {};
+
     struct MappedBuffer { ID3D11Resource* res; void* data; };
     MappedBuffer g_mapped[32] = {};
 
-    void ParamCensus(ID3D11Resource* dst, const void* data, void* caller)
+    // Size of a constant buffer, cached by resource pointer (GetDesc on every
+    // upload measurably dragged the frame rate in the census build).
+    UINT ConstantBufferSize(ID3D11Resource* res)
     {
-        const int eye = g_rasterEye.load();
-        if (eye < 0 || !g_stereoEnabled.load() || !dst || !data || !caller)
-            return;
+        struct Entry { ID3D11Resource* res; UINT size; };
+        static Entry cache[64] = {};
+        static unsigned next = 0;
+        for (const Entry& e : cache)
+            if (e.res == res)
+                return e.size;
+        UINT size = 0;
         D3D11_RESOURCE_DIMENSION dim{};
-        dst->GetType(&dim);
-        if (dim != D3D11_RESOURCE_DIMENSION_BUFFER)
-            return;
-        ID3D11Buffer* buffer = nullptr;
-        if (FAILED(dst->QueryInterface(__uuidof(ID3D11Buffer),
-                                       reinterpret_cast<void**>(&buffer))) || !buffer)
-            return;
-        D3D11_BUFFER_DESC bd{};
-        buffer->GetDesc(&bd);
-        buffer->Release();
-        if (!(bd.BindFlags & D3D11_BIND_CONSTANT_BUFFER) || bd.ByteWidth < 16)
-            return;
-        const UINT n = bd.ByteWidth < 64 ? bd.ByteWidth : 64;
-        if (!g_paramCsInit)
-            return;
-        EnterCriticalSection(&g_paramCs);
-        ParamRecord* r = nullptr;
-        for (unsigned i = 0; i < g_paramCount; ++i)
-            if (g_params[i].caller == caller && g_params[i].size == bd.ByteWidth)
-            {
-                r = &g_params[i];
-                break;
-            }
-        if (!r && g_paramCount < kParamMax)
+        res->GetType(&dim);
+        if (dim == D3D11_RESOURCE_DIMENSION_BUFFER)
         {
-            r = &g_params[g_paramCount++];
-            r->caller = caller;
-            r->size = bd.ByteWidth;
-        }
-        if (r)
-        {
-            if (r->seen[eye] && memcmp(r->value[eye], data, n) != 0)
-                r->changes = true;
-            memcpy(r->value[eye], data, n);
-            r->seen[eye] = true;
-            if (r->seen[0] && r->seen[1])
+            ID3D11Buffer* buffer = nullptr;
+            if (SUCCEEDED(res->QueryInterface(__uuidof(ID3D11Buffer),
+                                              reinterpret_cast<void**>(&buffer))) && buffer)
             {
-                if (memcmp(r->value[0], r->value[1], n) == 0)
-                    ++r->equalAcross;
-                else
-                    ++r->diffAcross;
+                D3D11_BUFFER_DESC bd{};
+                buffer->GetDesc(&bd);
+                buffer->Release();
+                if (bd.BindFlags & D3D11_BIND_CONSTANT_BUFFER)
+                    size = bd.ByteWidth;
             }
         }
-        LeaveCriticalSection(&g_paramCs);
+        cache[next % 64] = {res, size};
+        ++next;
+        return size;
+    }
 
-        // Suspect summary every ~10 s: shared-across-eyes AND time-varying.
-        static std::atomic<DWORD> lastDump{0};
-        const DWORD now = GetTickCount();
-        DWORD last = lastDump.load();
-        if (now - last >= 10000 && lastDump.compare_exchange_strong(last, now))
+    // Scan an upload for 64-byte blocks that exactly match the OTHER eye's
+    // stored matrices and replace them with THIS eye's. Exact float-for-float
+    // matches of a matrix block cannot occur by coincidence, and a legit
+    // per-eye upload already carries this eye's values (no match, no touch).
+    bool PatchGhostParams(int eye, unsigned char* bytes, UINT size)
+    {
+        const int other = 1 - eye;
+        bool patched = false;
+        for (UINT off = 0; off + 64 <= size; off += 16)
         {
-            const HMODULE halo3 = GetModuleHandleW(L"halo3.dll");
-            const HMODULE exe = GetModuleHandleW(nullptr);
-            EnterCriticalSection(&g_paramCs);
-            unsigned printed = 0;
-            for (unsigned i = 0; i < g_paramCount && printed < 16; ++i)
+            for (int age = 0; age < 2; ++age)
             {
-                const ParamRecord& p = g_params[i];
-                if (!p.changes || !p.seen[0] || !p.seen[1] ||
-                    p.equalAcross < p.diffAcross * 4 + 8)
+                if (!g_eyeDerivedValid[other][age] || !g_eyeDerivedValid[eye][age])
                     continue;
-                const float* f = reinterpret_cast<const float*>(p.value[0]);
-                const uintptr_t c = reinterpret_cast<uintptr_t>(p.caller);
-                const uintptr_t h3 = reinterpret_cast<uintptr_t>(halo3);
-                const uintptr_t ex = reinterpret_cast<uintptr_t>(exe);
-                LOG("M2 PARAM SUSPECT caller=%s+0x%llX size=%u eq=%u diff=%u f=[%.4f %.4f %.4f %.4f]",
-                    (h3 && c > h3 && c < h3 + 0x5000000) ? "halo3" : "exe",
-                    (unsigned long long)(c - ((h3 && c > h3 && c < h3 + 0x5000000) ? h3 : ex)),
-                    p.size, p.equalAcross, p.diffAcross, f[0], f[1], f[2], f[3]);
-                ++printed;
+                for (UINT sub = 0; sub + 64 <= sizeof(g_eyeDerivedSnap[0][0]); sub += 16)
+                {
+                    const unsigned char* ref = g_eyeDerivedSnap[other][age] + sub;
+                    if (*reinterpret_cast<const unsigned*>(bytes + off) !=
+                        *reinterpret_cast<const unsigned*>(ref))
+                        continue;
+                    if (memcmp(bytes + off, ref, 64) != 0)
+                        continue;
+                    // Degenerate (eyes identical): nothing to fix.
+                    if (memcmp(g_eyeDerivedSnap[eye][age] + sub, ref, 64) == 0)
+                        continue;
+                    memcpy(bytes + off, g_eyeDerivedSnap[eye][age] + sub, 64);
+                    patched = true;
+                    static std::atomic<unsigned> logged{0};
+                    const unsigned n = logged.fetch_add(1);
+                    if (n < 8)
+                        LOG("M2 GHOST-PARAM: patched other-eye matrix in upload "
+                            "(eye=%d size=%u offset=%u snapOffset=%u age=%d)",
+                            eye, size, off, sub, age);
+                    else if ((n & 0x3FF) == 0)
+                        LOG("M2 GHOST-PARAM: %u patches so far", n);
+                }
             }
-            LeaveCriticalSection(&g_paramCs);
-            if (printed)
-                LOG("M2 PARAM SUSPECT list end (%u shown)", printed);
         }
+        return patched;
     }
 } // namespace
 
-void VR_RecordParamUpload(ID3D11Resource* dst, const void* data, void* caller)
+void VR_StoreEyeDerived(int eye, const void* data, size_t len)
 {
-    ParamCensus(dst, data, caller);
+    if (eye < 0 || eye > 1 || !data || len < sizeof(g_eyeDerivedSnap[0][0]))
+        return;
+    memcpy(g_eyeDerivedSnap[eye][1], g_eyeDerivedSnap[eye][0],
+           sizeof(g_eyeDerivedSnap[0][0]));
+    g_eyeDerivedValid[eye][1] = g_eyeDerivedValid[eye][0];
+    memcpy(g_eyeDerivedSnap[eye][0], data, sizeof(g_eyeDerivedSnap[0][0]));
+    g_eyeDerivedValid[eye][0] = true;
+}
+
+const void* VR_FilterParamUpload(ID3D11Resource* dst, const void* data,
+                                 void* scratch, unsigned scratchSize)
+{
+    const int eye = g_rasterEye.load();
+    if (eye < 0 || !g_stereoEnabled.load() || !dst || !data || !scratch)
+        return data;
+    const UINT size = ConstantBufferSize(dst);
+    if (size < 64 || size > scratchSize)
+        return data;
+    memcpy(scratch, data, size);
+    return PatchGhostParams(eye, static_cast<unsigned char*>(scratch), size) ? scratch : data;
 }
 
 void VR_NoteMappedBuffer(ID3D11Resource* res, void* pData)
@@ -2373,7 +2371,7 @@ void VR_NoteMappedBuffer(ID3D11Resource* res, void* pData)
     LeaveCriticalSection(&g_paramCs);
 }
 
-void VR_RecordUnmap(ID3D11Resource* res, void* caller)
+void VR_RecordUnmap(ID3D11Resource* res, void*)
 {
     if (!g_paramCsInit)
         return;
@@ -2387,8 +2385,14 @@ void VR_RecordUnmap(ID3D11Resource* res, void* caller)
             break;
         }
     LeaveCriticalSection(&g_paramCs);
-    if (data)
-        ParamCensus(res, data, caller); // mapped bytes are valid until Unmap runs
+    if (!data)
+        return;
+    const int eye = g_rasterEye.load();
+    if (eye < 0 || !g_stereoEnabled.load())
+        return;
+    const UINT size = ConstantBufferSize(res);
+    if (size >= 64 && size <= 65536)
+        PatchGhostParams(eye, static_cast<unsigned char*>(data), size);
 }
 
 void VR_RecordFrameRtv(UINT count, ID3D11RenderTargetView* const* rtvs)

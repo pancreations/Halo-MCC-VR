@@ -56,8 +56,11 @@ static void STDMETHODCALLTYPE UpdateSubresourceHook(ID3D11DeviceContext* context
     ID3D11Resource* dst, UINT dstSub, const D3D11_BOX* box, const void* data,
     UINT rowPitch, UINT depthPitch)
 {
-    VR_RecordParamUpload(dst, data, _ReturnAddress());
-    g_origUpdateSubresource(context, dst, dstSub, box, data, rowPitch, depthPitch);
+    // The upload data is const; if the ghost fix needs to patch an other-eye
+    // matrix out of it, it hands back a patched copy in this scratch space.
+    unsigned char scratch[4096];
+    const void* use = VR_FilterParamUpload(dst, data, scratch, sizeof(scratch));
+    g_origUpdateSubresource(context, dst, dstSub, box, use, rowPitch, depthPitch);
 }
 
 static HRESULT STDMETHODCALLTYPE MapHook(ID3D11DeviceContext* context, ID3D11Resource* res,

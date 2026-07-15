@@ -50,13 +50,19 @@ void VR_RecordFrameRtv(UINT count, ID3D11RenderTargetView* const* rtvs);
 // census. Logs unique texture copy pairs while stereo runs, tagged with the
 // active eye (-1 = between passes, where the poison is suspected to move).
 void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what);
-// Ghost hunt, final channel (census-only): shader-constant uploads during the
-// eye passes. Flags parameter blocks that are IDENTICAL across both eyes but
-// change over time — the fingerprint of a per-frame single-viewpoint value
-// consumed by both eye renders.
-void VR_RecordParamUpload(ID3D11Resource* dst, const void* data, void* caller);
+// THE GHOST FIX at the shader-constant level: during an eye's render, any
+// constant upload containing a 64-byte block that exactly matches the OTHER
+// eye's camera/derived matrices (current or previous frame) gets that block
+// swapped for THIS eye's version. Exact-match only, so it cannot misfire;
+// does nothing when no block matches. The per-eye reference blocks are
+// stored by the render hook each pass via VR_StoreEyeDerived.
+void VR_StoreEyeDerived(int eye, const void* data, size_t len);
+// Returns `data`, or `scratch` holding a patched copy (UpdateSubresource
+// gives const data, so patching needs a copy).
+const void* VR_FilterParamUpload(ID3D11Resource* dst, const void* data,
+                                 void* scratch, unsigned scratchSize);
 void VR_NoteMappedBuffer(ID3D11Resource* res, void* pData);
-void VR_RecordUnmap(ID3D11Resource* res, void* caller);
+void VR_RecordUnmap(ID3D11Resource* res, void* caller); // patches mapped bytes in place
 // Ghosting hunt: logs each unique UAV-bound resource seen during an eye pass
 // (the temporal history writer is compute/UAV-based and invisible to the RTV hook).
 void VR_RecordUavCensus(UINT count, ID3D11UnorderedAccessView* const* uavs);

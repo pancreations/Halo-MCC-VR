@@ -455,6 +455,10 @@ namespace
                 memcpy(reinterpret_cast<char*>(view) + 0x158, camera, 0x90);
                 memcpy(reinterpret_cast<char*>(view) + 0x1E8,
                        reinterpret_cast<char*>(view) + 0x98, 0x90);
+                // Reference block for the constant-level ghost fix: uploads
+                // carrying the OTHER eye's exact matrices get them swapped
+                // for this eye's (VR_FilterParamUpload in vr.cpp).
+                VR_StoreEyeDerived(eye, reinterpret_cast<char*>(view) + 0x98, 0xC0);
             }
             // The draw routine consumes camera state uploaded to engine globals
             // by this per-view preparation stage, not the view structure
