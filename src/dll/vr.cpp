@@ -2120,11 +2120,20 @@ void VR_BeginRasterEye(int eye)
     // THE GHOST FIX: before this eye renders, replace the engine's frame
     // snapshot with THIS eye's own previous-frame version, so its temporal
     // effects blend against the same viewpoint instead of the other eye's.
+    // Both sides of the learned pair are reset: dst (the snapshot copy) AND
+    // src (the live target) — dst-only substitution armed but did not remove
+    // the ghost, so the effect must sample the live target early in the
+    // pass, before the render overwrites it; at that moment it still holds
+    // the OTHER eye's previous image unless reset here.
     for (unsigned i = 0; i < g_histPairCount; ++i)
     {
         HistoryPair& p = g_histPairs[i];
-        if (p.valid[eye] && p.shadow[eye] && p.dst)
+        if (!p.valid[eye] || !p.shadow[eye])
+            continue;
+        if (p.dst)
             g_context->CopyResource(p.dst, p.shadow[eye]);
+        if (p.src)
+            g_context->CopyResource(p.src, p.shadow[eye]);
     }
     backbuffer->Release();
 }
@@ -2180,6 +2189,7 @@ void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what)
             if (!known && !ours &&
                 dd.Width == g_eyeCacheDesc.Width && dd.Height == g_eyeCacheDesc.Height &&
                 sd.Width == dd.Width && sd.Height == dd.Height &&
+                FormatFamily(sd.Format) == FormatFamily(dd.Format) &&
                 (dd.BindFlags & D3D11_BIND_SHADER_RESOURCE) &&
                 dd.SampleDesc.Count == 1 && dd.ArraySize == 1)
             {
