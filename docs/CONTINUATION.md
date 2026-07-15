@@ -561,6 +561,22 @@ per-eye-swap that ONE resource, delete the warm-up pass in `RenderViewHook`, and
 **Current shipped state: ghost-free, full sharpness, 60 fps, controls good.** The user finds 60
 "abysmal" — eliminating the warm-up via the probe data is the top priority of the next session.
 
+**LATE-NIGHT ARC (22:00-22:25), current frontier:** the copy probe caught frame-level full-res
+snapshot copies; per-eye substitution of the learned pairs was built and ARMED (log:
+`per-eye history snapshot armed` x2, at 117-120 fps with the warm-up deleted) — commit `5485596`,
+which the user declared the baseline: **120 fps + controls great + stereo; only left-eye ghosting
+remains. Never regress fps/controls again — warm-up (3 renders) is BANNED (halves fps).** See
+memory `best-working-build`. dst-only substitution: ghost persisted. dst+src substitution
+(`55ca9f0`): ghost STILL persisted; capture pipeline verified healthy (no `refusing` lines).
+Conclusion: every texture-level channel is exhausted; the poison must travel as a **shader
+constant** (per-frame single-viewpoint param consumed by both eyes — the old PARAM-census plan).
+Shipped `3cd1644` (22:24): census-only hooks on UpdateSubresource + Map/Unmap (vtable 48/14/15)
+that self-filter suspects — `M2 PARAM SUSPECT caller=halo3+0xRVA size=N eq=X diff=Y f=[...]`
+lines every 10 s for uploads IDENTICAL across eyes but time-varying. Next session: user plays
+1-2 min in canopy with head motion → read suspects → intercept that caller's upload during eye
+passes and substitute per-eye values (we build per-eye matrices already; if the block matches a
+prev-frame VP, swap in the eye's own). That is the surgical 2-render ghost fix.
+
 **Answer to "would disabling the desktop view help?" — no, effectively nothing.** The desktop
 image is Halo's own frame: the engine runs its frame-level post + HUD + Present regardless of
 what we do, and our only added cost there is one blit. The frame cost is the world render, which
