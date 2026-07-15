@@ -38,25 +38,6 @@ void VR_EndRasterEye();
 bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                               ID3D11RenderTargetView* const* input,
                               ID3D11RenderTargetView** output);
-// During initial stereo frames, identifies render targets sampled before they
-// are overwritten. Those are the shared post-process history that needs an
-// independent copy for each eye; discovery disables itself once identified.
-void VR_RecordShaderResourceReads(UINT count, ID3D11ShaderResourceView* const* srvs);
-// Records render-target binds OUTSIDE the eye passes (frame-level post).
-// A texture written out of pass but sampled inside an eye pass is per-frame
-// shared history that per-eye copies cannot fix; it gets blanked in stereo.
-void VR_RecordFrameRtv(UINT count, ID3D11RenderTargetView* const* rtvs);
-// Ghost hunt, log-only: GPU-side copies were never observable by any earlier
-// census. Logs unique texture copy pairs while stereo runs, tagged with the
-// active eye (-1 = between passes, where the poison is suspected to move).
-void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what);
-// Ghosting hunt: logs each unique UAV-bound resource seen during an eye pass
-// (the temporal history writer is compute/UAV-based and invisible to the RTV hook).
-void VR_RecordUavCensus(UINT count, ID3D11UnorderedAccessView* const* uavs);
-// Read-only M3 diagnostic: records the tail of one eye's D3D draw stream so
-// weapon/CHUD shaders can be isolated without changing render state.
-void VR_RecordDraw(unsigned kind, unsigned count, const void* vertexShader,
-                   const void* pixelShader);
 
 // Latest head pose in the VR "local" space (captured each frame). Orientation
 // is a quaternion (x,y,z,w), position is meters (x,y,z). Returns false until a
