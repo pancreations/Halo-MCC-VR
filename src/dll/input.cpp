@@ -1,0 +1,369 @@
+#include <windows.h>
+#include <Xinput.h>
+#include <cmath>
+#include <atomic>
+#include <cstring>
+#include <MinHook.h>
+#include "game.h"
+#include "vr.h"
+#include "../common/log.h"
+#include "../common/config.h"
+
+// M3 VR input. MCC reads gamepads through XInputGetState; hooking it lets the
+// mod present the Sense controllers as a gamepad the game already understands
+// (menus included), and substitute the right stick with the aim steering from
+// Game_ComputeAimStick. If no physical gamepad is plugged in, a connected one
+// is fabricated. The game then runs all input through its normal sensitivity
+// and turn-rate paths, keeping bullets, reticle, vehicles and turrets correct.
+
+namespace
+{
+
+    using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
+    using XInputGetCapsFn = DWORD(WINAPI*)(DWORD, DWORD, XINPUT_CAPABILITIES*);
+    // 3 candidate DLLs x 2 entry points (XInputGetState by name, and the
+    // undocumented XInputGetStateEx at ordinal 100 that some titles use).
+    XInputGetStateFn g_origGetState[6] = {};
+    // MCC only polls XInputGetState for slots that XInputGetCapabilities says
+    // are connected. With no physical pad powered on, that check fails and the
+    // game NEVER reads input — so the connection check is hooked too and
+    // reports a standard gamepad on slot 0 whenever the VR controllers live.
+    XInputGetCapsFn g_origGetCaps[3] = {};
+    std::atomic<bool> g_overrideLogged{false};
+
+    // Map |v| in 0..1 to a raw stick value that clears MCC's inner deadzone,
+    // so small corrections still produce movement.
+    SHORT ToRawStick(float v)
+    {
+        if (fabsf(v) < 1e-3f)
+            return 0;
+        const float floor = 9000.0f; // typical XInput deadzone is ~7849
+        float raw = floor + fabsf(v) * (32767.0f - floor);
+        if (raw > 32767.0f) raw = 32767.0f;
+        return (SHORT)(v < 0 ? -raw : raw);
+    }
+
+    void MergeVrPad(XINPUT_STATE* state)
+    {
+        VrPadState pad;
+        VR_GetPadState(pad);
+        if (!pad.valid)
+            return;
+
+        WORD btn = state->Gamepad.wButtons;
+        if (pad.a) btn |= XINPUT_GAMEPAD_A;
+        if (pad.b) btn |= XINPUT_GAMEPAD_B;
+        if (pad.x) btn |= XINPUT_GAMEPAD_X;
+        if (pad.y) btn |= XINPUT_GAMEPAD_Y;
+        if (pad.clickL) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
+        if (pad.clickR) btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
+        if (pad.menu) btn |= XINPUT_GAMEPAD_START;
+        if (pad.gripL > 0.6f) btn |= XINPUT_GAMEPAD_LEFT_SHOULDER;
+        if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
+        state->Gamepad.wButtons = btn;
+
+        const BYTE tl = (BYTE)(pad.trigL * 255.0f);
+        const BYTE tr = (BYTE)(pad.trigR * 255.0f);
+        if (tl > state->Gamepad.bLeftTrigger) state->Gamepad.bLeftTrigger = tl;
+        if (tr > state->Gamepad.bRightTrigger) state->Gamepad.bRightTrigger = tr;
+
+        // UEVR-style D-pad gesture: hold the configured controller (F1 menu:
+        // left by default) up next to your head and the left stick becomes the
+        // D-pad (menu navigation, grenade switching); lower it and the stick
+        // walks again. No menu detection — the player chooses the mode with
+        // the gesture, anywhere.
+        bool dpadMode = false;
+        {
+            float hq[4], hp[3], cq[4], cp[3];
+            const bool haveController = g_config.dpad_hand == 0
+                ? VR_GetLeftControllerPose(cq, cp)
+                : VR_GetRightControllerPose(cq, cp);
+            if (haveController && VR_GetHeadPose(hq, hp))
+            {
+                const float dx = hp[0] - cp[0], dy = hp[1] - cp[1], dz = hp[2] - cp[2];
+                dpadMode = dx * dx + dy * dy + dz * dz < 0.30f * 0.30f;
+            }
+        }
+
+        if (dpadMode)
+        {
+            if (pad.moveY > 0.5f) btn |= XINPUT_GAMEPAD_DPAD_UP;
+            if (pad.moveY < -0.5f) btn |= XINPUT_GAMEPAD_DPAD_DOWN;
+            if (pad.moveX > 0.5f) btn |= XINPUT_GAMEPAD_DPAD_RIGHT;
+            if (pad.moveX < -0.5f) btn |= XINPUT_GAMEPAD_DPAD_LEFT;
+            state->Gamepad.wButtons = btn;
+            // No walking while navigating.
+            state->Gamepad.sThumbLX = 0;
+            state->Gamepad.sThumbLY = 0;
+            static std::atomic<bool> gestureLogged{false};
+            if (!gestureLogged.exchange(true))
+                LOG("M3: D-pad gesture active (right controller held at head)");
+        }
+        else
+        {
+            // Left stick: movement, rotated head-relative so forward = gaze.
+            float mx = pad.moveX, my = pad.moveY;
+            Game_MapMoveStick(mx, my);
+            if (mx * mx + my * my > 0.02f)
+            {
+                state->Gamepad.sThumbLX = ToRawStick(mx);
+                state->Gamepad.sThumbLY = ToRawStick(my);
+            }
+        }
+
+        // Right stick: hand-steered aim when active; otherwise pass the raw
+        // stick through (classic stick aiming, and it does nothing in menus).
+        // While VR aim is active the turn stick is consumed by the snap/smooth
+        // logic in game.cpp instead.
+        float rx = 0, ry = 0;
+        if (Game_ComputeAimStick(rx, ry))
+        {
+            state->Gamepad.sThumbRX = ToRawStick(rx);
+            state->Gamepad.sThumbRY = ToRawStick(ry);
+            if (!g_overrideLogged.exchange(true))
+                LOG("M3: VR aim override active (right stick steered by the controller)");
+        }
+        else if (fabsf(pad.turnX) > 0.15f || fabsf(pad.turnY) > 0.15f)
+        {
+            state->Gamepad.sThumbRX = ToRawStick(pad.turnX);
+            state->Gamepad.sThumbRY = ToRawStick(pad.turnY);
+        }
+    }
+
+    std::atomic<unsigned> g_diagReads{0}, g_diagPadValid{0}, g_diagMerged{0};
+
+    // Heartbeat: proves whether the game is reading through our hook at all,
+    // and whether controller data was valid when it did.
+    void DiagTick()
+    {
+        static std::atomic<DWORD> lastLog{0};
+        const DWORD now = GetTickCount();
+        DWORD last = lastLog.load();
+        if (now - last >= 10000 && lastLog.compare_exchange_strong(last, now))
+            LOG("M3 DIAG: xinput reads=%u padValid=%u merged=%u (last 10s window cumulative)",
+                g_diagReads.load(), g_diagPadValid.load(), g_diagMerged.load());
+    }
+
+    DWORD ProcessGetState(DWORD r, DWORD user, XINPUT_STATE* state)
+    {
+        if (user != 0 || !state)
+            return r;
+        g_diagReads.fetch_add(1);
+        DiagTick();
+        if (r != ERROR_SUCCESS)
+        {
+            // No physical gamepad: fabricate a connected, idle one for slot 0
+            // even before VR controller data is ready (see ProcessGetCaps).
+            *state = {};
+            r = ERROR_SUCCESS;
+        }
+        VrPadState pad;
+        VR_GetPadState(pad);
+        if (!pad.valid)
+            return r;
+        g_diagPadValid.fetch_add(1);
+        // Keep the packet number monotonically rising so MCC notices changes.
+        static std::atomic<DWORD> seq{1};
+        state->dwPacketNumber += seq.fetch_add(1);
+        MergeVrPad(state);
+        g_diagMerged.fetch_add(1);
+        return r;
+    }
+
+    template <int Slot>
+    DWORD WINAPI GetStateHook(DWORD user, XINPUT_STATE* state)
+    {
+        return ProcessGetState(g_origGetState[Slot](user, state), user, state);
+    }
+
+    DWORD(WINAPI* const g_hooks[6])(DWORD, XINPUT_STATE*) = {
+        &GetStateHook<0>, &GetStateHook<1>, &GetStateHook<2>,
+        &GetStateHook<3>, &GetStateHook<4>, &GetStateHook<5>};
+
+    DWORD ProcessGetCaps(DWORD r, DWORD user, XINPUT_CAPABILITIES* caps)
+    {
+        if (user != 0 || !caps || r == ERROR_SUCCESS)
+            return r;
+        // Fabricate a standard wired gamepad UNCONDITIONALLY: MCC enumerates
+        // controllers once at startup, often seconds before SteamVR activates
+        // our actions — gating this on live VR data made the whole input
+        // system a startup race. An idle fabricated pad is harmless.
+        *caps = {};
+        caps->Type = XINPUT_DEVTYPE_GAMEPAD;
+        caps->SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
+        caps->Gamepad.wButtons = 0xF3FF;
+        caps->Gamepad.bLeftTrigger = 0xFF;
+        caps->Gamepad.bRightTrigger = 0xFF;
+        caps->Gamepad.sThumbLX = 0x7FFF;
+        caps->Gamepad.sThumbLY = 0x7FFF;
+        caps->Gamepad.sThumbRX = 0x7FFF;
+        caps->Gamepad.sThumbRY = 0x7FFF;
+        caps->Vibration.wLeftMotorSpeed = 0xFFFF;
+        caps->Vibration.wRightMotorSpeed = 0xFFFF;
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true))
+            LOG("M3: reporting virtual gamepad as connected (no physical pad found)");
+        return ERROR_SUCCESS;
+    }
+
+    template <int Slot>
+    DWORD WINAPI GetCapsHook(DWORD user, DWORD flags, XINPUT_CAPABILITIES* caps)
+    {
+        return ProcessGetCaps(g_origGetCaps[Slot](user, flags, caps), user, caps);
+    }
+
+    DWORD(WINAPI* const g_capsHooks[3])(DWORD, DWORD, XINPUT_CAPABILITIES*) = {
+        &GetCapsHook<0>, &GetCapsHook<1>, &GetCapsHook<2>};
+
+    // Steam Input redirects MCC's calls at the IMPORT TABLE, so they jump to
+    // Steam's handler without ever executing the DLL export we detour — the
+    // reason controls kept working or dying depending on session timing. These
+    // shims are written INTO the game's import table, wrapping whatever was
+    // there (Steam's handler or the real export), and the claim is re-asserted
+    // periodically so a later Steam patch can't take the slot back.
+    XInputGetStateFn g_iatPrevGetState = nullptr;
+    XInputGetCapsFn g_iatPrevGetCaps = nullptr;
+
+    DWORD WINAPI IatGetStateShim(DWORD user, XINPUT_STATE* state)
+    {
+        const DWORD r = g_iatPrevGetState ? g_iatPrevGetState(user, state)
+                                          : ERROR_DEVICE_NOT_CONNECTED;
+        return ProcessGetState(r, user, state);
+    }
+
+    DWORD WINAPI IatGetCapsShim(DWORD user, DWORD flags, XINPUT_CAPABILITIES* caps)
+    {
+        const DWORD r = g_iatPrevGetCaps ? g_iatPrevGetCaps(user, flags, caps)
+                                         : ERROR_DEVICE_NOT_CONNECTED;
+        return ProcessGetCaps(r, user, caps);
+    }
+
+    bool ClaimIatSlot(void** slot, void* shim, void** prevOut, const char* what)
+    {
+        if (!slot || *slot == shim)
+            return false;
+        DWORD oldProtect;
+        if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &oldProtect))
+            return false;
+        *prevOut = *slot;
+        *slot = shim;
+        VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
+        LOG("M3: claimed game import-table slot for %s (previous handler %p)", what, *prevOut);
+        return true;
+    }
+}
+
+int Input_ClaimXInputIat()
+{
+    const BYTE* base = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
+    if (!base)
+        return 0;
+    auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!dir.VirtualAddress)
+        return 0;
+    int claims = 0;
+    for (auto desc = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress);
+         desc->Name; ++desc)
+    {
+        const char* dllName = reinterpret_cast<const char*>(base + desc->Name);
+        if (_stricmp(dllName, "xinput1_4.dll") != 0 &&
+            _stricmp(dllName, "xinput1_3.dll") != 0 &&
+            _stricmp(dllName, "xinput9_1_0.dll") != 0)
+            continue;
+        auto names = reinterpret_cast<const IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk);
+        auto iat = reinterpret_cast<IMAGE_THUNK_DATA*>(
+            const_cast<BYTE*>(base) + desc->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++iat)
+        {
+            void** slot = reinterpret_cast<void**>(&iat->u1.Function);
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
+            {
+                const WORD ordinal = static_cast<WORD>(IMAGE_ORDINAL64(names->u1.Ordinal));
+                // MCC imports XInputGetState from xinput1_3 by ordinal 2. This
+                // is the exact IAT slot Steam Input replaces, so claiming it
+                // removes the session-timing race that made controls vanish.
+                if (ordinal == 2 || ordinal == 100)
+                    claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetStateShim),
+                                           reinterpret_cast<void**>(&g_iatPrevGetState),
+                                           "XInputGetState ordinal");
+                else if (ordinal == 4)
+                    claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetCapsShim),
+                                           reinterpret_cast<void**>(&g_iatPrevGetCaps),
+                                           "XInputGetCapabilities ordinal");
+                continue;
+            }
+            auto imp = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
+            if (!strcmp(imp->Name, "XInputGetState"))
+                claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetStateShim),
+                                       reinterpret_cast<void**>(&g_iatPrevGetState), "XInputGetState");
+            else if (!strcmp(imp->Name, "XInputGetCapabilities"))
+                claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetCapsShim),
+                                       reinterpret_cast<void**>(&g_iatPrevGetCaps), "XInputGetCapabilities");
+        }
+    }
+    return claims;
+}
+
+int Input_InstallXInputHook()
+{
+    // MCC may load any of these depending on OS/build, and it can load them
+    // LATE (well after our first attempt) — the caller keeps retrying forever.
+    // Safe to call repeatedly: already-hooked slots are skipped.
+    const wchar_t* candidates[3] = {L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll"};
+    int hooked = 0;
+    for (int i = 0; i < 3; ++i)
+    {
+        HMODULE mod = GetModuleHandleW(candidates[i]);
+        if (!mod)
+            continue;
+        for (int j = 0; j < 2; ++j)
+        {
+            const int slot = i * 2 + j;
+            if (g_origGetState[slot])
+            {
+                ++hooked;
+                continue;
+            }
+            void* target = reinterpret_cast<void*>(
+                j == 0 ? GetProcAddress(mod, "XInputGetState")
+                       : GetProcAddress(mod, reinterpret_cast<LPCSTR>(100))); // XInputGetStateEx
+            if (!target)
+                continue;
+            if (MH_CreateHook(target, reinterpret_cast<void*>(g_hooks[slot]),
+                              reinterpret_cast<void**>(&g_origGetState[slot])) == MH_OK &&
+                MH_EnableHook(target) == MH_OK)
+            {
+                LOG("M3: XInputGetState%s hooked in %ls", j == 0 ? "" : "Ex", candidates[i]);
+                ++hooked;
+            }
+            else
+            {
+                g_origGetState[slot] = nullptr;
+            }
+        }
+        if (!g_origGetCaps[i])
+        {
+            void* capsTarget = reinterpret_cast<void*>(GetProcAddress(mod, "XInputGetCapabilities"));
+            if (capsTarget &&
+                MH_CreateHook(capsTarget, reinterpret_cast<void*>(g_capsHooks[i]),
+                              reinterpret_cast<void**>(&g_origGetCaps[i])) == MH_OK &&
+                MH_EnableHook(capsTarget) == MH_OK)
+            {
+                LOG("M3: XInputGetCapabilities hooked in %ls", candidates[i]);
+            }
+            else
+            {
+                g_origGetCaps[i] = nullptr;
+            }
+        }
+    }
+    static bool warned = false;
+    if (!hooked && !warned)
+    {
+        LOG("M3: no XInput module loaded yet — retrying until one appears");
+        warned = true;
+    }
+    return hooked;
+}

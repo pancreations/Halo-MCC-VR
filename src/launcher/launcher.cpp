@@ -159,7 +159,21 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
 
     STARTUPINFOW si{sizeof(si)};
     PROCESS_INFORMATION pi{};
-    std::wstring cmdline = L"\"" + gameExe + L"\"";
+    // M2 stereo: render the game into a near-square surface matching a VR
+    // eye, rather than stretching the normal 16:9 desktop frame into the
+    // headset's 2720x2772 projection. Windowed mode avoids asking the monitor
+    // for a non-standard exclusive-fullscreen display mode.
+    // PSVR2's symmetric coverage has a tangent-space aspect near 1.386:1.
+    // 2912x2100 keeps approximately the same pixel cost as 2448x2496 while
+    // allowing Halo to generate the correct wide raster/culling frustum.
+    // MEASURED (2026-07-14): Halo's world render cost is dominated by
+    // per-render engine/CPU work, not pixels — dropping to 2240x1616 with the
+    // 3-render ghost fix still ran at exactly 60 fps, the same as 3 renders
+    // at full size. Resolution is therefore NOT the lever for the warm-up
+    // pass cost; stay sharp. 120 fps returns when the warm-up render is
+    // eliminated (see CONTINUATION.md).
+    std::wstring cmdline = L"\"" + gameExe + L"\" -WINDOWED -ResX=2912 -ResY=2100";
+    LauncherLog("VR render command line: -WINDOWED -ResX=2912 -ResY=2100");
     if (!CreateProcessW(gameExe.c_str(), cmdline.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
                         nullptr, gameDir.c_str(), &si, &pi))
     {

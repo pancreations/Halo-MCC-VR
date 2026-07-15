@@ -28,7 +28,9 @@ FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG v1.92.8)
 
+
 FetchContent_MakeAvailable(openxr minhook imgui)
+
 
 # The OpenXR build forces the dynamic CRT onto the static loader, which
 # conflicts with our static-CRT build; force it back so everything matches.
@@ -55,7 +57,8 @@ add_library(halo3xr SHARED
     src/dll/vr.cpp
     src/dll/menu.cpp
     src/dll/sigscan.cpp
-    src/dll/game.cpp)
+    src/dll/game.cpp
+    src/dll/input.cpp)
 target_compile_definitions(halo3xr PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
     XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32)

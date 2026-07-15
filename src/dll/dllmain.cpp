@@ -36,13 +36,15 @@ static DWORD WINAPI InitThread(LPVOID)
     }
     LOG("D3D11 hooks installed; waiting for the game to render its first frame");
 
-    // Start OpenXR now, on this background thread, so the slow instance
-    // creation overlaps game loading instead of stalling the render thread.
-    VR_InitInstance();
-
-    // Start watching for halo3.dll (loads when a level begins) so we can find
-    // the camera for head tracking. Runs on its own thread.
+    // Install input interception immediately. OpenXR instance creation below
+    // blocks for roughly 20 seconds while SteamVR starts; waiting until after
+    // that made MCC finish controller enumeration before our hooks existed.
+    // This same worker also waits for halo3.dll and installs camera hooks.
     Game_Init();
+
+    // Start OpenXR on this background thread so the slow runtime startup does
+    // not stall the render thread. Input interception is already active above.
+    VR_InitInstance();
     return 0;
 }
 

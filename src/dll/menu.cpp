@@ -52,23 +52,35 @@ namespace
             return MA_ACTIVATE;
         }
 
-        // F10 (and Alt combos) arrive as WM_SYSKEYDOWN, not WM_KEYDOWN.
-        if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && !(lp & (1 << 30))) // ignore auto-repeat
+        // Hotkeys act on plain WM_KEYDOWN only. F10 is the one exception:
+        // Windows delivers it as WM_SYSKEYDOWN even without Alt held. All
+        // other Alt combos must reach the game untouched — SteamVR's
+        // exit/dashboard flow sends Alt+F4 (WM_SYSKEYDOWN + VK_F4), and when
+        // F4 was a hotkey that phantom press flipped the yaw sign, inverting
+        // head-turn and hand-aim ("controls completely broken", two sessions
+        // in a row ~50 ms after the session lost focus). The F4/F5/F7
+        // calibration flips now live in the F1 menu instead of on keys.
+        const bool keyDown = msg == WM_KEYDOWN && !(lp & (1 << 30)); // no auto-repeat
+        const bool sysKeyDown = msg == WM_SYSKEYDOWN && !(lp & (1 << 30));
+        if (sysKeyDown && wp == VK_F4)
+            LOG("Alt+F4 received; passing it to the game (close request)");
+        if (keyDown || (sysKeyDown && wp == VK_F10))
         {
             switch (wp)
             {
             case VK_F1: g_open = !g_open; LOG("menu %s", g_open ? "opened" : "closed"); return 0;
             case VK_F2: Game_ToggleHeadTracking(); return 0;
             case VK_F3: Game_Recenter(); return 0;
-            case VK_F4: Game_FlipYaw(); return 0;
-            case VK_F5: Game_FlipPitch(); return 0;
             case VK_F6: Game_TogglePositional(); return 0;
-            case VK_F7: Game_ToggleUp(); return 0;
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
             case VK_F10: VR_ToggleScreenFollow(); return 0;
+            case VK_F11: VR_ToggleStereo(); return 0;
             case VK_PRIOR: Game_LeanScale(+1); return 0; // Page Up
             case VK_NEXT:  Game_LeanScale(-1); return 0; // Page Down
+            case VK_HOME: Game_GunFovScale(-1); return 0; // bigger weapon/HUD
+            case VK_END:  Game_GunFovScale(+1); return 0; // smaller weapon/HUD
+            case VK_INSERT: Game_ToggleVrAim(); return 0; // controller steers aim
             }
         }
         if (g_ready && g_open)
@@ -92,7 +104,10 @@ namespace
             LeaveCriticalSection(&g_cs);
             // Swallow mouse/keyboard so clicking the menu doesn't also fire
             // the player's weapon. (Raw input still reaches the game in M0.)
-            if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST))
+            // Never swallow Alt+F4: closing the game must always work.
+            if (((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) ||
+                 (msg >= WM_KEYFIRST && msg <= WM_KEYLAST)) &&
+                !(msg == WM_SYSKEYDOWN && wp == VK_F4))
                 return 0;
         }
         return CallWindowProcW(g_origWndProc, hwnd, msg, wp, lp);
@@ -115,6 +130,64 @@ namespace
         bool changed = false;
         changed |= ImGui::SliderFloat("Screen width (m)", &g_config.screen_width_m, 1.0f, 10.0f, "%.1f");
         changed |= ImGui::SliderFloat("Screen distance (m)", &g_config.screen_distance_m, 0.5f, 10.0f, "%.1f");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("VR turning (right controller stick)");
+        if (ImGui::RadioButton("Snap turn", !g_config.turn_smooth))
+        {
+            g_config.turn_smooth = false;
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Smooth turn", g_config.turn_smooth))
+        {
+            g_config.turn_smooth = true;
+            changed = true;
+        }
+        if (g_config.turn_smooth)
+            changed |= ImGui::SliderFloat("Turn speed (deg/s)", &g_config.turn_smooth_deg_s, 30.0f, 360.0f, "%.0f");
+        else
+            changed |= ImGui::SliderFloat("Snap increment (deg)", &g_config.turn_snap_deg, 5.0f, 90.0f, "%.0f");
+
+        ImGui::Spacing();
+        ImGui::Text("D-pad gesture (hold controller next to head)");
+        if (ImGui::RadioButton("Left controller", g_config.dpad_hand == 0))
+        {
+            g_config.dpad_hand = 0;
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Right controller", g_config.dpad_hand == 1))
+        {
+            g_config.dpad_hand = 1;
+            changed = true;
+        }
+
+        ImGui::Spacing();
+        changed |= ImGui::Checkbox("Render right eye first (diagnostic)",
+                                   &g_config.right_eye_first);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        // These flips were the F4/F5/F7 hotkeys. A phantom F4 (SteamVR sends
+        // Alt+F4 on its exit path) kept inverting the controls mid-session, so
+        // they are reachable only from this menu now.
+        ImGui::Text("Tracking calibration  (yaw %+.0f, pitch %+.0f, up-vector %s)",
+                    Game_GetYawSign(), Game_GetPitchSign(), Game_GetWriteUp() ? "on" : "off");
+        if (ImGui::Button("Flip yaw"))
+            Game_FlipYaw();
+        ImGui::SameLine();
+        if (ImGui::Button("Flip pitch"))
+            Game_FlipPitch();
+        ImGui::SameLine();
+        if (ImGui::Button("Toggle up-vector"))
+            Game_ToggleUp();
+        ImGui::TextDisabled("If turning your head left turns the view right, click Flip yaw.");
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Insert toggles hand aim. Sense sticks move/turn; grips = bumpers,\ntriggers = fire/grenade, stick-click = zoom/crouch, left menu = Start.");
+
         static bool dirty = false;
         if (changed)
             dirty = true;
@@ -186,6 +259,7 @@ bool Menu_Init(HWND gameWindow, ID3D11Device* device, ID3D11DeviceContext* conte
     LOG("menu ready (F1 to toggle)");
     return true;
 }
+
 
 bool Menu_IsOpen()
 {

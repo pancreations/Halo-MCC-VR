@@ -3,6 +3,7 @@
 #include <dxgi1_2.h>
 #include <MinHook.h>
 #include "d3d11_hook.h"
+#include "game.h"
 #include "vr.h"
 #include "../common/log.h"
 
@@ -15,10 +16,89 @@
 typedef HRESULT(STDMETHODCALLTYPE* PresentFn)(IDXGISwapChain*, UINT, UINT);
 typedef HRESULT(STDMETHODCALLTYPE* Present1Fn)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
 typedef HRESULT(STDMETHODCALLTYPE* ResizeBuffersFn)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
+typedef void(STDMETHODCALLTYPE* OMSetRenderTargetsFn)(ID3D11DeviceContext*, UINT,
+    ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
+typedef void(STDMETHODCALLTYPE* OMSetRenderTargetsAndUavsFn)(ID3D11DeviceContext*, UINT,
+    ID3D11RenderTargetView* const*, ID3D11DepthStencilView*, UINT, UINT,
+    ID3D11UnorderedAccessView* const*);
+typedef void(STDMETHODCALLTYPE* PSSetShaderResourcesFn)(ID3D11DeviceContext*, UINT, UINT,
+    ID3D11ShaderResourceView* const*);
+typedef void(STDMETHODCALLTYPE* CopyResourceFn)(ID3D11DeviceContext*, ID3D11Resource*,
+    ID3D11Resource*);
+typedef void(STDMETHODCALLTYPE* CopySubresourceRegionFn)(ID3D11DeviceContext*, ID3D11Resource*,
+    UINT, UINT, UINT, UINT, ID3D11Resource*, UINT, const D3D11_BOX*);
 
 static PresentFn g_origPresent = nullptr;
 static Present1Fn g_origPresent1 = nullptr;
 static ResizeBuffersFn g_origResizeBuffers = nullptr;
+static OMSetRenderTargetsFn g_origOMSetRenderTargets = nullptr;
+static OMSetRenderTargetsAndUavsFn g_origOMSetRenderTargetsAndUavs = nullptr;
+static PSSetShaderResourcesFn g_origPSSetShaderResources = nullptr;
+static CopyResourceFn g_origCopyResource = nullptr;
+static CopySubresourceRegionFn g_origCopySubresourceRegion = nullptr;
+static void* g_psSetShaderResourcesTarget = nullptr;
+
+// Ghost hunt, the two probes every previous census missed: GPU-side copies
+// (never hooked before) and resources moved without any bind call. Log-only.
+static void STDMETHODCALLTYPE CopyResourceHook(ID3D11DeviceContext* context,
+    ID3D11Resource* dst, ID3D11Resource* src)
+{
+    VR_RecordCopy(dst, src, "CopyResource");
+    g_origCopyResource(context, dst, src);
+}
+
+static void STDMETHODCALLTYPE CopySubresourceRegionHook(ID3D11DeviceContext* context,
+    ID3D11Resource* dst, UINT dstSub, UINT dstX, UINT dstY, UINT dstZ,
+    ID3D11Resource* src, UINT srcSub, const D3D11_BOX* box)
+{
+    VR_RecordCopy(dst, src, "CopySubresource");
+    g_origCopySubresourceRegion(context, dst, dstSub, dstX, dstY, dstZ, src, srcSub, box);
+}
+
+static void STDMETHODCALLTYPE PSSetShaderResourcesHook(ID3D11DeviceContext* context, UINT startSlot,
+    UINT count, ID3D11ShaderResourceView* const* srvs)
+{
+    VR_RecordShaderResourceReads(count, srvs);
+    g_origPSSetShaderResources(context, startSlot, count, srvs);
+}
+
+void D3D11_SetHistoryDiscovery(bool enabled)
+{
+    if (!g_psSetShaderResourcesTarget)
+        return;
+    const MH_STATUS status = enabled ? MH_EnableHook(g_psSetShaderResourcesTarget)
+                                     : MH_DisableHook(g_psSetShaderResourcesTarget);
+    if (status != MH_OK && status != MH_ERROR_ENABLED && status != MH_ERROR_DISABLED)
+        LOG("M2: could not %s post-process history discovery hook (%s)",
+            enabled ? "enable" : "disable", MH_StatusToString(status));
+}
+
+static void STDMETHODCALLTYPE OMSetRenderTargetsHook(ID3D11DeviceContext* context, UINT count,
+    ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv)
+{
+    ID3D11RenderTargetView* redirected[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    if (count <= D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT &&
+        VR_RedirectRenderTargets(context, count, rtvs, redirected))
+    {
+        g_origOMSetRenderTargets(context, count, redirected, dsv);
+    }
+    else
+    {
+        VR_RecordFrameRtv(count, rtvs); // no-op unless discovery runs outside an eye pass
+        g_origOMSetRenderTargets(context, count, rtvs, dsv);
+    }
+}
+
+// Frame-level post can bind through the RTV+UAV variant, which the plain
+// OMSetRenderTargets hook never sees. Record-only; nothing is redirected here.
+static void STDMETHODCALLTYPE OMSetRenderTargetsAndUavsHook(ID3D11DeviceContext* context,
+    UINT count, ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv,
+    UINT uavStart, UINT uavCount, ID3D11UnorderedAccessView* const* uavs)
+{
+    if (count != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL && rtvs)
+        VR_RecordFrameRtv(count, rtvs);
+    g_origOMSetRenderTargetsAndUavs(context, count, rtvs, dsv, uavStart, uavCount, uavs);
+}
 
 // Present1 can forward to Present internally; this depth counter makes sure
 // we only run the VR frame once per game frame.
@@ -95,8 +175,20 @@ bool InstallD3D11Hooks()
     }
 
     void** vtbl = *(void***)sc;
+    void** contextVtbl = *(void***)ctx;
+    g_psSetShaderResourcesTarget = contextVtbl[8];
     bool ok = MH_CreateHook(vtbl[8], (void*)&PresentHook, (void**)&g_origPresent) == MH_OK &&
-              MH_CreateHook(vtbl[13], (void*)&ResizeBuffersHook, (void**)&g_origResizeBuffers) == MH_OK;
+              MH_CreateHook(vtbl[13], (void*)&ResizeBuffersHook, (void**)&g_origResizeBuffers) == MH_OK &&
+              MH_CreateHook(g_psSetShaderResourcesTarget, (void*)&PSSetShaderResourcesHook,
+                            (void**)&g_origPSSetShaderResources) == MH_OK &&
+              MH_CreateHook(contextVtbl[33], (void*)&OMSetRenderTargetsHook,
+                            (void**)&g_origOMSetRenderTargets) == MH_OK &&
+              MH_CreateHook(contextVtbl[34], (void*)&OMSetRenderTargetsAndUavsHook,
+                            (void**)&g_origOMSetRenderTargetsAndUavs) == MH_OK &&
+              MH_CreateHook(contextVtbl[46], (void*)&CopySubresourceRegionHook,
+                            (void**)&g_origCopySubresourceRegion) == MH_OK &&
+              MH_CreateHook(contextVtbl[47], (void*)&CopyResourceHook,
+                            (void**)&g_origCopyResource) == MH_OK;
 
     IDXGISwapChain1* sc1 = nullptr;
     if (SUCCEEDED(sc->QueryInterface(__uuidof(IDXGISwapChain1), (void**)&sc1)))

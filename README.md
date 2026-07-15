@@ -2,7 +2,7 @@
 
 A native OpenXR VR mod for **Halo 3** and **Halo 3: ODST** in *Halo: The Master Chief Collection* (Steam, PC).
 
-> **Status: M0 works — the game plays on a big virtual screen in the headset (verified on PSVR2 via SteamVR). Head tracking (M1) is next.**
+> **Status: M0 and M1 work. M2 true per-eye stereo rendering is working on PSVR2 via SteamVR and is in validation/polish.**
 
 ## Planned features
 
@@ -25,7 +25,7 @@ A native OpenXR VR mod for **Halo 3** and **Halo 3: ODST** in *Halo: The Master 
 |---|---|---|
 | M0 | Mod injects into the game, .bat install/uninstall works, game shows on a giant virtual screen in the headset, in-headset menu opens | **working** |
 | M1 | Your head controls the in-game camera (look around for real) | **working** (rotation + leaning, camera found by signature) |
-| M2 | True stereoscopic 3D rendering | not started |
+| M2 | True stereoscopic 3D rendering | **working** (per-eye raster; validation/polish underway) |
 | M3 | 6DOF motion controls — aim your weapon with your hands | not started |
 | M4 | HUD projected into 3D space, comfort options, ODST verification, polish | not started |
 

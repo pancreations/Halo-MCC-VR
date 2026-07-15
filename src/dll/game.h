@@ -11,9 +11,38 @@ bool Game_IsHeadTracking(); // true while F2 head tracking is on
 // Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
 void Game_ToggleHeadTracking(); // F2
 void Game_Recenter();           // F3
-void Game_FlipYaw();            // F4
-void Game_FlipPitch();          // F5
+void Game_FlipYaw();            // F1 menu only (was F4: SteamVR's Alt+F4 kept triggering it)
+void Game_FlipPitch();          // F1 menu only (was F5)
 void Game_TogglePositional();   // F6: leaning / positional tracking on/off
-void Game_ToggleUp();           // F7
+void Game_ForcePositional();    // stereo VR requires 6DOF
+void Game_ToggleUp();           // F1 menu only (was F7)
+float Game_GetYawSign();        // current calibration state, shown in the menu
+float Game_GetPitchSign();
+bool Game_GetWriteUp();
 void Game_PitchTrim(int dir);   // F8 (down) / F9 (up): nudge pitch offset
 void Game_LeanScale(int dir);   // PageDown / PageUp: leaning strength
+void Game_GunFovScale(int dir); // Home (bigger) / End (smaller): weapon/HUD size in stereo
+void Game_ToggleVrAim();        // Insert: right controller steers the weapon aim
+
+// M3 VR aim: called by the XInput hook on the game's input thread. Returns
+// the right-stick deflection (-1..1) that turns the game's aim toward the
+// right controller ray; false = leave the player's real stick alone.
+bool Game_ComputeAimStick(float& outRx, float& outRy);
+// Rotates a move-stick vector so pushing forward walks toward the gaze
+// instead of the hand-steered aim heading. No-op when VR aim is inactive.
+void Game_MapMoveStick(float& mx, float& my);
+// Hooks XInputGetState in every loaded xinput DLL; returns how many are
+// hooked. Safe to call repeatedly until it succeeds.
+int Input_InstallXInputHook();
+// Writes our shims into MCC's import table for xinput1_3 (Steam Input patches
+// the same slots, bypassing DLL-level hooks). Call repeatedly to re-assert.
+int Input_ClaimXInputIat();
+
+
+// M2 alternate-eye proof. -1 removes the stereo eye offset; 0/1 selects the
+// left/right render camera for the next game frame.
+void Game_SetStereoEye(int eye);
+float Game_GetWorldScale();
+// Symmetric half-frustum tangents from Halo's active world camera.
+void Game_GetProjectionTangents(float& tanX, float& tanY);
+void Game_GetRenderHalfFov(float& halfX, float& halfY);

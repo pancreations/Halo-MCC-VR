@@ -50,18 +50,42 @@ def module_base(pid):
     k32.CloseHandle(snap); return base, size
 
 def main():
-    rva = int(sys.argv[1], 16)
-    length = int(sys.argv[2]) if len(sys.argv) > 2 else 128
-    pid = find_pid()
+    float_mode = sys.argv[1].lower() == "floats"
+    arg = 2 if float_mode else 1
+    rva = int(sys.argv[arg], 16)
+    length = (int(sys.argv[arg + 1]) * 4 if float_mode else int(sys.argv[arg + 1])) if len(sys.argv) > arg + 1 else 128
+    # Optional explicit PID/base bypasses Toolhelp module enumeration, which
+    # can intermittently miss dynamically loaded engine DLLs.
+    pid_arg = arg + 2
+    pid = int(sys.argv[pid_arg], 0) if len(sys.argv) > pid_arg else find_pid()
     if not pid: print("game not running"); return
-    base, size = module_base(pid)
+    if len(sys.argv) > pid_arg + 1:
+        base, size = int(sys.argv[pid_arg + 1], 0), 0x4768000
+    else:
+        base, size = module_base(pid)
     if not base: print("halo3.dll not loaded"); return
     h = k32.OpenProcess(PROCESS_VM_READ|PROCESS_QUERY_INFORMATION, False, pid)
     buf = (C.c_char*length)(); read = C.c_size_t(0)
     if not k32.ReadProcessMemory(h, C.c_void_p(base+rva), buf, length, C.byref(read)):
-        print("read failed", C.get_last_error()); return
+        # halo3.dll can unload when the title returns to a menu. Code RVAs in
+        # its .text section map to raw file offsets with this build's 0xC00
+        # section delta, so retain an offline read-only fallback for RE work.
+        path = r"N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\halo3\halo3.dll"
+        with open(path, "rb") as f:
+            f.seek(rva - 0xC00)
+            raw = f.read(length)
+        code = raw
+        k32.CloseHandle(h)
+        read = None
+    else:
+        code = bytes(buf[:read.value])
     k32.CloseHandle(h)
-    code = bytes(buf[:read.value])
+    if float_mode:
+        import struct
+        vals = struct.unpack("<%df" % (len(code) // 4), code)
+        for i in range(0, len(vals), 4):
+            print("[%02d] % .7f % .7f % .7f % .7f" % ((i,) + vals[i:i+4]))
+        return
     md = Cs(CS_ARCH_X86, CS_MODE_64)
     for insn in md.disasm(code, rva):
         print("halo3.dll+0x%X:  %-9s %s" % (insn.address, insn.mnemonic, insn.op_str))

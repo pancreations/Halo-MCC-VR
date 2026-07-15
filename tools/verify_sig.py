@@ -3,7 +3,8 @@
 import re, sys
 
 DLL = r"N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\halo3\halo3.dll"
-SIG = "48 89 5C 24 08 57 48 83 EC 30 0F 29 74 24 20 48 8B FA 48 8B D9 48 85 D2 74 ?? F3 0F 10 1D ?? ?? ?? ??"
+SIG = (sys.argv[1] if len(sys.argv) > 1 else
+       "48 89 5C 24 08 57 48 83 EC 30 0F 29 74 24 20 48 8B FA 48 8B D9 48 85 D2 74 ?? F3 0F 10 1D ?? ?? ?? ??")
 
 # Build a byte-regex from the pattern.
 pat = b""
