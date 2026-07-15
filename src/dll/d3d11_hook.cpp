@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <intrin.h> // _ReturnAddress: the game's call site inside our hooks
 #include <MinHook.h>
 #include "d3d11_hook.h"
 #include "game.h"
@@ -27,6 +28,11 @@ typedef void(STDMETHODCALLTYPE* CopyResourceFn)(ID3D11DeviceContext*, ID3D11Reso
     ID3D11Resource*);
 typedef void(STDMETHODCALLTYPE* CopySubresourceRegionFn)(ID3D11DeviceContext*, ID3D11Resource*,
     UINT, UINT, UINT, UINT, ID3D11Resource*, UINT, const D3D11_BOX*);
+typedef void(STDMETHODCALLTYPE* UpdateSubresourceFn)(ID3D11DeviceContext*, ID3D11Resource*,
+    UINT, const D3D11_BOX*, const void*, UINT, UINT);
+typedef HRESULT(STDMETHODCALLTYPE* MapFn)(ID3D11DeviceContext*, ID3D11Resource*, UINT,
+    D3D11_MAP, UINT, D3D11_MAPPED_SUBRESOURCE*);
+typedef void(STDMETHODCALLTYPE* UnmapFn)(ID3D11DeviceContext*, ID3D11Resource*, UINT);
 
 static PresentFn g_origPresent = nullptr;
 static Present1Fn g_origPresent1 = nullptr;
@@ -36,7 +42,41 @@ static OMSetRenderTargetsAndUavsFn g_origOMSetRenderTargetsAndUavs = nullptr;
 static PSSetShaderResourcesFn g_origPSSetShaderResources = nullptr;
 static CopyResourceFn g_origCopyResource = nullptr;
 static CopySubresourceRegionFn g_origCopySubresourceRegion = nullptr;
+static UpdateSubresourceFn g_origUpdateSubresource = nullptr;
+static MapFn g_origMap = nullptr;
+static UnmapFn g_origUnmap = nullptr;
 static void* g_psSetShaderResourcesTarget = nullptr;
+
+// Ghost hunt, final channel: shader-constant uploads. All texture-level
+// instrumentation is exhausted; a per-frame parameter block computed from one
+// viewpoint and consumed by both eye renders is the last mechanism that fits
+// the evidence. Census-only: flags uploads identical across eyes but changing
+// over time.
+static void STDMETHODCALLTYPE UpdateSubresourceHook(ID3D11DeviceContext* context,
+    ID3D11Resource* dst, UINT dstSub, const D3D11_BOX* box, const void* data,
+    UINT rowPitch, UINT depthPitch)
+{
+    VR_RecordParamUpload(dst, data, _ReturnAddress());
+    g_origUpdateSubresource(context, dst, dstSub, box, data, rowPitch, depthPitch);
+}
+
+static HRESULT STDMETHODCALLTYPE MapHook(ID3D11DeviceContext* context, ID3D11Resource* res,
+    UINT sub, D3D11_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE* mapped)
+{
+    const HRESULT hr = g_origMap(context, res, sub, type, flags, mapped);
+    if (SUCCEEDED(hr) && mapped &&
+        (type == D3D11_MAP_WRITE_DISCARD || type == D3D11_MAP_WRITE_NO_OVERWRITE ||
+         type == D3D11_MAP_WRITE))
+        VR_NoteMappedBuffer(res, mapped->pData);
+    return hr;
+}
+
+static void STDMETHODCALLTYPE UnmapHook(ID3D11DeviceContext* context, ID3D11Resource* res,
+    UINT sub)
+{
+    VR_RecordUnmap(res, _ReturnAddress()); // reads the mapped bytes BEFORE the unmap
+    g_origUnmap(context, res, sub);
+}
 
 // Ghost hunt, the two probes every previous census missed: GPU-side copies
 // (never hooked before) and resources moved without any bind call. Log-only.
@@ -188,7 +228,11 @@ bool InstallD3D11Hooks()
               MH_CreateHook(contextVtbl[46], (void*)&CopySubresourceRegionHook,
                             (void**)&g_origCopySubresourceRegion) == MH_OK &&
               MH_CreateHook(contextVtbl[47], (void*)&CopyResourceHook,
-                            (void**)&g_origCopyResource) == MH_OK;
+                            (void**)&g_origCopyResource) == MH_OK &&
+              MH_CreateHook(contextVtbl[48], (void*)&UpdateSubresourceHook,
+                            (void**)&g_origUpdateSubresource) == MH_OK &&
+              MH_CreateHook(contextVtbl[14], (void*)&MapHook, (void**)&g_origMap) == MH_OK &&
+              MH_CreateHook(contextVtbl[15], (void*)&UnmapHook, (void**)&g_origUnmap) == MH_OK;
 
     IDXGISwapChain1* sc1 = nullptr;
     if (SUCCEEDED(sc->QueryInterface(__uuidof(IDXGISwapChain1), (void**)&sc1)))

@@ -50,6 +50,13 @@ void VR_RecordFrameRtv(UINT count, ID3D11RenderTargetView* const* rtvs);
 // census. Logs unique texture copy pairs while stereo runs, tagged with the
 // active eye (-1 = between passes, where the poison is suspected to move).
 void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what);
+// Ghost hunt, final channel (census-only): shader-constant uploads during the
+// eye passes. Flags parameter blocks that are IDENTICAL across both eyes but
+// change over time — the fingerprint of a per-frame single-viewpoint value
+// consumed by both eye renders.
+void VR_RecordParamUpload(ID3D11Resource* dst, const void* data, void* caller);
+void VR_NoteMappedBuffer(ID3D11Resource* res, void* pData);
+void VR_RecordUnmap(ID3D11Resource* res, void* caller);
 // Ghosting hunt: logs each unique UAV-bound resource seen during an eye pass
 // (the temporal history writer is compute/UAV-based and invisible to the RTV hook).
 void VR_RecordUavCensus(UINT count, ID3D11UnorderedAccessView* const* uavs);

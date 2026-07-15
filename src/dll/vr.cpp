@@ -455,6 +455,8 @@ namespace
     // the lock. Orientation is a quaternion, position is in meters.
     CRITICAL_SECTION g_headCs;
     bool g_headCsInit = false;
+    CRITICAL_SECTION g_paramCs; // guards the constant-upload census tables
+    bool g_paramCsInit = false;
     XrPosef g_headPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_headPoseValid = false;
     XrPosef g_rightAimPose{{0, 0, 0, 1}, {0, 0, 0}};
@@ -1889,6 +1891,11 @@ void VR_InitInstance()
         InitializeCriticalSection(&g_headCs);
         g_headCsInit = true;
     }
+    if (!g_paramCsInit)
+    {
+        InitializeCriticalSection(&g_paramCs);
+        g_paramCsInit = true;
+    }
     // Runs on the DLL's background init thread, in parallel with the game
     // loading. Never touches the render thread or the game's D3D device.
     if (InitInstance())
@@ -2238,6 +2245,150 @@ void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what)
         g_rasterEye.load(), what,
         (void*)src, sd.Width, sd.Height, (unsigned)sd.Format, sd.BindFlags,
         (void*)dst, dd.Width, dd.Height, (unsigned)dd.Format, dd.BindFlags);
+}
+
+namespace
+{
+    // Constant-upload census. One record per unique (caller, size); tracks
+    // the last value seen from each eye. Suspects = seen by both eyes with
+    // identical bytes while the value changes over time (a static value can't
+    // ghost; a per-eye-different value is already correct).
+    struct ParamRecord
+    {
+        void* caller = nullptr;
+        UINT size = 0;
+        unsigned char value[2][64] = {};
+        bool seen[2] = {};
+        bool changes = false;      // value varies over time
+        unsigned equalAcross = 0;  // times both eyes carried identical bytes
+        unsigned diffAcross = 0;
+    };
+    constexpr unsigned kParamMax = 256;
+    ParamRecord g_params[kParamMax];
+    unsigned g_paramCount = 0;
+    struct MappedBuffer { ID3D11Resource* res; void* data; };
+    MappedBuffer g_mapped[32] = {};
+
+    void ParamCensus(ID3D11Resource* dst, const void* data, void* caller)
+    {
+        const int eye = g_rasterEye.load();
+        if (eye < 0 || !g_stereoEnabled.load() || !dst || !data || !caller)
+            return;
+        D3D11_RESOURCE_DIMENSION dim{};
+        dst->GetType(&dim);
+        if (dim != D3D11_RESOURCE_DIMENSION_BUFFER)
+            return;
+        ID3D11Buffer* buffer = nullptr;
+        if (FAILED(dst->QueryInterface(__uuidof(ID3D11Buffer),
+                                       reinterpret_cast<void**>(&buffer))) || !buffer)
+            return;
+        D3D11_BUFFER_DESC bd{};
+        buffer->GetDesc(&bd);
+        buffer->Release();
+        if (!(bd.BindFlags & D3D11_BIND_CONSTANT_BUFFER) || bd.ByteWidth < 16)
+            return;
+        const UINT n = bd.ByteWidth < 64 ? bd.ByteWidth : 64;
+        if (!g_paramCsInit)
+            return;
+        EnterCriticalSection(&g_paramCs);
+        ParamRecord* r = nullptr;
+        for (unsigned i = 0; i < g_paramCount; ++i)
+            if (g_params[i].caller == caller && g_params[i].size == bd.ByteWidth)
+            {
+                r = &g_params[i];
+                break;
+            }
+        if (!r && g_paramCount < kParamMax)
+        {
+            r = &g_params[g_paramCount++];
+            r->caller = caller;
+            r->size = bd.ByteWidth;
+        }
+        if (r)
+        {
+            if (r->seen[eye] && memcmp(r->value[eye], data, n) != 0)
+                r->changes = true;
+            memcpy(r->value[eye], data, n);
+            r->seen[eye] = true;
+            if (r->seen[0] && r->seen[1])
+            {
+                if (memcmp(r->value[0], r->value[1], n) == 0)
+                    ++r->equalAcross;
+                else
+                    ++r->diffAcross;
+            }
+        }
+        LeaveCriticalSection(&g_paramCs);
+
+        // Suspect summary every ~10 s: shared-across-eyes AND time-varying.
+        static std::atomic<DWORD> lastDump{0};
+        const DWORD now = GetTickCount();
+        DWORD last = lastDump.load();
+        if (now - last >= 10000 && lastDump.compare_exchange_strong(last, now))
+        {
+            const HMODULE halo3 = GetModuleHandleW(L"halo3.dll");
+            const HMODULE exe = GetModuleHandleW(nullptr);
+            EnterCriticalSection(&g_paramCs);
+            unsigned printed = 0;
+            for (unsigned i = 0; i < g_paramCount && printed < 16; ++i)
+            {
+                const ParamRecord& p = g_params[i];
+                if (!p.changes || !p.seen[0] || !p.seen[1] ||
+                    p.equalAcross < p.diffAcross * 4 + 8)
+                    continue;
+                const float* f = reinterpret_cast<const float*>(p.value[0]);
+                const uintptr_t c = reinterpret_cast<uintptr_t>(p.caller);
+                const uintptr_t h3 = reinterpret_cast<uintptr_t>(halo3);
+                const uintptr_t ex = reinterpret_cast<uintptr_t>(exe);
+                LOG("M2 PARAM SUSPECT caller=%s+0x%llX size=%u eq=%u diff=%u f=[%.4f %.4f %.4f %.4f]",
+                    (h3 && c > h3 && c < h3 + 0x5000000) ? "halo3" : "exe",
+                    (unsigned long long)(c - ((h3 && c > h3 && c < h3 + 0x5000000) ? h3 : ex)),
+                    p.size, p.equalAcross, p.diffAcross, f[0], f[1], f[2], f[3]);
+                ++printed;
+            }
+            LeaveCriticalSection(&g_paramCs);
+            if (printed)
+                LOG("M2 PARAM SUSPECT list end (%u shown)", printed);
+        }
+    }
+} // namespace
+
+void VR_RecordParamUpload(ID3D11Resource* dst, const void* data, void* caller)
+{
+    ParamCensus(dst, data, caller);
+}
+
+void VR_NoteMappedBuffer(ID3D11Resource* res, void* pData)
+{
+    if (g_rasterEye.load() < 0 || !g_stereoEnabled.load() || !g_paramCsInit)
+        return;
+    EnterCriticalSection(&g_paramCs);
+    for (auto& m : g_mapped)
+        if (!m.res)
+        {
+            m.res = res;
+            m.data = pData;
+            break;
+        }
+    LeaveCriticalSection(&g_paramCs);
+}
+
+void VR_RecordUnmap(ID3D11Resource* res, void* caller)
+{
+    if (!g_paramCsInit)
+        return;
+    void* data = nullptr;
+    EnterCriticalSection(&g_paramCs);
+    for (auto& m : g_mapped)
+        if (m.res == res)
+        {
+            data = m.data;
+            m = {};
+            break;
+        }
+    LeaveCriticalSection(&g_paramCs);
+    if (data)
+        ParamCensus(res, data, caller); // mapped bytes are valid until Unmap runs
 }
 
 void VR_RecordFrameRtv(UINT count, ID3D11RenderTargetView* const* rtvs)
