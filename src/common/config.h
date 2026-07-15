@@ -14,28 +14,13 @@ struct Config
     float turn_snap_deg = 30.0f;       // degrees per snap
     float turn_smooth_deg_s = 120.0f;  // smooth turn speed, degrees/second
 
-    // M2 stereo ghosting is fixed unconditionally in RenderViewHook (the
-    // frame's post pass is anchored to the first eye instead of the centre).
-    // Two renders per frame, no fps cost, no options: an fps-halving warm-up
-    // pass was tried as a fallback and removed on request.
-
-    // M2: give each eye a private copy of the bloom/exposure history buffers.
-    // DISPROVEN as the ghost cause (discovery finds no qualifying target and
-    // toggling it changes nothing). Kept only as a diagnostic switch.
-    bool per_eye_history = false;
-
-    // Halo's sun-shaft radial blur. Suspected as the ghost source, then
-    // DISPROVEN by headset A/B: neutralizing it changed nothing. Default 1 =
-    // leave the game's effect alone rather than disable it for no benefit.
-    bool stereo_sun_shafts = true;
-
     // Which controller, held next to the head, turns the left stick into the
     // D-pad (UEVR-style gesture): 0 = left controller, 1 = right controller.
     int dpad_hand = 0;
 
-    // Ghosting diagnostic: render the right eye before the left. If the
-    // post-processing ghost trails move to the right lens, the cause is
-    // confirmed as shared temporal history consumed by whichever eye goes first.
+    // Ghosting diagnostic, and the one reliable way to reproduce the open
+    // left-eye ghost bug on demand: render the right eye first and the trails
+    // move to the right lens. See docs/CONTINUATION.md "KNOWN MAJOR BUG".
     bool right_eye_first = false;
 };
 

@@ -94,87 +94,6 @@ namespace
     ID3D11RenderTargetView* g_eyeCacheRtvs[2] = {nullptr, nullptr};
     D3D11_TEXTURE2D_DESC g_eyeCacheDesc{};
 
-    // M2 sun-shaft neutralization. The engine computes the sun's screen
-    // position once per frame from a single camera, so its screen-space
-    // radial blur (sun shafts / god rays) is only correct for one of the two
-    // eye rasters — the other eye shows streaks radiating from a shifted sun
-    // (the "ghost follows whichever eye renders first" result). The shaft
-    // chain starts at a small square two-channel (R16G16) occlusion target;
-    // while stereo_sun_shafts is off we clear the game's copy to black and
-    // divert the pass's writes into these dummies, so the later composite
-    // adds nothing. Mono rendering is never touched.
-    struct SunShaftDummy
-    {
-        ID3D11Texture2D* tex = nullptr;
-        ID3D11RenderTargetView* rtv = nullptr;
-        UINT width = 0, height = 0;
-        DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-    };
-    SunShaftDummy g_sunShaftDummies[4];
-
-    bool IsR16G16Family(DXGI_FORMAT f)
-    {
-        switch (f)
-        {
-        case DXGI_FORMAT_R16G16_TYPELESS:
-        case DXGI_FORMAT_R16G16_FLOAT:
-        case DXGI_FORMAT_R16G16_UNORM:
-        case DXGI_FORMAT_R16G16_UINT:
-        case DXGI_FORMAT_R16G16_SNORM:
-        case DXGI_FORMAT_R16G16_SINT:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    ID3D11RenderTargetView* GetSunShaftDummyRtv(const D3D11_TEXTURE2D_DESC& desc,
-                                                ID3D11RenderTargetView* gameRtv)
-    {
-        for (SunShaftDummy& d : g_sunShaftDummies)
-            if (d.rtv && d.width == desc.Width && d.height == desc.Height &&
-                d.format == desc.Format)
-                return d.rtv;
-        for (SunShaftDummy& d : g_sunShaftDummies)
-        {
-            if (d.rtv)
-                continue;
-            D3D11_TEXTURE2D_DESC dd = desc;
-            dd.MipLevels = 1;
-            dd.ArraySize = 1;
-            dd.CPUAccessFlags = 0;
-            dd.MiscFlags = 0;
-            dd.Usage = D3D11_USAGE_DEFAULT;
-            dd.BindFlags = D3D11_BIND_RENDER_TARGET;
-            if (FAILED(g_device->CreateTexture2D(&dd, nullptr, &d.tex)))
-                return nullptr; // fail open: the effect just renders normally
-            // Same typed view format as the game's own view (handles typeless).
-            D3D11_RENDER_TARGET_VIEW_DESC vd{};
-            gameRtv->GetDesc(&vd);
-            if (FAILED(g_device->CreateRenderTargetView(d.tex, &vd, &d.rtv)))
-            {
-                d.tex->Release();
-                d.tex = nullptr;
-                return nullptr;
-            }
-            d.width = desc.Width;
-            d.height = desc.Height;
-            d.format = desc.Format;
-            return d.rtv;
-        }
-        return nullptr;
-    }
-
-    void ReleaseSunShaftDummies()
-    {
-        for (SunShaftDummy& d : g_sunShaftDummies)
-        {
-            if (d.rtv) d.rtv->Release();
-            if (d.tex) d.tex->Release();
-            d = {};
-        }
-    }
-
     // Removed: the per-eye post-process history machinery (cross-pass
     // discovery, frame-level blanking, and the learned scene-snapshot
     // pairs). Every one of them was disproven in a headset session, and
@@ -1713,7 +1632,6 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
     // references it must go first or the resize fails. The tracked history
     // targets are resolution-dependent too — drop and re-learn them.
     ReleaseSourceViews();
-    ReleaseSunShaftDummies(); // sized to the old resolution; recreated on demand
 }
 
 void VR_RequestRecenter()
@@ -1841,34 +1759,6 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                                                reinterpret_cast<void**>(&candidate)));
         if (isTexture)
             candidate->GetDesc(&candidateDesc);
-
-        // Sun-shaft neutralization (see the SunShaftDummy comment). The only
-        // R16G16 render target bound inside the eye passes is the shaft
-        // chain's square occlusion buffer (800x800 R16G16_FLOAT in the RTV
-        // census). Clear the game's copy to black so the composite that
-        // samples it adds nothing, and send the pass's own writes to a dummy
-        // so it stays black. Toggling "Sun shafts in stereo" in the F1 menu
-        // stops this instantly for a live A/B comparison.
-        if (isTexture && context && !g_config.stereo_sun_shafts &&
-            IsR16G16Family(candidateDesc.Format) &&
-            candidateDesc.Width <= 2048 && candidateDesc.Height <= 2048 &&
-            candidateDesc.SampleDesc.Count == 1 &&
-            (candidateDesc.BindFlags & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE)) ==
-                (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE))
-        {
-            if (ID3D11RenderTargetView* dummy = GetSunShaftDummyRtv(candidateDesc, input[i]))
-            {
-                const float black[4] = {0, 0, 0, 0};
-                context->ClearRenderTargetView(input[i], black);
-                output[i] = dummy;
-                changed = true;
-                static std::atomic<unsigned> loggedShaft{0};
-                if (loggedShaft.fetch_add(1) < 4)
-                    LOG("M2: sun-shaft occlusion target %ux%u fmt=%u neutralized (eye %d, stereo_sun_shafts=0)",
-                        candidateDesc.Width, candidateDesc.Height,
-                        (unsigned)candidateDesc.Format, eye);
-            }
-        }
 
         D3D11_TEXTURE2D_DESC backbufferDesc{};
         backbuffer->GetDesc(&backbufferDesc);

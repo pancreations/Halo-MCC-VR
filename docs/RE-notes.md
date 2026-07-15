@@ -63,6 +63,28 @@ cue) → `clusters` → `watch` (confirm it tracks the view) → `poke`/`spin` (
     hook as the world-camera path and gives M2 a place to apply alternating left/right position
     offsets and, later, per-eye projection overrides.
 
+## View struct + render entry points (offline, via `tools/pedis.py`, build 1.3528)
+
+- `0x286A14` — **inner per-view renderer**, `rcx` = prepared view struct. Hooked as
+  `RenderViewHook`; called exactly ONCE per frame (verified: `view renders 60/sec` vs `fps 60`).
+- `0x1854C8` — **PrepareView**, a thin wrapper: publishes the view ptr to global `0x46BB978`,
+  calls the real setup at `0x286620`, clears the global on exit.
+- `0x286620` — **real per-view setup**. Consumes the view's camera/matrix pair exactly once, at
+  `0x2866E2`: `lea rdx,[r14+0x98]; lea rcx,[r14+8]; call 0x2770F0` (r14 = view).
+- **The view struct has a SECOND camera/matrix pair at `{camera@+0x158, derived@+0x1E8}`** —
+  same 0x90 sizes, same +0x150 stride as `{+0x08, +0x98}`. It has a *different* consumer:
+  `call 0x295DC0(view+0x158, <word>, view+0x1E8, view+0x27F4, ...)`, from exactly two sites
+  (`0x2833A8`, `0x2A5B4D`); `0x295DC0` forwards to `0x2B8124` then `0x1B8148`. Site `0x2833A8`
+  also reads `view+0x27E8/+0x27F4` — the same fields PrepareView reads — which **proves its
+  `rbx` is the view struct**, so this is genuinely a second view-state slot.
+  - **OPEN:** is it previous-frame state (temporal reprojection) or a secondary view? Settle by
+    finding the engine's own writer of `view+0x158`; a per-frame current→prev copy proves it.
+    `RenderViewHook` currently sets prev := current for both eyes (unjustified, from `bd2254e`).
+  - Ruled out: `0x46A9E0` writes qwords to `+0x158`/`+0x1E8` but with unrelated fields
+    interleaved at `+0x160..+0x174`/`+0x1D8` — a different struct, coincidental offsets.
+- `0x2AF8C1` — the single call site every shader-constant upload funnels through (~100k/s), so
+  caller-RVA cannot discriminate between effects. Do not build another constant census on it.
+
 ## Key lesson / next step
 
 ### Critical stereo correction and successful raster redirect (2026-07-14)

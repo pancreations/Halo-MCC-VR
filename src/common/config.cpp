@@ -58,12 +58,9 @@ void ConfigLoad(const wchar_t* path)
         else if (!strcmp(key, "turn_smooth_deg_s"))
             g_config.turn_smooth_deg_s = (float)atof(val);
         else if (!strcmp(key, "ghost_fix") || !strcmp(key, "stereo_alternate_order") ||
-                 !strcmp(key, "stereo_warmup_pass"))
-            continue; // ghost fix is unconditional now; ignore old config keys
-        else if (!strcmp(key, "per_eye_history"))
-            g_config.per_eye_history = atoi(val) != 0;
-        else if (!strcmp(key, "stereo_sun_shafts"))
-            g_config.stereo_sun_shafts = atoi(val) != 0;
+                 !strcmp(key, "stereo_warmup_pass") || !strcmp(key, "per_eye_history") ||
+                 !strcmp(key, "stereo_sun_shafts"))
+            continue; // retired ghost-fix switches; accept old config files quietly
         else if (!strcmp(key, "dpad_hand"))
             g_config.dpad_hand = atoi(val) != 0 ? 1 : 0;
         else if (!strcmp(key, "right_eye_first"))
@@ -100,11 +97,6 @@ void ConfigSave()
     fprintf(f, "turn_snap_deg = %.0f\n\n", g_config.turn_snap_deg);
     fprintf(f, "# Smooth turn speed in degrees per second (30-360).\n");
     fprintf(f, "turn_smooth_deg_s = %.0f\n\n", g_config.turn_smooth_deg_s);
-    fprintf(f, "# Diagnostic only (disproven as the ghost cause): per-eye bloom history.\n");
-    fprintf(f, "per_eye_history = %d\n\n", g_config.per_eye_history ? 1 : 0);
-    fprintf(f, "# Sun shafts in stereo (disproven as the ghost cause): 1 = leave the\n");
-    fprintf(f, "# game's effect alone, 0 = neutralize it.\n");
-    fprintf(f, "stereo_sun_shafts = %d\n\n", g_config.stereo_sun_shafts ? 1 : 0);
     fprintf(f, "# Hold this controller next to your head to use the left stick as D-pad:\n");
     fprintf(f, "# 0 = left controller, 1 = right controller.\n");
     fprintf(f, "dpad_hand = %d\n\n", g_config.dpad_hand);
