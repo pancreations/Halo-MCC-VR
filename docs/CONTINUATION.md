@@ -585,6 +585,49 @@ full sharpness; left-eye ghosting remains (trailing after-images of bright pixel
 first-rendered eye, also on the desktop mirror). Warm-up (3 renders) remains the only proven
 remover and remains BANNED (halves fps).
 
+**2026-07-14 (later session) — RAM answer + offline RE progress. NO ghost fix shipped.**
+
+*The RAM/immense-memory question is answered and fixed (commit `c373136`).* Every disproven
+probe was still installed and still paying. The worst: the `CopyResource` pair learning
+allocated **two full-resolution (2912x2100 RGBA ≈ 25 MB) shadow textures per learned pair**,
+up to 4 pairs ≈ **200 MB**, and re-copied them on every eye pass — for the snapshot
+substitution that had *already been shown not to remove the ghost*. Also removed: the
+PSSetShaderResources discovery hook (0 targets in two sessions, up to 96 AddRef'd textures),
+the RTV+UAV frame-level hook (0 targets), the PASS-SRV probe (16 SRV AddRef/Release per pass
+× 600), and a 2048-entry draw trace whose recorder was already gone. **Only the
+`OMSetRenderTargets` (vtable 33) redirect remains** — it is what makes stereo work. Stereo,
+camera, and input paths untouched. Expect lower RAM and less GPU copy traffic; the ghost is
+unchanged (nothing removed was fixing it).
+
+*Offline RE toolkit added (this is the durable win):* `disasm.py` only works on the LIVE
+process, which is why offline analysis never happened. There is now a **static** PE
+disassembler pattern (scratchpad `pedis.py` — worth moving into `tools/`): maps on-disk
+halo3.dll RVA→file offset, disassembles any function, AOB-scans to RVAs, and sweeps for
+`[reg+disp]` operands. **Critical gotcha:** capstone's `disasm()` stops dead at the first
+undecodable byte, so a naive linear sweep silently skips almost everything (a first attempt
+reported 50 hits across the whole .text; with byte-by-byte resync the same scan found 405).
+Any future scan must resync.
+
+*Confirmed offline (build 1.3528):*
+- `PrepareView` = RVA **`0x1854C8`** (thin wrapper: publishes the view ptr to global
+  `0x46BB978`, calls the real setup at **`0x286620`**, clears the global on exit).
+- The real setup consumes the view's camera/matrix pair as
+  `call 0x2770F0(view+0x08, view+0x98)` at `0x2866E2` — the ONLY use of that pair there.
+- **The view struct's second `{camera@+0x158, derived@+0x1E8}` pair has a different consumer:**
+  `call 0x295DC0(view+0x158, <word>, view+0x1E8, view+0x27F4, ...)` from exactly two sites
+  (`0x2833A8` and `0x2A5B4D`), which forwards to `0x2B8124` then `0x1B8148`. Site `0x2833A8`
+  also reads `view+0x27E8/+0x27F4` — the same fields `PrepareView` reads — which **proves its
+  `rbx` is the view struct**, so this pair is genuinely a second view-state slot.
+- **Open and untested:** whether `{+0x158,+0x1E8}` is the *previous-frame* view (temporal
+  reprojection state) or a secondary view. It matters: `RenderViewHook` (game.cpp ~line 455)
+  currently sets `prev := current` for BOTH eyes every pass, which would zero any reprojection
+  delta. Nobody has ever justified those two memcpys — they arrived unexplained in `bd2254e`.
+  Next step is to find the engine's own writer of `view+0x158` (a per-frame current→prev copy
+  would settle it). Related unfollowed M1 note: RE-notes line 50 records the world render
+  camera as *"a sliding array/ring (render history for temporal effects)"* around `~0x468xxxx`.
+- Ruled out as a coincidence: `0x46A9E0` writes qwords to `+0x158`/`+0x1E8` but with unrelated
+  fields interleaved at `+0x160..+0x174`/`+0x1D8`, so it is a different struct.
+
 **NEXT SESSION PLAN — no more headset-guessing; understand first (user-directed):**
 1. **Study `reference/UEVR` (praydog)** — the user explicitly asked to learn from it. Focus:
    how UEVR handles per-eye temporal state at the D3D11 level (its stereo submission,
