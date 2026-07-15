@@ -226,6 +226,42 @@ namespace
     D3D11_TEXTURE2D_DESC g_blankDescs[kBlankMax] = {};
     unsigned g_blankCount = 0;
 
+    // THE GHOST ROOT CAUSE (observed via the CopyResource probe): between the
+    // eye passes the engine snapshots the full-res scene into a sampleable
+    // texture — its "previous frame" for temporal effects. Both eyes sample
+    // that one snapshot next frame, but it was made from whichever eye
+    // rendered last, so the first eye blends against the other eye's image
+    // (the trailing after-images on bright pixels). Fix: learn the (src,dst)
+    // pair from the copy hook, keep a per-eye copy of the snapshot captured
+    // after each eye's own render, and substitute it into the game's dst
+    // right before that eye renders again. Each eye then always sees its own
+    // previous frame. Three texture copies per frame — no third render.
+    struct HistoryPair
+    {
+        ID3D11Texture2D* src = nullptr;   // game texture the engine snapshots
+        ID3D11Texture2D* dst = nullptr;   // the engine's snapshot destination
+        ID3D11Texture2D* shadow[2] = {};  // per-eye snapshot versions
+        bool valid[2] = {};
+        bool srcIsRedirectedScene = false; // src is the final scene we redirect
+                                           // per eye; use the eye caches instead
+    };
+    HistoryPair g_histPairs[4];
+    unsigned g_histPairCount = 0;
+
+    void ReleaseHistoryPairs()
+    {
+        for (unsigned i = 0; i < g_histPairCount; ++i)
+        {
+            HistoryPair& p = g_histPairs[i];
+            if (p.src) p.src->Release();
+            if (p.dst) p.dst->Release();
+            for (int e = 0; e < 2; ++e)
+                if (p.shadow[e]) p.shadow[e]->Release();
+            p = {};
+        }
+        g_histPairCount = 0;
+    }
+
     bool IsTrackedHistory(ID3D11Texture2D* texture)
     {
         for (unsigned i = 0; i < g_histCount; ++i)
@@ -1926,6 +1962,7 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
     // targets are resolution-dependent too — drop and re-learn them.
     ReleaseSourceViews();
     ReleaseEyeHistory();
+    ReleaseHistoryPairs();    // snapshot textures are resolution-dependent
     ReleaseSunShaftDummies(); // sized to the old resolution; recreated on demand
 }
 
@@ -2080,6 +2117,15 @@ void VR_BeginRasterEye(int eye)
             if (g_blankRtvs[i])
                 g_context->ClearRenderTargetView(g_blankRtvs[i], black);
     }
+    // THE GHOST FIX: before this eye renders, replace the engine's frame
+    // snapshot with THIS eye's own previous-frame version, so its temporal
+    // effects blend against the same viewpoint instead of the other eye's.
+    for (unsigned i = 0; i < g_histPairCount; ++i)
+    {
+        HistoryPair& p = g_histPairs[i];
+        if (p.valid[eye] && p.shadow[eye] && p.dst)
+            g_context->CopyResource(p.dst, p.shadow[eye]);
+    }
     backbuffer->Release();
 }
 
@@ -2103,13 +2149,57 @@ void VR_RecordShaderResourceReads(UINT count, ID3D11ShaderResourceView* const* s
 
 void VR_RecordCopy(ID3D11Resource* dst, ID3D11Resource* src, const char* what)
 {
-    // Log-only ghost probe. Every earlier census watched BIND calls, so a
+    // Ghost probe + fix. Every earlier census watched BIND calls, so a
     // resource moved by a GPU copy was invisible. Log each unique (dst, src)
     // texture pair seen while stereo runs, tagged with the eye (-1 = between
-    // passes). Our own copies (eye caches, staging) will appear too — that is
-    // fine, they are recognizable by size and can be ignored when reading.
+    // passes), and LEARN the frame-level full-res scene snapshot pairs the
+    // per-eye substitution needs (see HistoryPair).
     if (!g_stereoEnabled.load() || !dst || !src)
         return;
+    // Learn snapshot pairs: frame-level (between passes), both full-res
+    // textures, destination sampleable. Our own copies never qualify (they
+    // run inside passes or into bind-0 staging).
+    if (g_rasterEye.load() < 0 && g_histPairCount < 4 && g_eyeCacheDesc.Width != 0)
+    {
+        ID3D11Texture2D* dt = nullptr;
+        ID3D11Texture2D* st = nullptr;
+        if (SUCCEEDED(dst->QueryInterface(__uuidof(ID3D11Texture2D),
+                                          reinterpret_cast<void**>(&dt))) &&
+            SUCCEEDED(src->QueryInterface(__uuidof(ID3D11Texture2D),
+                                          reinterpret_cast<void**>(&st))))
+        {
+            D3D11_TEXTURE2D_DESC dd{}, sd{};
+            dt->GetDesc(&dd);
+            st->GetDesc(&sd);
+            bool known = false;
+            for (unsigned i = 0; i < g_histPairCount; ++i)
+                if (g_histPairs[i].dst == dt)
+                    known = true;
+            const bool ours = dt == g_eyeCache[0] || dt == g_eyeCache[1] ||
+                              st == g_eyeCache[0] || st == g_eyeCache[1];
+            if (!known && !ours &&
+                dd.Width == g_eyeCacheDesc.Width && dd.Height == g_eyeCacheDesc.Height &&
+                sd.Width == dd.Width && sd.Height == dd.Height &&
+                (dd.BindFlags & D3D11_BIND_SHADER_RESOURCE) &&
+                dd.SampleDesc.Count == 1 && dd.ArraySize == 1)
+            {
+                HistoryPair& p = g_histPairs[g_histPairCount++];
+                dt->AddRef();
+                st->AddRef();
+                p.dst = dt;
+                p.src = st;
+                p.srcIsRedirectedScene =
+                    sd.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS &&
+                    (sd.BindFlags & D3D11_BIND_UNORDERED_ACCESS);
+                LOG("M2: per-eye history snapshot armed: src=%p fmt=%u%s -> dst=%p fmt=%u (%u pairs)",
+                    (void*)st, (unsigned)sd.Format,
+                    p.srcIsRedirectedScene ? " (redirected scene; using eye caches)" : "",
+                    (void*)dt, (unsigned)dd.Format, g_histPairCount);
+            }
+        }
+        if (dt) dt->Release();
+        if (st) st->Release();
+    }
     struct Pair { ID3D11Resource* dst; ID3D11Resource* src; };
     static Pair seen[96];
     static std::atomic<unsigned> seenCount{0};
@@ -2220,6 +2310,38 @@ void VR_EndRasterEye()
             {
                 g_context->CopyResource(g_histShadow[eye][i], g_histShared[i]);
                 g_histValid[eye][i] = true;
+            }
+        }
+    }
+    // THE GHOST FIX, capture side: save this eye's fresh scene as its own
+    // snapshot for next frame. For the redirected final scene the fresh
+    // content lives in our eye cache, not the game's (stale) texture.
+    if (eye >= 0 && eye < 2 && g_device && g_context)
+    {
+        for (unsigned i = 0; i < g_histPairCount; ++i)
+        {
+            HistoryPair& p = g_histPairs[i];
+            ID3D11Texture2D* source =
+                p.srcIsRedirectedScene ? g_eyeCache[eye] : p.src;
+            if (!source || !p.src)
+                continue;
+            if (!p.shadow[eye])
+            {
+                D3D11_TEXTURE2D_DESC d{};
+                p.src->GetDesc(&d);
+                d.BindFlags = 0;
+                d.MiscFlags = 0;
+                d.CPUAccessFlags = 0;
+                d.Usage = D3D11_USAGE_DEFAULT;
+                d.MipLevels = 1;
+                d.ArraySize = 1;
+                if (FAILED(g_device->CreateTexture2D(&d, nullptr, &p.shadow[eye])))
+                    p.shadow[eye] = nullptr;
+            }
+            if (p.shadow[eye])
+            {
+                g_context->CopyResource(p.shadow[eye], source);
+                p.valid[eye] = true;
             }
         }
     }

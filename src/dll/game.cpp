@@ -328,27 +328,25 @@ namespace
         constexpr float kStereoWorldUnitsPerMeter = 0.33f;
         const float halfIpdWorld = 0.5f * 0.0675f * kStereoWorldUnitsPerMeter;
 
-        // STEREO GHOSTING — settled empirically. Headset results:
-        //   [A B] fixed order      -> ghost on A (the first render), steady
-        //   [A B]/[B A] alternate  -> ghost FLICKERS between both eyes
-        //   first-eye post anchor  -> ghost unchanged on the first render
-        //   [A_discard A B] warmup -> BOTH kept renders clean (only success)
-        // with `M2: view renders/sec` == `fps` proving one hook call/frame.
+        // STEREO GHOSTING — root cause finally OBSERVED (2026-07-14, the
+        // CopyResource probe): between the eye passes, the engine snapshots
+        // the full-resolution scene into a sampleable texture
+        // (M2 COPY eye=-1, 2912x2100 fmt29 -> fmt29) — its "last frame"
+        // source for temporal effects. In stereo that snapshot is made from
+        // whichever eye rendered LAST, and BOTH eyes sample it next frame:
+        // the last eye reads itself (clean), the first eye reads the other
+        // eye (trailing after-images offset by the eye separation). This
+        // explains every earlier result: fixed order -> steady first-eye
+        // ghost; alternation -> flicker; a discarded warm-up render -> clean
+        // (it flushed the foreign snapshot through the effect chain) at the
+        // cost of a third render (60 fps).
         //
-        // Together these say: whichever render crosses the frame boundary
-        // absorbs poisoned state (trails on bright pixels) regardless of eye
-        // identity, and no camera anchoring or ordering trick prevents it —
-        // five attempts, five failures. Every census (in-pass RTV/SRV/UAV,
-        // frame-level RTV) failed to name the resource, so the shipped fix is
-        // the one mechanism proven in the headset: render the first eye once
-        // extra and DISCARD it, so the boundary-crossing render is never
-        // shown. The frame-rate cost is paid back in the launcher, which
-        // requests a game resolution sized so THREE renders fit the 120 Hz
-        // budget instead of two (resolution is the intended perf lever per
-        // PLAN.md). If someone later names the poisoned resource (untried:
-        // CopyResource/CopySubresourceRegion hooks, draw-time
-        // PSGetShaderResources snapshots), the warm-up can go and full
-        // resolution comes back.
+        // The fix (vr.cpp, VR_Begin/EndRasterEye + the CopyResource hook):
+        // keep a per-eye copy of that snapshot — captured after each eye's
+        // own render, substituted into the game's snapshot texture right
+        // before that eye renders again. Each eye then always samples its own
+        // previous frame. Three texture copies per frame instead of a third
+        // world render, so this runs at the full two-render rate.
         {
             static std::atomic<unsigned> viewRenders{0};
             static std::atomic<DWORD> lastLog{GetTickCount()};
@@ -363,11 +361,9 @@ namespace
             }
         }
         const int firstEye = g_config.right_eye_first ? 1 : 0;
-        for (int pass = 0; pass < 3; ++pass)
+        for (int pass = 0; pass < 2; ++pass)
         {
-            // Pass 0 is the discarded warm-up of the first eye (see above).
-            const bool keep = pass != 0;
-            const int eye = pass == 2 ? 1 - firstEye : firstEye;
+            const int eye = pass == 0 ? firstEye : 1 - firstEye;
             g_stereoEye = eye;
             VR_BeginRasterEye(eye);
             memcpy(camera, saved, sizeof(saved));
@@ -484,8 +480,7 @@ namespace
                 gunTan[1] = tanf(g_renderHalfFovY.load()) * scale;
             }
             g_origRenderView(view);
-            if (keep)
-                VR_CaptureRenderedEye(eye);
+            VR_CaptureRenderedEye(eye);
             VR_EndRasterEye();
         }
         g_stereoEye = -1;
