@@ -114,7 +114,7 @@ void ConfigLoad(const wchar_t* path)
         else if (!strcmp(key, "kill_reticle"))
             g_config.kill_reticle = atoi(val) != 0;
         else if (!strcmp(key, "reticle_element_id"))
-            g_config.reticle_element_id = atoi(val);
+            continue; // retired runtime tag-index picker; accept old configs quietly
         else if (!strcmp(key, "game_brightness"))
             g_config.game_brightness = (float)atof(val);
         else if (!strcmp(key, "hud_size"))
@@ -206,11 +206,9 @@ void ConfigSave()
     fprintf(f, "# Push the gun forward of the controller, in meters (-0.3 to 0.5).\n");
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
-    fprintf(f, "# Hide Halo's centered weapon crosshair using the remembered element.\n");
+    fprintf(f, "# Hide every native CHUD crosshair class.\n");
     fprintf(f, "# The floating motion-control reticle remains visible.\n");
-    fprintf(f, "kill_reticle = %d\n", g_config.kill_reticle ? 1 : 0);
-    fprintf(f, "# Remembered runtime HUD element id.\n");
-    fprintf(f, "reticle_element_id = %d\n", g_config.reticle_element_id);
+    fprintf(f, "kill_reticle = %d\n\n", g_config.kill_reticle ? 1 : 0);
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
     fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);
     fprintf(f, "# HUD size: fraction of the view the HUD lays out into (0.30-1.00).\n");

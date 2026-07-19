@@ -8,11 +8,6 @@ void Game_Init();
 bool Game_IsHooked();
 bool Game_IsHeadTracking(); // true while F2 head tracking is on
 
-// HUD element ids seen so far (for the menu's reticle picker). Returns the count.
-int Game_CopySeenHudIds(unsigned short* out, int maxOut);
-void Game_CycleReticleElement(); // F4: hide the next HUD element (find the crosshair)
-void Game_ClearReticleElement(); // F5: stop hiding (show all HUD elements)
-
 // HUD size: config hud_size drives Halo's own safe-frame floats in the loaded
 // chud_globals tag data (auto-located at runtime; proven live 2026-07-19).
 void Game_LocateHudSafeFrames();  // manual rescan (menu button; normally automatic)

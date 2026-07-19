@@ -296,51 +296,26 @@ namespace
             LOG("M3: brightness hook active (game_brightness %.2f)", b);
     }
 
-    // HUD ELEMENT HIDER (2026-07-19 — the mechanism that can't miss). The centered
-    // weapon reticle is one of the data-driven CHUD widgets submitted by 0x2EDF24
-    // (16-bit element id in r8w; the real draw is 0x2EEB80/0x2F0C50 at its tail).
-    // Its id is runtime tag data — NOT knowable offline, which is why every
-    // offline guess (chud+0x146, the 0x28443C quad) missed. So instead we record
-    // every element id we actually see and let the user pick which to hide from
-    // the menu (step until the crosshair disappears). Skipping the submit for
-    // that id hides ONLY that element; everything else draws normally.
-    constexpr int kMaxSeenHudIds = 64;
-    std::atomic<uint16_t> g_seenHudIds[kMaxSeenHudIds];
-    std::atomic<int> g_seenHudIdCount{0};
+    // HUD CROSSHAIR CLASS HIDER.
+    // H3EK's complete ui/chud tag set marks native reticles with scripting
+    // class 2. Halo already resolves that class safely inside chud_draw_widget;
+    // normal gameplay merely short-circuits around the check. The install code
+    // below enables the existing check and hooks its visibility predicate.
+    typedef bool (__fastcall *HudCrosshairVisibleFn)(int);
+    typedef bool (__fastcall *GameIsPlaybackFn)();
+    HudCrosshairVisibleFn g_realHudCrosshairVisible = nullptr;
+    GameIsPlaybackFn g_gameIsPlayback = nullptr;
 
-    void RecordSeenHudId(uint16_t id)
+    bool __fastcall HudCrosshairVisibleHook(int userIndex)
     {
-        // Called only from the render thread (the hook); the menu only reads.
-        const int n = g_seenHudIdCount.load(std::memory_order_acquire);
-        for (int i = 0; i < n; ++i)
-            if (g_seenHudIds[i].load(std::memory_order_relaxed) == id) return;
-        if (n < kMaxSeenHudIds)
-        {
-            g_seenHudIds[n].store(id, std::memory_order_relaxed);
-            g_seenHudIdCount.store(n + 1, std::memory_order_release);
-        }
-    }
-
-    // Return uint64_t so that when we hide an element we return 0 — exactly what
-    // the game's OWN "element not visible" path returns (0x2EDF24 jumps to its
-    // epilogue with al=0 when the visibility check 0x2EDE38 says hide). So hiding
-    // via this hook is byte-for-byte the same outcome the engine produces when it
-    // hides an element itself — not a new, untested code path.
-    typedef uint64_t (__fastcall *HudElementFn)(uint64_t, uint64_t, uint64_t, uint64_t);
-    HudElementFn g_realHudElement = nullptr;
-    uint64_t __fastcall HudElementHook(uint64_t player, uint64_t descriptor,
-                                       uint64_t r8, uint64_t r9)
-    {
-        const uint16_t id = static_cast<uint16_t>(r8 & 0xFFFF);
-        RecordSeenHudId(id);
-        // (The 2026-07-19 "HUD gone hunt" trace + per-second submit diagnostics
-        // that lived here were stripped: the one run carrying them froze the
-        // render thread at the first HUD element submit. This is the minimal
-        // body that was live when the reticle kill was headset-verified.)
-        if (g_config.kill_reticle && g_config.reticle_element_id >= 0 &&
-            id == static_cast<uint16_t>(g_config.reticle_element_id))
-            return 0;   // hide this element (the reticle, once the user picks it)
-        return g_realHudElement(player, descriptor, r8, r9);
+        if (g_config.kill_reticle)
+            return false;
+        // Preserve the original short-circuit exactly when hiding is disabled.
+        if (!g_gameIsPlayback)
+            return true;
+        if (!g_gameIsPlayback())
+            return true;
+        return g_realHudCrosshairVisible(userIndex);
     }
 
     // (HudPlaceHook removed 2026-07-19: the 0x2EEFC8 out-struct was MEASURED —
@@ -2518,8 +2493,8 @@ namespace
     // DISPROVED (0x146 was a nav dot, not the crosshair; 0x32F97C copies only
     // 0x144..0x147) — the stomping suppressed the whole HUD except the objective
     // text and the F1 element checkboxes did nothing. The CHUD struct is now
-    // fully game-managed; the only element control is the verified 0x2EDF24
-    // element-hider (HudElementHook, user-picked reticle id). Do not write into
+    // fully game-managed; the only element control is the class-gated
+    // crosshair predicate in 0x2EDF24. Do not write into
     // the chud byte block again without headset-verified offsets.)
 
     // DIAGNOSTIC (hud_probe): log the bytes in the CHUD struct that CHANGE, to
@@ -3627,29 +3602,101 @@ namespace
                 LOG("M3: brightness signature missing/ambiguous; brightness fixed at 1.0");
         }
 
-        // HUD ELEMENT HIDER: restore the headset-proven element-submit boundary.
-        // The attempted type-2 visibility predicate at 0x2EDE38 did not hide the
-        // visible weapon crosshair in-headset (2026-07-19), so it is not retained.
-        // The menu stays simple; the last proven element id remains in the config.
+        // HUD CROSSHAIR CLASS HIDER. H3EK and ManagedDonkey agree that class 2
+        // is the authoritative crosshair marker. chud_draw_widget already checks
+        // that class, but game_is_playback short-circuits the check during normal
+        // play. NOP only that short-circuit and hook the existing class-gated
+        // predicate; no tag-table reads are added to the render hook.
         {
             const char* kHudElemSig =
                 "48 89 5C 24 10 57 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 41 8A F9 45 0F B7 C0";
             uintptr_t hudElem = sig::Find(base, size, kHudElemSig);
-            if (hudElem && !sig::Find(hudElem+1, base+size-hudElem-1, kHudElemSig))
+            bool uniqueHudElem = hudElem != 0;
+            if (uniqueHudElem)
+                uniqueHudElem = sig::Find(hudElem + 1, base + size - hudElem - 1,
+                                          kHudElemSig) == 0;
+            if (uniqueHudElem)
             {
-                if (MH_CreateHook(reinterpret_cast<void*>(hudElem),
-                                  reinterpret_cast<void*>(&HudElementHook),
-                                  reinterpret_cast<void**>(&g_realHudElement)) == MH_OK &&
-                    MH_EnableHook(reinterpret_cast<void*>(hudElem)) == MH_OK)
-                    LOG("M3: stock-crosshair element hider hooked at halo3.dll+0x%llX "
-                        "(remembered id 0x%X)",
-                        (unsigned long long)(hudElem - base),
-                        g_config.reticle_element_id);
+                const unsigned char expectedClassGate[] = {
+                    0x74, 0x17, 0xB8, 0x02, 0x00, 0x00, 0x00,
+                    0x66, 0x41, 0x3B, 0x42, 0x04, 0x75, 0x0B,
+                    0x8B, 0xCB, 0xE8
+                };
+                unsigned char* classGate =
+                    reinterpret_cast<unsigned char*>(hudElem + 0x84);
+                bool layoutMatches =
+                    memcmp(classGate, expectedClassGate,
+                           sizeof(expectedClassGate)) == 0;
+                if (reinterpret_cast<unsigned char*>(hudElem)[0x7D] != 0xE8)
+                    layoutMatches = false;
+                if (layoutMatches)
+                {
+                    const uintptr_t playbackTarget =
+                        sig::RipTarget(hudElem + 0x7E, hudElem + 0x82);
+                    const uintptr_t visibleTarget =
+                        sig::RipTarget(hudElem + 0x95, hudElem + 0x99);
+                    bool targetsInModule = playbackTarget >= base;
+                    if (playbackTarget >= base + size)
+                        targetsInModule = false;
+                    if (visibleTarget < base)
+                        targetsInModule = false;
+                    if (visibleTarget >= base + size)
+                        targetsInModule = false;
+                    if (targetsInModule)
+                    {
+                        g_gameIsPlayback =
+                            reinterpret_cast<GameIsPlaybackFn>(playbackTarget);
+                        const MH_STATUS createStatus = MH_CreateHook(
+                            reinterpret_cast<void*>(visibleTarget),
+                            reinterpret_cast<void*>(&HudCrosshairVisibleHook),
+                            reinterpret_cast<void**>(&g_realHudCrosshairVisible));
+                        bool hookReady = createStatus == MH_OK;
+                        if (hookReady)
+                            hookReady = MH_EnableHook(
+                                reinterpret_cast<void*>(visibleTarget)) == MH_OK;
+                        if (hookReady)
+                        {
+                            DWORD oldProtect = 0;
+                            if (VirtualProtect(classGate, 2, PAGE_EXECUTE_READWRITE,
+                                               &oldProtect))
+                            {
+                                classGate[0] = 0x90;
+                                classGate[1] = 0x90;
+                                FlushInstructionCache(GetCurrentProcess(),
+                                                      classGate, 2);
+                                DWORD ignored = 0;
+                                VirtualProtect(classGate, 2, oldProtect, &ignored);
+                                LOG("M3: native CHUD crosshair class hider active "
+                                    "at halo3.dll+0x%llX",
+                                    (unsigned long long)(hudElem - base));
+                            }
+                            else
+                            {
+                                MH_DisableHook(reinterpret_cast<void*>(visibleTarget));
+                                MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+                                LOG("M3: CHUD class gate protection failed; "
+                                    "game reticle stays visible");
+                            }
+                        }
+                        else
+                        {
+                            if (createStatus == MH_OK)
+                                MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+                            LOG("M3: CHUD crosshair predicate hook failed; "
+                                "game reticle stays visible");
+                        }
+                    }
+                    else
+                        LOG("M3: CHUD class targets outside halo3.dll; "
+                            "game reticle stays visible");
+                }
                 else
-                    LOG("M3: HUD element hook failed; game reticle stays visible");
+                    LOG("M3: CHUD class-gate layout mismatch; "
+                        "game reticle stays visible");
             }
             else
-                LOG("M3: HUD element signature missing/ambiguous; game reticle stays visible");
+                LOG("M3: HUD element signature missing/ambiguous; "
+                    "game reticle stays visible");
         }
 
         // (0x2EEFC8 placement hook removed — measured: no coordinates there.)
@@ -3796,7 +3843,7 @@ namespace
 
         // (CHUD visibility-snapshot hook removed 2026-07-19 evening — its forced
         // byte writes used a disproven offset map and suppressed the HUD. The
-        // reticle kill lives in HudElementHook / 0x2EDF24 only.)
+        // reticle kill uses Halo's class-gated path inside 0x2EDF24 only.)
 
         // RECONSTRUCTION Phase 0: hook the engine's FP render driver and
         // resolve the guard global that gates its first in-window call site.
@@ -3915,46 +3962,6 @@ void Game_Init()
 
 bool Game_IsHooked() { return g_hooked; }
 bool Game_IsHeadTracking() { return g_enabled.load(); }
-
-// Copy the set of HUD element ids seen so far (for the menu's reticle picker).
-// Reads the render-thread-written atomics; returns the count copied.
-int Game_CopySeenHudIds(uint16_t* out, int maxOut)
-{
-    int n = g_seenHudIdCount.load(std::memory_order_acquire);
-    if (n > maxOut) n = maxOut;
-    for (int i = 0; i < n; ++i)
-        out[i] = g_seenHudIds[i].load(std::memory_order_relaxed);
-    return n;
-}
-
-// F4: advance the hidden HUD element to the next one the game has drawn (wrapping
-// from none -> first). Lets the user find the center crosshair by tapping the key
-// in-game (menu CLOSED, so the crosshair is fully visible) and stopping the
-// moment it disappears. Persists so it sticks.
-void Game_CycleReticleElement()
-{
-    uint16_t ids[64];
-    const int n = Game_CopySeenHudIds(ids, 64);
-    if (n <= 0)
-    { LOG("reticle-find: no HUD elements seen yet — get a weapon out first"); return; }
-    int cur = -1;
-    for (int i = 0; i < n; ++i)
-        if ((int)ids[i] == g_config.reticle_element_id) { cur = i; break; }
-    cur = (cur + 1 >= n) ? 0 : cur + 1;
-    g_config.reticle_element_id = ids[cur];
-    g_config.kill_reticle = true;
-    ConfigSave();
-    LOG("reticle-find: hiding HUD element id 0x%X (%d of %d) — stop when the "
-        "center crosshair is gone; F5 resets", g_config.reticle_element_id, cur + 1, n);
-}
-
-// F5: stop hiding (show all HUD elements again) — for when you overshoot.
-void Game_ClearReticleElement()
-{
-    g_config.reticle_element_id = -1;
-    ConfigSave();
-    LOG("reticle-find: reset — no HUD element hidden");
-}
 
 // HUD size (F1 menu): manual rescan + status. The scan normally starts itself
 // (HudSizeAutoTick) whenever hud_size is non-stock and no slots are located.

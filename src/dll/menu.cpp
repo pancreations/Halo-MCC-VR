@@ -177,56 +177,8 @@ namespace
         changed |= ImGui::SliderFloat("Gun forward offset (m)", &g_config.gun_forward_m, -0.3f, 0.5f, "%.2f");
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         changed |= ImGui::Checkbox("Hide game reticle (use VR reticle only)", &g_config.kill_reticle);
-        ImGui::TextDisabled("Hides Halo's remembered centered crosshair.\n"
+        ImGui::TextDisabled("Hides every native CHUD crosshair class.\n"
                             "The motion-control VR reticle stays visible.");
-        if (g_config.kill_reticle)
-        {
-            ImGui::Indent();
-            uint16_t ids[64];
-            const int nids = Game_CopySeenHudIds(ids, 64);
-            int cur = -1;
-            for (int i = 0; i < nids; ++i)
-            {
-                if ((int)ids[i] == g_config.reticle_element_id)
-                {
-                    cur = i;
-                    break;
-                }
-            }
-            if (g_config.reticle_element_id < 0)
-                ImGui::TextUnformatted("Hide target: none selected");
-            else
-                ImGui::Text("Hide target: 0x%X  (%d of %d)",
-                            g_config.reticle_element_id, cur + 1, nids);
-            if (ImGui::Button("Previous HUD element##ret"))
-            {
-                if (nids > 0)
-                {
-                    cur = (cur <= 0) ? nids - 1 : cur - 1;
-                    g_config.reticle_element_id = ids[cur];
-                    changed = true;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Next HUD element##ret"))
-            {
-                if (nids > 0)
-                {
-                    cur = (cur + 1 >= nids) ? 0 : cur + 1;
-                    g_config.reticle_element_id = ids[cur];
-                    changed = true;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("None##ret"))
-            {
-                g_config.reticle_element_id = -1;
-                changed = true;
-            }
-            ImGui::TextDisabled("With a weapon out, click Next until the centered oval disappears.\n"
-                                "Leave it on that target; it saves automatically.");
-            ImGui::Unindent();
-        }
         changed |= ImGui::Checkbox("Bone probe (diagnostic)", &g_config.weapon_probe);
         ImGui::TextDisabled("Pushes every composed skeleton (bipeds/NPCs + FP) 1m left.\n"
                             "Bodies visibly shifting = their bones are writable (VRIK stage A2).");

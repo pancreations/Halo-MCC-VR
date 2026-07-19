@@ -63,13 +63,9 @@ struct Config
     // objective text. The native HUD is fully game-managed now; the only
     // element control is the reticle kill below.)
 
-    // Hide the game's centered weapon reticle. It's head-locked (causes eye
-    // strain in VR) and redundant with our floating VR reticle. The verified
-    // element-submit hook skips the remembered crosshair element id.
+    // Hide every native CHUD widget collection marked scripting class
+    // crosshair. The head-locked game cursor is redundant with our VR reticle.
     bool kill_reticle = true;
-    // Headset-confirmed assault-rifle crosshair element. IDs may vary with
-    // weapon/tag data, so the F1 picker remains available as a safe fallback.
-    int reticle_element_id = 0x62C;
 
     // Game brightness / gamma (0x278EE0's screen color constant). 1.0 = the game's
     // own brightness; higher = brighter, lower = darker. NOT a HUD control — the
