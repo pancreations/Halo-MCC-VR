@@ -271,21 +271,30 @@ namespace
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Picture");
-        changed |= ImGui::SliderFloat("Resolution scale", &g_config.resolution_scale,
-                                      0.50f, 1.00f, "%.2fx");
-        if (ImGui::SmallButton("Native (1.00)##res"))
+        const char* resolutionPresets[] = {
+            "Potato (50%)", "Low (67%)", "Medium (80%)",
+            "High (100%)", "Ultra (110%)"
+        };
+        const float resolutionScales[] = {0.50f, 0.67f, 0.80f, 1.00f, 1.10f};
+        int resolutionPreset = 3;
+        if (g_config.resolution_scale < 0.585f)
+            resolutionPreset = 0;
+        else if (g_config.resolution_scale < 0.735f)
+            resolutionPreset = 1;
+        else if (g_config.resolution_scale < 0.90f)
+            resolutionPreset = 2;
+        else if (g_config.resolution_scale >= 1.05f)
+            resolutionPreset = 4;
+        else
+            resolutionPreset = 3;
+        if (ImGui::Combo("Resolution preset", &resolutionPreset,
+                         resolutionPresets, 5))
         {
-            g_config.resolution_scale = 1.00f;
+            g_config.resolution_scale = resolutionScales[resolutionPreset];
             changed = true;
         }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Low test (0.67)##res"))
-        {
-            g_config.resolution_scale = 0.67f;
-            changed = true;
-        }
-        ImGui::TextDisabled("Lowers Halo's internal pixel count for performance. Restart required.\n"
-                            "The complete eye still fills the headset's full projection.");
+        ImGui::TextDisabled("Potato/Low/Medium reduce pixel count; Ultra supersamples.\n"
+                            "Changing this requires a full game restart. Close MCC and relaunch.");
         changed |= ImGui::SliderFloat("Game brightness", &g_config.game_brightness, 0.5f, 2.0f, "%.2f");
         ImGui::TextDisabled("Brightens/darkens the whole game. 1.0 = the game's own brightness.");
         changed |= ImGui::Checkbox("Motion blur", &g_config.motion_blur);

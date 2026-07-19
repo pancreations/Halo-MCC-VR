@@ -24,7 +24,16 @@ static void Clamp()
     g_config.reticle_b = std::clamp(g_config.reticle_b, 0.0f, 1.0f);
     g_config.gun_scale = std::clamp(g_config.gun_scale, 0.3f, 3.0f);
     g_config.game_brightness = std::clamp(g_config.game_brightness, 0.5f, 2.0f);
-    g_config.resolution_scale = std::clamp(g_config.resolution_scale, 0.50f, 1.00f);
+    if (g_config.resolution_scale < 0.585f)
+        g_config.resolution_scale = 0.50f;
+    else if (g_config.resolution_scale < 0.735f)
+        g_config.resolution_scale = 0.67f;
+    else if (g_config.resolution_scale < 0.90f)
+        g_config.resolution_scale = 0.80f;
+    else if (g_config.resolution_scale < 1.05f)
+        g_config.resolution_scale = 1.00f;
+    else
+        g_config.resolution_scale = 1.10f;
     g_config.hud_size = std::clamp(g_config.hud_size, 0.30f, 1.00f);
     g_config.left_hand_forward_m = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
@@ -214,7 +223,9 @@ void ConfigSave()
     fprintf(f, "kill_reticle = %d\n\n", g_config.kill_reticle ? 1 : 0);
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
     fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);
-    fprintf(f, "# Internal game-render resolution (0.50-1.00). Restart required.\n");
+    fprintf(f, "# Internal render preset: 0.50 potato, 0.67 low, 0.80 medium,\n");
+    fprintf(f, "# 1.00 high, or 1.10 ultra.\n");
+    fprintf(f, "# Restart the game after changing this value.\n");
     fprintf(f, "# The headset projection stays full-size; the complete eye is upscaled.\n");
     fprintf(f, "resolution_scale = %.2f\n\n", g_config.resolution_scale);
     fprintf(f, "# HUD size: fraction of the view the HUD lays out into (0.30-1.00).\n");

@@ -102,10 +102,16 @@ static float ReadResolutionScale(const std::wstring& path)
         }
         fclose(f);
     }
-    if (scale < 0.50f)
+    if (scale < 0.585f)
         scale = 0.50f;
-    if (scale > 1.00f)
+    else if (scale < 0.735f)
+        scale = 0.67f;
+    else if (scale < 0.90f)
+        scale = 0.80f;
+    else if (scale < 1.05f)
         scale = 1.00f;
+    else
+        scale = 1.10f;
     return scale;
 }
 
