@@ -5,6 +5,7 @@ A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 ## Current status
 
 The headset-proven recovery baseline is Git commit 330a568 on branch recovery/best-working-20260719-1300.
+The safe cleanup branch retains that exact runtime source and changes documentation/repository hygiene only. A broader runtime cleanup was rejected after a headset fatal error during level transition.
 
 Working in Halo 3 on PSVR2 through SteamVR OpenXR:
 

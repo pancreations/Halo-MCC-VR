@@ -4,10 +4,10 @@ CURRENT-STATE.md is the authority for what works and what must not be repeated.
 
 ## Gate 1: lock the recovered baseline
 
-- Build and deploy the cleanup branch.
+- Keep the deployed runtime at the headset-proven 330a568 source. The broad cleanup at 42a1276 caused a fatal level-transition regression and was reverted at ddfe109.
 - Headset regression test: level load, stereo, head tracking, movement, firing, reload, melee, grenade, reticle, and both arms.
 - Weapon check: spawn shotgun first, then assault rifle and pistol. Confirm the left hand stays under controller control before and after switching or melee.
-- If anything regresses, return to 330a568 and compare one subsystem at a time.
+- Remove dormant runtime code only one independently understood path at a time, on its own commit and headset build. If anything regresses, return to 330a568 immediately.
 
 ## Gate 2: weapon coverage
 

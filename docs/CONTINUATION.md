@@ -4,7 +4,9 @@ Start with CURRENT-STATE.md; it contains the current behavior, recovery commits,
 
 Current protected baseline: 330a568 on recovery/best-working-20260719-1300.
 
-Current work branch: cleanup/production-baseline-20260719. This branch removes diagnostic hot-loop code, abandoned experiments, stale config/menu switches, and contradictory notes without intentionally changing gameplay behavior.
+Current work branch: cleanup/production-baseline-20260719. Commit ddfe109 restores its runtime source exactly from 330a568; the branch retains only the documentation and repository-hygiene cleanup. Commit 42a1276 attempted a broad runtime cleanup and caused a headset fatal error during the first level transition. It is preserved only as failure evidence and must not be deployed.
+
+The currently installed DLL was rebuilt cleanly from 330a568 and byte-verified on 2026-07-19 at 13:47. Do not infer that dormant code is safe to remove merely because it looks unused. Isolate one candidate per branch, preserve the exact runtime baseline, and require a headset level-load test before keeping it.
 
 Before coding:
 

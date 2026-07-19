@@ -6,7 +6,8 @@ Authoritative as of 2026-07-19. If another note conflicts with this file, this f
 
 - Headset-proven baseline: 330a568
 - Protected branch: recovery/best-working-20260719-1300
-- Cleanup branch: cleanup/production-baseline-20260719
+- Safe documentation-cleanup branch: cleanup/production-baseline-20260719; runtime restored by ddfe109
+- Failed broad runtime-cleanup commit: 42a1276 (preserved for diagnosis; never deploy)
 - Pre-recovery master: ad61f8d
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
@@ -35,7 +36,7 @@ The active path is deliberately small:
 6. The CHUD element-submit hook hides only the configured centered reticle.
 7. At startup, a unique signature changes the stock first-person weapon-IK decision from 74 05 to EB 18. This selects Halo's own no-weapon-IK branch and prevents shotgun-specific authored pump grip IK from overriding the left controller arm.
 
-No diagnostic mode is part of the saved configuration. Old keys are accepted and ignored so existing config files continue to load.
+The working runtime still contains dormant diagnostic and fallback code inherited from 330a568. Its defaults are the headset-proven behavior. Do not enable, remove, or consolidate those paths in bulk: commit 42a1276 performed a broad cleanup, built successfully, then produced a fatal error at the first level transition. Remove only one independently understood path per branch and headset test.
 
 ## Safety invariants
 
@@ -63,12 +64,13 @@ No diagnostic mode is part of the saved configuration. Old keys are accepted and
 | Synthetic shotgun palette fallback | Did not affect the stuck support hand | Native weapon IK was the overriding consumer |
 | Unverified manual deployment | Re-tested a stale DLL across sessions | Use deploy.bat auto and compare timestamps/hashes |
 | Right-eye-first/trace/census modes | Useful once, no production behavior | Recreate temporary probes on a disposable branch only |
+| Broad runtime/config cleanup at 42a1276 | Built and launched, then fatal error at the first level transition before weapon/palette logging | Never deploy 42a1276; clean one independently verified path per headset build |
 
 ## Known limitations
 
 - Halo 3 only is validated; ODST is not.
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
-- Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol after this cleanup, then cover every weapon class.
+- Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
 - The native HUD remains full-size. The centered game reticle requires selecting the correct observed element id.
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
