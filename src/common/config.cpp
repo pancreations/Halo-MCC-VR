@@ -91,12 +91,9 @@ void ConfigLoad(const wchar_t* path)
             g_config.gun_scale = (float)atof(val);
         else if (!strcmp(key, "bullet_snap"))
             continue; // retired: the composed-wrist snap was reverted (hand spin); accept old cfgs quietly
-        else if (!strcmp(key, "hud_probe"))
-            g_config.hud_probe = atoi(val) != 0;
-        else if (!strcmp(key, "bullet_probe"))
-            g_config.bullet_probe = atoi(val) != 0;
-        else if (!strcmp(key, "weapon_probe"))
-            g_config.weapon_probe = atoi(val) != 0;
+        else if (!strcmp(key, "hud_probe") || !strcmp(key, "bullet_probe") ||
+                 !strcmp(key, "weapon_probe"))
+            continue; // retired diagnostics; accept old config files quietly
         else if (!strcmp(key, "gun_pitch_deg"))
             g_config.gun_pitch_deg = (float)atof(val);
         else if (!strcmp(key, "gun_yaw_deg"))
@@ -132,7 +129,7 @@ void ConfigLoad(const wchar_t* path)
         else if (!strcmp(key, "crouch_by_height") || !strcmp(key, "crouch_threshold_m"))
             continue; // removed feature; accept old config files quietly
         else if (!strcmp(key, "body_wip"))
-            g_config.body_wip = atoi(val) != 0;
+            continue; // retired experiment; accept old config files quietly
         else if (!strcmp(key, "arm_ik"))
             g_config.arm_ik = atoi(val) != 0;
         else if (!strcmp(key, "right_shoulder_drop"))
@@ -142,7 +139,7 @@ void ConfigLoad(const wchar_t* path)
         else if (!strcmp(key, "motion_blur"))
             g_config.motion_blur = atoi(val) != 0;
         else if (!strcmp(key, "right_eye_first"))
-            g_config.right_eye_first = atoi(val) != 0;
+            continue; // retired diagnostic; accept old config files quietly
         else if (*key)
             LOG("config: unknown key '%s' ignored", key);
     }
@@ -223,20 +220,8 @@ void ConfigSave()
     fprintf(f, "# Keep the IK shoulders level with the horizon instead of pitching\n");
     fprintf(f, "# with your head. 1 = level torso (shoulders stay put); 0 = old.\n");
     fprintf(f, "shoulder_level = %d\n\n", g_config.shoulder_level ? 1 : 0);
-    fprintf(f, "# VRIK stage A1: show the player's game-animated body (experimental).\n");
-    fprintf(f, "body_wip = %d\n\n", g_config.body_wip ? 1 : 0);
     fprintf(f, "# Halo's camera motion blur: 0 = off (VR default; also removes the\n");
     fprintf(f, "# repeating echo artifacts in stereo), 1 = the game's normal blur.\n");
     fprintf(f, "motion_blur = %d\n\n", g_config.motion_blur ? 1 : 0);
-    fprintf(f, "# Diagnostic: 1 ignores the controller and pushes the weapon a fixed\n");
-    fprintf(f, "# distance left, to test whether the gun mesh reads our matrices.\n");
-    fprintf(f, "weapon_probe = %d\n\n", g_config.weapon_probe ? 1 : 0);
-    fprintf(f, "# Diagnostic: 1 logs the CHUD state-byte window on change (finds the\n");
-    fprintf(f, "# enemy-red reticle state and per-element HUD flags). Log-only.\n");
-    fprintf(f, "hud_probe = %d\n\n", g_config.hud_probe ? 1 : 0);
-    fprintf(f, "# Diagnostic: log camera-vs-muzzle offset on each shot (bullet origin).\n");
-    fprintf(f, "bullet_probe = %d\n\n", g_config.bullet_probe ? 1 : 0);
-    fprintf(f, "# Ghosting diagnostic: 1 renders the right eye first.\n");
-    fprintf(f, "right_eye_first = %d\n", g_config.right_eye_first ? 1 : 0);
     fclose(f);
 }

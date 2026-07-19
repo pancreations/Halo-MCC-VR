@@ -24,23 +24,7 @@ static Present1Fn g_origPresent1 = nullptr;
 static ResizeBuffersFn g_origResizeBuffers = nullptr;
 static OMSetRenderTargetsFn g_origOMSetRenderTargets = nullptr;
 
-// Hooks deliberately NOT installed here, each retired after disproving a
-// theory. Re-adding any of them costs frame time for information we already
-// have:
-//   UpdateSubresource/Map/Unmap - constant census sagged fps ~25%; the
-//     exact-match matrix matcher scored zero hits in a full session.
-//   CopyResource/CopySubresourceRegion - learned the frame-level scene
-//     snapshot pairs; per-eye substitution of both sides left the ghost
-//     unchanged. The learning also allocated a full-resolution shadow texture
-//     per eye per pair (~25 MB each) and re-copied them every eye pass.
-//   PSSetShaderResources - cross-pass history discovery promoted 0 targets in
-//     two sessions.
-//   OMSetRenderTargetsAndUnorderedAccessViews - frame-level RTV discovery
-//     promoted 0 targets.
-//   PSSetShader/VSSetShader/Draw* - the CHUD steal-and-requad classifier
-//     (2026-07-18): removed the native HUD from both eyes, never displayed
-//     its hand quad, and its calibration retry loop cost ~30 fps.
-// OMSetRenderTargets makes the two eye renders land in separate textures.
+// OMSetRenderTargets redirects the two eye renders into separate textures.
 
 static void STDMETHODCALLTYPE OMSetRenderTargetsHook(ID3D11DeviceContext* context, UINT count,
     ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv)

@@ -25,5 +25,10 @@ cmake_install.cmake
 # Local-only files
 *.log
 local/
+camscan_*.bin
+recovery-*/
+tools/__pycache__/
+tools/*.CT
+
 # Third-party source kept locally for reference (praydog/UEVR) — not ours to ship
 reference/

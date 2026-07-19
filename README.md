@@ -1,54 +1,44 @@
-# Halo 3 MCC OpenXR (working title)
+# Halo 3 MCC OpenXR
 
-A native OpenXR VR mod for **Halo 3** and **Halo 3: ODST** in *Halo: The Master Chief Collection* (Steam, PC).
+A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 
-> **Status: M0 and M1 work. M2 true per-eye stereo rendering is working on PSVR2 via SteamVR and is in validation/polish.**
+## Current status
 
-## Planned features
+The headset-proven recovery baseline is Git commit 330a568 on branch recovery/best-working-20260719-1300.
 
-- **Full 6DOF head tracking and stereo rendering** — real VR, not a flat screen in a headset
-- **6DOF motion controls** — weapon aim decoupled from your view, driven by your VR controller
-- **In-headset settings menu** (UEVR-style) — resolution scale, world scale, snap turn, and comfort options adjustable live without leaving the game
-- **Clean install/uninstall via .bat** — no game files are ever modified; uninstalling deletes the mod files and nothing else
-- Pure **OpenXR** — works with any OpenXR runtime (SteamVR, including PSVR2 via Sony's PC adapter)
+Working in Halo 3 on PSVR2 through SteamVR OpenXR:
 
-## What it will require
+- true per-eye stereo and 6DOF head tracking;
+- Sense-controller input, snap/smooth turning, melee, grenades, and menu control;
+- controller-driven weapon aim and floating VR reticle;
+- articulated VRIK arms;
+- free left support hand on the shotgun, with assault rifle and pistol as the known-good comparison;
+- native HUD with the centered game reticle hidden by the selected HUD element;
+- motion blur disabled by default to prevent stereo echo artifacts;
+- verified build/deploy workflow.
 
-- Halo: The Master Chief Collection on **Steam** (you must own it — this mod contains zero game files)
-- A PC VR headset with an OpenXR runtime
-- The game must be launched **without Easy Anti-Cheat** (Steam's built-in option; the installer sets this up). This means no online matchmaking while modded — campaign, co-op custom games, and Forge still work.
-- Performance target: playable on an RTX 2070 Super-class GPU using resolution scaling
+This is a development build, not yet a public release. ODST, every weapon, scopes, vehicles, cutscenes, performance targets, and friend-machine installation still need systematic validation. See docs/CURRENT-STATE.md.
 
-## Milestones
+## Build
 
-| Stage | What you get | Status |
-|---|---|---|
-| M0 | Mod injects into the game, .bat install/uninstall works, game shows on a giant virtual screen in the headset, in-headset menu opens | **working** |
-| M1 | Your head controls the in-game camera (look around for real) | **working** (rotation + leaning, camera found by signature) |
-| M2 | True stereoscopic 3D rendering | **working** (per-eye raster; validation/polish underway) |
-| M3 | 6DOF motion controls — aim your weapon with your hands | not started |
-| M4 | HUD projected into 3D space, comfort options, ODST verification, polish | not started |
+Requirements: Visual Studio 2022 C++ workload, CMake, Git, and x64.
 
-## Building from source (developers)
+    cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+    cmake --build build --config Release
 
-Requires Visual Studio 2022 with the C++ workload (CMake and Git are bundled). From the repo root:
+For the development machine, close MCC and run:
 
-```
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-cmake --install build --config Release --prefix dist --component dist
-```
+    .\deploy.bat auto
 
-`dist/` then contains everything a user needs: `halo3xr.dll`, `halo3xr_launcher.exe`,
-`install.bat`, `uninstall.bat`. The three dependencies (OpenXR loader, MinHook, Dear ImGui)
-are fetched and built automatically by CMake — no manual setup. Binaries link the static C
-runtime, so target machines need no Visual C++ redistributable.
+The deploy script stops on build failure and byte-compares the built and installed DLL.
 
-## Credits & prior art
+## Requirements and safety
 
-- [HaloCEVR](https://github.com/LivingFray/HaloCEVR) by LivingFray — the open-source VR mod for the original 2003 Halo CE that proves every one of these features is possible in a Blam engine, and whose design this project learns from
-- [ReclaimerVR](https://github.com/Nibre/ReclaimerVR) by Nibre — the unreleased MCC VR prototype that proved it can be done in MCC specifically
+- Steam copy of MCC and an OpenXR headset/runtime.
+- Launch through MCC's official "Play without anti-cheat" mode.
+- No game files are patched or redistributed.
+- Do not use the mod in anti-cheat-enabled matchmaking.
 
-## Legal
+## Credits
 
-This mod injects code into a running game the user already owns. It contains and distributes **no** Microsoft/343 Industries game assets or binaries. Halo is a trademark of Microsoft Corporation. This project is not affiliated with or endorsed by Microsoft or 343 Industries / Halo Studios.
+Inspired by HaloCEVR by LivingFray and the proof of concept ReclaimerVR by Nibre. Halo is a Microsoft trademark; this project is not affiliated with Microsoft or Halo Studios.

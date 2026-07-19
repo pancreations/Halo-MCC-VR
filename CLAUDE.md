@@ -1,47 +1,33 @@
-# CLAUDE.md — project context for Claude sessions
+# Project instructions
 
-## What this project is
-0000000000000000000000000000000
-A native OpenXR VR mod for Halo 3 + Halo 3: ODST in Halo: The Master Chief Collection (Steam).
-Injected C++ DLL that hooks the game's D3D11 renderer and camera, submits stereo frames via
-OpenXR, drives weapon aim from motion controllers, and shows a Dear ImGui settings menu on an
-OpenXR quad layer. Ships with a .bat installer/uninstaller. See `docs/PLAN.md` for the full
-technical plan, decisions log, and milestone acceptance criteria — read it before starting work.
+Halo 3 OpenXR is a native C++20 OpenXR VR mod for Halo 3 in MCC Steam. Before changing code, read docs/CURRENT-STATE.md. It is the only authoritative status and failure ledger. docs/RE-notes.md contains only verified reverse-engineering facts.
 
-## The user
+## User and testing
 
-- **No coding experience.** Background is game modding via guides and Blender.
-  - Explain what code does and why in plain language as you go. Define jargon on first use.
-  - Claude writes all the code. The user runs the game, tests in the headset, and reports back.
-  - When a step needs the user to do something (run the game, put on the headset, read a value
-    from Cheat Engine), give exact click-by-click instructions.
-- Hardware: PSVR2 (via Sony PC adapter → SteamVR → SteamVR's OpenXR runtime), RTX 5070 Ti.
-- Goal: public free release eventually; near-term must be installable by a friend via the .bat.
-- Performance target: playable on an RTX 2070 Super (friend's class of GPU) via resolution scale.
+The user is a game modder, not a programmer. Explain test steps in plain language. Headset results outrank theories, logs, and desktop appearance. Do not claim a fix until the user has tested the exact deployed DLL.
 
-## Key paths and facts
+## Non-negotiable workflow
 
-- Game install: `N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection`
-- Host process: `MCC\Binaries\Win64\MCC-Win64-Shipping.exe` (v1.3528.0.0 as of 2026-07-10)
-- Engine DLL / RE target: `halo3\halo3.dll` (~10.6 MB, loaded at runtime by the host process;
-  same engine family covers ODST)
-- MCC's frontend menus are UE4; the games are native Blam engine. UEVR is not applicable.
-- Dev machine is Windows 11, PowerShell 5.1 default shell.
+1. Start from a clean Git branch and create a checkpoint before risky work.
+2. Make one evidence-backed behavioral change per test build.
+3. Build Release and stop on any compiler error.
+4. Deploy only with deploy.bat auto; it checks that MCC is closed, builds, copies, and byte-compares the DLL.
+5. Match the deployed DLL timestamp/hash to the first line of halo3xr.log.
+6. Record the headset result. Revert failed experiments instead of leaving dormant switches, probes, or fallback paths.
+7. Locate engine code with unique AOB signatures. Never ship a guessed hardcoded address.
+8. Keep logging, file I/O, locks, COM, and allocation out of render and palette hot hooks.
+9. Never patch game files on disk or interact with Easy Anti-Cheat. The mod runs only through MCC's official EAC-disabled mode.
+10. Never hook halo3+0x120DF8; even a pass-through detour crashed on level load.
 
-## Hard rules
+## Paths
 
-- **Never modify, patch on disk, or redistribute any game file.** All modification is in-memory
-  at runtime. Install = copy our files + create an EAC-off launch shortcut; uninstall = delete them.
-- The game must be launched with Easy Anti-Cheat disabled (Steam's official
-  "Play without anti-cheat" option). Never attempt to bypass or tamper with EAC itself.
-- Find game addresses via **AOB/signature scanning**, never hardcoded offsets — MCC updates
-  shift addresses and the mod must survive patches (or fail gracefully with a clear message).
-- OpenXR only. No OpenVR/SteamVR API calls in mod code.
-- Source lives here; built artifacts get copied into the game folder by the install script.
+- Source: N:\dev\halo3-openxr
+- Game: N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection
+- Host: MCC\Binaries\Win64\MCC-Win64-Shipping.exe
+- Engine: halo3\halo3.dll
+- Deployed mod: halo3xr\halo3xr.dll
+- Runtime log: halo3xr\halo3xr.log
 
-## Tech stack (agreed)
+## Definition of done
 
-- C++20, x64, MSVC (Visual Studio 2022), CMake
-- OpenXR SDK (Khronos loader), D3D11 graphics binding
-- MinHook for function hooking; Dear ImGui for the in-headset menu
-- Config as a plain-text file next to the DLL so users can hand-edit
+A code change is complete only after a Release build succeeds, the diff contains no accidental behavior changes, deployment verifies byte-for-byte, and the requested behavior is confirmed in the headset. A failed signature must log clearly and leave the game running safely.
