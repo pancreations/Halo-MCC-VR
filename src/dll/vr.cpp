@@ -2310,6 +2310,16 @@ bool VR_GetEyeFov(int eye, float outFov[4])
            outFov[2] > 0.0f && outFov[3] < 0.0f;
 }
 
+bool VR_GetGameRenderAspect(float& outAspect)
+{
+    if (!g_gameBackbufferDescValid || !g_gameBackbufferDesc.Width ||
+        !g_gameBackbufferDesc.Height)
+        return false;
+    outAspect = static_cast<float>(g_gameBackbufferDesc.Width) /
+                static_cast<float>(g_gameBackbufferDesc.Height);
+    return isfinite(outAspect) && outAspect > 0.1f;
+}
+
 void VR_GetStatus(VrStatus& out)
 {
     out = g_status;

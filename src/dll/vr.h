@@ -70,6 +70,10 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3]);
 bool VR_IsTwoHandAiming();
 // Latest OpenXR per-eye FOV angles: left, right, up, down (radians).
 bool VR_GetEyeFov(int eye, float outFov[4]);
+// Pixel aspect of Halo's main render surface. Halo lays native 2D HUD geometry
+// out for this shape, which can differ substantially from the headset's
+// tangent-space view aspect.
+bool VR_GetGameRenderAspect(float& outAspect);
 // M3: snapshot of the VR controllers' gamepad-like inputs, read once per frame
 // from the OpenXR action set. The XInput hook merges this into (or fabricates)
 // the gamepad state MCC reads, so the Sense controllers drive menus and game.

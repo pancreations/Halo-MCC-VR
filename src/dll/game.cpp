@@ -626,12 +626,12 @@ namespace
         return 1;
     }
 
-    static int SafeFrameWritePair(uintptr_t slot, float value)
+    static int SafeFrameWritePair(uintptr_t slot, float horizontal, float vertical)
     {
         __try
         {
-            *reinterpret_cast<volatile float*>(slot) = value;
-            *reinterpret_cast<volatile float*>(slot + 4) = value;
+            *reinterpret_cast<volatile float*>(slot) = horizontal;
+            *reinterpret_cast<volatile float*>(slot + 4) = vertical;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
         return 1;
@@ -652,17 +652,49 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
     }
 
-    // Payload plausibility: the two safe-frame floats are always written as a
-    // pair, so a real block holds an identical pair in the sane fraction
-    // range — the shipped 0.87f OR a value we applied earlier. (The first
+    // Payload plausibility: both safe-frame axes must remain in a sane fraction
+    // range. The shipped pair is 0.87/0.87; headset aspect correction can make
+    // our applied pair anisotropic. (The first
     // release accepted ONLY the shipped bits, which deadlocked: after our own
     // apply, every rescan rejected our own value — 2026-07-19 15:00 log.)
     static bool SafeFramePairPlausible(uint32_t h, uint32_t v)
     {
-        if (h != v) return false;
-        float f = 0;
-        memcpy(&f, &h, 4);
-        return f >= 0.25f && f <= 1.05f;
+        float hf = 0, vf = 0;
+        memcpy(&hf, &h, 4);
+        memcpy(&vf, &v, 4);
+        return hf >= 0.15f && hf <= 1.05f &&
+               vf >= 0.15f && vf <= 1.05f;
+    }
+
+    // Halo builds its native HUD for the game render surface's pixel aspect.
+    // In VR that image is submitted across the headset's tangent-space FOV.
+    // Those happened to agree on the PSVR2 setup the launcher was designed
+    // around. Quest 3 without OpenXR Toolkit measured 1.386 game pixels versus
+    // ~0.964 tangent-space, making the HUD geometry visibly too narrow. Keep
+    // hud_size as the larger safe-frame axis and reduce the other axis so the
+    // HUD's perceived X:Y geometry remains square on any runtime/headset.
+    static void ComputeHudSafeFramePair(float size, float& horizontal, float& vertical)
+    {
+        horizontal = vertical = size;
+        float gameAspect = 0.0f;
+        float eyeFov[4]{};
+        if (!VR_GetGameRenderAspect(gameAspect) || !VR_GetEyeFov(0, eyeFov))
+            return;
+        const float halfX = fmaxf(-eyeFov[0], eyeFov[1]);
+        const float halfY = fmaxf(eyeFov[2], -eyeFov[3]);
+        const float tanX = tanf(halfX), tanY = tanf(halfY);
+        if (!isfinite(tanX) || !isfinite(tanY) || tanX <= 0.01f || tanY <= 0.01f)
+            return;
+        const float headsetAspect = tanX / tanY;
+        const float correction = gameAspect / headsetAspect;
+        if (!isfinite(correction) || correction < 0.25f || correction > 4.0f)
+            return;
+        if (correction > 1.0f)
+            vertical = size / correction;
+        else
+            horizontal = size * correction;
+        horizontal = fmaxf(0.15f, fminf(horizontal, 1.0f));
+        vertical = fmaxf(0.15f, fminf(vertical, 1.0f));
     }
 
     DWORD WINAPI SafeFrameScanThread(LPVOID)
@@ -748,8 +780,13 @@ namespace
         if (n <= 0) return;
         const float want = g_config.hud_size;
         if (!(want >= 0.30f && want <= 1.00f)) return; // bad cfg: leave stock
+        float wantH = want, wantV = want;
+        ComputeHudSafeFramePair(want, wantH, wantV);
         uint32_t wantBits = 0;
+        uint32_t wantHBits = 0, wantVBits = 0;
         memcpy(&wantBits, &want, 4);
+        memcpy(&wantHBits, &wantH, 4);
+        memcpy(&wantVBits, &wantV, 4);
         int live = 0;
         for (int i = 0; i < n && i < kMaxSafeFrameHits; ++i)
         {
@@ -758,11 +795,14 @@ namespace
             uint32_t h = 0, v = 0;
             if (!SafeFrameVerifySlot(slot, &h, &v)) continue; // anchor gone: stale
             if (!SafeFramePairPlausible(h, v)) continue;      // junk pair: stale
-            if (h == wantBits && v == wantBits) { ++live; continue; } // already ours
-            if (SafeFrameWritePair(slot, want)) ++live;
+            if (h == wantHBits && v == wantVBits) { ++live; continue; } // already ours
+            if (SafeFrameWritePair(slot, wantH, wantV)) ++live;
         }
         if (live > 0)
+        {
             g_hudAppliedBits.store(wantBits, std::memory_order_relaxed);
+            // Pair is re-evaluated once per second as runtime FOV becomes valid.
+        }
         else
         {
             g_hudAppliedBits.store(0, std::memory_order_relaxed);
