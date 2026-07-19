@@ -72,6 +72,10 @@ struct Config
     // function once thought to size the HUD actually adjusts brightness.
     float game_brightness = 1.0f;
 
+    // Halo's internal raster resolution, applied by the launcher on the next
+    // game start. The OpenXR projection remains at the headset's full size.
+    float resolution_scale = 1.0f;
+
     // (The 0x2EEFC8 placement-slider experiment is retired: measured 2026-07-19,
     // that struct holds colors/alpha/animation only — Halo's HUD has no position
     // data to edit. The HUD panel below is the real fix.)

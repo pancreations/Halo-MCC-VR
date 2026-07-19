@@ -3,6 +3,7 @@
 #include <string>
 #include <cstdio>
 #include <cstdarg>
+#include <cmath>
 
 // Starts MCC-Win64-Shipping.exe directly — which is exactly what Steam's
 // official "Play without anti-cheat" option runs, so EAC is never started —
@@ -85,6 +86,37 @@ static bool ProcessRunning(const wchar_t* exeName)
     return found;
 }
 
+static float ReadResolutionScale(const std::wstring& path)
+{
+    float scale = 1.0f;
+    FILE* f = nullptr;
+    _wfopen_s(&f, path.c_str(), L"rt");
+    if (f)
+    {
+        char line[512];
+        while (fgets(line, sizeof(line), f))
+        {
+            float parsed = 1.0f;
+            if (sscanf_s(line, " resolution_scale = %f", &parsed) == 1)
+                scale = parsed;
+        }
+        fclose(f);
+    }
+    if (scale < 0.50f)
+        scale = 0.50f;
+    if (scale > 1.00f)
+        scale = 1.00f;
+    return scale;
+}
+
+static int ScaleEven(int base, float scale)
+{
+    int value = static_cast<int>(std::lround(static_cast<float>(base) * scale));
+    if (value & 1)
+        ++value;
+    return value;
+}
+
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
 {
     wchar_t selfPath[MAX_PATH];
@@ -159,21 +191,34 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
 
     STARTUPINFOW si{sizeof(si)};
     PROCESS_INFORMATION pi{};
-    // M2 stereo: render the game into a near-square surface matching a VR
-    // eye, rather than stretching the normal 16:9 desktop frame into the
-    // headset's 2720x2772 projection. Windowed mode avoids asking the monitor
-    // for a non-standard exclusive-fullscreen display mode.
+    // M2 stereo: render the game into a wide surface matching Halo's VR
+    // projection rather than the normal 16:9 desktop frame. Windowed mode
+    // avoids asking the monitor for a non-standard display mode.
     // PSVR2's symmetric coverage has a tangent-space aspect near 1.386:1.
     // 2912x2100 keeps approximately the same pixel cost as 2448x2496 while
     // allowing Halo to generate the correct wide raster/culling frustum.
-    // MEASURED (2026-07-14): Halo's world render cost is dominated by
-    // per-render engine/CPU work, not pixels — dropping to 2240x1616 with the
-    // 3-render ghost fix still ran at exactly 60 fps, the same as 3 renders
-    // at full size. Resolution is therefore NOT the lever for the warm-up
-    // pass cost; stay sharp. 120 fps returns when the warm-up render is
-    // eliminated (see CONTINUATION.md).
-    std::wstring cmdline = L"\"" + gameExe + L"\" -WINDOWED -ResX=2912 -ResY=2100";
-    LauncherLog("VR render command line: -WINDOWED -ResX=2912 -ResY=2100");
+    // resolution_scale reduces both dimensions together, preserving this
+    // aspect and Halo's culling/projection. The DLL then upscales the complete
+    // eye into the unchanged full-size OpenXR projection. This can help
+    // GPU-limited systems; it cannot remove CPU/per-render engine cost.
+    constexpr int kNativeRenderWidth = 2912;
+    constexpr int kNativeRenderHeight = 2100;
+    const float resolutionScale =
+        ReadResolutionScale(dir + L"/halo3xr.cfg");
+    const int renderWidth = ScaleEven(kNativeRenderWidth, resolutionScale);
+    const int renderHeight = ScaleEven(kNativeRenderHeight, resolutionScale);
+    wchar_t renderArgs[96];
+    swprintf_s(renderArgs, L" -WINDOWED -ResX=%d -ResY=%d",
+               renderWidth, renderHeight);
+    const wchar_t quote = 34;
+    std::wstring cmdline(1, quote);
+    cmdline += gameExe;
+    cmdline += quote;
+    cmdline += renderArgs;
+    LauncherLog("VR render command line: -WINDOWED -ResX=%d -ResY=%d "
+                "(resolution_scale %.2f; native %dx%d)",
+                renderWidth, renderHeight, resolutionScale,
+                kNativeRenderWidth, kNativeRenderHeight);
     if (!CreateProcessW(gameExe.c_str(), cmdline.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
                         nullptr, gameDir.c_str(), &si, &pi))
     {

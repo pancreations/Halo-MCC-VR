@@ -271,6 +271,21 @@ namespace
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Picture");
+        changed |= ImGui::SliderFloat("Resolution scale", &g_config.resolution_scale,
+                                      0.50f, 1.00f, "%.2fx");
+        if (ImGui::SmallButton("Native (1.00)##res"))
+        {
+            g_config.resolution_scale = 1.00f;
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Low test (0.67)##res"))
+        {
+            g_config.resolution_scale = 0.67f;
+            changed = true;
+        }
+        ImGui::TextDisabled("Lowers Halo's internal pixel count for performance. Restart required.\n"
+                            "The complete eye still fills the headset's full projection.");
         changed |= ImGui::SliderFloat("Game brightness", &g_config.game_brightness, 0.5f, 2.0f, "%.2f");
         ImGui::TextDisabled("Brightens/darkens the whole game. 1.0 = the game's own brightness.");
         changed |= ImGui::Checkbox("Motion blur", &g_config.motion_blur);
