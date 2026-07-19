@@ -67,9 +67,9 @@ struct Config
     // strain in VR) and redundant with our floating VR reticle. The verified
     // element-submit hook skips the remembered crosshair element id.
     bool kill_reticle = true;
-    // Last headset-proven crosshair element. IDs can vary with weapon/tag data;
-    // the simple menu intentionally does not expose the old calibration controls.
-    int reticle_element_id = -1;
+    // Headset-confirmed assault-rifle crosshair element. IDs may vary with
+    // weapon/tag data, so the F1 picker remains available as a safe fallback.
+    int reticle_element_id = 0x62C;
 
     // Game brightness / gamma (0x278EE0's screen color constant). 1.0 = the game's
     // own brightness; higher = brighter, lower = darker. NOT a HUD control — the
