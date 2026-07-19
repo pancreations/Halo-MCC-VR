@@ -37,6 +37,9 @@ The user confirmed that this frees the shotgun left arm. The removed synthetic p
 ## HUD and picture
 
 - halo3+0x2EDF24: CHUD element-submit boundary used to skip only the configured centered reticle element.
+- halo3+0x2EDE38 is called for one resolved widget type inside 0x2EDF24, but
+  forcing it false did not hide the visible weapon crosshair in the headset.
+  It is not the production crosshair-removal boundary.
 - The native HUD is the accepted rendering path.
 - The function once investigated as CHUD scale near 0x278EE0 controls screen brightness/alpha. It is used only for the brightness setting.
 - Direct CHUD state-byte writes and capture/diff HUD extraction are disproven and removed.

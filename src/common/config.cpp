@@ -203,10 +203,10 @@ void ConfigSave()
     fprintf(f, "# Push the gun forward of the controller, in meters (-0.3 to 0.5).\n");
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
-    fprintf(f, "# Hide the game's centered weapon reticle. It works by skipping one\n");
-    fprintf(f, "# HUD element; pick which one in the menu (step until the crosshair is\n");
-    fprintf(f, "# gone). kill_reticle = master on/off; reticle_element_id = which element.\n");
+    fprintf(f, "# Hide Halo's centered weapon crosshair using the remembered element.\n");
+    fprintf(f, "# The floating motion-control reticle remains visible.\n");
     fprintf(f, "kill_reticle = %d\n", g_config.kill_reticle ? 1 : 0);
+    fprintf(f, "# Remembered runtime HUD element id.\n");
     fprintf(f, "reticle_element_id = %d\n", g_config.reticle_element_id);
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
     fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);

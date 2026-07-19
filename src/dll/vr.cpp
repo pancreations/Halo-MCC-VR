@@ -1773,10 +1773,7 @@ float4 ps_pass(VSOut i) : SV_Target
                 // The menu is submitted in BOTH modes (it used to live only in
                 // the mono-screen branch, which made F1 invisible in stereo).
                 // In stereo it head-locks so it is always in front of you.
-                // Menu_HasToast: the same panel also carries the one-line
-                // background-status toast while the menu is closed, so waits
-                // (engine hooking, HUD data scan) never look like freezes.
-                if (Menu_IsOpen() || Menu_HasToast())
+                if (Menu_IsOpen())
                 {
                     if (ID3D11Texture2D* menuTex = Menu_Render())
                     {

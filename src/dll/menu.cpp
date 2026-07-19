@@ -1,7 +1,6 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <atomic>
-#include <cstring>
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
@@ -72,8 +71,6 @@ namespace
             case VK_F1: g_open = !g_open; LOG("menu %s", g_open ? "opened" : "closed"); return 0;
             case VK_F2: Game_ToggleHeadTracking(); return 0;
             case VK_F3: Game_Recenter(); return 0;
-            case VK_F4: Game_CycleReticleElement(); return 0; // find/hide the center crosshair
-            case VK_F5: Game_ClearReticleElement(); return 0; // undo (show all HUD)
             case VK_F6: Game_TogglePositional(); return 0;
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
@@ -121,15 +118,6 @@ namespace
         ImGui::SetNextWindowPos(ImVec2(16, 16), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(MENU_W - 32, MENU_H - 32), ImGuiCond_FirstUseEver);
         ImGui::Begin("Halo 3 VR — Settings (M0: virtual screen)", nullptr, ImGuiWindowFlags_NoCollapse);
-
-        // The background-status line also lives at the top of the menu: the
-        // floating toast intentionally hides while the menu is open, so this
-        // is where an open-menu user sees what's happening.
-        {
-            char bg[160];
-            if (Game_GetStatusText(bg, sizeof(bg)) > 0)
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", bg);
-        }
 
         VrStatus st{};
         VR_GetStatus(st);
@@ -189,34 +177,8 @@ namespace
         changed |= ImGui::SliderFloat("Gun forward offset (m)", &g_config.gun_forward_m, -0.3f, 0.5f, "%.2f");
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         changed |= ImGui::Checkbox("Hide game reticle (use VR reticle only)", &g_config.kill_reticle);
-        ImGui::TextDisabled("EASIEST: close this menu, have a weapon out, and tap F4 while\n"
-                            "watching the center. Each tap hides a different HUD element;\n"
-                            "stop when the old crosshair vanishes (F5 undoes it). Or step here:");
-        if (g_config.kill_reticle)
-        {
-            ImGui::Indent();
-            uint16_t ids[64];
-            const int nids = Game_CopySeenHudIds(ids, 64);
-            int cur = -1;
-            for (int i = 0; i < nids; ++i)
-                if ((int)ids[i] == g_config.reticle_element_id) { cur = i; break; }
-            if (g_config.reticle_element_id < 0)
-                ImGui::Text("Hiding: nothing picked yet  (%d HUD elements seen)", nids);
-            else
-                ImGui::Text("Hiding element id 0x%X  (%d of %d)",
-                            g_config.reticle_element_id, cur + 1, nids);
-            if (ImGui::Button("< prev##ret") && nids > 0)
-            { cur = (cur <= 0) ? nids - 1 : cur - 1; g_config.reticle_element_id = ids[cur]; changed = true; }
-            ImGui::SameLine();
-            if (ImGui::Button("Step to next element##ret") && nids > 0)
-            { cur = (cur + 1 >= nids) ? 0 : cur + 1; g_config.reticle_element_id = ids[cur]; changed = true; }
-            ImGui::SameLine();
-            if (ImGui::Button("None##ret"))
-            { g_config.reticle_element_id = -1; changed = true; }
-            ImGui::TextDisabled("Have a weapon out, then click 'Step' until the centered\n"
-                                "crosshair vanishes, and leave it there.");
-            ImGui::Unindent();
-        }
+        ImGui::TextDisabled("Hides Halo's remembered centered crosshair.\n"
+                            "The motion-control VR reticle remains visible.");
         changed |= ImGui::Checkbox("Bone probe (diagnostic)", &g_config.weapon_probe);
         ImGui::TextDisabled("Pushes every composed skeleton (bipeds/NPCs + FP) 1m left.\n"
                             "Bodies visibly shifting = their bones are writable (VRIK stage A2).");
@@ -233,18 +195,7 @@ namespace
         ImGui::TextDisabled("Fraction of the view the HUD lays out into. 0.87 = Halo stock.\n"
                             "Lower pulls shields/radar/ammo toward the center of your eyes.\n"
                             "Small nudges (0.84) are invisible - use the preset to SEE it work.");
-        {
-            int sfMatches; bool sfScanning;
-            Game_GetHudSafeFrameStatus(sfMatches, sfScanning);
-            const bool sfStock = g_config.hud_size >= 0.8695f && g_config.hud_size <= 0.8705f;
-            if (sfScanning)          ImGui::TextDisabled("status: locating HUD data (takes ~20s)...");
-            else if (sfMatches > 0)  ImGui::TextDisabled("status: active (%d tag slot pair(s))", sfMatches);
-            else if (sfStock)        ImGui::TextDisabled("status: stock size — nothing applied");
-            else                     ImGui::TextDisabled("status: waiting for a level (auto-locates)");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Rescan##sf"))
-                Game_LocateHudSafeFrames();
-        }
+        ImGui::TextDisabled("The setting applies automatically after entering a level.");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -429,46 +380,6 @@ bool Menu_IsOpen()
     return g_ready && g_open;
 }
 
-// Toast: one line of background status (engine hooking, HUD data scan) shown
-// in the headset while the menu is CLOSED, so waits never look like freezes.
-// Text lives here so the render below can reuse it on the same thread.
-static char g_toastText[160];
-
-bool Menu_HasToast()
-{
-    if (!g_ready)
-        return false;
-    const bool has = Game_GetStatusText(g_toastText, sizeof(g_toastText)) > 0;
-    // Diagnostic trail (2026-07-19: the user reported never seeing a toast):
-    // log every state change so the log proves whether this path ran at all.
-    // Compare only a prefix so per-second counter text doesn't spam the log.
-    static char lastLogged[160] = "";
-    if (has && strncmp(g_toastText, lastLogged, 24) != 0)
-    {
-        strncpy_s(lastLogged, g_toastText, _TRUNCATE);
-        LOG("TOAST: %s", g_toastText);
-    }
-    else if (!has && lastLogged[0])
-    {
-        lastLogged[0] = 0;
-        LOG("TOAST: cleared");
-    }
-    return has;
-}
-
-static void DrawToast()
-{
-    ImGui::SetNextWindowPos(ImVec2(MENU_W * 0.5f, (float)(MENU_H - 48)),
-                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    ImGui::Begin("##toast", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
-                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-    ImGui::TextUnformatted(g_toastText);
-    ImGui::End();
-}
-
 ID3D11Texture2D* Menu_Render()
 {
     if (!g_ready)
@@ -479,10 +390,7 @@ ID3D11Texture2D* Menu_Render()
     ImGui_ImplWin32_NewFrame();
     ImGui::GetIO().DisplaySize = ImVec2((float)MENU_W, (float)MENU_H); // our texture, not the window
     ImGui::NewFrame();
-    if (g_open)
-        DrawUI();       // full settings menu
-    else
-        DrawToast();    // menu closed: only the small status line
+    DrawUI();
     ImGui::Render();
 
     D3DStateBackup backup;

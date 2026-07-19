@@ -64,13 +64,11 @@ struct Config
     // element control is the reticle kill below.)
 
     // Hide the game's centered weapon reticle. It's head-locked (causes eye
-    // strain in VR) and redundant with our floating VR reticle. This works by
-    // skipping ONE HUD element at draw time — but the reticle's element id is
-    // runtime tag data, so the user identifies it in the menu (reticle_element_id
-    // below) by stepping until the crosshair disappears. ON = hide that element.
+    // strain in VR) and redundant with our floating VR reticle. The verified
+    // element-submit hook skips the remembered crosshair element id.
     bool kill_reticle = true;
-    // Which HUD element id to hide as the reticle. -1 = none picked yet. Set from
-    // the in-headset menu once the user finds the id that removes the crosshair.
+    // Last headset-proven crosshair element. IDs can vary with weapon/tag data;
+    // the simple menu intentionally does not expose the old calibration controls.
     int reticle_element_id = -1;
 
     // Game brightness / gamma (0x278EE0's screen color constant). 1.0 = the game's

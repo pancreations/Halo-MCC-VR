@@ -581,8 +581,10 @@ namespace
         0x00,0x00,0x68,0x42, 0x00,0x00,0x80,0x40 }; // 58.0f, 4.0f
     std::atomic<uintptr_t> g_safeFrameSlots[kMaxSafeFrameHits]{};
     std::atomic<int> g_safeFrameHitCount{-1}; // -1 never/none, -2 scanning, >0 found
-    std::atomic<uint32_t> g_camTicks{0};       // CamCopyHook heartbeat (level rendering)
-    std::atomic<uint64_t> g_safeFrameScanStartMs{0}; // for the toast's elapsed seconds
+    std::atomic<uint32_t> g_hudAppliedBits{0}; // last value confirmed in live slots
+    // Freshness beacon shared with auto-VR: CamCopyHook updates it only while a
+    // level camera is running. HUD discovery reads it from Present.
+    std::atomic<uint64_t> g_lastCamCopyMs{0};
     // Addresses that verified in a previous locate this session. The tag
     // allocator tends to reuse the same block on map reload, so re-checking
     // these (anchor + payload, same certainty as the scan) usually re-acquires
@@ -729,23 +731,19 @@ namespace
     {
         if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2) return;
         for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
-        g_safeFrameScanStartMs.store(GetTickCount64());
+        g_hudAppliedBits.store(0, std::memory_order_relaxed);
         g_safeFrameHitCount.store(-2, std::memory_order_release);
         HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
         if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (%s)", why); }
         else { g_safeFrameHitCount.store(-1); LOG("SAFEFRAME: scan thread create FAILED"); }
     }
 
-    // Called every frame from CamCopyHook (game thread) — same pattern as
-    // ApplyMotionBlurSetting. Writes are tiny, SEH-guarded, and no logging
-    // happens here (hot-path rule). Every slot is FULLY re-verified before
-    // every write (24-byte anchor + plausible pair — ~72 byte compares per
-    // frame, trivial): the strongest possible guard against the tag data
-    // moving out from under us. When no slot verifies anymore, all are
-    // dropped and the Present-thread auto-tick relocates them.
-    void ApplyHudSize()
+    // Present-thread, change/validation only. This used to run from every
+    // camera-copy hot-hook call; there is no need to reapply persistent tag
+    // floats hundreds of times per second. HudSizeAutoTick invokes it when the
+    // slider changes and once per second to catch a map reload.
+    void ApplyHudSizeOnce()
     {
-        g_camTicks.fetch_add(1, std::memory_order_relaxed);
         const int n = g_safeFrameHitCount.load(std::memory_order_acquire);
         if (n <= 0) return;
         const float want = g_config.hud_size;
@@ -763,8 +761,13 @@ namespace
             if (h == wantBits && v == wantBits) { ++live; continue; } // already ours
             if (SafeFrameWritePair(slot, want)) ++live;
         }
-        if (live == 0)
+        if (live > 0)
+            g_hudAppliedBits.store(wantBits, std::memory_order_relaxed);
+        else
+        {
+            g_hudAppliedBits.store(0, std::memory_order_relaxed);
             g_safeFrameHitCount.store(-1, std::memory_order_release); // relocate
+        }
     }
 
     // Instant re-acquire: after a map change the tag allocator usually puts
@@ -785,6 +788,7 @@ namespace
         }
         if (!accepted) return false;
         for (int i = accepted; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
+        g_hudAppliedBits.store(0, std::memory_order_relaxed); // force one apply
         g_safeFrameHitCount.store(accepted, std::memory_order_release);
         LOG("SAFEFRAME: reacquired %d pair(s) at previous address(es); scan skipped", accepted);
         return true;
@@ -798,15 +802,25 @@ namespace
     void HudSizeAutoTick()
     {
         const float want = g_config.hud_size;
-        if (want >= 0.8695f && want <= 0.8705f) return; // stock: zero overhead
+        uint32_t wantBits = 0;
+        memcpy(&wantBits, &want, sizeof(wantBits));
         const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
-        if (c > 0 || c == -2) return; // located or scanning
-        static uint32_t lastTicks = 0;
-        const uint32_t ticks = g_camTicks.load(std::memory_order_relaxed);
-        const bool rendering = (ticks != lastTicks);
-        lastTicks = ticks;
-        if (!rendering) return;
         const uint64_t now = GetTickCount64();
+        if (c > 0)
+        {
+            static uint64_t lastVerifyMs = 0;
+            if (g_hudAppliedBits.load(std::memory_order_relaxed) != wantBits ||
+                now - lastVerifyMs >= 1000)
+            {
+                lastVerifyMs = now;
+                ApplyHudSizeOnce();
+            }
+            return;
+        }
+        if (c == -2) return; // scan already running
+        if (want >= 0.8695f && want <= 0.8705f) return; // stock needs no locate
+        const uint64_t lastCam = g_lastCamCopyMs.load(std::memory_order_relaxed);
+        if (!lastCam || now - lastCam > 1000) return; // not rendering a level
         static uint64_t lastReacquireMs = 0;
         if (now - lastReacquireMs >= 1000)
         {
@@ -2925,17 +2939,11 @@ namespace
         }
     }
 
-    // Freshness beacon for auto-VR: this hook only fires while a level's camera
-    // is being driven (not in the MCC frontend / loading), so a recent
-    // timestamp == "in gameplay". Read by Game_AutoVrTick from the present thread.
-    std::atomic<uint64_t> g_lastCamCopyMs{0};
-
     void* __fastcall CamCopyHook(void* dst, void* src)
     {
         g_lastCamCopyMs.store(GetTickCount64(), std::memory_order_relaxed);
         ChudProbe();
         ApplyMotionBlurSetting();
-        ApplyHudSize();
         ProbeBulletOrigin();
         ApplyBodySetting();
         // M2 tracing: this function copies src+0x68/+0x6C into the compact
@@ -3578,11 +3586,10 @@ namespace
                 LOG("M3: brightness signature missing/ambiguous; brightness fixed at 1.0");
         }
 
-        // HUD ELEMENT HIDER: hook the CHUD element-submit primitive (0x2EDF24) so
-        // the user can hide the centered weapon reticle (and declutter) by picking
-        // its element id in the menu. See HudElementHook. Signature ends before the
-        // rip-relative table load so it survives MCC patches (13 fixed bytes, the
-        // 4-byte disp wildcarded, then the r9b/r8w arg shuffle).
+        // HUD ELEMENT HIDER: restore the headset-proven element-submit boundary.
+        // The attempted type-2 visibility predicate at 0x2EDE38 did not hide the
+        // visible weapon crosshair in-headset (2026-07-19), so it is not retained.
+        // The menu stays simple; the last proven element id remains in the config.
         {
             const char* kHudElemSig =
                 "48 89 5C 24 10 57 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 41 8A F9 45 0F B7 C0";
@@ -3593,14 +3600,15 @@ namespace
                                   reinterpret_cast<void*>(&HudElementHook),
                                   reinterpret_cast<void**>(&g_realHudElement)) == MH_OK &&
                     MH_EnableHook(reinterpret_cast<void*>(hudElem)) == MH_OK)
-                    LOG("M3: HUD element submit hooked at halo3.dll+0x%llX "
-                        "(pick reticle id in menu to hide it)",
-                        (unsigned long long)(hudElem - base));
+                    LOG("M3: stock-crosshair element hider hooked at halo3.dll+0x%llX "
+                        "(remembered id 0x%X)",
+                        (unsigned long long)(hudElem - base),
+                        g_config.reticle_element_id);
                 else
-                    LOG("M3: HUD element MH_CreateHook failed; can't hide reticle");
+                    LOG("M3: HUD element hook failed; game reticle stays visible");
             }
             else
-                LOG("M3: HUD element signature missing/ambiguous; can't hide reticle");
+                LOG("M3: HUD element signature missing/ambiguous; game reticle stays visible");
         }
 
         // (0x2EEFC8 placement hook removed — measured: no coordinates there.)
@@ -3920,36 +3928,6 @@ void Game_GetHudSafeFrameStatus(int& matches, bool& scanning)
     scanning = (c == -2);
     matches = (c > 0) ? c : 0;
 }
-
-// One-line background status for the in-headset toast (menu.cpp). Returns
-// characters written, 0 = nothing to show. Present thread; atomic reads and
-// snprintf only. Priorities: engine not hooked > scan running > waiting for
-// data > a 3-second "applied" confirmation.
-int Game_GetStatusText(char* buf, int len)
-{
-    if (!buf || len < 8) return 0;
-    if (!g_hooked)
-        return snprintf(buf, len, "Halo 3 VR loaded — start a level to enter VR");
-    const float want = g_config.hud_size;
-    const bool stock = (want >= 0.8695f && want <= 0.8705f);
-    const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
-    const uint64_t now = GetTickCount64();
-    static int lastCount = 0;      // transition detector for the applied toast
-    static uint64_t appliedMs = 0; // single caller thread (Present)
-    if (c > 0 && lastCount <= 0) appliedMs = now;
-    lastCount = c;
-    if (c == -2)
-        return snprintf(buf, len, "HUD size: locating layout data... %us (game keeps running)",
-                        (unsigned)((now - g_safeFrameScanStartMs.load()) / 1000));
-    if (!stock && c <= 0)
-        return snprintf(buf, len, "HUD size: waiting for level data — retries automatically");
-    if (!stock && c > 0 && now - appliedMs < 3000)
-        return snprintf(buf, len, "HUD size %.2f active (%d layout block%s)",
-                        want, c, c == 1 ? "" : "s");
-    return 0;
-}
-
-
 
 namespace { std::atomic<bool> g_autoVrUserVeto{false}; std::atomic<bool> g_autoVrOwned{false}; }
 
