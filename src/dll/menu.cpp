@@ -207,6 +207,9 @@ namespace
                                 "crosshair vanishes, and leave it there.");
             ImGui::Unindent();
         }
+        changed |= ImGui::Checkbox("Bone probe (diagnostic)", &g_config.weapon_probe);
+        ImGui::TextDisabled("Pushes every composed skeleton (bipeds/NPCs + FP) 1m left.\n"
+                            "Bodies visibly shifting = their bones are writable (VRIK stage A2).");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -272,6 +275,8 @@ namespace
             ImGui::TextDisabled("ON: shoulders stay level with the horizon when you look up/down.\n"
                                 "OFF: shoulders ride your head pitch (old). Hand+gun unaffected.");
         }
+        changed |= ImGui::Checkbox("Show body (VRIK stage A1)", &g_config.body_wip);
+        ImGui::TextDisabled("Shows Chief's game-animated body via the engine's own director switches.");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -288,6 +293,8 @@ namespace
                             "menu - no F2/F11. F2 still toggles by hand (and vetoes auto until reload).");
 
         ImGui::Spacing();
+        changed |= ImGui::Checkbox("Render right eye first (diagnostic)",
+                                   &g_config.right_eye_first);
 
         ImGui::Spacing();
         ImGui::Separator();

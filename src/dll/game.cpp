@@ -75,7 +75,7 @@ namespace
     // The exact camera state the engine consumed this tick (position from
     // kSrcPos, fwd/up = the very floats ApplyHeadLook wrote). Captured in
     // CamCopyHook; consumed by the first-person transform (head-bake
-    // cancellation must use these exact values, not a re-derivation.
+    // cancellation MUST use these, not a re-derivation) and by FpRootShim.
     std::atomic<float> g_camX{0}, g_camY{0}, g_camZ{0};
     // Gameplay camera origin before ApplyHeadLook adds headset leaning. A
     // controller world position is based on this stable origin plus
@@ -168,6 +168,19 @@ namespace
     std::atomic<int> g_fpLShoulderIndex[2] = {{-1},{-1}};
     std::atomic<uint64_t> g_fpLWristDescendants[2] = {{0},{0}};
 
+    // The composer sees authored bones immediately before Halo applies its
+    // camera-lag rotation to every bone except camera_control. Cache the full
+    // wrist->camera_control relation with an atomic seqlock. The visible
+    // palette hook uses it to synthesize a lag-consistent camera_control bone,
+    // then removes the common lag as one rigid transform without changing the
+    // weapon's already-correct authored barrel alignment.
+    struct AtomicBoneMatrix
+    {
+        std::atomic<uint32_t> sequence{0};
+        std::atomic<float> value[13]{};
+    };
+    AtomicBoneMatrix g_fpWristToCamera[2];
+
     struct FpInterpolationContext
     {
         const BoneMatrix* source = nullptr;
@@ -188,6 +201,25 @@ namespace
     thread_local FpInterpolationContext g_fpInterpolationContext;
     thread_local BoneMatrix g_fpUnmodifiedInterpolation[64];
     thread_local BoneMatrix g_fpPaletteScratch[64];
+    // The render-thread IK path publishes only pointer-sized diagnostics.
+    // Present consumes them and owns all logging, keeping file I/O and log
+    // locks out of the palette hot path.
+    thread_local const char* g_armFailWhy = nullptr;
+    std::atomic<const char*> g_armFailurePublished{nullptr};
+    // 0 = both arms applied, 1 = right-arm/fallback failure, 2 = left-arm failure.
+    std::atomic<int> g_armFailureSide{-1};
+    std::atomic<uint64_t> g_fpSkeletonKey{0};
+    struct FpBoneMapSnapshot
+    {
+        std::atomic<uint32_t> sequence{0};
+        std::atomic<uint64_t> skeletonKey{0};
+        std::atomic<uint32_t> tag{0};
+        std::atomic<int> count{0};
+        std::atomic<int> reconstructed{0};
+        std::atomic<int32_t> map[64]{};
+    };
+    FpBoneMapSnapshot g_fpBoneMapSnapshots[16];
+    std::atomic<int> g_fpBoneMapSnapshotCount{0};
 
     // One visible-palette pose per stereo pair. Halo calls the interpolation
     // and palette path from each eye render, but an articulated body must be
@@ -311,6 +343,11 @@ namespace
         return g_realHudElement(player, descriptor, r8, r9);
     }
 
+    // (HudPlaceHook removed 2026-07-19: the 0x2EEFC8 out-struct was MEASURED —
+    // user sliders + log dump — to hold colors/alpha/animation state only, no
+    // screen coordinates. Halo's HUD has no per-element position to edit; the
+    // HUD panel in vr.cpp (capture diff) is the real fix.)
+
     // Per-eye snapshot handed from RenderViewHook to the FP hooks below. The
     // buffers are written before g_origRenderView and read during it (same
     // thread ordering via the render call; atomic pointer pairs visibility).
@@ -318,12 +355,19 @@ namespace
     alignas(16) unsigned char g_eyeCompactCamera[0x90];
     alignas(16) unsigned char g_eyeDerivedBlock[0x90];
 
-    // Halo's first-person driver stages and draws the weapon/HUD layer.
+    // RECONSTRUCTION Phase 0 (2026-07-19): the engine's FP render driver
+    // (0x2835D4; contains all six FP camera rebuild calls + the FP passes).
+    // Instrumented to answer, from one desktop run: does it execute inside our
+    // per-eye windows (g_stereoEye 0/1) or outside (-1), on which thread, how
+    // often, with which flag. Phase A then invokes it per eye ourselves.
     using FpDriverFn = void(__fastcall*)(void* view, unsigned char flag);
     FpDriverFn g_origFpDriver = nullptr;
+    int32_t* g_fpDriverGuard = nullptr; // zero-init global gating call site 1
 
     void __fastcall FpDriverHook(void* view, unsigned char flag)
     {
+        VR_TraceEvent("fp-driver", (int)flag, g_stereoEye.load());
+        // (The hud_zoom layout-factor poke that lived here is retired
         // 2026-07-19: [view+0x2B0]+0x174 never resized the visible HUD. HUD
         // sizing is now the vr.cpp HUD panel — capture, erase, re-present.)
         // RECONSTRUCTION Phase A (2026-07-19). Measured architecture: the
@@ -342,12 +386,25 @@ namespace
         char* eyeView = static_cast<char*>(g_eyeFpView.load(std::memory_order_acquire));
         if (eyeView && view)
         {
+            // Stamp the DRIVER'S OWN view object (the earlier == eyeView gate
+            // silently never matched — different object; identity settled by
+            // the one-shot below). Both FP pairs + the engine's own constant
+            // upload, so recorded FP draws executing later in this eye window
+            // bind this eye's camera.
+            static std::atomic<bool> loggedIdentity{false};
+            if (!loggedIdentity.exchange(true))
+                LOG("P0: in-window driver view=%p vs eye window view=%p (delta=0x%llX)",
+                    view, eyeView,
+                    (unsigned long long)((char*)view > eyeView ? (char*)view - eyeView
+                                                               : eyeView - (char*)view));
             char* base = static_cast<char*>(view);
             // The FP driver runs ~3x per eye; after the first stamp of a given
             // eye the pairs already hold this eye's camera. Skip the re-stamp +
             // (costly) constant upload when nothing changed. memcmp is cheap and
             // self-correcting: if the engine rewrote the pair between runs the
-            // compare fails and we stamp and upload again.
+            // compare fails and we stamp + upload exactly as before. Counters
+            // below prove how often we stamp vs skip.
+            static std::atomic<uint32_t> stamps{0}, skips{0};
             const bool needStamp =
                 memcmp(base + 0x158, g_eyeCompactCamera, sizeof(g_eyeCompactCamera)) != 0 ||
                 memcmp(base + 0x1E8, g_eyeDerivedBlock, sizeof(g_eyeDerivedBlock)) != 0 ||
@@ -355,12 +412,25 @@ namespace
                 memcmp(base + 0x6C8 + 0x1E8, g_eyeDerivedBlock, sizeof(g_eyeDerivedBlock)) != 0;
             if (needStamp)
             {
+                stamps.fetch_add(1);
                 memcpy(base + 0x158, g_eyeCompactCamera, sizeof(g_eyeCompactCamera));
                 memcpy(base + 0x1E8, g_eyeDerivedBlock, sizeof(g_eyeDerivedBlock));
                 memcpy(base + 0x6C8 + 0x08, g_eyeCompactCamera, sizeof(g_eyeCompactCamera));
                 memcpy(base + 0x6C8 + 0x1E8, g_eyeDerivedBlock, sizeof(g_eyeDerivedBlock));
                 if (g_fpCameraUpload)
                     g_fpCameraUpload(base + 0x6C8 + 0x08, base + 0x6C8 + 0x1E8);
+            }
+            else
+            {
+                skips.fetch_add(1);
+            }
+            {
+                static std::atomic<DWORD> lastLog{GetTickCount()};
+                const DWORD now=GetTickCount(); DWORD last=lastLog.load();
+                if (now-last>=10000 && lastLog.compare_exchange_strong(last,now))
+                    LOG("PERF: FP driver camera stamps=%u skips=%u per 10s "
+                        "(skips = uploads avoided)",
+                        stamps.exchange(0),skips.exchange(0));
             }
             static std::atomic<bool> logged{false};
             if (!logged.exchange(true))
@@ -428,6 +498,137 @@ namespace
             LOG("M3: motion-blur tuning vars resolved (scale/max x+y); toggle is live");
         else
             LOG("M3: motion-blur vars: only %d of 4 resolved; toggle disabled", count);
+    }
+
+    // VRIK stage: the engine's own switches for body-in-first-person, found in
+    // the same debug-var table (resolved BY NAME, no RVAs):
+    //   director_disable_first_person — the camera director stops treating the
+    //     view as first person, which is the engine's condition for drawing
+    //     the player biped (running legs, crouch — game-animated).
+    //   render_first_person — master switch for the old viewmodel layer.
+    // Applied per frame while the F1 "Show body" WIP toggle is on; original
+    // dwords are captured on first apply and restored when toggled off.
+    // Each lever: value slot + captured original + the value to force when the
+    // "Show body" toggle is ON. onValue is a best guess pending the live poke
+    // session (docs/VRIK-ROADMAP.md); the toggle now works if ANY lever
+    // resolves, instead of the old all-or-nothing that disabled everything
+    // because director/render_first_person were null at install time.
+    struct EngineVarSlot { int32_t* slot=nullptr; int32_t original=0; int32_t onValue=0; };
+    EngineVarSlot g_bodyVars[3];
+    std::atomic<int> g_bodyVarCount{0};
+    std::atomic<bool> g_bodyApplied{false};
+
+    // DIAGNOSTIC (hud_probe): dump engine debug-var NAMES that look HUD-related,
+    // so we can find a safe-area / HUD-scale / crosshair lever for the edge-crop
+    // fix (the HUD gets cut off at the headset lens edges). Read-only one-time
+    // scan of the module's strings; logs any name containing a HUD-ish token
+    // that also resolves to a live value slot (name -> resolvable = a real var).
+    void DumpHudDebugVars(uintptr_t base, size_t size)
+    {
+        if (!g_config.hud_probe) return;
+        static const char* kTokens[] = {
+            "safe_area","safe_frame","hud_scale","hud_","chud","reticle",
+            "crosshair","widescreen","aspect","overscan","fov_scale"};
+        const uint8_t* m=reinterpret_cast<const uint8_t*>(base);
+        int dumped=0;
+        LOG("HUD-VARS: scanning module for HUD-related debug-var names...");
+        for (size_t i=1; i+4<size && dumped<80; ++i)
+        {
+            // Start of a C string (preceded by a null, printable ASCII run).
+            if (m[i-1]!=0 || m[i]<0x20 || m[i]>0x7E) continue;
+            size_t len=0;
+            while (i+len<size && m[i+len]>=0x20 && m[i+len]<=0x7E && len<64) ++len;
+            if (len<4 || i+len>=size || m[i+len]!=0) { i+=len; continue; }
+            const char* s=reinterpret_cast<const char*>(m+i);
+            bool hit=false;
+            for (const char* tok : kTokens) if (strstr(s,tok)) { hit=true; break; }
+            if (hit)
+            {
+                float* slot=FindDebugVarFloat(base,size,s);
+                if (slot)
+                {
+                    LOG("HUD-VARS: '%s' = %.4f (@%p)", s, *slot, (void*)slot);
+                    ++dumped;
+                }
+            }
+            i+=len;
+        }
+        LOG("HUD-VARS: %d resolvable HUD-related var(s) logged", dumped);
+    }
+
+    void ResolveBodyVars(uintptr_t base, size_t size)
+    {
+        struct { const char* name; int32_t on; } wanted[3] = {
+            {"director_disable_first_person", 1}, // stop treating view as FP
+            {"render_first_person", 0},           // hide the viewmodel layer
+            {"debug_first_person_models", 1},     // has a live value slot on disk
+        };
+        int n=0;
+        for (auto& w : wanted)
+        {
+            int32_t* slot=reinterpret_cast<int32_t*>(FindDebugVarFloat(base,size,w.name));
+            if (slot) { g_bodyVars[n++]={slot,0,w.on}; }
+            LOG("VRIK: body switch '%s' -> %p%s", w.name, slot,
+                slot?"":" (null at install; may init at runtime)");
+        }
+        g_bodyVarCount.store(n,std::memory_order_release);
+        LOG("VRIK: %d/3 body switches resolved; Show body toggle %s",
+            n, n?"available":"disabled");
+    }
+
+    void ApplyBodySetting()
+    {
+        const int n=g_bodyVarCount.load(std::memory_order_acquire);
+        if (!n) return;
+        if (g_config.body_wip)
+        {
+            if (!g_bodyApplied.exchange(true))
+            {
+                for (int i=0;i<n;++i) g_bodyVars[i].original=*g_bodyVars[i].slot;
+                LOG("VRIK: body mode ON (%d switches forced)", n);
+            }
+            for (int i=0;i<n;++i) *g_bodyVars[i].slot=g_bodyVars[i].onValue;
+        }
+        else if (g_bodyApplied.exchange(false))
+        {
+            for (int i=0;i<n;++i) *g_bodyVars[i].slot=g_bodyVars[i].original;
+            LOG("VRIK: body mode OFF (engine values restored)");
+        }
+    }
+
+    // (Removed 2026-07-19: the old ResolveChudScale/ApplyChudScale patched the
+    // 1.0f immediates in 0x278EE0 — the headset proved those are the CHUD ALPHA,
+    // not size. That function turned out to drive game BRIGHTNESS; it's now the
+    // brightness hook, HudXformHook. HUD size has no single in-place lever; it
+    // needs a captured VR panel, tracked separately.)
+
+    // Bullet-origin measurement: on each right-trigger pull, log where Halo
+    // spawns the bullet (the camera) vs the gun muzzle world position, so the
+    // "bullets from thin air" gap is quantified. The true fix moves the spawn
+    // to the muzzle via a fire hook (runtime hunt); this proves + measures it.
+    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale); // defined below
+    void ProbeBulletOrigin()
+    {
+        if (!g_config.bullet_probe) return;
+        VrPadState pad; VR_GetPadState(pad);
+        static bool prev=false;
+        const bool trig = pad.valid && pad.trigR>0.5f;
+        if (trig && !prev)
+        {
+            const float cam[3]={g_camX.load(),g_camY.load(),g_camZ.load()};
+            BoneMatrix w{}; float ms=1.0f;
+            if (DesiredWristWorld(false,w,ms))
+            {
+                const float dx=cam[0]-w.translation[0],dy=cam[1]-w.translation[1],
+                            dz=cam[2]-w.translation[2];
+                LOG("BULLET-PROBE shot: spawn(camera)=(%.2f,%.2f,%.2f) "
+                    "gun=(%.2f,%.2f,%.2f) offset=%.2f wu (%.2f m)",
+                    cam[0],cam[1],cam[2],
+                    w.translation[0],w.translation[1],w.translation[2],
+                    sqrtf(dx*dx+dy*dy+dz*dz), sqrtf(dx*dx+dy*dy+dz*dz)*3.048f);
+            }
+        }
+        prev=trig;
     }
 
     // Called every frame from CamCopyHook. Zero wins over the engine's tag
@@ -672,6 +873,30 @@ namespace
         return true;
     }
 
+    void StoreAtomicBoneMatrix(AtomicBoneMatrix& destination, const BoneMatrix& value)
+    {
+        destination.sequence.fetch_add(1,std::memory_order_acq_rel); // writer active (odd)
+        const float* source=reinterpret_cast<const float*>(&value);
+        for (int i=0;i<13;++i)
+            destination.value[i].store(source[i],std::memory_order_relaxed);
+        destination.sequence.fetch_add(1,std::memory_order_release); // complete (even)
+    }
+
+    bool LoadAtomicBoneMatrix(const AtomicBoneMatrix& source, BoneMatrix& value)
+    {
+        for (int attempt=0;attempt<4;++attempt)
+        {
+            const uint32_t before=source.sequence.load(std::memory_order_acquire);
+            if (!before || (before&1)) continue;
+            float* destination=reinterpret_cast<float*>(&value);
+            for (int i=0;i<13;++i)
+                destination[i]=source.value[i].load(std::memory_order_relaxed);
+            const uint32_t after=source.sequence.load(std::memory_order_acquire);
+            if (before==after && !(after&1)) return true;
+        }
+        return false;
+    }
+
     bool LoadCameraBasis(float basis[9])
     {
         if (!g_camValid.load()) return false;
@@ -686,10 +911,140 @@ namespace
         return true;
     }
 
-    // Discover the active first-person skeleton and publish the arm topology.
-    bool DiscoverFirstPersonArmTopology(void* model, BoneMatrix* output)
+    bool GetControllerFirstPersonTransform(int slot, float target[3], float desired[9])
     {
-        if (!model || !output || !g_animationTagData || !*g_animationTagData) return false;
+        // Slot 0 is Halo's right-hand first-person weapon. Do not move a
+        // second/left-hand slot as part of the right-controller override.
+        if (slot!=0 || !g_vrAim.load() || !g_enabled.load()) return false;
+        if (!g_aimSeen.load()) return false;
+        float hq[4],hp[3],cq[4],cp[3];
+        if (!VR_GetHeadPose(hq,hp) || !VR_GetRightControllerPose(cq,cp)) return false;
+
+        float mount[9];
+        BasisFromAngles(g_config.gun_yaw_deg*0.0174533f,
+                        g_config.gun_pitch_deg*0.0174533f,
+                        g_config.gun_roll_deg*0.0174533f,mount);
+
+        // The visible renderer supplies the head camera as the skeleton root:
+        //     World = Head * record
+        // Therefore the replacement record (not a delta composed onto the
+        // engine's already head-baked record) must be:
+        //     record = Head^-1 * Controller
+        // so World = Head * Head^-1 * Controller = Controller.
+        const float ih[4]={-hq[0],-hq[1],-hq[2],hq[3]};
+        const float dp[3]={cp[0]-hp[0],cp[1]-hp[1],cp[2]-hp[2]};
+        float rp[3]; RotateByQuat(ih,dp,rp);
+        const float s=g_worldScale.load();
+        // Head basis = the EXACT vectors the engine's camera consumed this
+        // tick (captured in CamCopyHook), not a re-derivation. left = up x fwd.
+        float headBasis[9],controllerBasis[9];
+        if (!LoadCameraBasis(headBasis)) return false;
+        BuildTrackedGameBasis(cq,false,controllerBasis);
+        // The renderer draws World = Root * record, Root = (Head, camPos).
+        // We want World = Controller, so record must be Head^-1 * Controller,
+        // and the offset must be expressed IN the head frame (Head^-1 * world
+        // offset == the head-frame components themselves).
+        target[0]=-rp[2]*s; target[1]=-rp[0]*s; target[2]=rp[1]*s; // (fwd,left,up)
+        // Head-relative with the engine's EXACT camera floats. The two
+        // bracketing experiments (2026-07-15 ~05:1x): zero head terms -> the
+        // gun FOLLOWS the head (proves the render root carries the camera
+        // orientation); head-cancellation -> counter-wobble DURING head
+        // motion only (the renderer samples the camera on its own interpolated
+        // 120Hz clock; our 60Hz sim-side write is stale by up to a tick).
+        // This form is exactly right whenever the head is not mid-motion; the
+        // residual is a velocity-proportional wobble + a one-tick flick on
+        // snap turns. Fixing THAT requires cancelling on the renderer's clock
+        // = intercepting the render-side FP root build (not yet located; see
+        // CONTINUATION). Do not retry frame-algebra variants: both directions
+        // are already falsified.
+        // rel = Head^-1 * Controller. ORDER IS THE WHOLE BUG (2026-07-15 05:2x):
+        //   rel = Controller * Head^T  -> World = H*C*H^T = CONJUGATION: the
+        //     head rotation is applied TWICE -> "gun tracks inverted".
+        //   rel = 0 head terms         -> World = H*C -> "gun follows head".
+        //   rel = Head^T * Controller  -> World = H*H^T*C = C. Correct.
+        // Storage is column-major (m[c*3+j] = component j of column c), so
+        // (H^T C)(r,c) = sum_k H(k,r)C(k,c) => rel[c*3+r] = sum_k H[r*3+k]*C[c*3+k].
+        float rel[9];
+        MultiplyInverseBasis(headBasis,controllerBasis,rel);
+
+        // Verify the storage/order invariant in the live build. If an engine
+        // update ever changes the basis convention, do not write a plausible
+        // but wrong quaternion into the animation bank.
+        float reconstructedController[9];
+        MultiplyBases(headBasis,rel,reconstructedController);
+        float maxError=0.0f;
+        for(int i=0;i<9;++i)
+            maxError=fmaxf(maxError,fabsf(reconstructedController[i]-controllerBasis[i]));
+        if (!isfinite(maxError) || maxError>0.002f) return false;
+        MultiplyBases(rel,mount,desired);
+
+        return true;
+    }
+
+    bool GetControllerTransformForRoot(const BoneMatrix& root, float target[3],
+                                       float desiredCameraControl[9], float& meshScale)
+    {
+        if (!isfinite(root.scale) || fabsf(root.scale)<0.001f) return false;
+        float rootBasis[9];
+        if (!NormalizedBasis(root,rootBasis)) return false;
+
+        float controllerBasis[9],controllerPosition[3];
+        if (!ControllerWorldPose(controllerBasis,controllerPosition,meshScale)) return false;
+        float mountedController[9],mount[9];
+        BasisFromAngles(g_config.gun_yaw_deg*0.0174533f,
+                        g_config.gun_pitch_deg*0.0174533f,
+                        g_config.gun_roll_deg*0.0174533f,mount);
+        MultiplyBases(controllerBasis,mount,mountedController);
+        // This is the actual root pointer passed to the visible-palette
+        // consumer, not a TLS re-read or a separately sampled head matrix.
+        MultiplyInverseBasis(rootBasis,mountedController,desiredCameraControl);
+
+        const float delta[3]={controllerPosition[0]-root.translation[0],
+                              controllerPosition[1]-root.translation[1],
+                              controllerPosition[2]-root.translation[2]};
+        for (int c=0;c<3;++c)
+        {
+            target[c]=0.0f;
+            for (int r=0;r<3;++r) target[c]+=rootBasis[c*3+r]*delta[r];
+            target[c]/=root.scale;
+            if (!isfinite(target[c])) return false;
+        }
+        for (int i=0;i<9;++i)
+            if (!isfinite(desiredCameraControl[i])) return false;
+        return isfinite(meshScale) && meshScale>0.0f;
+    }
+
+    // THE LEVER, HaloCEVR's pattern (root fed INTO composition) applied to the
+    // input the mesh actually reads. Proven by elimination across headset
+    // tests + the composer disassembly (0x23200C):
+    //   output[0] = defaultsRoot * sourceRecord[0]            (0x23203B)
+    //   output[i] = output[parent[i]] * sourceRecord[i]       (0x232099)
+    // - Writing `defaults` (03:27 build) moved ONLY the muzzle flash: the
+    //   composed output feeds markers/effects, and nothing else.
+    // - The visible MESH recomposes from the 0x20-byte orientation bank — the
+    //   composers' `source` argument — with its own camera-derived root
+    //   (that is how it stays head-glued in vanilla). Editing the bank root
+    //   is the only lever that has ever moved the actual gun in a headset.
+    // So replace the wrist ancestor's bank record (quaternion + translation)
+    // with the controller pose expressed in the head-camera frame; the mesh's
+    // own camera root then cancels the head and lands the gun on the hand.
+    // The composed output inherits the same pose through that child, so the
+    // muzzle flash stays correct WITHOUT touching `defaults` (writing both
+    // would double-apply the transform).
+    //
+    // No new hooks: 0x20 bytes into data the engine hands us and immediately
+    // consumes. Detouring additional engine functions is what crashed the game.
+    // Write the controller pose into the first bank record on the wrist's
+    // ancestry chain BELOW the root (found by walking the tag node table's
+    // parent words, never guessed). Rationale, from tonight's falsifications:
+    // the renderer rebuilds the mesh from the bank's CHILD records under its
+    // own camera-derived root — record 0 is replaced by that root (why the
+    // record-0 test moved only the camera feedback, never the mesh), children
+    // are kept. The game-thread composition consumes the same record, so the
+    // markers/flash inherit the pose with no separate camera_control edit.
+    bool ApplyControllerToBankChild(void* model, BoneMatrix* output, float* bank)
+    {
+        if (!model || !bank || !output || !g_animationTagData || !*g_animationTagData) return false;
         int slot=-1; unsigned char* weapon=nullptr;
         if (!FindFirstPersonWeapon(output,slot,weapon)) return false;
         const int count=*reinterpret_cast<int*>(weapon+0x49C);
@@ -748,13 +1103,21 @@ namespace
         // Left arm: l_hand global string id 0xA2 — LIVE-PROVEN (2026-07-19
         // skeleton dump: index 5 = id 0xA2, parent chain 5<-3<-1, subtree 16;
         // right mirror 6=0xA6<-4<-2, subtree 21 incl. the 5 gun bones 37-41).
+        // Both offline derivations (0xA1, then 0x9E from the disk pointer
+        // table) were falsified live — trust only the runtime skeleton dump.
         constexpr uint32_t kLeftHandStringIndex=0xA2;
         int lWristIndex=-1;
         for(int i=0;i<count;++i)
             if (*reinterpret_cast<const uint32_t*>(records+i*0x20)==kLeftHandStringIndex)
             { lWristIndex=i; break; }
-        // If the known left-hand id is absent, select the smallest hand-sized
-        // subtree outside the right-arm branch.
+        // TOPOLOGICAL FALLBACK (2026-07-19): every offline id derivation for
+        // the left hand has been falsified live (0xA1, then 0x9E: "L wrist
+        // -1"), so stop depending on the id at all. The left wrist is
+        // structurally unmistakable: the DEEPEST node with a hand-sized
+        // subtree (>=10 bones) that neither contains the right wrist nor
+        // lies inside its subtree. Deepest == smallest qualifying subtree
+        // (l_hand < l_radius < l_humerus). Log the id found there so the
+        // true value becomes a recorded fact.
         if (lWristIndex<0)
         {
             int bestPop=count;
@@ -787,6 +1150,347 @@ namespace
         g_fpLShoulderIndex[slot].store(lShoulderIndex,std::memory_order_relaxed);
         g_fpLWristDescendants[slot].store(lDescendants,std::memory_order_relaxed);
         g_fpBoneCount[slot].store(count,std::memory_order_release);
+        // PROBE (2026-07-19, shotgun left-hand-stuck): the analysis above
+        // re-runs every frame for whatever weapon is up, but this log was
+        // once-per-session, so only the FIRST weapon's skeleton was ever
+        // recorded. Key it on the skeleton's identity instead: every weapon
+        // SWITCH dumps its chain + skeleton, and a missing left wrist is
+        // called out loudly. Rate-limited (dual-wield could alternate
+        // skeletons per frame). Log-only — behavior unchanged.
+        uint64_t skelKey=(uint64_t)count;
+        for(int i=0;i<count && i<64;++i)
+            skelKey=skelKey*31+*reinterpret_cast<const uint32_t*>(records+i*0x20);
+        g_fpSkeletonKey.store(skelKey,std::memory_order_release);
+        static std::atomic<uint64_t> loggedSkelKey{0};
+        static std::atomic<DWORD> lastSkelLogMs{0};
+        const DWORD skelNowMs=GetTickCount();
+        if (loggedSkelKey.load(std::memory_order_relaxed)!=skelKey &&
+            skelNowMs-lastSkelLogMs.load(std::memory_order_relaxed)>=2000)
+        {
+            loggedSkelKey.store(skelKey,std::memory_order_relaxed);
+            lastSkelLogMs.store(skelNowMs,std::memory_order_relaxed);
+            if (lWristIndex<0)
+                LOG("M3 VRIK PROBE: LEFT WRIST NOT FOUND on this skeleton — left "
+                    "arm stays game-animated (the 'hand stuck on gun' symptom)");
+            LOG("M3 VRIK: arm chains — R wrist %d/elbow %d/shoulder %d (subtree %d) | "
+                "L wrist %d/elbow %d/shoulder %d (subtree %d)",
+                wristIndex,elbowIndex,shoulderIndex,(int)__popcnt64(descendants),
+                lWristIndex,lElbowIndex,lShoulderIndex,(int)__popcnt64(lDescendants));
+            // Full skeleton dump, per weapon: index=id/parent for every record.
+            // This is the ground truth every offline id derivation failed to
+            // reproduce — keep it in every log.
+            char line[512]; int pos=0; int from=0;
+            for(int i=0;i<count;++i)
+            {
+                const uint32_t id=*reinterpret_cast<const uint32_t*>(records+i*0x20);
+                const int par=*reinterpret_cast<const int16_t*>(records+i*0x20+8);
+                const int n=snprintf(line+pos,sizeof(line)-pos,"%d=%X/%d ",i,id,par);
+                if (n<0 || pos+n>=(int)sizeof(line)-1)
+                {
+                    line[pos]=0;
+                    LOG("M3 VRIK: skeleton[%d..%d]: %s",from,i-1,line);
+                    pos=0; from=i; --i; continue;
+                }
+                pos+=n;
+            }
+            line[pos]=0;
+            LOG("M3 VRIK: skeleton[%d..%d]: %s",from,count-1,line);
+        }
+
+        // The CE probe proved the interpolated render packet is the first safe
+        // gun/arms-only boundary. Once that hook is live, this sim-bank path
+        // becomes topology discovery only: writing here would apply the hand
+        // twice and can leak through camera_control into the gameplay camera.
+        if (g_fpInterpolatorHooked.load(std::memory_order_acquire)) return true;
+
+        float target[3],desired[9];
+        if (!GetControllerFirstPersonTransform(slot,target,desired)) return false;
+        // Never hand the engine a non-finite value: that is how a bad frame
+        // becomes a crash deep inside the renderer instead of a visible glitch.
+        for(float v : target) if (!isfinite(v)) return false;
+        for(float v : desired) if (!isfinite(v)) return false;
+        const float meshScale=Clamp(g_config.gun_scale,0.3f,3.0f);
+        if (!isfinite(meshScale) || meshScale<=0.0f) return false;
+
+        // Column-basis matrix (desired[c*3+r], columns = forward/left/up) ->
+        // quaternion, robust in all four trace branches.
+        const float m00=desired[0],m10=desired[1],m20=desired[2];
+        const float m01=desired[3],m11=desired[4],m21=desired[5];
+        const float m02=desired[6],m12=desired[7],m22=desired[8];
+        float qx,qy,qz,qw;
+        const float tr=m00+m11+m22;
+        if (tr>0.0f)
+        { const float s=sqrtf(tr+1.0f)*2.0f; qw=0.25f*s; qx=(m21-m12)/s; qy=(m02-m20)/s; qz=(m10-m01)/s; }
+        else if (m00>m11 && m00>m22)
+        { const float s=sqrtf(1.0f+m00-m11-m22)*2.0f; qw=(m21-m12)/s; qx=0.25f*s; qy=(m01+m10)/s; qz=(m02+m20)/s; }
+        else if (m11>m22)
+        { const float s=sqrtf(1.0f+m11-m00-m22)*2.0f; qw=(m02-m20)/s; qx=(m01+m10)/s; qy=0.25f*s; qz=(m12+m21)/s; }
+        else
+        { const float s=sqrtf(1.0f+m22-m00-m11)*2.0f; qw=(m10-m01)/s; qx=(m02+m20)/s; qy=(m12+m21)/s; qz=0.25f*s; }
+        if (!isfinite(qx)||!isfinite(qy)||!isfinite(qz)||!isfinite(qw)) return false;
+        const float qLength=sqrtf(qx*qx+qy*qy+qz*qz+qw*qw);
+        if (!isfinite(qLength) || qLength<0.001f) return false;
+        qx/=qLength; qy/=qLength; qz/=qLength; qw/=qLength;
+
+        // The engine record is not composed with anymore: its content is the
+        // per-tick camera bake (rest pose identity), and composing with it
+        // re-imports the head at whatever phase the animator sampled — the
+        // dual-tracking / snap-turn fling. The record is replaced outright.
+
+        // This target record's scale is deliberately NOT written: camera_control
+        // descends from this node, and changing it zooms the game camera —
+        // the user's "scale control scales the entire world" report. The
+        // engine's animated value is preserved; a mesh-only size lever is an
+        // open follow-up (gun_scale currently has no effect on the mesh).
+        // HaloCEVR's actual anti-contortion mechanism (WeaponHandler.cpp):
+        //     if (bone.Parent == 0 || boneArray[bone.Parent].Parent == 0)
+        //         outBoneTransforms[i].scale = 0.0f;   // hide the arms
+        // The span from the camera-anchored body to the hand-anchored wrist
+        // CANNOT be posed away — the shipped Halo VR mod hides the geometry
+        // that spans it. Ours: apply the same parent-or-grandparent criterion
+        // only outside the controller and camera root branches, i.e. to the
+        // body/other-arm geometry stretching between the two
+        // anchors. Our own branch (child) keeps its scale, and the branch
+        // camera_control descends from is never touched — a scale there zooms
+        // the game camera (the "scale moves the whole world" report).
+        const int cc=selectedIndex;
+        int camBranch=-1;
+        if (cc>=0 && cc<count)
+        {
+            int n=cc;
+            for(int g=0; g<16; ++g)
+            {
+                const int p=*reinterpret_cast<const int16_t*>(records+n*0x20+8);
+                if (p<0||p>=count) break;
+                if (p==0) { camBranch=n; break; }
+                n=p;
+            }
+        }
+        auto rootBranchOf=[&](int node)
+        {
+            for(int g=0; g<16 && node>0 && node<count; ++g)
+            {
+                const int p=*reinterpret_cast<const int16_t*>(records+node*0x20+8);
+                if (p==0) return node;
+                if (p<0 || p>=count) break;
+                node=p;
+            }
+            return -1;
+        };
+        auto writeRecord=[&](float* base)
+        {
+            float* r=base+static_cast<ptrdiff_t>(child)*8;
+            r[0]=qx; r[1]=qy; r[2]=qz; r[3]=qw; // i,j,k,w
+            r[4]=target[0]; r[5]=target[1]; r[6]=target[2];
+            for(int i=1;i<count;++i)
+            {
+                const int branch=rootBranchOf(i);
+                if (branch==child || branch==camBranch) continue;
+                const int parent=*reinterpret_cast<const int16_t*>(records+i*0x20+8);
+                const int grandparent=(parent>0 && parent<count)
+                    ? *reinterpret_cast<const int16_t*>(records+parent*0x20+8) : -1;
+                if (parent==0 || grandparent==0)
+                    base[static_cast<ptrdiff_t>(i)*8+7]=0.0f;
+            }
+        };
+        writeRecord(bank);
+        // The renderer interpolates TWO sim snapshots of these records (the
+        // engine's 60Hz-sim -> 120Hz-render path). Writing only the half being
+        // composed leaves the other half head-glued and the visible gun lands
+        // midway between head and hand — the reported "weird in-between
+        // state". Write the sibling half too (banks at TLS+0x560, one 0x1000
+        // bank per slot, two 0x800 halves of 64 records each).
+        auto** tlsSlots=reinterpret_cast<void**>(__readgsqword(0x58));
+        auto* tls2=tlsSlots?reinterpret_cast<unsigned char*>(tlsSlots[*g_engineTlsIndex]):nullptr;
+        auto* banks=tls2?*reinterpret_cast<unsigned char**>(tls2+0x560):nullptr;
+        if (banks)
+        {
+            auto* slotBank=banks+static_cast<size_t>(slot)*0x1000;
+            auto* half=reinterpret_cast<unsigned char*>(bank);
+            const bool match=(half==slotBank || half==slotBank+0x800);
+            static std::atomic<bool> loggedHalf{false};
+            if (!loggedHalf.exchange(true))
+                LOG("M3 DIAG: bank source=%p slotBank=%p sibling-write=%s",
+                    half,slotBank,match?"ACTIVE":"MISSED (blend may persist)");
+            if (match)
+                writeRecord(reinterpret_cast<float*>(slotBank+((half-slotBank)^0x800)));
+        }
+        static std::atomic<unsigned> logged{0};
+        const unsigned bit=1u<<slot;
+        if (!(logged.fetch_or(bit)&bit))
+            LOG("M3: slot %d bank CHILD node %d (wrist ancestor under root) bound to the %s controller (scale %.2f)",
+                slot,child,slot==0?"right":"left",meshScale);
+        return true;
+    }
+
+    void CacheAuthoredFirstPersonAlignment(BoneMatrix* bones, int first, int composedCount)
+    {
+        if (!bones || first!=0) return;
+        int slot=-1;
+        unsigned char* weapon=nullptr;
+        if (!FindFirstPersonWeapon(bones,slot,weapon) || slot<0 || slot>1) return;
+        const int count=*reinterpret_cast<int*>(weapon+0x49C);
+        const int wrist=g_fpWristIndex[slot].load(std::memory_order_acquire);
+        const int cameraControl=g_fpOrientationIndex[slot].load(std::memory_order_acquire);
+        if (count<=0 || count>64 || composedCount<count ||
+            wrist<0 || wrist>=count || cameraControl<0 || cameraControl>=count) return;
+
+        BoneMatrix inverseWrist{},wristToCamera{};
+        if (!InvertBoneMatrix(bones[wrist],inverseWrist) ||
+            !ComposeBoneMatrices(inverseWrist,bones[cameraControl],wristToCamera)) return;
+        StoreAtomicBoneMatrix(g_fpWristToCamera[slot],wristToCamera);
+        static std::atomic<unsigned> loggedSlots{0};
+        const unsigned bit=1u<<slot;
+        if (!(loggedSlots.fetch_or(bit)&bit))
+            LOG("M3: cached authored wrist->camera_control relation for FP slot %d "
+                "(wrist %d, camera_control %d)",slot,wrist,cameraControl);
+    }
+
+    bool ApplyControllerToComposedBones(void* model, BoneMatrix* bones)
+    {
+        if (g_fpInterpolatorHooked.load(std::memory_order_acquire)) return false;
+        if (!model || !bones || !g_engineTlsIndex || !g_animationTagData || !*g_animationTagData)
+            return false;
+        auto** slots=reinterpret_cast<void**>(__readgsqword(0x58));
+        if (!slots) return false;
+        auto* tls=reinterpret_cast<unsigned char*>(slots[*g_engineTlsIndex]);
+        if (!tls) return false;
+        auto* weapons=*reinterpret_cast<unsigned char**>(tls+0x568);
+        if (!weapons) return false;
+        int slot=-1;
+        unsigned char* weapon=nullptr;
+        for(int candidate=0;candidate<2;++candidate)
+        {
+            auto* w=weapons+candidate*0x11BC;
+            if (reinterpret_cast<BoneMatrix*>(w+0x4A4)==bones) { slot=candidate; weapon=w; break; }
+        }
+        if (!weapon) return false;
+        const int count=*reinterpret_cast<int*>(weapon+0x49C);
+        if (count<=0 || count>64 ||
+            *reinterpret_cast<int*>(reinterpret_cast<unsigned char*>(model)+0x14)!=count) return false;
+        const int recordOffset=*reinterpret_cast<int*>(reinterpret_cast<unsigned char*>(model)+0x18);
+        if (!recordOffset) return false;
+        auto* records=*g_animationTagData+static_cast<ptrdiff_t>(recordOffset)*4;
+        // Runtime animation node records use the raw global string index, not
+        // the packed map StringId.  This is also how the engine calls its own
+        // node finder at 0x2323AC (for example, edx=0xD9/0x1D9).  r_hand is
+        // global string index 0xA6; using 0x0C0000A6 made every pose silently
+        // miss the wrist and left the view model attached to the camera.
+        constexpr uint32_t kRightHandStringIndex=0xA6;
+        int wristIndex=-1;
+        for(int i=0;i<count;++i)
+            if (*reinterpret_cast<const uint32_t*>(records+i*0x20)==kRightHandStringIndex)
+            {
+                wristIndex=i;
+                break;
+            }
+        if (wristIndex<0)
+        {
+            static std::atomic<bool> loggedMissing{false};
+            if (!loggedMissing.exchange(true))
+            {
+                LOG("M3: r_hand node 0x%X absent from first-person skeleton (%d bones; first nodes %X,%X,%X,%X)",
+                    kRightHandStringIndex,count,
+                    count>0?*reinterpret_cast<const uint32_t*>(records):0,
+                    count>1?*reinterpret_cast<const uint32_t*>(records+0x20):0,
+                    count>2?*reinterpret_cast<const uint32_t*>(records+0x40):0,
+                    count>3?*reinterpret_cast<const uint32_t*>(records+0x60):0);
+            }
+            return false;
+        }
+        // Halo resolves the per-weapon camera_control node (string index 0xD9)
+        // itself and stores its bone index here. Unlike a guessed `gun` name,
+        // this exists in the live 43-node skeleton and follows each weapon's
+        // authored barrel orientation.
+        const int selectedIndex=*reinterpret_cast<int*>(weapon+0x11A4);
+        const int orientationIndex=selectedIndex>=0&&selectedIndex<count?selectedIndex:wristIndex;
+
+        // Proven offline (2026-07-15): the root transform handed to the composer
+        // at halo3+0x2C4626 is scale 1, rotation IDENTITY, translation ~0, so
+        // these composed bones are CAMERA-space. Log the real values once to
+        // confirm the magnitudes match that reading in the live game.
+        static std::atomic<bool> loggedBones{false};
+        if (!loggedBones.exchange(true))
+            LOG("M3 PROBE: composed bones camera-space check: wrist[%d] t=(%.4f,%.4f,%.4f) "
+                "scale=%.3f | camera_control[%d] t=(%.4f,%.4f,%.4f) fwd=(%.3f,%.3f,%.3f)",
+                wristIndex,bones[wristIndex].translation[0],bones[wristIndex].translation[1],
+                bones[wristIndex].translation[2],bones[wristIndex].scale,
+                selectedIndex,bones[orientationIndex].translation[0],
+                bones[orientationIndex].translation[1],bones[orientationIndex].translation[2],
+                bones[orientationIndex].rotation[0],bones[orientationIndex].rotation[1],
+                bones[orientationIndex].rotation[2]);
+
+        if (g_config.weapon_probe)
+        {
+            // DECISIVE PROBE. No controller, no head, no rotation: shove the
+            // whole composed assembly a fixed 0.3 world units (~1 m) to the
+            // LEFT (camera space: +x forward, +y left, +z up). The visible gun
+            // either moves or it does not, and that single bit tells us whether
+            // the mesh reads these matrices at all — which the disassembly
+            // cannot, because our edits provably reach both the effects anchor
+            // and the mesh's own render packet.
+            for(int i=0;i<count;++i) bones[i].translation[1]+=0.3f;
+            static std::atomic<bool> loggedProbe{false};
+            if (!loggedProbe.exchange(true))
+                LOG("M3 PROBE ACTIVE: all %d bones of slot %d pushed +0.3 left; "
+                    "if the GUN MESH does not move, it does not read weapon+0x4A4",
+                    count,slot);
+            return true;
+        }
+
+        float target[3],desired[9];
+        if (!GetControllerFirstPersonTransform(slot,target,desired)) return false;
+        const float anchor[3]={bones[wristIndex].translation[0],bones[wristIndex].translation[1],
+                               bones[wristIndex].translation[2]};
+        float current[9];
+        for(int column=0;column<3;++column)
+        {
+            float len=0;
+            for(int j=0;j<3;++j)
+            {
+                current[column*3+j]=bones[orientationIndex].rotation[column*3+j];
+                len+=current[column*3+j]*current[column*3+j];
+            }
+            len=sqrtf(len);
+            if (len<0.001f) return false;
+            for(int j=0;j<3;++j) current[column*3+j]/=len;
+        }
+        auto rotateDelta=[&](const float in[3],float out[3])
+        {
+            float component[3]{};
+            for(int column=0;column<3;++column)
+                for(int j=0;j<3;++j)
+                    component[column]+=in[j]*current[column*3+j];
+            for(int j=0;j<3;++j)
+                out[j]=desired[j]*component[0]+desired[3+j]*component[1]+desired[6+j]*component[2];
+        };
+
+        // Halo 3's weapon vertices are weighted across r_hand, camera_control,
+        // root and weapon-specific nodes. Moving only the wrist descendants
+        // leaves some weights head-driven, producing the reported dual
+        // head+hand motion. Apply one rigid delta and one uniform mesh scale
+        // to the complete composed assembly so every influence agrees. The
+        // bones are camera-space world units and the overlay frustum matches
+        // the world projection, so 1.0 draws the weapon at authored size.
+        const float meshScale=Clamp(g_config.gun_scale,0.3f,3.0f);
+        for(int i=0;i<count;++i)
+        {
+            const float d[3]={bones[i].translation[0]-anchor[0],bones[i].translation[1]-anchor[1],
+                              bones[i].translation[2]-anchor[2]};
+            float rt[3]; rotateDelta(d,rt);
+            for(int j=0;j<3;++j) bones[i].translation[j]=target[j]+rt[j]*meshScale;
+            bones[i].scale*=meshScale;
+            for(int column=0;column<3;++column)
+            {
+                float rotated[3]; rotateDelta(&bones[i].rotation[column*3],rotated);
+                for(int j=0;j<3;++j) bones[i].rotation[column*3+j]=rotated[j];
+            }
+        }
+        static std::atomic<unsigned> logged{0};
+        const unsigned bit=1u<<slot;
+        if (!(logged.fetch_or(bit)&bit))
+            LOG("M3: complete first-person slot %d bound to %s controller (%d bones, wrist %d, camera_control %d, scale %.2f)",
+                slot,slot==0?"right":"left",count,wristIndex,selectedIndex,meshScale);
         return true;
     }
 
@@ -1028,7 +1732,11 @@ namespace
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
         if (!DesiredWristWorld(false,desiredWristWorld,meshScale))
+        {
+            g_armFailurePublished.store("right-controller-pose",std::memory_order_relaxed);
+            g_armFailureSide.store(1,std::memory_order_release);
             return false;
+        }
 
         // CENTER-ROOT WORLD SOLVE (2026-07-19): this function runs once per
         // EYE, and the palette consumer's `root` is that eye's camera. Any
@@ -1110,10 +1818,20 @@ namespace
             BoneMatrix invRoot{};
             if (InvertBoneMatrix(root,invRoot))
             {
+                // IK divergence probe (log-only): capture the per-eye solve
+                // inputs so a single desktop/headset session names WHICH input
+                // differs between the two eye passes (root by design; anything
+                // else is the left-arm-splits-between-eyes bug). Filled by
+                // applyArm, compared when eye 1 lands against eye 0.
+                struct ArmProbe { float S[3]; float E[3]; float T[3];
+                                  float upperLen; float lowerLen; };
+                ArmProbe probeLeft{};
+                bool probeLeftValid=false;
                 auto applyArm=[&](int shoulder,int elbow,int wrist,uint64_t mask,
                                   const BoneMatrix& desired,float outSign,
-                                  float shoulderDrop)->bool
+                                  ArmProbe* probeOut,float shoulderDrop)->bool
                 {
+                    g_armFailWhy="compose-rest";
                     BoneMatrix shW{},elW{},wrW{};
                     if (!ComposeBoneMatrices(armRoot,unmod[shoulder],shW) ||
                         !ComposeBoneMatrices(armRoot,unmod[elbow],elW) ||
@@ -1180,7 +1898,14 @@ namespace
                         }
                     }
                     float E[3];
+                    g_armFailWhy="two-bone-solve";
                     if (!IK_SolveTwoBone(S,T,solveUpper,solveLower,pole,E)) return false;
+                    if (probeOut)
+                    {
+                        for(int j=0;j<3;++j){ probeOut->S[j]=S[j]; probeOut->E[j]=E[j];
+                                              probeOut->T[j]=T[j]; }
+                        probeOut->upperLen=upperLen; probeOut->lowerLen=lowerLen;
+                    }
                     auto unit=[](const float* a,const float* b,float* o){
                         o[0]=a[0]-b[0];o[1]=a[1]-b[1];o[2]=a[2]-b[2];
                         const float l=sqrtf(o[0]*o[0]+o[1]*o[1]+o[2]*o[2]);
@@ -1195,6 +1920,7 @@ namespace
                     BoneMatrix newEl=elW; MultiplyBases(Rf,elW.rotation,newEl.rotation);
                     newEl.translation[0]=E[0]; newEl.translation[1]=E[1]; newEl.translation[2]=E[2];
                     BoneMatrix invWrRest{},D{};
+                    g_armFailWhy="invert-wrist";
                     if (!InvertBoneMatrix(wrW,invWrRest)) return false;
                     ComposeBoneMatrices(desired,invWrRest,D);
                     ComposeBoneMatrices(invRoot,newSh,g_fpPaletteScratch[shoulder]);
@@ -1207,13 +1933,18 @@ namespace
                             ComposeBoneMatrices(D,boneW,newW))
                             ComposeBoneMatrices(invRoot,newW,g_fpPaletteScratch[i]);
                     }
+                    g_armFailWhy=nullptr;
                     return true;
                 };
                 if (applyArm(context.shoulder,context.elbow,context.wrist,
-                             context.wristDescendants,desiredWristWorld,-1.0f,
+                             context.wristDescendants,desiredWristWorld,-1.0f,nullptr,
                              g_config.right_shoulder_drop))
                 {
                     // Left arm: same treatment onto the left controller.
+                    auto publishLeftFailure=[](const char* why){
+                        g_armFailurePublished.store(why,std::memory_order_relaxed);
+                        g_armFailureSide.store(2,std::memory_order_release);
+                    };
                     if (context.lShoulder>=0 && context.lShoulder<context.count &&
                         context.lElbow>=0 && context.lElbow<context.count &&
                         context.lWrist>=0 && context.lWrist<context.count)
@@ -1224,12 +1955,54 @@ namespace
                             static std::atomic<bool> loggedLeft{false};
                             if (applyArm(context.lShoulder,context.lElbow,context.lWrist,
                                          context.lWristDescendants,desiredLeft,1.0f,
-                                         0.0f))
+                                         &probeLeft,0.0f))
                             {
+                                probeLeftValid=true;
+                                g_armFailurePublished.store(nullptr,std::memory_order_relaxed);
+                                g_armFailureSide.store(0,std::memory_order_release);
                                 if (!loggedLeft.exchange(true))
                                     LOG("M3 VRIK: LEFT arm on the left controller "
                                         "(wrist %d, elbow %d, shoulder %d)",
                                         context.lWrist,context.lElbow,context.lShoulder);
+                            }
+                            else publishLeftFailure(g_armFailWhy?g_armFailWhy:"apply-arm");
+                        }
+                        else publishLeftFailure("left-controller-pose");
+                    }
+                    else publishLeftFailure("left-chain-indices");
+                    // Compare this eye's LEFT-arm solve inputs to the other
+                    // eye's. dRoot large is expected (eye offset). Any nonzero
+                    // dCenterRoot / dWrist / dLens / dDesired names the leaking
+                    // per-eye input behind the left-arm split. Rate-limited.
+                    if (probeLeftValid)
+                    {
+                        static ArmProbe eyeProbe[2]{};
+                        static BoneMatrix eyeRoot[2]{}, eyeCenterRoot[2]{};
+                        static bool eyeHave[2]={false,false};
+                        const int eye=g_stereoEye.load();
+                        if (eye==0 || eye==1)
+                        {
+                            eyeProbe[eye]=probeLeft; eyeRoot[eye]=root;
+                            eyeCenterRoot[eye]=centerRoot; eyeHave[eye]=true;
+                            static std::atomic<uint64_t> lastMs{0};
+                            const uint64_t now=GetTickCount64();
+                            if (eye==1 && eyeHave[0] &&
+                                now-lastMs.load()>2000)
+                            {
+                                lastMs.store(now);
+                                auto d3=[](const float* a,const float* b){
+                                    float m=0; for(int j=0;j<3;++j){
+                                        const float e=fabsf(a[j]-b[j]); if(e>m)m=e;} return m;};
+                                const float dRoot=d3(eyeRoot[0].translation,eyeRoot[1].translation);
+                                const float dCenter=d3(eyeCenterRoot[0].translation,
+                                                       eyeCenterRoot[1].translation);
+                                const float dWrist=d3(eyeProbe[0].T,eyeProbe[1].T);
+                                const float dElbow=d3(eyeProbe[0].E,eyeProbe[1].E);
+                                const float dLens=fabsf(eyeProbe[0].upperLen-eyeProbe[1].upperLen)+
+                                                  fabsf(eyeProbe[0].lowerLen-eyeProbe[1].lowerLen);
+                                LOG("IK-PROBE dRoot=%.4f dCenterRoot=%.4f dDesiredWrist=%.4f "
+                                    "dElbow=%.4f dLens=%.4f (dRoot big=OK; others should be ~0)",
+                                    dRoot,dCenter,dWrist,dElbow,dLens);
                             }
                         }
                     }
@@ -1265,13 +2038,38 @@ namespace
                             "wrist %d + %lld subtree bones to controller",
                             context.shoulder,context.elbow,context.wrist,
                             (long long)__popcnt64(context.wristDescendants));
+                    // Full-solve rate (both arms). ~2x fps today (once per eye);
+                    // the Session B once-per-frame cache should halve this to ~fps.
+                    {
+                        static std::atomic<uint32_t> solves{0};
+                        static std::atomic<DWORD> lastLog{GetTickCount()};
+                        solves.fetch_add(1);
+                        const DWORD now=GetTickCount(); DWORD last=lastLog.load();
+                        if (now-last>=10000 && lastLog.compare_exchange_strong(last,now))
+                            LOG("PERF: FP palette full solves %.0f/sec "
+                                "(compare to fps; ~2x fps = once per eye)",
+                                solves.exchange(0)*1000.0/(now-last));
+                    }
                     return true;
                 }
+                g_armFailurePublished.store(g_armFailWhy?g_armFailWhy:"right-apply-arm",
+                                            std::memory_order_relaxed);
+                g_armFailureSide.store(1,std::memory_order_release);
+            }
+            else
+            {
+                g_armFailurePublished.store("invert-root",std::memory_order_relaxed);
+                g_armFailureSide.store(1,std::memory_order_release);
             }
             // IK could not solve this frame — fall through to rigid parent.
         }
 
         // M = rootEye^-1 * T * rootCenter applied per record: the WORLD result
+        else if (g_config.arm_ik)
+        {
+            g_armFailurePublished.store("right-chain-indices",std::memory_order_relaxed);
+            g_armFailureSide.store(1,std::memory_order_release);
+        }
         // T * rootCenter * record is built from the center camera (identical
         // in both eyes), and only the record conversion uses the eye root.
         const BoneMatrix* unmodified=g_fpUnmodifiedInterpolation;
@@ -1324,10 +2122,49 @@ namespace
         // relation is publishing), use the untouched snapshot for this frame.
         if (context.valid && source==context.source)
             selectedSource=g_fpUnmodifiedInterpolation;
+        bool reconstructed=false;
         if (root && source)
-            ReconstructVisiblePaletteSource(context,*root,source,selectedSource);
+            reconstructed=ReconstructVisiblePaletteSource(
+                context,*root,source,selectedSource);
         g_origFpVisiblePalette(tag,root,destination,unused,selectedSource,boneMap);
 
+        // Collect every UNIQUE final-palette submission, not just the first
+        // one for a weapon. A shotgun-only secondary arm palette can otherwise
+        // render the authored pump grip over the correctly solved fp_body.
+        // Atomic publication only; Present owns all formatting and logging.
+        const uint64_t key=g_fpSkeletonKey.load(std::memory_order_acquire);
+        if (key)
+        {
+            uint64_t signature=key;
+            signature=signature*31+tag;
+            signature=signature*31+(context.valid?1:0);
+            signature=signature*31+(reconstructed?1:0);
+            static thread_local uint64_t seen[16]{};
+            static thread_local int seenCount=0;
+            bool known=false;
+            for(int i=0;i<seenCount;++i) if(seen[i]==signature){known=true;break;}
+            if(!known && seenCount<16)
+            {
+                seen[seenCount++]=signature;
+                const int slot=g_fpBoneMapSnapshotCount.fetch_add(
+                    1,std::memory_order_acq_rel);
+                if(slot<16)
+                {
+                    auto& snap=g_fpBoneMapSnapshots[slot];
+                    const int n=(context.valid && boneMap)
+                        ? (context.count>64?64:context.count) : 0;
+                    snap.sequence.fetch_add(1,std::memory_order_acq_rel);
+                    snap.skeletonKey.store(key,std::memory_order_relaxed);
+                    snap.tag.store(tag,std::memory_order_relaxed);
+                    snap.count.store(n,std::memory_order_relaxed);
+                    snap.reconstructed.store(reconstructed?1:0,
+                                             std::memory_order_relaxed);
+                    for(int i=0;i<n;++i)
+                        snap.map[i].store(boneMap[i],std::memory_order_relaxed);
+                    snap.sequence.fetch_add(1,std::memory_order_release);
+                }
+            }
+        }
     }
 
     void __fastcall FpCameraRebuildHook(void* view, unsigned char flag)
@@ -1368,11 +2205,111 @@ namespace
     // element-hider (HudElementHook, user-picked reticle id). Do not write into
     // the chud byte block again without headset-verified offsets.)
 
+    // DIAGNOSTIC (hud_probe): log the bytes in the CHUD struct that CHANGE, to
+    // locate (a) the enemy target-lock state that turns the OG reticle red and
+    // (b) the per-element visibility flags (health / motion sensor / ammo).
+    // Aim at an enemy, then away, then toggle HUD elements — the flipped
+    // offsets appear in the log. Log-only; changes nothing. Called from
+    // CamCopyHook where the CHUD pointer is already resolved.
+    void ChudProbe()
+    {
+        if (!g_config.hud_probe || !g_engineTlsIndex) return;
+        auto** slots=reinterpret_cast<void**>(__readgsqword(0x58));
+        if (!slots) return;
+        auto* tls=reinterpret_cast<unsigned char*>(slots[*g_engineTlsIndex]);
+        if (!tls) return;
+        auto* chud=*reinterpret_cast<unsigned char**>(tls+0x220);
+        if (!chud) return;
+        // A window generous enough to span the known crosshair/show bytes
+        // (0x144/0x146) plus nearby state. We force 0x144/0x146 every frame, so
+        // ignore those two offsets in the diff.
+        constexpr int kStart=0x100, kEnd=0x260;
+        static unsigned char prev[kEnd-kStart];
+        static bool have=false;
+        if (!have) { memcpy(prev,chud+kStart,sizeof(prev)); have=true;
+            LOG("HUD-PROBE armed: watching CHUD +0x%03X..+0x%03X for changes "
+                "(aim at an enemy to find the red-reticle byte)",kStart,kEnd); return; }
+        static std::atomic<uint64_t> lastMs{0};
+        const uint64_t now=GetTickCount64();
+        char line[512]; int n=0; int changes=0;
+        for (int off=kStart; off<kEnd; ++off)
+        {
+            const int i=off-kStart;
+            const unsigned char cur=chud[off];
+            if (cur==prev[i]) continue;
+            if (off==0x144 || off==0x146) { prev[i]=cur; continue; } // we drive these
+            if (changes<24 && n<(int)sizeof(line)-24)
+                n+=snprintf(line+n,sizeof(line)-n,"+0x%03X:%02X->%02X ",off,prev[i],cur);
+            prev[i]=cur;
+            ++changes;
+        }
+        if (changes && now-lastMs.load()>250)
+        {
+            lastMs.store(now);
+            LOG("HUD-PROBE %d byte(s) changed: %s",changes,line);
+        }
+    }
+
     thread_local bool g_insideSpecialCompose=false;
 
-    // Place the assembly by writing the root before composition. Do not edit
-    // the composed output: Halo's downstream weapon-lag pass separates the
-    // mesh from marker/effect transforms.
+    // Place the assembly by writing the root BEFORE the engine composes.
+    // Post-editing the composed output is retired: it is downstream of the
+    // engine's own weapon-lag pass (0x2C484B), which rotates every bone except
+    // camera_control and so overwrote the mesh while leaving the muzzle flash
+    // on our pose — exactly the reported split. `weapon_probe` still drives the
+    // old output path, and only that, as a diagnostic.
+    // THE MESH FIX — a call-site patch, not a detour (2026-07-15 ~04:00).
+    // Proven chain, all read offline: the visible first-person mesh is built by
+    // the object-node recomposer at halo3+0x341768 (single caller 0x3424DD),
+    // which dequantizes the object's compressed animation and roots the chain
+    // with `call 0x3453DC` at +0x341A5B — a generic object-root getter with 56
+    // callers that fabricates {MakeTransformFromXZ(fwd@+0x5C, up@+0x68),
+    // pos@+0x50} from the object datum. The FP arms/weapon objects sit exactly
+    // at the camera every frame; that collocation IS the head-glue, and it is
+    // also how the shim identifies them without knowing their handles.
+    //
+    // We patch the 4 aligned displacement bytes of that ONE call (atomic
+    // InterlockedExchange, installed at DLL load before any level runs) to a
+    // 12-byte trampoline that reaches FpRootShim. The shim calls the REAL
+    // getter, and only if the returned root is camera-collocated replaces it
+    // with the controller's world pose — a write into a STACK buffer the
+    // renderer consumes immediately. No engine function is detoured, none of
+    // the other 55 callers are affected, and no simulation state is touched.
+    // Failure mode if MCC updates: signature miss -> log + gun stays glued.
+    using FpRootFn = BoneMatrix*(__fastcall*)(uint16_t index, BoneMatrix* out);
+    FpRootFn g_realFpRoot = nullptr;
+
+
+    // THE HEAD-GLUE, finally acted on safely: right after composition, the FP
+    // evaluator loops every bone EXCEPT camera_control (cmp r9d,[rdi+0x11A4])
+    // and rotates it via `call 0x120DF8` at halo3+0x2C485B with a camera-
+    // pitch/turn matrix. That is the exact flash-vs-mesh partition observed in
+    // every headset test tonight. Detouring 0x120DF8 crashes on level load
+    // (proven, banned); patching THIS ONE CALL SITE affects no other caller —
+    // the same aligned-disp32 technique that survived a full session at
+    // 0x341A5B. The shim skips the rotation only for bone addresses inside an
+    // assembly we re-rooted this frame (thread_local ranges, same thread that
+    // composes), and forwards everything else to the real function untouched.
+    using SwayApplyFn = void(__fastcall*)(void* sway, BoneMatrix* bone);
+    SwayApplyFn g_realSwayApply = nullptr;
+
+    // CRASH LESSON (both fatal errors tonight, same root cause): halo3.dll is
+    // LTCG-optimized — the sway loop keeps its counter (r9d), bone pointer
+    // (r8) and count (r10d) LIVE IN VOLATILE REGISTERS across `call 0x120DF8`,
+    // because the compiler knows that function never touches them. ANY
+    // compiled C/C++ interposition (a MinHook detour or a C++ shim) clobbers
+    // those registers and corrupts the caller -> wild writes -> fatal error on
+    // level load. Interposing engine-internal calls therefore requires a
+    // hand-assembled shim restricted to registers the caller provably treats
+    // as dead — here, only RAX (verified: reloaded/unused after the call).
+    //
+    // The emitted shim (see InstallHook) compares rdx (the bone) against
+    // these bounds and returns without rotating when it lies inside an
+    // assembly ApplyControllerToRoot re-rooted this frame; everything else
+    // tail-jumps to the real rotator. Same game thread writes and reads the
+    // bounds (compose -> sway loop), so there is no race.
+    alignas(8) volatile uintptr_t g_fpSkipBounds[4] = {0, 0, 0, 0}; // lo0,hi0,lo1,hi1
+
     bool ControllerWorldPoseEx(bool left, float basis[9], float pos[3], float& scale)
     {
         if (!g_vrAim.load() || !g_enabled.load() || !g_camValid.load() ||
@@ -1420,22 +2357,158 @@ namespace
         return ControllerWorldPoseEx(false, basis, pos, scale);
     }
 
+    // Repurposed 2026-07-19 as the VRIK Stage A2 probe. This call-site patch
+    // sits inside the OBJECT-node recomposer (0x341768) — the pipeline that
+    // animates every visible biped, including the player's own natively
+    // visible legs. With the Bone-probe checkbox on, every recomposed object's
+    // root is pushed 0.3 wu left. Legs/NPCs visibly shifting = this boundary
+    // reaches biped pixels = Stage B (arm IK) has a real write path.
+    // The old camera-collocated re-anchor is retired (the FP camera anchor in
+    // RenderViewHook owns gun placement now).
+    // Retired to a clean passthrough (2026-07-19). This object recomposer's
+    // root output was proven NOT to drive the visible body (the +0.6 lift test
+    // moved nothing on screen), and the FP camera anchor owns gun placement.
+    // Kept only so the call-site patch remains a stable, harmless no-op rather
+    // than reintroducing an unpatch path. See docs/VRIK-ROADMAP.md.
+    BoneMatrix* __fastcall FpRootShim(uint16_t index, BoneMatrix* out)
+    {
+        return g_realFpRoot(index, out);
+    }
+
+    // The 03:27 lever, restored: write the composers' `defaults` root. Proven
+    // side-effect-free in the headset and it puts the muzzle flash/markers on
+    // the controller. Does NOT move the mesh (that consumer is still unfound).
+    bool ApplyControllerToRoot(BoneMatrix* output, BoneMatrix* root)
+    {
+        if (!root || !output) return false;
+        int slot=-1; unsigned char* weapon=nullptr;
+        if (!FindFirstPersonWeapon(output,slot,weapon)) return false;
+        float target[3],desired[9];
+        if (!GetControllerFirstPersonTransform(slot,target,desired)) return false;
+        for(float v : target) if (!isfinite(v)) return false;
+        for(float v : desired) if (!isfinite(v)) return false;
+        const float meshScale=Clamp(g_config.gun_scale,0.3f,3.0f);
+        if (!isfinite(meshScale) || meshScale<=0.0f) return false;
+        root->scale=meshScale;
+        memcpy(root->rotation,desired,sizeof(desired));
+        memcpy(root->translation,target,sizeof(target));
+        // This assembly now carries the controller pose; exempt exactly these
+        // bones from the engine's camera pitch/turn rotation (emitted shim).
+        const int count=*reinterpret_cast<int*>(weapon+0x49C);
+        if (count>0 && count<=64)
+        {
+            g_fpSkipBounds[slot*2+0]=reinterpret_cast<uintptr_t>(output);
+            g_fpSkipBounds[slot*2+1]=g_fpSkipBounds[slot*2+0]+static_cast<size_t>(count)*sizeof(BoneMatrix);
+        }
+        static std::atomic<unsigned> logged{0};
+        const unsigned bit=1u<<slot;
+        if (!(logged.fetch_or(bit)&bit))
+            LOG("M3: first-person slot %d rooted to the %s controller (markers/flash lever, scale %.2f)",
+                slot,slot==0?"right":"left",meshScale);
+        return true;
+    }
+
+    // CENSUS RESULT (2026-07-19, retired): the two composer hooks we install
+    // process ONLY first-person weapon/arm skeletons (42-45 bones, camera-space
+    // at origin) — never world bipeds. The biped skeleton lives in the render
+    // pool at RVA ~0x468xxxx (found live via camscan; see docs/VRIK-ROADMAP.md).
+    // The census + biped probe that proved this are removed.
+
+    // BANK WRITES ARE BANNED (2026-07-15, 03:4x headset result): writing the
+    // controller pose into bank record 0 did NOT move the mesh, but it DID
+    // bleed the wrist into the body/camera — record 0 propagates into
+    // camera_control, which the game reads back to drive the camera. The
+    // ApplyControllerToBankRoot helper is intentionally no longer called;
+    // kept only as documentation of the falsified lever.
+    // BULLET-SPAWN FIX (2026-07-19): the projectile spawn / effect origins
+    // read the COMPOSED output, which stayed AUTHORED (head-glued) once the
+    // bank write went dormant — bullets emerged at the authored center-screen
+    // muzzle, "slightly left and ahead of the gun". Composed output is WORLD
+    // space (output[0] = defaultsRoot * record0), so snap ONLY the right-wrist
+    // subtree onto the shared controller wrist target. Everything else —
+    // especially record 0 and camera_control — is left untouched: rewriting
+    // those is the falsified "wrist moves the world" camera feedback.
+    bool ApplyControllerToComposedWristSubtree(BoneMatrix* output)
+    {
+        int slot=-1; unsigned char* weapon=nullptr;
+        if (!FindFirstPersonWeapon(output,slot,weapon)) return false;
+        const int count=g_fpBoneCount[slot].load(std::memory_order_acquire);
+        const int wrist=g_fpWristIndex[slot].load(std::memory_order_acquire);
+        const uint64_t mask=g_fpWristDescendants[slot].load(std::memory_order_acquire);
+        if (count<=0 || count>64 || wrist<0 || wrist>=count ||
+            *reinterpret_cast<int*>(weapon+0x49C)!=count) return false;
+        float meshScale=1.0f;
+        BoneMatrix desired{},invWrist{},t{};
+        if (!DesiredWristWorld(false,desired,meshScale)) return false;
+        if (!InvertBoneMatrix(output[wrist],invWrist) ||
+            !ComposeBoneMatrices(desired,invWrist,t)) return false;
+        for (int i=0;i<count;++i)
+        {
+            if (!(mask&(1ull<<i))) continue;
+            BoneMatrix moved{};
+            if (!ComposeBoneMatrices(t,output[i],moved)) return false;
+            output[i]=moved;
+        }
+        if (meshScale!=1.0f)
+        {
+            const float* a=desired.translation;
+            for (int i=0;i<count;++i)
+            {
+                if (!(mask&(1ull<<i))) continue;
+                for (int r=0;r<3;++r)
+                    output[i].translation[r]=a[r]+
+                        (output[i].translation[r]-a[r])*meshScale;
+                output[i].scale*=meshScale;
+            }
+        }
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true))
+            LOG("M3: composed wrist subtree snapped to the controller "
+                "(bullet spawn / effect origins now on the gun)");
+        return true;
+    }
+
     void __fastcall ComposeBonesHook(void* model, int start, int count, BoneMatrix* output,
                                      void* source, void* defaults)
     {
         if (!g_insideSpecialCompose)
         {
-            DiscoverFirstPersonArmTopology(model,output);
+            g_fpSkipBounds[0]=g_fpSkipBounds[1]=g_fpSkipBounds[2]=g_fpSkipBounds[3]=0;
+            ApplyControllerToBankChild(model,output,reinterpret_cast<float*>(source));
         }
         g_origComposeBones(model,start,count,output,source,defaults);
+        // This is the last full authored pose before Halo's caller applies the
+        // camera-lag transform (camera_control alone is exempt). Preserve that
+        // relation for exact render-side lag removal.
+        CacheAuthoredFirstPersonAlignment(output,start,count);
+        // NOTE (2026-07-18): wiring ApplyControllerToComposedWristSubtree here
+        // (the "bullet_snap" experiment) caused the RIGHT HAND to spin
+        // uncontrollably and pushed bullets to stage-left — the composed output
+        // is downstream of the engine weapon-lag pass and re-snapping the wrist
+        // fights it. Reverted to the known-good M3 gun tracking. Bullet origin
+        // will be fixed via a weapon-fire hook (origin+direction swap) instead,
+        // not by editing composed bones. The call is intentionally gone.
+        // 04:17 falsified the output rewrite as a mesh lever for good (43-bone
+        // rewrite confirmed running; mesh unmoved; "wrist moves the world" =
+        // camera_control feedback). Probe-only again. The defaults-root write
+        // is retired for the same reason: both only fed markers + the camera.
+        if (!g_insideSpecialCompose && g_config.weapon_probe)
+            ApplyControllerToComposedBones(model,output);
     }
     void __fastcall ComposeSpecialBonesHook(void* model, BoneMatrix* output, void* source,
                                             void* defaults, int firstSpecial, int secondSpecial)
     {
-        DiscoverFirstPersonArmTopology(model,output);
+        g_fpSkipBounds[0]=g_fpSkipBounds[1]=g_fpSkipBounds[2]=g_fpSkipBounds[3]=0;
+        ApplyControllerToBankChild(model,output,reinterpret_cast<float*>(source));
         g_insideSpecialCompose=true;
         g_origComposeSpecialBones(model,output,source,defaults,firstSpecial,secondSpecial);
         g_insideSpecialCompose=false;
+        int slot=-1; unsigned char* weapon=nullptr;
+        if (FindFirstPersonWeapon(output,slot,weapon))
+            CacheAuthoredFirstPersonAlignment(
+                output,0,*reinterpret_cast<int*>(weapon+0x49C));
+        // (bullet_snap reverted here too — see ComposeBonesHook note.)
+        if (g_config.weapon_probe) ApplyControllerToComposedBones(model,output);
     }
 
     float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -1597,11 +2670,15 @@ namespace
     void* __fastcall CamCopyHook(void* dst, void* src)
     {
         g_lastCamCopyMs.store(GetTickCount64(), std::memory_order_relaxed);
+        ChudProbe();
         ApplyMotionBlurSetting();
+        ProbeBulletOrigin();
+        ApplyBodySetting();
         // M2 tracing: this function copies src+0x68/+0x6C into the compact
         // render camera at dst+0x28/+0x2C. Record only the first few calls so
         // we can distinguish world, weapon, and other camera passes without
         // producing a frame-sized log forever.
+        static std::atomic<unsigned> traceCount{0};
         if (src)
         {
             const float srcTanX=*reinterpret_cast<const float*>(
@@ -1629,7 +2706,30 @@ namespace
                         zoomed?"zoomed IN":"unzoomed",srcTanX,baseTan,factor);
                 }
             }
+            // Camera buffers are heap-allocated and move on level changes;
+            // log every new one so external tools (camscan aimwrite) can
+            // always read the current address from the log.
+            static void* seenSrc[16]{};
+            static unsigned seenSrcCount = 0;
+            bool newSrc = true;
+            for (unsigned i = 0; i < seenSrcCount; ++i)
+                if (seenSrc[i] == src) { newSrc = false; break; }
+            if (newSrc && seenSrcCount < 16)
+                seenSrc[seenSrcCount++] = src;
+            const unsigned trace = traceCount.fetch_add(1);
+            if (trace < 24 || newSrc)
+            {
+                const float* pos = reinterpret_cast<const float*>(
+                    reinterpret_cast<const char*>(src) + kSrcPos);
+                const float projX = *reinterpret_cast<const float*>(
+                    reinterpret_cast<const char*>(src) + kSrcProjX);
+                const float projY = *reinterpret_cast<const float*>(
+                    reinterpret_cast<const char*>(src) + kSrcProjY);
+                LOG("M2 camera copy %u: dst=%p src=%p pos=(%.2f,%.2f,%.2f) proj=(%.6f,%.6f)",
+                    trace, dst, src, pos[0], pos[1], pos[2], projX, projY);
+            }
         }
+        if (src)
         {
             // The game recomputes this forward from its aim state every frame,
             // so pre-overwrite it equals the true aim direction (bullets follow
@@ -1662,7 +2762,8 @@ namespace
             if (src)
             {
                 // Post-head-look camera position (includes leaning): the
-                // authoritative camera position used to place controllers in world space.
+                // reference FpRootShim uses to recognize camera-glued FP
+                // objects and to place the controller in world space.
                 const float* p = reinterpret_cast<const float*>(
                     reinterpret_cast<const char*>(src) + kSrcPos);
                 g_camX.store(p[0]); g_camY.store(p[1]); g_camZ.store(p[2]);
@@ -1782,7 +2883,8 @@ namespace
                     "a multiple => extra engine views)", n * 1000.0 / (now - last));
             }
         }
-        constexpr int firstEye = 0;        for (int pass = 0; pass < 2; ++pass)
+        const int firstEye = g_config.right_eye_first ? 1 : 0;
+        for (int pass = 0; pass < 2; ++pass)
         {
             const int eye = pass == 0 ? firstEye : 1 - firstEye;
             g_stereoEye = eye;
@@ -2149,6 +3251,11 @@ namespace
                 LOG("M3 VRIK: native weapon-IK decision missing/ambiguous; patch skipped");
         }
 
+        // The CHUD steal-and-requad machinery is GONE (2026-07-18): its three
+        // CHUD hooks + draw-call classifier removed the native HUD from both
+        // eyes, never displayed the hand quad, and its retry loop cost ~30 fps.
+        // The native HUD renders untouched again; only the stock crosshair is
+        // suppressed (our floating reticle replaces it).
         uintptr_t fpCamHit=sig::Find(base,size,kFpCameraRebuildSig);
         uintptr_t fpUploadHit=sig::Find(base,size,kFpCameraUploadSig);
         const bool uniqueFpCam=fpCamHit &&
@@ -2232,28 +3339,184 @@ namespace
                 LOG("M3: HUD element signature missing/ambiguous; can't hide reticle");
         }
 
-        // halo3+0x120DF8 is intentionally untouched: even a pass-through
-        // detour crashed on the first level-load call.
-        ResolveMotionBlurVars(base, size);
+        // (0x2EEFC8 placement hook removed — measured: no coordinates there.)
 
-        // Hook Halo's first-person render driver (0x2835D4 in build 1.3528).
+        // DO NOT HOOK halo3+0x120DF8. Tried 2026-07-15: it crashes the game on
+        // level load, on contact, even as a pure pass-through (proven — the
+        // skip range was never armed, the unconditional probe log never
+        // printed, and it still died). Surviving the menus proves nothing:
+        // halo3.dll's model pipeline does not run there, so the first real call
+        // IS the level load. The weapon-lag diagnosis in RE-notes stands; the
+        // mechanism for acting on it must not be a detour on this function.
+
+        // FP mesh re-anchor: patch the single root-fetch call inside the object
+        // node recomposer (see FpRootShim). lea rdx,[rsp+20]; mov ecx,ebx;
+        // call <root>; then the 0x1205AC multiply — unique on disk, verified.
+        const char* kFpRootCallSig =
+            "48 8D 54 24 20 8B CB E8 ?? ?? ?? ?? 4D 8B C4 48 8D 4C 24 20 49 8B D7 E8";
+        uintptr_t callSite = sig::Find(base, size, kFpRootCallSig);
+        if (callSite &&
+            !sig::Find(callSite+1, base+size-callSite-1, kFpRootCallSig))
+        {
+            const uintptr_t callInstr = callSite + 7;    // the E8
+            const uintptr_t relAt = callInstr + 1;       // 4-byte aligned disp32
+            const int32_t origRel = *reinterpret_cast<const int32_t*>(relAt);
+            g_realFpRoot = reinterpret_cast<FpRootFn>(callInstr + 5 + origRel);
+            // 12-byte trampoline (mov rax, imm64; jmp rax) within rel32 range
+            // of the call site, since our DLL may sit >2GB away.
+            unsigned char* tramp = nullptr;
+            for (uintptr_t probe = callInstr & ~0xFFFFull;
+                 probe > callInstr - 0x40000000ull && !tramp; probe -= 0x100000)
+                tramp = static_cast<unsigned char*>(VirtualAlloc(
+                    reinterpret_cast<void*>(probe), 0x1000,
+                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+            const intptr_t newRel = tramp
+                ? reinterpret_cast<intptr_t>(tramp) - static_cast<intptr_t>(callInstr + 5) : INT64_MAX;
+            if (tramp && newRel >= INT32_MIN && newRel <= INT32_MAX && (relAt & 3) == 0)
+            {
+                tramp[0]=0x48; tramp[1]=0xB8;                       // mov rax, imm64
+                *reinterpret_cast<void**>(tramp+2) =
+                    reinterpret_cast<void*>(&FpRootShim);
+                tramp[10]=0xFF; tramp[11]=0xE0;                     // jmp rax
+                DWORD old;
+                if (VirtualProtect(reinterpret_cast<void*>(relAt), 4,
+                                   PAGE_EXECUTE_READWRITE, &old))
+                {
+                    InterlockedExchange(reinterpret_cast<volatile LONG*>(relAt),
+                                        static_cast<LONG>(newRel));
+                    VirtualProtect(reinterpret_cast<void*>(relAt), 4, old, &old);
+                    FlushInstructionCache(GetCurrentProcess(),
+                                          reinterpret_cast<void*>(callInstr), 5);
+                    LOG("M3: FP mesh root call-site patched at halo3.dll+0x%llX "
+                        "(real getter halo3.dll+0x%llX; atomic disp32 swap)",
+                        (unsigned long long)(callInstr-base),
+                        (unsigned long long)(reinterpret_cast<uintptr_t>(g_realFpRoot)-base));
+                }
+                else
+                    LOG("M3: FP mesh call-site VirtualProtect failed; gun stays camera-glued");
+            }
+            else
+                LOG("M3: FP mesh trampoline allocation failed (rel %lld); gun stays camera-glued",
+                    (long long)newRel);
+        }
+        else
+            LOG("VRIK: object-root call-site signature missing/ambiguous; A2 probe unavailable");
+
+        // Second call-site patch: the camera pitch/turn rotation applied to
+        // every FP bone but camera_control (the head-glue; see the emitted
+        // rax-only shim below and the LTCG note at g_fpSkipBounds).
+        const char* kSwayCallSig = "44 3B 8F A4 11 00 00 74 0C 49 8B D0 48 8D 4D C8 E8";
+        uintptr_t swaySite = sig::Find(base, size, kSwayCallSig);
+        if (!g_fpInterpolatorHooked.load() && swaySite &&
+            !sig::Find(swaySite+1, base+size-swaySite-1, kSwayCallSig))
+        {
+            const uintptr_t callInstr = swaySite + 16;   // the E8
+            const uintptr_t relAt = callInstr + 1;       // 4-byte aligned disp32
+            const int32_t origRel = *reinterpret_cast<const int32_t*>(relAt);
+            g_realSwayApply = reinterpret_cast<SwayApplyFn>(callInstr + 5 + origRel);
+            unsigned char* tramp = nullptr;
+            for (uintptr_t probe = callInstr & ~0xFFFFull;
+                 probe > callInstr - 0x40000000ull && !tramp; probe -= 0x100000)
+                tramp = static_cast<unsigned char*>(VirtualAlloc(
+                    reinterpret_cast<void*>(probe), 0x1000,
+                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+            const intptr_t newRel = tramp
+                ? reinterpret_cast<intptr_t>(tramp) - static_cast<intptr_t>(callInstr + 5) : INT64_MAX;
+            if (tramp && newRel >= INT32_MIN && newRel <= INT32_MAX && (relAt & 3) == 0)
+            {
+                // Hand-assembled shim, clobbers ONLY rax (the caller keeps its
+                // loop state in r8/r9/r10 across this call — LTCG contract; a
+                // compiled C++ shim here IS the fatal-error bug). Layout:
+                //   [0x00] mov rax,[lo0]; cmp rdx,rax; jb +0x0F (-> lo1 test)
+                //   [0x0F] mov rax,[hi0]; cmp rdx,rax; jb +0x2A (-> ret)
+                //   [0x1E] mov rax,[lo1]; cmp rdx,rax; jb +0x0F (-> tail)
+                //   [0x2D] mov rax,[hi1]; cmp rdx,rax; jb +0x0C (-> ret)
+                //   [0x3C] mov rax, real; jmp rax
+                //   [0x48] ret
+                unsigned char shim[0x49];
+                int o = 0;
+                auto movRaxAbs = [&](volatile uintptr_t* a) {
+                    shim[o++]=0x48; shim[o++]=0xA1;         // mov rax, moffs64
+                    const void* p = const_cast<uintptr_t*>(a);
+                    memcpy(shim+o, &p, 8); o += 8;
+                };
+                auto cmpJb = [&](unsigned char disp) {
+                    shim[o++]=0x48; shim[o++]=0x39; shim[o++]=0xC2; // cmp rdx, rax
+                    shim[o++]=0x72; shim[o++]=disp;                 // jb rel8
+                };
+                movRaxAbs(&g_fpSkipBounds[0]); cmpJb(0x0F);
+                movRaxAbs(&g_fpSkipBounds[1]); cmpJb(0x2A);
+                movRaxAbs(&g_fpSkipBounds[2]); cmpJb(0x0F);
+                movRaxAbs(&g_fpSkipBounds[3]); cmpJb(0x0C);
+                shim[o++]=0x48; shim[o++]=0xB8;             // mov rax, imm64
+                const void* real = reinterpret_cast<const void*>(g_realSwayApply);
+                memcpy(shim+o, &real, 8); o += 8;
+                shim[o++]=0xFF; shim[o++]=0xE0;             // jmp rax
+                shim[o++]=0xC3;                             // ret (skip path)
+                memcpy(tramp, shim, o);
+                DWORD old;
+                if (VirtualProtect(reinterpret_cast<void*>(relAt), 4,
+                                   PAGE_EXECUTE_READWRITE, &old))
+                {
+                    InterlockedExchange(reinterpret_cast<volatile LONG*>(relAt),
+                                        static_cast<LONG>(newRel));
+                    VirtualProtect(reinterpret_cast<void*>(relAt), 4, old, &old);
+                    FlushInstructionCache(GetCurrentProcess(),
+                                          reinterpret_cast<void*>(callInstr), 5);
+                    LOG("M3: camera pitch/turn call-site patched at halo3.dll+0x%llX "
+                        "(rotator halo3.dll+0x%llX)",
+                        (unsigned long long)(callInstr-base),
+                        (unsigned long long)(reinterpret_cast<uintptr_t>(g_realSwayApply)-base));
+                }
+                else
+                    LOG("M3: pitch/turn call-site VirtualProtect failed; gun stays head-rotated");
+            }
+            else
+                LOG("M3: pitch/turn trampoline allocation failed; gun stays head-rotated");
+        }
+        else if (!g_fpInterpolatorHooked.load())
+            LOG("M3: pitch/turn call-site signature missing/ambiguous; gun stays head-rotated");
+
+        ResolveMotionBlurVars(base, size);
+        ResolveBodyVars(base, size);
+        DumpHudDebugVars(base, size);
+
+        // (CHUD visibility-snapshot hook removed 2026-07-19 evening — its forced
+        // byte writes used a disproven offset map and suppressed the HUD. The
+        // reticle kill lives in HudElementHook / 0x2EDF24 only.)
+
+        // RECONSTRUCTION Phase 0: hook the engine's FP render driver and
+        // resolve the guard global that gates its first in-window call site.
+        // Driver prologue (0x2835D4 in 1.3528); guard cmp site (0x28599D).
         const char* kFpDriverSig =
             "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 41 55 41 56 41 57 "
             "48 83 EC 20 48 8B D9 40 8A F2 8B 89 F4 27 00 00";
+        const char* kFpDriverGuardSig = "44 39 2D ?? ?? ?? ?? 75 0A 33 D2 48 8B CF E8";
         uintptr_t driverHit = sig::Find(base, size, kFpDriverSig);
+        uintptr_t guardHit = sig::Find(base, size, kFpDriverGuardSig);
+        if (guardHit && !sig::Find(guardHit+1, base+size-guardHit-1, kFpDriverGuardSig))
+        {
+            const int32_t disp = *reinterpret_cast<const int32_t*>(guardHit + 3);
+            g_fpDriverGuard = reinterpret_cast<int32_t*>(guardHit + 7 + disp);
+            LOG("P0: FP driver guard global at halo3.dll+0x%llX (value now %d)",
+                (unsigned long long)(reinterpret_cast<uintptr_t>(g_fpDriverGuard) - base),
+                *g_fpDriverGuard);
+        }
+        else
+            LOG("P0: FP driver guard site missing/ambiguous");
         if (driverHit && !sig::Find(driverHit+1, base+size-driverHit-1, kFpDriverSig))
         {
             if (MH_CreateHook(reinterpret_cast<void*>(driverHit),
                               reinterpret_cast<void*>(&FpDriverHook),
                               reinterpret_cast<void**>(&g_origFpDriver)) == MH_OK &&
                 MH_EnableHook(reinterpret_cast<void*>(driverHit)) == MH_OK)
-                LOG("M3: FP driver hooked at halo3.dll+0x%llX",
+                LOG("P0: FP driver hooked at halo3.dll+0x%llX",
                     (unsigned long long)(driverHit - base));
             else
-                LOG("M3: FP driver hook FAILED");
+                LOG("P0: FP driver hook FAILED");
         }
         else
-            LOG("M3: FP driver signature missing/ambiguous");
+            LOG("P0: FP driver signature missing/ambiguous");
 
         uintptr_t gunRef = sig::Find(base, size, kGunCamRefSig);
         if (gunRef && !sig::Find(gunRef + 1, base + size - gunRef - 1, kGunCamRefSig))
@@ -2401,6 +3664,69 @@ void Game_ToggleHeadTracking()
 // while in a level vetoes auto-arm until the next level load; F2/F11 still work.
 void Game_AutoVrTick()
 {
+    // Render-thread diagnostics are reported here, on Present. Log only a
+    // stable state transition; never log from the palette or HUD hot hooks.
+    {
+        static int loggedSide=-2;
+        static const char* loggedWhy=reinterpret_cast<const char*>(1);
+        static uint64_t lastLogMs=0;
+        const int side=g_armFailureSide.load(std::memory_order_acquire);
+        const char* why=g_armFailurePublished.load(std::memory_order_relaxed);
+        const uint64_t diagNow=GetTickCount64();
+        if ((side!=loggedSide || why!=loggedWhy) && diagNow-lastLogMs>=500)
+        {
+            loggedSide=side; loggedWhy=why; lastLogMs=diagNow;
+            if (side==0)
+                LOG("M3 VRIK SAFE-DIAG: both arms applied to controllers");
+            else if (side==1)
+                LOG("M3 VRIK SAFE-DIAG: right-arm solve fell back (%s); authored "
+                    "support hand remains on weapon",why?why:"pre-solve");
+            else if (side==2)
+                LOG("M3 VRIK SAFE-DIAG: left arm not applied (%s)",
+                    why?why:"pre-solve");
+        }
+    }
+    {
+        static int loggedCount=0;
+        int available=g_fpBoneMapSnapshotCount.load(std::memory_order_acquire);
+        if(available>16) available=16;
+        while(loggedCount<available)
+        {
+            auto& snap=g_fpBoneMapSnapshots[loggedCount];
+            const uint32_t begin=snap.sequence.load(std::memory_order_acquire);
+            if((begin&1) || begin==0) break;
+            const uint64_t key=snap.skeletonKey.load(std::memory_order_relaxed);
+            const uint32_t tag=snap.tag.load(std::memory_order_relaxed);
+            const int count=snap.count.load(std::memory_order_relaxed);
+            const int reconstructed=snap.reconstructed.load(std::memory_order_relaxed);
+            int32_t map[64]{};
+            for(int i=0;i<count && i<64;++i)
+                map[i]=snap.map[i].load(std::memory_order_relaxed);
+            const uint32_t end=snap.sequence.load(std::memory_order_acquire);
+            if(begin!=end) break;
+            int shoulderDest=-1,elbowDest=-1,wristDest=-1;
+            for(int i=0;i<count && i<64;++i)
+            {
+                if(map[i]==1) shoulderDest=i;
+                if(map[i]==3) elbowDest=i;
+                if(map[i]==5) wristDest=i;
+            }
+            LOG("M3 VRIK PALETTE #%d: skeleton %016llX tag 0x%04X "
+                "reconstructed=%d count=%d; left 1/3/5 -> %d/%d/%d",
+                loggedCount,static_cast<unsigned long long>(key),tag,
+                reconstructed,count,shoulderDest,elbowDest,wristDest);
+            for(int from=0;from<count;from+=16)
+            {
+                char line[512]; int pos=0;
+                const int to=(from+16<count)?from+16:count;
+                for(int i=from;i<to && pos<(int)sizeof(line)-24;++i)
+                    pos+=snprintf(line+pos,sizeof(line)-pos,"%d=%d ",i,map[i]);
+                LOG("M3 VRIK PALETTE #%d MAP[%d..%d]: %s",
+                    loggedCount,from,to-1,line);
+            }
+            ++loggedCount;
+        }
+    }
     if (!g_config.auto_vr) return;
     const uint64_t now = GetTickCount64();
     const uint64_t last = g_lastCamCopyMs.load(std::memory_order_relaxed);
@@ -2495,14 +3821,29 @@ bool Game_ComputeAimStick(float& outRx, float& outRy)
     // angular error between the game's aim and the controller ray. The game
     // integrates it through its normal turn-rate path, so bullets, reticle
     // logic, vehicles and turrets all behave as if the player aimed manually.
-    if (!g_vrAim.load() || !g_enabled.load() || !g_aimSeen.load())
+    // Diagnostic: when aim steering is not running, log WHICH precondition
+    // failed (once per distinct reason) so a dead aim is explainable from the
+    // log alone.
+    static std::atomic<int> lastAimBlock{-1};
+    auto blocked = [](int reason, const char* what) {
+        int prev = lastAimBlock.exchange(reason);
+        if (prev != reason)
+            LOG("M3 DIAG: aim steering blocked: %s", what);
         return false;
+    };
+    if (!g_vrAim.load())
+        return blocked(1, "VR aim toggled OFF (press Insert)");
+    if (!g_enabled.load())
+        return blocked(2, "head tracking OFF (press F2)");
+    if (!g_aimSeen.load())
+        return blocked(3, "camera hook not running (not in a level?)");
     float q[4], p[3];
     if (!VR_GetAimPose(q, p)) // two-hand-adjusted weapon aim (falls back to right hand)
-        return false;
+        return blocked(4, "right controller not tracked");
     float hq[4], hp[3];
     if (!VR_GetHeadPose(hq, hp))
-        return false;
+        return blocked(5, "headset not tracked");
+    lastAimBlock = 0;
 
     // Controller forward: the RAW aim-pose -Z, deliberately NOT mount-trimmed.
     // Bullets and the reticle share this fixed "laser" ray; the mount trim

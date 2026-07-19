@@ -38,6 +38,10 @@ struct Config
     // new-pipeline starting point. Home/End adjust live.
     float gun_scale = 0.85f;
 
+    // (gun_length_scale removed 2026-07-19: a barrel-only squash is not
+    // expressible in the engine's uniform-scale bone format; moving bone
+    // origins just translated the rigid gun mesh.)
+
     // Fixed mounting rotation between the weapon bone's authored frame and
     // the controller (degrees). Rotates ONLY the visible gun + muzzle flash;
     // the cursor/bullet ray stays fixed on the controller, so tune these
@@ -52,6 +56,12 @@ struct Config
     // into/behind your fist (the practical "gun feels too long" trim);
     // positive moves it out of your face. Never touches aim.
     float gun_forward_m = 0.0f;
+
+    // (show_hud / hud_ammo / hud_health / hud_motion / hud_grenades retired
+    // 2026-07-19 evening: their chud+0x144..0x14A byte writes used a
+    // headset-disproven offset map and suppressed the whole HUD except the
+    // objective text. The native HUD is fully game-managed now; the only
+    // element control is the reticle kill below.)
 
     // Hide the game's centered weapon reticle. It's head-locked (causes eye
     // strain in VR) and redundant with our floating VR reticle. This works by
@@ -68,6 +78,16 @@ struct Config
     // function once thought to size the HUD actually adjusts brightness.
     float game_brightness = 1.0f;
 
+    // (The 0x2EEFC8 placement-slider experiment is retired: measured 2026-07-19,
+    // that struct holds colors/alpha/animation only — Halo's HUD has no position
+    // data to edit. The HUD panel below is the real fix.)
+
+    // (HUD sizing experiments all retired 2026-07-19 at the user's direction.
+    // The capture-diff HUD panel was headset-disproven — it showed only the
+    // objective text and cost GPU time every frame — and the hud_zoom
+    // [view+0x2B0]+0x174 layout poke never resized anything. The HUD ships
+    // native and full-size; only the reticle element is hidden, above.)
+
     // Automatically enter VR (head tracking + stereo) when a level loads, and
     // drop back to the flat menu screen when you leave — no F2/F11 needed.
     bool auto_vr = true;
@@ -82,6 +102,10 @@ struct Config
     // hold (engaged only while the left grip is held).
     bool two_hand_toggle = true;
 
+    // VRIK stage A1: show the player's real body (game-animated) by flipping
+    // the engine's director/viewmodel switches. Experimental gate for the
+    // upper-body VRIK plan (docs/VRIK-ROADMAP.md).
+    bool body_wip = false;
 
     // VRIK arm IK: bend the first-person arm (shoulder planted, elbow solved,
     // hand+gun to the controller) instead of rigid-parenting the whole
@@ -108,6 +132,31 @@ struct Config
     // standard. 0 = blur scales forced to zero (default), 1 = engine values.
     bool motion_blur = false;
 
+    // (bullet_snap retired: the composed-wrist snap spun the right hand and
+    // sent bullets stage-left; reverted. The real fix is a runtime fire hook —
+    // see docs and the bullet_probe diagnostic below.)
+
+    // DIAGNOSTIC (off by default). Ignores the controller and shoves the whole
+    // composed first-person assembly a fixed distance to the left. Answers one
+    // binary question that the disassembly cannot: does the visible gun MESH
+    // consume the bone matrices we edit? See docs/CONTINUATION.md 2026-07-15.
+    bool weapon_probe = false;
+
+    // DIAGNOSTIC (off by default). Logs the CHUD state-byte window whenever it
+    // changes, to locate the reticle "on target" (enemy red) state and the
+    // per-element visibility flags. Log-only; changes nothing.
+    bool hud_probe = false;
+
+    // DIAGNOSTIC (off by default; set bullet_probe=1 in the cfg for the
+    // fire-hook hunt). On each shot, logs the camera (where Halo spawns your
+    // bullet) vs the gun muzzle world position, to measure the "bullets from
+    // thin air" gap. Log-only; the actual origin-move needs a runtime fire hook.
+    bool bullet_probe = false;
+
+    // Ghosting diagnostic, and the one reliable way to reproduce the open
+    // left-eye ghost bug on demand: render the right eye first and the trails
+    // move to the right lens. See docs/CONTINUATION.md "KNOWN MAJOR BUG".
+    bool right_eye_first = false;
 };
 
 extern Config g_config;

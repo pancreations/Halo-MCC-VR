@@ -12,6 +12,17 @@ void VR_InitInstance();
 void VR_OnPresent(IDXGISwapChain* swapchain);
 void VR_OnResizeBuffers(IDXGISwapChain* swapchain);
 
+// HUD panel capture: called from the FP driver hook (render thread, left-eye
+// pass, before the HUD elements draw). Snapshots the left-eye scene-only image;
+// VR_OnPresent diffs it against the finished frame to extract Halo's HUD pixels
+// for the floating HUD panel.
+
+// One-shot frame trace: logs the in-frame ORDER of render events (eye begin,
+// RTV redirect, FP driver runs, HUD element submits, eye end) for ~one frame,
+// a few seconds into a level. Names the correct pre-HUD snapshot anchor from
+// the game's own timeline instead of an assumption.
+void VR_TraceEvent(const char* tag, int a, int b);
+
 // Called from the menu: re-place the virtual screen in front of where the
 // user is currently looking.
 void VR_RequestRecenter();

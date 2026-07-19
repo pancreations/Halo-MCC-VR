@@ -89,6 +89,13 @@ namespace
     // target-lock state). While set, the reticle repaints red like the OG HUD.
     std::atomic<bool> g_reticleEnemy{false};
 
+    // The CHUD steal-and-requad machinery (capture texture, shader
+    // classifier, hand-HUD swapchain) was removed 2026-07-18: it removed the
+    // native HUD from both eyes, never displayed its quad, and its
+    // calibration retry loop cost ~30 fps. The native HUD renders untouched;
+    // per-eye FP camera substitution in game.cpp gives it (and the gun)
+    // stereo-correct rendering.
+
     // M2 eye targets. Each eye is a separate swapchain because the headset may
     // recommend a different size for each view. They are allocated now so the
     // later render hook can draw directly into them; the mono quad remains the
@@ -110,7 +117,13 @@ namespace
     ID3D11RenderTargetView* g_eyeCacheRtvs[2] = {nullptr, nullptr};
     D3D11_TEXTURE2D_DESC g_eyeCacheDesc{};
 
-    // Runtime eye state.
+    // Removed: the per-eye post-process history machinery (cross-pass
+    // discovery, frame-level blanking, and the learned scene-snapshot
+    // pairs). Every one of them was disproven in a headset session, and
+    // together they held two full-resolution shadow textures per learned
+    // pair (~25 MB each) plus 96 AddRef'd candidate textures, and re-copied
+    // them on every eye pass. See docs/CONTINUATION.md for what each probe
+    // ruled out; do not rebuild them without new evidence.
     std::atomic<bool> g_stereoEnabled{false};
     int g_renderEye = 0;
     bool g_eyeHasImage[2] = {false, false};
@@ -118,7 +131,11 @@ namespace
     std::atomic<int> g_rasterEye{-1};
     bool g_rasterRedirected[2] = {false, false};
     IDXGISwapChain* g_gameSwapchain = nullptr; // borrowed; owned by the game
-
+    // The internal scene-color RTV is stable after the first eye render. Keep
+    // one reference and use a pointer comparison in the OMSetRenderTargets
+    // hook. The retired census path performed GetBuffer/GetResource/QI/GetDesc
+    // plus a 128-entry linear scan on nearly every RTV bind and could collapse
+    // stereo from 90 fps into the 20s.
     ID3D11RenderTargetView* g_sceneColorRtv = nullptr;
     D3D11_TEXTURE2D_DESC g_gameBackbufferDesc{};
     bool g_gameBackbufferDescValid = false;
@@ -1979,6 +1996,28 @@ void VR_CaptureRenderedEye(int eye)
     }
 }
 
+void VR_TraceEvent(const char* tag, int a, int b)
+{
+    // Arms ~8s after first call (a level is up), then logs the next 60 events
+    // and disarms forever. One burst, zero steady-state cost beyond two loads.
+    static std::atomic<DWORD> firstMs{0};
+    static std::atomic<int> budget{-1};
+    DWORD f = firstMs.load();
+    if (f == 0 && firstMs.compare_exchange_strong(f, GetTickCount())) f = firstMs.load();
+    int have = budget.load();
+    if (have == -1)
+    {
+        if (GetTickCount() - f < 8000) return;
+        int expect = -1;
+        if (!budget.compare_exchange_strong(expect, 60)) {}
+        have = budget.load();
+    }
+    if (have <= 0) return;
+    if (budget.fetch_sub(1) <= 0) return;
+    LOG("TRACE %s a=%d b=%d rasterEye=%d redir0=%d", tag, a, b,
+        g_rasterEye.load(), g_rasterRedirected[0] ? 1 : 0);
+}
+
 void VR_BeginRasterEye(int eye)
 {
     if (eye < 0 || eye > 1 || !g_gameSwapchain || !g_device)
@@ -1988,13 +2027,13 @@ void VR_BeginRasterEye(int eye)
     // the required sRGB conversion.
     g_rasterRedirected[eye] = false;
     g_rasterEye = eye;
-
+    VR_TraceEvent("eye-begin", eye, 0);
 }
 
 
 void VR_EndRasterEye()
 {
-
+    VR_TraceEvent("eye-end", g_rasterEye.load(), 0);
     // Promote any newly identified history, then save this eye's copies of
     // every tracked target before the other eye (or next frame) overwrites
     // them. A ping-pong pair only reveals its read side a frame after its
@@ -2079,7 +2118,7 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
     if (sceneChanged)
     {
         g_rasterRedirected[eye] = true;
-
+        VR_TraceEvent("rtv-redirect", eye, 0);
         static std::atomic<unsigned> logged{0};
         if (logged.fetch_add(1) < 4)
             LOG("M2 RASTER: redirected internal scene-color RTV to eye %d target", eye);

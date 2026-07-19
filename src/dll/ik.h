@@ -1,6 +1,6 @@
 #pragma once
 
-// Two-bone analytic IK for the first-person arms.
+// Two-bone analytic IK for upper-body VRIK (docs/VRIK-ROADMAP.md, Stage B).
 // Pure math, no engine types: positions are float[3] in any consistent space.
 // The solver never distance-clamps the hand — at full reach the chain goes
 // straight; past full reach the hand STILL sits at the target (the arm just

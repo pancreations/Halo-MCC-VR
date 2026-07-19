@@ -130,13 +130,26 @@ namespace
         }
     }
 
+    std::atomic<unsigned> g_diagReads{0}, g_diagPadValid{0}, g_diagMerged{0};
+
+    // Heartbeat: proves whether the game is reading through our hook at all,
+    // and whether controller data was valid when it did.
+    void DiagTick()
+    {
+        static std::atomic<DWORD> lastLog{0};
+        const DWORD now = GetTickCount();
+        DWORD last = lastLog.load();
+        if (now - last >= 10000 && lastLog.compare_exchange_strong(last, now))
+            LOG("M3 DIAG: xinput reads=%u padValid=%u merged=%u (last 10s window cumulative)",
+                g_diagReads.load(), g_diagPadValid.load(), g_diagMerged.load());
+    }
 
     DWORD ProcessGetState(DWORD r, DWORD user, XINPUT_STATE* state)
     {
         if (user != 0 || !state)
             return r;
-
-
+        g_diagReads.fetch_add(1);
+        DiagTick();
         if (r != ERROR_SUCCESS)
         {
             // No physical gamepad: fabricate a connected, idle one for slot 0
@@ -148,12 +161,12 @@ namespace
         VR_GetPadState(pad);
         if (!pad.valid)
             return r;
-
+        g_diagPadValid.fetch_add(1);
         // Keep the packet number monotonically rising so MCC notices changes.
         static std::atomic<DWORD> seq{1};
         state->dwPacketNumber += seq.fetch_add(1);
         MergeVrPad(state);
-
+        g_diagMerged.fetch_add(1);
         return r;
     }
 
