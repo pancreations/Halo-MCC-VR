@@ -24,6 +24,7 @@ static void Clamp()
     g_config.reticle_b = std::clamp(g_config.reticle_b, 0.0f, 1.0f);
     g_config.gun_scale = std::clamp(g_config.gun_scale, 0.3f, 3.0f);
     g_config.game_brightness = std::clamp(g_config.game_brightness, 0.5f, 2.0f);
+    g_config.hud_size = std::clamp(g_config.hud_size, 0.30f, 1.00f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
@@ -115,6 +116,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.reticle_element_id = atoi(val);
         else if (!strcmp(key, "game_brightness"))
             g_config.game_brightness = (float)atof(val);
+        else if (!strcmp(key, "hud_size"))
+            g_config.hud_size = (float)atof(val);
         else if (!strcmp(key, "hud_offset_x") || !strcmp(key, "hud_offset_y") ||
                  !strcmp(key, "hud_elem_scale"))
             continue; // retired placement-experiment keys; accept old cfgs quietly
@@ -207,6 +210,10 @@ void ConfigSave()
     fprintf(f, "reticle_element_id = %d\n", g_config.reticle_element_id);
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
     fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);
+    fprintf(f, "# HUD size: fraction of the view the HUD lays out into (0.30-1.00).\n");
+    fprintf(f, "# 0.87 = Halo's stock value; smaller pulls shields/radar/ammo toward\n");
+    fprintf(f, "# the center so both VR eyes see them. Tune live in the F1 menu.\n");
+    fprintf(f, "hud_size = %.2f\n\n", g_config.hud_size);
     fprintf(f, "# Automatically enter VR when a level loads (no F2/F11 needed).\n");
     fprintf(f, "auto_vr = %d\n\n", g_config.auto_vr ? 1 : 0);
     fprintf(f, "# Two-handed aiming: put your left hand on the gun front and use the\n");

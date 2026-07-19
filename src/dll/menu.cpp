@@ -213,28 +213,21 @@ namespace
 
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("HUD size (probe)");
+        ImGui::Text("HUD layout");
+        changed |= ImGui::SliderFloat("HUD size", &g_config.hud_size, 0.30f, 1.00f, "%.2f");
+        ImGui::TextDisabled("Fraction of the view the HUD lays out into. 0.87 = Halo stock.\n"
+                            "Lower pulls shields/radar/ammo toward the center of your eyes.");
         {
-            int sfMatches; float sfPoked; bool sfScanning;
-            Game_GetHudSafeFrameStatus(sfMatches, sfPoked, sfScanning);
-            if (ImGui::Button("Locate HUD safe-frames"))
-                Game_LocateHudSafeFrames();
+            int sfMatches; bool sfScanning;
+            Game_GetHudSafeFrameStatus(sfMatches, sfScanning);
+            const bool sfStock = g_config.hud_size >= 0.8695f && g_config.hud_size <= 0.8705f;
+            if (sfScanning)          ImGui::TextDisabled("status: locating HUD data (takes ~20s)...");
+            else if (sfMatches > 0)  ImGui::TextDisabled("status: active (%d tag slot pair(s))", sfMatches);
+            else if (sfStock)        ImGui::TextDisabled("status: stock size — nothing applied");
+            else                     ImGui::TextDisabled("status: waiting for a level (auto-locates)");
             ImGui::SameLine();
-            if (sfScanning)          ImGui::Text("scanning...");
-            else if (sfMatches < 0)  ImGui::Text("not scanned (be in a level first)");
-            else                     ImGui::Text("%d verified pair(s)", sfMatches);
-            if (sfMatches > 0)
-            {
-                if (ImGui::Button("HUD 50%##sf")) Game_PokeHudSafeFrames(0.50f);
-                ImGui::SameLine();
-                if (ImGui::Button("HUD 65%##sf")) Game_PokeHudSafeFrames(0.65f);
-                ImGui::SameLine();
-                if (ImGui::Button("Back to 87%##sf")) Game_PokeHudSafeFrames(0.87f);
-                if (sfPoked > 0.0f) { ImGui::SameLine(); ImGui::Text("wrote %.2f", sfPoked); }
-                ImGui::TextDisabled("Click and WATCH the HUD. Instant re-layout = live lever\n"
-                                    "(slider build next). No change = try reverting to last save;\n"
-                                    "if it changes only then, it's read at load time.");
-            }
+            if (ImGui::SmallButton("Rescan##sf"))
+                Game_LocateHudSafeFrames();
         }
 
         ImGui::Spacing();

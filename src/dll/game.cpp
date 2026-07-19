@@ -580,8 +580,9 @@ namespace
         0x00,0x00,0x5C,0x42, 0x00,0x40,0x25,0x44,   // 55.0f, 661.0f
         0x00,0x00,0x68,0x42, 0x00,0x00,0x80,0x40 }; // 58.0f, 4.0f
     std::atomic<uintptr_t> g_safeFrameSlots[kMaxSafeFrameHits]{};
-    std::atomic<int> g_safeFrameHitCount{-1}; // -1 never scanned, -2 scanning
-    std::atomic<float> g_safeFramePoked{0.0f}; // last value we wrote, 0 = none
+    std::atomic<int> g_safeFrameHitCount{-1}; // -1 never/none, -2 scanning, >0 found
+    std::atomic<uint32_t> g_hudAppliedBits{0}; // bits of the last hud_size we wrote
+    std::atomic<uint32_t> g_camTicks{0};       // CamCopyHook heartbeat (level rendering)
 
     // Plain helpers: SEH frames must stay free of C++ unwinding (C2712), and a
     // region can decommit between VirtualQuery and the read, so every touch of
@@ -679,11 +680,79 @@ namespace
             addr = next;
         }
         LOG("SAFEFRAME: scan done in %llu ms — %d raw anchor hit(s), "
-            "%d verified pokeable pair(s)%s",
+            "%d verified pair(s)%s",
             (unsigned long long)(GetTickCount64() - t0), rawHits, accepted,
-            accepted ? "; use the F1 test buttons and watch the HUD" : "");
+            accepted ? "; hud_size applies from the next frame" : "");
         g_safeFrameHitCount.store(accepted, std::memory_order_release);
         return 0;
+    }
+
+    void LaunchSafeFrameScan(const char* why)
+    {
+        if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2) return;
+        for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
+        g_hudAppliedBits.store(0);
+        g_safeFrameHitCount.store(-2, std::memory_order_release);
+        HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
+        if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (%s)", why); }
+        else { g_safeFrameHitCount.store(-1); LOG("SAFEFRAME: scan thread create FAILED"); }
+    }
+
+    // Called every frame from CamCopyHook (game thread) — same pattern as
+    // ApplyMotionBlurSetting. Writes are tiny, SEH-guarded, and no logging
+    // happens here (hot-path rule). A slot is only written while it holds the
+    // shipped 0.87f bits or the value we last applied; anything else means the
+    // tag data moved (map change) — then all slots are dropped and the Present-
+    // thread auto-tick relocates them, throttled.
+    void ApplyHudSize()
+    {
+        g_camTicks.fetch_add(1, std::memory_order_relaxed);
+        const int n = g_safeFrameHitCount.load(std::memory_order_acquire);
+        if (n <= 0) return;
+        const float want = g_config.hud_size;
+        if (!(want >= 0.30f && want <= 1.00f)) return; // bad cfg: leave stock
+        uint32_t wantBits = 0;
+        memcpy(&wantBits, &want, 4);
+        const uint32_t applied = g_hudAppliedBits.load(std::memory_order_relaxed);
+        int live = 0;
+        for (int i = 0; i < n && i < kMaxSafeFrameHits; ++i)
+        {
+            const uintptr_t slot = g_safeFrameSlots[i].load(std::memory_order_relaxed);
+            if (!slot) continue;
+            uint32_t h = 0, v = 0;
+            if (!SafeFrameReadPair(slot, &h, &v)) continue;
+            if (h == wantBits && v == wantBits) { ++live; continue; } // already ours
+            const bool known = (h == kSafeFrameBits && v == kSafeFrameBits) ||
+                               (applied && h == applied && v == applied);
+            if (!known) continue; // stale: tag data moved out from under us
+            if (SafeFrameWritePair(slot, want)) ++live;
+        }
+        if (live > 0)
+            g_hudAppliedBits.store(wantBits, std::memory_order_relaxed);
+        else
+            g_safeFrameHitCount.store(-1, std::memory_order_release); // relocate
+    }
+
+    // Called every frame from Game_AutoVrTick (Present thread — logging and
+    // thread creation are fine here). Starts/restarts the locator scan when
+    // hud_size is non-stock and no verified slots exist, only while a level is
+    // actually rendering (CamCopyHook heartbeat), at most every 15 seconds.
+    void HudSizeAutoTick()
+    {
+        const float want = g_config.hud_size;
+        if (want >= 0.8695f && want <= 0.8705f) return; // stock: zero overhead
+        const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
+        if (c > 0 || c == -2) return; // located or scanning
+        static uint32_t lastTicks = 0;
+        const uint32_t ticks = g_camTicks.load(std::memory_order_relaxed);
+        const bool rendering = (ticks != lastTicks);
+        lastTicks = ticks;
+        if (!rendering) return;
+        static uint64_t lastAttemptMs = 0;
+        const uint64_t now = GetTickCount64();
+        if (now - lastAttemptMs < 15000) return;
+        lastAttemptMs = now;
+        LaunchSafeFrameScan("auto: hud_size is set and no slots are located");
     }
 
     void ResolveBodyVars(uintptr_t base, size_t size)
@@ -2802,6 +2871,7 @@ namespace
         g_lastCamCopyMs.store(GetTickCount64(), std::memory_order_relaxed);
         ChudProbe();
         ApplyMotionBlurSetting();
+        ApplyHudSize();
         ProbeBulletOrigin();
         ApplyBodySetting();
         // M2 tracing: this function copies src+0x68/+0x6C into the compact
@@ -3773,52 +3843,18 @@ void Game_ClearReticleElement()
     LOG("reticle-find: reset — no HUD element hidden");
 }
 
-// HUD safe-frame probe (F1 menu). See SafeFrameScanThread for the mechanism.
+// HUD size (F1 menu): manual rescan + status. The scan normally starts itself
+// (HudSizeAutoTick) whenever hud_size is non-stock and no slots are located.
 void Game_LocateHudSafeFrames()
 {
-    if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2)
-    { LOG("SAFEFRAME: scan already running"); return; }
-    for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
-    g_safeFramePoked.store(0.0f);
-    g_safeFrameHitCount.store(-2, std::memory_order_release);
-    HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
-    if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (background thread)"); }
-    else { g_safeFrameHitCount.store(-1); LOG("SAFEFRAME: scan thread create FAILED"); }
+    LaunchSafeFrameScan("manual rescan from the menu");
 }
 
-void Game_GetHudSafeFrameStatus(int& matches, float& lastPoke, bool& scanning)
+void Game_GetHudSafeFrameStatus(int& matches, bool& scanning)
 {
     const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
     scanning = (c == -2);
-    matches = (c >= 0) ? c : -1;
-    lastPoke = g_safeFramePoked.load();
-}
-
-// Write `value` into every verified safe-frame pair. Refuses any slot whose
-// current bits are neither the shipped 0.87f nor our own previous poke — that
-// means the tag data moved (map change) and the slot is stale: rescan.
-void Game_PokeHudSafeFrames(float value)
-{
-    const int n = g_safeFrameHitCount.load(std::memory_order_acquire);
-    if (n <= 0) { LOG("SAFEFRAME: nothing located; run the scan first"); return; }
-    const float prev = g_safeFramePoked.load();
-    uint32_t prevBits = 0;
-    memcpy(&prevBits, &prev, 4);
-    int wrote = 0, stale = 0;
-    for (int i = 0; i < n && i < kMaxSafeFrameHits; ++i)
-    {
-        const uintptr_t slot = g_safeFrameSlots[i].load();
-        if (!slot) continue;
-        uint32_t h = 0, v = 0;
-        if (!SafeFrameReadPair(slot, &h, &v)) { ++stale; continue; }
-        const bool known = (h == kSafeFrameBits && v == kSafeFrameBits) ||
-                           (prev != 0.0f && h == prevBits && v == prevBits);
-        if (!known) { ++stale; continue; }
-        if (SafeFrameWritePair(slot, value)) ++wrote; else ++stale;
-    }
-    if (wrote) g_safeFramePoked.store(value);
-    LOG("SAFEFRAME: wrote %.2f to %d of %d pair(s)%s", value, wrote, n,
-        stale ? " — stale/unreadable slot(s) skipped; rescan after a map change" : "");
+    matches = (c > 0) ? c : 0;
 }
 
 
@@ -3842,6 +3878,7 @@ void Game_ToggleHeadTracking()
 // while in a level vetoes auto-arm until the next level load; F2/F11 still work.
 void Game_AutoVrTick()
 {
+    HudSizeAutoTick(); // HUD size: (re)locate the tag slots when needed
     // Render-thread diagnostics are reported here, on Present. Log only a
     // stable state transition; never log from the palette or HUD hot hooks.
     {

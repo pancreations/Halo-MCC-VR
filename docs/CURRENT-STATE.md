@@ -72,7 +72,8 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
-- The native HUD remains full-size. The centered game reticle requires selecting the correct observed element id.
+- HUD size: the chud_globals safe-frame lever is live-proven (2026-07-19 probe: 3/3 tag slots located and poked in MCC, instant re-layout, log-verified). The hud_size slider build that drives it automatically is deployed but awaits headset confirmation.
+- The centered game reticle requires selecting the correct observed element id, and one picked id did not cover a later level/weapon session (re-pick with F4; a multi-id hide list is the queued fix if variance persists).
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
 
 ## Required test/deploy sequence

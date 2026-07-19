@@ -82,11 +82,19 @@ struct Config
     // that struct holds colors/alpha/animation only — Halo's HUD has no position
     // data to edit. The HUD panel below is the real fix.)
 
-    // (HUD sizing experiments all retired 2026-07-19 at the user's direction.
-    // The capture-diff HUD panel was headset-disproven — it showed only the
-    // objective text and cost GPU time every frame — and the hud_zoom
-    // [view+0x2B0]+0x174 layout poke never resized anything. The HUD ships
-    // native and full-size; only the reticle element is hidden, above.)
+    // (HUD sizing experiments before 2026-07-19 PM are retired: the capture-diff
+    // panel was headset-disproven and the hud_zoom [view+0x2B0]+0x174 poke never
+    // resized anything. hud_size below is the one that works — it is DATA, not
+    // code: Halo's own layout input.)
+
+    // HUD size: the fraction of the view the HUD lays out into. This drives
+    // Halo's own "global safe frame" floats inside the loaded chud_globals tag
+    // data (located at runtime by their immutable byte neighborhood; proven in
+    // H3EK tag_test on desktop AND live in MCC, 2026-07-19 probe: the engine
+    // re-lays the HUD out the same frame the floats change). 0.87 = the game's
+    // stock value (mod applies nothing); smaller pulls shields/radar/ammo
+    // toward the screen center where both VR eyes can see them.
+    float hud_size = 0.87f;
 
     // Automatically enter VR (head tracking + stereo) when a level loads, and
     // drop back to the flat menu screen when you leave — no F2/F11 needed.

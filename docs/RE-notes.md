@@ -40,6 +40,9 @@ The user confirmed that this frees the shotgun left arm. The removed synthetic p
 - The native HUD is the accepted rendering path.
 - The function once investigated as CHUD scale near 0x278EE0 controls screen brightness/alpha. It is used only for the brightness setting.
 - Direct CHUD state-byte writes and capture/diff HUD extraction are disproven and removed.
+- HUD layout size is DATA, not code (2026-07-19): the chud_globals tag's "curvature infos" blocks (one per skin: default/dervish/monitor) hold two "global safe frame" floats (shipped 0.87f, bits 0x3F5EB852) that scale the whole HUD layout toward screen center. Proven twice: H3EK tag_test re-laid the HUD out at 0.5 (desktop observation), and MCC consumes the floats per frame (live pokes resized the HUD instantly in-headset).
+- At runtime those floats live in loaded tag data (private read-write heap, not the module image). They are located by the immutable 24-byte prefix [int32 1280][int32 720][55.0f][661.0f][58.0f][4.0f] (virtual canvas, sensor origin/radius, blip radius) with the safe-frame pair at +24/+28. Exactly 3 blocks exist and all 3 were found with bit-exact payloads (log-verified). A hit counts only if prefix AND payload match; writes are refused when a slot no longer holds the shipped or last-applied bits.
+- The reticle-kill element id (0x2EDF24 hook) is not one global constant: a picked id can fail to cover the crosshair in another level/weapon session. Re-pick via F4; treat per-weapon variance as unconfirmed until measured.
 
 ## Input and firing
 
