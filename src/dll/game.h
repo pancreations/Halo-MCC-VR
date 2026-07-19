@@ -13,6 +13,13 @@ int Game_CopySeenHudIds(unsigned short* out, int maxOut);
 void Game_CycleReticleElement(); // F4: hide the next HUD element (find the crosshair)
 void Game_ClearReticleElement(); // F5: stop hiding (show all HUD elements)
 
+// HUD safe-frame probe (F1 menu): locate the loaded chud_globals safe-frame
+// floats (the tag_test-proven HUD-shrink lever) and poke them live to see if
+// MCC re-lays the HUD out. matches: -1 = not scanned yet, else verified pairs.
+void Game_LocateHudSafeFrames();  // one-shot background memory scan
+void Game_GetHudSafeFrameStatus(int& matches, float& lastPoke, bool& scanning);
+void Game_PokeHudSafeFrames(float value); // write to the verified slots only
+
 // Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
 void Game_ToggleHeadTracking(); // F2
 void Game_AutoVrTick();         // per-frame: auto-enter/exit VR on level load/exit

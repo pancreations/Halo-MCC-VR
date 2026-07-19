@@ -556,6 +556,136 @@ namespace
         LOG("HUD-VARS: %d resolvable HUD-related var(s) logged", dumped);
     }
 
+    // HUD SAFE-FRAME LOCATOR (2026-07-19 probe). Halo 3 lays the whole HUD out
+    // inside a "global safe frame" fraction stored in the chud_globals tag
+    // (skins -> curvature infos): 0.87 x 0.87 of the screen. DESKTOP-PROVEN in
+    // H3EK tag_test: writing 0.5 into the tag pulls every element toward the
+    // screen center — exactly the VR shrink we want. At runtime those floats
+    // live in loaded tag data (heap, not the module image), so we find them by
+    // their immutable neighborhood, byte-verified against the shipped tag:
+    //   [int32 1280][int32 720][55.f][661.f][58.f][4.f]
+    //   (virtual canvas w/h, sensor origin x/y, sensor radius, blip radius)
+    // with the two safe-frame floats at +24/+28. Exactly 3 such blocks exist
+    // in ui\chud\globals (one per skin: default/dervish/monitor, 720p
+    // fullscreen). A hit only counts if +24/+28 hold the exact shipped 0.87f
+    // bit pattern (0x3F5EB852) AND the region is private read-write — pattern
+    // and payload must BOTH agree before we ever write (no-guessing rule).
+    // User-triggered from the F1 menu; the scan runs on its own thread, never
+    // the render thread. The poke buttons are the decisive MCC experiment:
+    // does the live game re-layout the HUD when these floats change?
+    constexpr int kMaxSafeFrameHits = 16;
+    constexpr uint32_t kSafeFrameBits = 0x3F5EB852u; // 0.87f, bit-exact as shipped
+    static const unsigned char kSafeFrameAnchor[24] = {
+        0x00,0x05,0x00,0x00, 0xD0,0x02,0x00,0x00,   // int32 1280, int32 720
+        0x00,0x00,0x5C,0x42, 0x00,0x40,0x25,0x44,   // 55.0f, 661.0f
+        0x00,0x00,0x68,0x42, 0x00,0x00,0x80,0x40 }; // 58.0f, 4.0f
+    std::atomic<uintptr_t> g_safeFrameSlots[kMaxSafeFrameHits]{};
+    std::atomic<int> g_safeFrameHitCount{-1}; // -1 never scanned, -2 scanning
+    std::atomic<float> g_safeFramePoked{0.0f}; // last value we wrote, 0 = none
+
+    // Plain helpers: SEH frames must stay free of C++ unwinding (C2712), and a
+    // region can decommit between VirtualQuery and the read, so every touch of
+    // foreign memory is guarded.
+    static int SafeFrameScanRegion(uintptr_t regionBase, size_t len,
+                                   uintptr_t* out, int maxOut)
+    {
+        int found = 0;
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(regionBase);
+        __try
+        {
+            const uint64_t prefix = 0x000002D000000500ULL; // [1280][720] LE
+            for (size_t i = 0; i + 32 <= len && found < maxOut; ++i)
+            {
+                if (*reinterpret_cast<const uint64_t*>(p + i) != prefix) continue;
+                if (memcmp(p + i + 8, kSafeFrameAnchor + 8, 16) != 0) continue;
+                out[found++] = regionBase + i + 24;
+                i += 23;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return found; }
+        return found;
+    }
+
+    static int SafeFrameReadPair(uintptr_t slot, uint32_t* h, uint32_t* v)
+    {
+        __try
+        {
+            *h = *reinterpret_cast<const volatile uint32_t*>(slot);
+            *v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return 1;
+    }
+
+    static int SafeFrameWritePair(uintptr_t slot, float value)
+    {
+        __try
+        {
+            *reinterpret_cast<volatile float*>(slot) = value;
+            *reinterpret_cast<volatile float*>(slot + 4) = value;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return 1;
+    }
+
+    DWORD WINAPI SafeFrameScanThread(LPVOID)
+    {
+        const uint64_t t0 = GetTickCount64();
+        // Exclude our own image: kSafeFrameAnchor itself lives in it.
+        uintptr_t selfBase = 0; size_t selfSize = 0;
+        sig::ModuleRange(L"halo3xr.dll", selfBase, selfSize);
+
+        int accepted = 0, rawHits = 0;
+        SYSTEM_INFO si; GetSystemInfo(&si);
+        uintptr_t addr = reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
+        const uintptr_t addrMax = reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
+        MEMORY_BASIC_INFORMATION mbi{};
+        while (addr < addrMax && accepted < kMaxSafeFrameHits &&
+               VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)) == sizeof(mbi))
+        {
+            const uintptr_t regionBase = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            const uintptr_t next = regionBase + mbi.RegionSize;
+            const bool readable =
+                mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                                PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                PAGE_EXECUTE_WRITECOPY)) != 0;
+            const bool self =
+                selfBase && regionBase >= selfBase && regionBase < selfBase + selfSize;
+            if (readable && !self)
+            {
+                uintptr_t hits[kMaxSafeFrameHits];
+                const int n = SafeFrameScanRegion(regionBase, mbi.RegionSize,
+                                                  hits, kMaxSafeFrameHits);
+                for (int k = 0; k < n; ++k)
+                {
+                    ++rawHits;
+                    uint32_t h = 0, v = 0;
+                    if (!SafeFrameReadPair(hits[k], &h, &v)) continue;
+                    const bool payloadOk = (h == kSafeFrameBits && v == kSafeFrameBits);
+                    const bool pokeable =
+                        (mbi.Protect == PAGE_READWRITE && mbi.Type == MEM_PRIVATE);
+                    LOG("SAFEFRAME: anchor at %p (type 0x%X protect 0x%X) "
+                        "payload %08X/%08X -> %s",
+                        reinterpret_cast<void*>(hits[k]),
+                        (unsigned)mbi.Type, (unsigned)mbi.Protect, h, v,
+                        !payloadOk ? "payload mismatch, REJECTED"
+                        : pokeable ? "VERIFIED (pokeable)"
+                                   : "payload ok but not private-RW; observe only");
+                    if (payloadOk && pokeable && accepted < kMaxSafeFrameHits)
+                        g_safeFrameSlots[accepted++].store(hits[k]);
+                }
+            }
+            addr = next;
+        }
+        LOG("SAFEFRAME: scan done in %llu ms — %d raw anchor hit(s), "
+            "%d verified pokeable pair(s)%s",
+            (unsigned long long)(GetTickCount64() - t0), rawHits, accepted,
+            accepted ? "; use the F1 test buttons and watch the HUD" : "");
+        g_safeFrameHitCount.store(accepted, std::memory_order_release);
+        return 0;
+    }
+
     void ResolveBodyVars(uintptr_t base, size_t size)
     {
         struct { const char* name; int32_t on; } wanted[3] = {
@@ -3641,6 +3771,54 @@ void Game_ClearReticleElement()
     g_config.reticle_element_id = -1;
     ConfigSave();
     LOG("reticle-find: reset — no HUD element hidden");
+}
+
+// HUD safe-frame probe (F1 menu). See SafeFrameScanThread for the mechanism.
+void Game_LocateHudSafeFrames()
+{
+    if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2)
+    { LOG("SAFEFRAME: scan already running"); return; }
+    for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
+    g_safeFramePoked.store(0.0f);
+    g_safeFrameHitCount.store(-2, std::memory_order_release);
+    HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
+    if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (background thread)"); }
+    else { g_safeFrameHitCount.store(-1); LOG("SAFEFRAME: scan thread create FAILED"); }
+}
+
+void Game_GetHudSafeFrameStatus(int& matches, float& lastPoke, bool& scanning)
+{
+    const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
+    scanning = (c == -2);
+    matches = (c >= 0) ? c : -1;
+    lastPoke = g_safeFramePoked.load();
+}
+
+// Write `value` into every verified safe-frame pair. Refuses any slot whose
+// current bits are neither the shipped 0.87f nor our own previous poke — that
+// means the tag data moved (map change) and the slot is stale: rescan.
+void Game_PokeHudSafeFrames(float value)
+{
+    const int n = g_safeFrameHitCount.load(std::memory_order_acquire);
+    if (n <= 0) { LOG("SAFEFRAME: nothing located; run the scan first"); return; }
+    const float prev = g_safeFramePoked.load();
+    uint32_t prevBits = 0;
+    memcpy(&prevBits, &prev, 4);
+    int wrote = 0, stale = 0;
+    for (int i = 0; i < n && i < kMaxSafeFrameHits; ++i)
+    {
+        const uintptr_t slot = g_safeFrameSlots[i].load();
+        if (!slot) continue;
+        uint32_t h = 0, v = 0;
+        if (!SafeFrameReadPair(slot, &h, &v)) { ++stale; continue; }
+        const bool known = (h == kSafeFrameBits && v == kSafeFrameBits) ||
+                           (prev != 0.0f && h == prevBits && v == prevBits);
+        if (!known) { ++stale; continue; }
+        if (SafeFrameWritePair(slot, value)) ++wrote; else ++stale;
+    }
+    if (wrote) g_safeFramePoked.store(value);
+    LOG("SAFEFRAME: wrote %.2f to %d of %d pair(s)%s", value, wrote, n,
+        stale ? " — stale/unreadable slot(s) skipped; rescan after a map change" : "");
 }
 
 

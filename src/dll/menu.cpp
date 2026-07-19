@@ -213,6 +213,32 @@ namespace
 
         ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Text("HUD size (probe)");
+        {
+            int sfMatches; float sfPoked; bool sfScanning;
+            Game_GetHudSafeFrameStatus(sfMatches, sfPoked, sfScanning);
+            if (ImGui::Button("Locate HUD safe-frames"))
+                Game_LocateHudSafeFrames();
+            ImGui::SameLine();
+            if (sfScanning)          ImGui::Text("scanning...");
+            else if (sfMatches < 0)  ImGui::Text("not scanned (be in a level first)");
+            else                     ImGui::Text("%d verified pair(s)", sfMatches);
+            if (sfMatches > 0)
+            {
+                if (ImGui::Button("HUD 50%##sf")) Game_PokeHudSafeFrames(0.50f);
+                ImGui::SameLine();
+                if (ImGui::Button("HUD 65%##sf")) Game_PokeHudSafeFrames(0.65f);
+                ImGui::SameLine();
+                if (ImGui::Button("Back to 87%##sf")) Game_PokeHudSafeFrames(0.87f);
+                if (sfPoked > 0.0f) { ImGui::SameLine(); ImGui::Text("wrote %.2f", sfPoked); }
+                ImGui::TextDisabled("Click and WATCH the HUD. Instant re-layout = live lever\n"
+                                    "(slider build next). No change = try reverting to last save;\n"
+                                    "if it changes only then, it's read at load time.");
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
         ImGui::Text("Aim crosshair (stereo)");
         changed |= ImGui::Checkbox("Show a crosshair where the weapon shoots", &g_config.crosshair);
         if (g_config.crosshair)
