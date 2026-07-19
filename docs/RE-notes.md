@@ -46,10 +46,13 @@ The user confirmed that this frees the shotgun left arm. The removed synthetic p
 - halo3+0x2EDF24 calls game_is_playback first. Normal play short-circuits around
   both the class-2 comparison and halo3+0x2EDE38, explaining why hooking
   0x2EDE38 alone did nothing in-headset.
-- The current test path NOPs only that validated short-circuit and hooks
+- The production path in commit c923842 NOPs only that validated short-circuit and hooks
   0x2EDE38. Halo still performs its own tag lookup and class comparison; the
   hook returns hidden only after Halo identifies class 2. No runtime tag-table
   dereferences were added to the render hook.
+- Headset testing across multiple weapons confirmed that this removes the native
+  crosshairs while preserving the VR reticle and the rest of the HUD, without
+  reproducing the earlier black-screen failure.
 - The native HUD is the accepted rendering path.
 - The function once investigated as CHUD scale near 0x278EE0 controls screen brightness/alpha. It is used only for the brightness setting.
 - Direct CHUD state-byte writes and capture/diff HUD extraction are disproven and removed.
