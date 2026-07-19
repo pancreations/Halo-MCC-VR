@@ -583,6 +583,13 @@ namespace
     std::atomic<int> g_safeFrameHitCount{-1}; // -1 never/none, -2 scanning, >0 found
     std::atomic<uint32_t> g_hudAppliedBits{0}; // bits of the last hud_size we wrote
     std::atomic<uint32_t> g_camTicks{0};       // CamCopyHook heartbeat (level rendering)
+    std::atomic<uint64_t> g_safeFrameScanStartMs{0}; // for the toast's elapsed seconds
+    // Addresses that verified in a previous locate this session. The tag
+    // allocator tends to reuse the same block on map reload, so re-checking
+    // these (anchor + payload, same certainty as the scan) usually re-acquires
+    // instantly instead of costing a full rescan.
+    std::atomic<uintptr_t> g_safeFrameLastGood[kMaxSafeFrameHits]{};
+    std::atomic<int> g_safeFrameLastGoodCount{0};
 
     // Plain helpers: SEH frames must stay free of C++ unwinding (C2712), and a
     // region can decommit between VirtualQuery and the read, so every touch of
@@ -629,6 +636,22 @@ namespace
         return 1;
     }
 
+    // Full verification of a remembered address: the 24-byte anchor must sit
+    // at slot-24 and the payload must be the freshly-loaded 0.87f bits. Same
+    // acceptance rule as the scan, so a reacquired slot is equally proven.
+    static int SafeFrameCheckAnchor(uintptr_t slot)
+    {
+        __try
+        {
+            if (memcmp(reinterpret_cast<const void*>(slot - 24),
+                       kSafeFrameAnchor, 24) != 0) return 0;
+            const uint32_t h = *reinterpret_cast<const volatile uint32_t*>(slot);
+            const uint32_t v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
+            return (h == kSafeFrameBits && v == kSafeFrameBits) ? 1 : 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+
     DWORD WINAPI SafeFrameScanThread(LPVOID)
     {
         const uint64_t t0 = GetTickCount64();
@@ -646,14 +669,16 @@ namespace
         {
             const uintptr_t regionBase = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
             const uintptr_t next = regionBase + mbi.RegionSize;
-            const bool readable =
+            // Only private read-write regions can ever be ACCEPTED (that is
+            // where loaded tag data lives — probe-verified), so only those are
+            // scanned at all. This skips every module image and mapped file
+            // view and cuts the scan from ~20s to a few seconds.
+            const bool candidate =
                 mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
-                (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
-                                PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
-                                PAGE_EXECUTE_WRITECOPY)) != 0;
+                mbi.Protect == PAGE_READWRITE && mbi.Type == MEM_PRIVATE;
             const bool self =
                 selfBase && regionBase >= selfBase && regionBase < selfBase + selfSize;
-            if (readable && !self)
+            if (candidate && !self)
             {
                 uintptr_t hits[kMaxSafeFrameHits];
                 const int n = SafeFrameScanRegion(regionBase, mbi.RegionSize,
@@ -679,10 +704,16 @@ namespace
             }
             addr = next;
         }
-        LOG("SAFEFRAME: scan done in %llu ms — %d raw anchor hit(s), "
-            "%d verified pair(s)%s",
+        LOG("SAFEFRAME: scan done in %llu ms (private-RW only) — %d raw anchor "
+            "hit(s), %d verified pair(s)%s",
             (unsigned long long)(GetTickCount64() - t0), rawHits, accepted,
             accepted ? "; hud_size applies from the next frame" : "");
+        if (accepted > 0) // remember for instant reacquire after map changes
+        {
+            for (int i = 0; i < accepted; ++i)
+                g_safeFrameLastGood[i].store(g_safeFrameSlots[i].load());
+            g_safeFrameLastGoodCount.store(accepted, std::memory_order_release);
+        }
         g_safeFrameHitCount.store(accepted, std::memory_order_release);
         return 0;
     }
@@ -692,6 +723,7 @@ namespace
         if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2) return;
         for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
         g_hudAppliedBits.store(0);
+        g_safeFrameScanStartMs.store(GetTickCount64());
         g_safeFrameHitCount.store(-2, std::memory_order_release);
         HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
         if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (%s)", why); }
@@ -733,10 +765,34 @@ namespace
             g_safeFrameHitCount.store(-1, std::memory_order_release); // relocate
     }
 
+    // Instant re-acquire: after a map change the tag allocator usually puts
+    // chud_globals back at the same addresses. Re-verify the remembered ones
+    // (anchor + fresh 0.87f payload — the scan's own acceptance rule); on any
+    // success, skip the full rescan entirely.
+    bool TryReacquireSafeFrames()
+    {
+        const int m = g_safeFrameLastGoodCount.load(std::memory_order_acquire);
+        if (m <= 0) return false;
+        int accepted = 0;
+        for (int i = 0; i < m && i < kMaxSafeFrameHits; ++i)
+        {
+            const uintptr_t slot = g_safeFrameLastGood[i].load(std::memory_order_relaxed);
+            if (slot && SafeFrameCheckAnchor(slot))
+                g_safeFrameSlots[accepted++].store(slot);
+        }
+        if (!accepted) return false;
+        for (int i = accepted; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
+        g_hudAppliedBits.store(0);
+        g_safeFrameHitCount.store(accepted, std::memory_order_release);
+        LOG("SAFEFRAME: reacquired %d pair(s) at previous address(es); scan skipped", accepted);
+        return true;
+    }
+
     // Called every frame from Game_AutoVrTick (Present thread — logging and
-    // thread creation are fine here). Starts/restarts the locator scan when
-    // hud_size is non-stock and no verified slots exist, only while a level is
-    // actually rendering (CamCopyHook heartbeat), at most every 15 seconds.
+    // thread creation are fine here). While hud_size is non-stock and no
+    // verified slots exist: first try the instant reacquire (once a second),
+    // then fall back to the full background scan (at most every 15 seconds).
+    // Both only while a level is actually rendering (CamCopyHook heartbeat).
     void HudSizeAutoTick()
     {
         const float want = g_config.hud_size;
@@ -748,8 +804,14 @@ namespace
         const bool rendering = (ticks != lastTicks);
         lastTicks = ticks;
         if (!rendering) return;
-        static uint64_t lastAttemptMs = 0;
         const uint64_t now = GetTickCount64();
+        static uint64_t lastReacquireMs = 0;
+        if (now - lastReacquireMs >= 1000)
+        {
+            lastReacquireMs = now;
+            if (TryReacquireSafeFrames()) return;
+        }
+        static uint64_t lastAttemptMs = 0;
         if (now - lastAttemptMs < 15000) return;
         lastAttemptMs = now;
         LaunchSafeFrameScan("auto: hud_size is set and no slots are located");
@@ -3855,6 +3917,34 @@ void Game_GetHudSafeFrameStatus(int& matches, bool& scanning)
     const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
     scanning = (c == -2);
     matches = (c > 0) ? c : 0;
+}
+
+// One-line background status for the in-headset toast (menu.cpp). Returns
+// characters written, 0 = nothing to show. Present thread; atomic reads and
+// snprintf only. Priorities: engine not hooked > scan running > waiting for
+// data > a 3-second "applied" confirmation.
+int Game_GetStatusText(char* buf, int len)
+{
+    if (!buf || len < 8) return 0;
+    if (!g_hooked)
+        return snprintf(buf, len, "Halo 3 VR loaded — start a level to enter VR");
+    const float want = g_config.hud_size;
+    const bool stock = (want >= 0.8695f && want <= 0.8705f);
+    const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
+    const uint64_t now = GetTickCount64();
+    static int lastCount = 0;      // transition detector for the applied toast
+    static uint64_t appliedMs = 0; // single caller thread (Present)
+    if (c > 0 && lastCount <= 0) appliedMs = now;
+    lastCount = c;
+    if (c == -2)
+        return snprintf(buf, len, "HUD size: locating layout data... %us (game keeps running)",
+                        (unsigned)((now - g_safeFrameScanStartMs.load()) / 1000));
+    if (!stock && c <= 0)
+        return snprintf(buf, len, "HUD size: waiting for level data — retries automatically");
+    if (!stock && c > 0 && now - appliedMs < 3000)
+        return snprintf(buf, len, "HUD size %.2f active (%d layout block%s)",
+                        want, c, c == 1 ? "" : "s");
+    return 0;
 }
 
 

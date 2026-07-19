@@ -17,6 +17,9 @@ void Game_ClearReticleElement(); // F5: stop hiding (show all HUD elements)
 // chud_globals tag data (auto-located at runtime; proven live 2026-07-19).
 void Game_LocateHudSafeFrames();  // manual rescan (menu button; normally automatic)
 void Game_GetHudSafeFrameStatus(int& matches, bool& scanning);
+// One-line background status for the in-headset toast: engine hook progress,
+// HUD-scan progress, transient confirmations. 0 = nothing to show right now.
+int Game_GetStatusText(char* buf, int len);
 
 // Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
 void Game_ToggleHeadTracking(); // F2

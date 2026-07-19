@@ -413,6 +413,31 @@ bool Menu_IsOpen()
     return g_ready && g_open;
 }
 
+// Toast: one line of background status (engine hooking, HUD data scan) shown
+// in the headset while the menu is CLOSED, so waits never look like freezes.
+// Text lives here so the render below can reuse it on the same thread.
+static char g_toastText[160];
+
+bool Menu_HasToast()
+{
+    if (!g_ready)
+        return false;
+    return Game_GetStatusText(g_toastText, sizeof(g_toastText)) > 0;
+}
+
+static void DrawToast()
+{
+    ImGui::SetNextWindowPos(ImVec2(MENU_W * 0.5f, (float)(MENU_H - 48)),
+                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##toast", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::TextUnformatted(g_toastText);
+    ImGui::End();
+}
+
 ID3D11Texture2D* Menu_Render()
 {
     if (!g_ready)
@@ -423,7 +448,10 @@ ID3D11Texture2D* Menu_Render()
     ImGui_ImplWin32_NewFrame();
     ImGui::GetIO().DisplaySize = ImVec2((float)MENU_W, (float)MENU_H); // our texture, not the window
     ImGui::NewFrame();
-    DrawUI();
+    if (g_open)
+        DrawUI();       // full settings menu
+    else
+        DrawToast();    // menu closed: only the small status line
     ImGui::Render();
 
     D3DStateBackup backup;
