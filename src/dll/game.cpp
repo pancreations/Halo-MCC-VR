@@ -581,7 +581,6 @@ namespace
         0x00,0x00,0x68,0x42, 0x00,0x00,0x80,0x40 }; // 58.0f, 4.0f
     std::atomic<uintptr_t> g_safeFrameSlots[kMaxSafeFrameHits]{};
     std::atomic<int> g_safeFrameHitCount{-1}; // -1 never/none, -2 scanning, >0 found
-    std::atomic<uint32_t> g_hudAppliedBits{0}; // bits of the last hud_size we wrote
     std::atomic<uint32_t> g_camTicks{0};       // CamCopyHook heartbeat (level rendering)
     std::atomic<uint64_t> g_safeFrameScanStartMs{0}; // for the toast's elapsed seconds
     // Addresses that verified in a previous locate this session. The tag
@@ -636,20 +635,32 @@ namespace
         return 1;
     }
 
-    // Full verification of a remembered address: the 24-byte anchor must sit
-    // at slot-24 and the payload must be the freshly-loaded 0.87f bits. Same
-    // acceptance rule as the scan, so a reacquired slot is equally proven.
-    static int SafeFrameCheckAnchor(uintptr_t slot)
+    // Full verification of an address: the 24-byte anchor must sit at slot-24;
+    // on success the payload pair is read out under the same guard.
+    static int SafeFrameVerifySlot(uintptr_t slot, uint32_t* h, uint32_t* v)
     {
         __try
         {
             if (memcmp(reinterpret_cast<const void*>(slot - 24),
                        kSafeFrameAnchor, 24) != 0) return 0;
-            const uint32_t h = *reinterpret_cast<const volatile uint32_t*>(slot);
-            const uint32_t v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
-            return (h == kSafeFrameBits && v == kSafeFrameBits) ? 1 : 0;
+            *h = *reinterpret_cast<const volatile uint32_t*>(slot);
+            *v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
+            return 1;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+
+    // Payload plausibility: the two safe-frame floats are always written as a
+    // pair, so a real block holds an identical pair in the sane fraction
+    // range — the shipped 0.87f OR a value we applied earlier. (The first
+    // release accepted ONLY the shipped bits, which deadlocked: after our own
+    // apply, every rescan rejected our own value — 2026-07-19 15:00 log.)
+    static bool SafeFramePairPlausible(uint32_t h, uint32_t v)
+    {
+        if (h != v) return false;
+        float f = 0;
+        memcpy(&f, &h, 4);
+        return f >= 0.25f && f <= 1.05f;
     }
 
     DWORD WINAPI SafeFrameScanThread(LPVOID)
@@ -688,17 +699,13 @@ namespace
                     ++rawHits;
                     uint32_t h = 0, v = 0;
                     if (!SafeFrameReadPair(hits[k], &h, &v)) continue;
-                    const bool payloadOk = (h == kSafeFrameBits && v == kSafeFrameBits);
-                    const bool pokeable =
-                        (mbi.Protect == PAGE_READWRITE && mbi.Type == MEM_PRIVATE);
+                    const bool payloadOk = SafeFramePairPlausible(h, v);
                     LOG("SAFEFRAME: anchor at %p (type 0x%X protect 0x%X) "
                         "payload %08X/%08X -> %s",
                         reinterpret_cast<void*>(hits[k]),
                         (unsigned)mbi.Type, (unsigned)mbi.Protect, h, v,
-                        !payloadOk ? "payload mismatch, REJECTED"
-                        : pokeable ? "VERIFIED (pokeable)"
-                                   : "payload ok but not private-RW; observe only");
-                    if (payloadOk && pokeable && accepted < kMaxSafeFrameHits)
+                        payloadOk ? "VERIFIED" : "payload implausible, REJECTED");
+                    if (payloadOk && accepted < kMaxSafeFrameHits)
                         g_safeFrameSlots[accepted++].store(hits[k]);
                 }
             }
@@ -722,7 +729,6 @@ namespace
     {
         if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2) return;
         for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
-        g_hudAppliedBits.store(0);
         g_safeFrameScanStartMs.store(GetTickCount64());
         g_safeFrameHitCount.store(-2, std::memory_order_release);
         HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
@@ -732,10 +738,11 @@ namespace
 
     // Called every frame from CamCopyHook (game thread) — same pattern as
     // ApplyMotionBlurSetting. Writes are tiny, SEH-guarded, and no logging
-    // happens here (hot-path rule). A slot is only written while it holds the
-    // shipped 0.87f bits or the value we last applied; anything else means the
-    // tag data moved (map change) — then all slots are dropped and the Present-
-    // thread auto-tick relocates them, throttled.
+    // happens here (hot-path rule). Every slot is FULLY re-verified before
+    // every write (24-byte anchor + plausible pair — ~72 byte compares per
+    // frame, trivial): the strongest possible guard against the tag data
+    // moving out from under us. When no slot verifies anymore, all are
+    // dropped and the Present-thread auto-tick relocates them.
     void ApplyHudSize()
     {
         g_camTicks.fetch_add(1, std::memory_order_relaxed);
@@ -745,29 +752,24 @@ namespace
         if (!(want >= 0.30f && want <= 1.00f)) return; // bad cfg: leave stock
         uint32_t wantBits = 0;
         memcpy(&wantBits, &want, 4);
-        const uint32_t applied = g_hudAppliedBits.load(std::memory_order_relaxed);
         int live = 0;
         for (int i = 0; i < n && i < kMaxSafeFrameHits; ++i)
         {
             const uintptr_t slot = g_safeFrameSlots[i].load(std::memory_order_relaxed);
             if (!slot) continue;
             uint32_t h = 0, v = 0;
-            if (!SafeFrameReadPair(slot, &h, &v)) continue;
+            if (!SafeFrameVerifySlot(slot, &h, &v)) continue; // anchor gone: stale
+            if (!SafeFramePairPlausible(h, v)) continue;      // junk pair: stale
             if (h == wantBits && v == wantBits) { ++live; continue; } // already ours
-            const bool known = (h == kSafeFrameBits && v == kSafeFrameBits) ||
-                               (applied && h == applied && v == applied);
-            if (!known) continue; // stale: tag data moved out from under us
             if (SafeFrameWritePair(slot, want)) ++live;
         }
-        if (live > 0)
-            g_hudAppliedBits.store(wantBits, std::memory_order_relaxed);
-        else
+        if (live == 0)
             g_safeFrameHitCount.store(-1, std::memory_order_release); // relocate
     }
 
     // Instant re-acquire: after a map change the tag allocator usually puts
     // chud_globals back at the same addresses. Re-verify the remembered ones
-    // (anchor + fresh 0.87f payload — the scan's own acceptance rule); on any
+    // (anchor + plausible pair — the scan's own acceptance rule); on any
     // success, skip the full rescan entirely.
     bool TryReacquireSafeFrames()
     {
@@ -777,12 +779,12 @@ namespace
         for (int i = 0; i < m && i < kMaxSafeFrameHits; ++i)
         {
             const uintptr_t slot = g_safeFrameLastGood[i].load(std::memory_order_relaxed);
-            if (slot && SafeFrameCheckAnchor(slot))
+            uint32_t h = 0, v = 0;
+            if (slot && SafeFrameVerifySlot(slot, &h, &v) && SafeFramePairPlausible(h, v))
                 g_safeFrameSlots[accepted++].store(slot);
         }
         if (!accepted) return false;
         for (int i = accepted; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
-        g_hudAppliedBits.store(0);
         g_safeFrameHitCount.store(accepted, std::memory_order_release);
         LOG("SAFEFRAME: reacquired %d pair(s) at previous address(es); scan skipped", accepted);
         return true;

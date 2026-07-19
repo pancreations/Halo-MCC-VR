@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <atomic>
+#include <cstring>
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
@@ -121,6 +122,15 @@ namespace
         ImGui::SetNextWindowSize(ImVec2(MENU_W - 32, MENU_H - 32), ImGuiCond_FirstUseEver);
         ImGui::Begin("Halo 3 VR — Settings (M0: virtual screen)", nullptr, ImGuiWindowFlags_NoCollapse);
 
+        // The background-status line also lives at the top of the menu: the
+        // floating toast intentionally hides while the menu is open, so this
+        // is where an open-menu user sees what's happening.
+        {
+            char bg[160];
+            if (Game_GetStatusText(bg, sizeof(bg)) > 0)
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", bg);
+        }
+
         VrStatus st{};
         VR_GetStatus(st);
         ImGui::Text("Runtime: %s", st.runtime);
@@ -215,8 +225,14 @@ namespace
         ImGui::Separator();
         ImGui::Text("HUD layout");
         changed |= ImGui::SliderFloat("HUD size", &g_config.hud_size, 0.30f, 1.00f, "%.2f");
+        if (ImGui::SmallButton("Set VR preset (0.45)##sf"))
+        { g_config.hud_size = 0.45f; changed = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Back to stock (0.87)##sf"))
+        { g_config.hud_size = 0.87f; changed = true; }
         ImGui::TextDisabled("Fraction of the view the HUD lays out into. 0.87 = Halo stock.\n"
-                            "Lower pulls shields/radar/ammo toward the center of your eyes.");
+                            "Lower pulls shields/radar/ammo toward the center of your eyes.\n"
+                            "Small nudges (0.84) are invisible - use the preset to SEE it work.");
         {
             int sfMatches; bool sfScanning;
             Game_GetHudSafeFrameStatus(sfMatches, sfScanning);
@@ -422,7 +438,22 @@ bool Menu_HasToast()
 {
     if (!g_ready)
         return false;
-    return Game_GetStatusText(g_toastText, sizeof(g_toastText)) > 0;
+    const bool has = Game_GetStatusText(g_toastText, sizeof(g_toastText)) > 0;
+    // Diagnostic trail (2026-07-19: the user reported never seeing a toast):
+    // log every state change so the log proves whether this path ran at all.
+    // Compare only a prefix so per-second counter text doesn't spam the log.
+    static char lastLogged[160] = "";
+    if (has && strncmp(g_toastText, lastLogged, 24) != 0)
+    {
+        strncpy_s(lastLogged, g_toastText, _TRUNCATE);
+        LOG("TOAST: %s", g_toastText);
+    }
+    else if (!has && lastLogged[0])
+    {
+        lastLogged[0] = 0;
+        LOG("TOAST: cleared");
+    }
+    return has;
 }
 
 static void DrawToast()
