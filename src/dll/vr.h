@@ -12,6 +12,17 @@ void VR_InitInstance();
 void VR_OnPresent(IDXGISwapChain* swapchain);
 void VR_OnResizeBuffers(IDXGISwapChain* swapchain);
 
+// HUD panel capture: called from the FP driver hook (render thread, left-eye
+// pass, before the HUD elements draw). Snapshots the left-eye scene-only image;
+// VR_OnPresent diffs it against the finished frame to extract Halo's HUD pixels
+// for the floating HUD panel.
+
+// One-shot frame trace: logs the in-frame ORDER of render events (eye begin,
+// RTV redirect, FP driver runs, HUD element submits, eye end) for ~one frame,
+// a few seconds into a level. Names the correct pre-HUD snapshot anchor from
+// the game's own timeline instead of an assumption.
+void VR_TraceEvent(const char* tag, int a, int b);
+
 // Called from the menu: re-place the virtual screen in front of where the
 // user is currently looking.
 void VR_RequestRecenter();
@@ -30,6 +41,7 @@ bool VR_IsStereoEnabled();
 void VR_CaptureRenderedEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
+
 // Redirects the final scene-color RTV to the active eye's target and, while
 // stereo_sun_shafts is off, neutralizes the sun-shaft occlusion pass (its
 // radial blur uses a single per-frame sun position, streaking the other eye).
@@ -48,6 +60,14 @@ bool VR_GetHeadPose(float outQuat[4], float outPos[3]);
 bool VR_GetRightControllerPose(float outQuat[4], float outPos[3]);
 // Left controller pose (used by the D-pad gesture; false until tracked).
 bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3]);
+// M3: the game layer sets this when the crosshair is over an enemy (engine
+// target-lock). While true, the floating reticle repaints red like the OG HUD.
+void VR_SetReticleEnemy(bool enemy);
+// Weapon-hand aim pose shared by bullet steering, the reticle, and the visible
+// barrel. Position = right hand; orientation = right controller, or the
+// right->left two-hand line when two-handed aim engages. False until tracked.
+bool VR_GetAimPose(float outQuat[4], float outPos[3]);
+bool VR_IsTwoHandAiming();
 // Latest OpenXR per-eye FOV angles: left, right, up, down (radians).
 bool VR_GetEyeFov(int eye, float outFov[4]);
 // M3: snapshot of the VR controllers' gamepad-like inputs, read once per frame

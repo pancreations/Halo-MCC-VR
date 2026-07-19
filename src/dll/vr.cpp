@@ -8,6 +8,7 @@
 #include <array>
 #include <string>
 #include <atomic>
+#include <mutex>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -80,6 +81,20 @@ namespace
     std::vector<ID3D11Texture2D*> g_reticleImages;
     std::vector<ID3D11RenderTargetView*> g_reticleRtvs;
     constexpr uint32_t kReticleSize = 64;
+    // Color the reticle was last painted with, so we repaint only when the
+    // user changes it (not every frame). Sentinel forces the first paint.
+    float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
+    bool g_reticleEnemyPainted = false; // which color is currently on the image
+    // Set by the game layer when the crosshair is over an enemy (the engine's
+    // target-lock state). While set, the reticle repaints red like the OG HUD.
+    std::atomic<bool> g_reticleEnemy{false};
+
+    // The CHUD steal-and-requad machinery (capture texture, shader
+    // classifier, hand-HUD swapchain) was removed 2026-07-18: it removed the
+    // native HUD from both eyes, never displayed its quad, and its
+    // calibration retry loop cost ~30 fps. The native HUD renders untouched;
+    // per-eye FP camera substitution in game.cpp gives it (and the gun)
+    // stereo-correct rendering.
 
     // M2 eye targets. Each eye is a separate swapchain because the headset may
     // recommend a different size for each view. They are allocated now so the
@@ -116,6 +131,14 @@ namespace
     std::atomic<int> g_rasterEye{-1};
     bool g_rasterRedirected[2] = {false, false};
     IDXGISwapChain* g_gameSwapchain = nullptr; // borrowed; owned by the game
+    // The internal scene-color RTV is stable after the first eye render. Keep
+    // one reference and use a pointer comparison in the OMSetRenderTargets
+    // hook. The retired census path performed GetBuffer/GetResource/QI/GetDesc
+    // plus a 128-entry linear scan on nearly every RTV bind and could collapse
+    // stereo from 90 fps into the 20s.
+    ID3D11RenderTargetView* g_sceneColorRtv = nullptr;
+    D3D11_TEXTURE2D_DESC g_gameBackbufferDesc{};
+    bool g_gameBackbufferDescValid = false;
 
     // Where the virtual screen sits: yaw-only orientation + head position,
     // captured once at start (and again on "re-center").
@@ -267,8 +290,20 @@ namespace
 
     bool EnsureBlitPipeline()
     {
-        if (g_blitVs)
+        if (g_blitVs && g_blitPsLinearize && g_blitPsPass &&
+            g_blitSampler && g_blitRasterizer && g_blitDepthOff)
             return true;
+        auto release=[&](auto*& object)
+        {
+            if (object) object->Release();
+            object=nullptr;
+        };
+        release(g_blitVs);
+        release(g_blitPsLinearize);
+        release(g_blitPsPass);
+        release(g_blitSampler);
+        release(g_blitRasterizer);
+        release(g_blitDepthOff);
 
         static const char* src = R"(
 Texture2D srcTex : register(t0);
@@ -354,19 +389,32 @@ float4 ps_pass(VSOut i) : SV_Target
     // Copy src into dst (an XR swapchain image). Uses a plain GPU copy when
     // the formats/sizes allow it, otherwise draws a fullscreen quad, fixing
     // gamma along the way.
-    void Blit(ID3D11Texture2D* src, const D3D11_TEXTURE2D_DESC& srcDesc,
-              ID3D11Texture2D* dst, uint32_t dstW, uint32_t dstH, ID3D11RenderTargetView* dstRtv)
+    bool Blit(ID3D11Texture2D* src, const D3D11_TEXTURE2D_DESC& srcDesc,
+              ID3D11Texture2D* dst, uint32_t dstW, uint32_t dstH,
+              ID3D11RenderTargetView* dstRtv)
     {
         const bool sameSize = srcDesc.Width == dstW && srcDesc.Height == dstH;
         const bool sameFamily = FormatFamily(srcDesc.Format) == FormatFamily((DXGI_FORMAT)g_xrFormat);
-        if (sameSize && sameFamily && srcDesc.SampleDesc.Count <= 1)
+        const bool fastPath = sameSize && sameFamily && srcDesc.SampleDesc.Count <= 1;
+        // One-time: confirm the cheap CopyResource path is taken (the slow path
+        // makes an intermediate texture + full-screen draw every eye blit).
+        static bool loggedPath=false;
+        if (!loggedPath)
+        {
+            loggedPath=true;
+            LOG("PERF: eye blit uses %s path (src %ux%u fmt %d -> dst %ux%u xrfmt %d)",
+                fastPath?"FAST CopyResource":"SLOW shader",
+                srcDesc.Width,srcDesc.Height,(int)srcDesc.Format,
+                dstW,dstH,(int)g_xrFormat);
+        }
+        if (fastPath)
         {
             g_context->CopyResource(dst, src);
-            return;
+            return true;
         }
 
         if (!EnsureBlitPipeline())
-            return;
+            return false;
 
         // Find something we can sample from. Backbuffers usually can't be
         // used as shader input directly, so we may need an intermediate copy.
@@ -403,7 +451,7 @@ float4 ps_pass(VSOut i) : SV_Target
                 {
                     LOG("blit: intermediate texture creation failed (fmt %d)", (int)srcDesc.Format);
                     ReleaseSourceViews();
-                    return;
+                    return false;
                 }
                 g_intermediateDesc = d;
             }
@@ -417,8 +465,8 @@ float4 ps_pass(VSOut i) : SV_Target
         // If the source is already an sRGB view (sampling gives linear) or the
         // destination isn't sRGB, a raw copy through the shader is correct.
         // Otherwise decode gamma in the shader so the sRGB target re-encodes it.
-        ID3D11PixelShader* ps =
-            (!IsSrgb(srcDesc.Format) && IsSrgb((DXGI_FORMAT)g_xrFormat)) ? g_blitPsLinearize : g_blitPsPass;
+        const bool linearize=!IsSrgb(srcDesc.Format) && IsSrgb((DXGI_FORMAT)g_xrFormat);
+        ID3D11PixelShader* ps=linearize?g_blitPsLinearize:g_blitPsPass;
 
         D3DStateBackup backup;
         backup.Capture(g_context);
@@ -432,13 +480,26 @@ float4 ps_pass(VSOut i) : SV_Target
         g_context->IASetInputLayout(nullptr);
         g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         g_context->VSSetShader(g_blitVs, nullptr, 0);
+        // Halo may leave a geometry shader bound at the end of an eye pass.
+        // The fullscreen triangle has no compatible GS stage; clear it for the
+        // blit and let D3DStateBackup restore the game's shader afterward.
+        g_context->GSSetShader(nullptr, nullptr, 0);
         g_context->PSSetShader(ps, nullptr, 0);
         g_context->PSSetShaderResources(0, 1, &srv);
         g_context->PSSetSamplers(0, 1, &g_blitSampler);
         g_context->Draw(3, 0);
 
         backup.Restore(g_context);
+        return true;
     }
+
+    // (The HUD "capture-diff panel" machinery that lived here — per-eye pre-HUD
+    // snapshots, ps_huddiff extraction, union blend, head-locked panel quad,
+    // native-HUD erase — was headset-DISPROVEN 2026-07-19: the diff carried only
+    // the objective text, the rest of the HUD vanished, and the capture copies
+    // cost real GPU time every frame. Removed at the user's direction. The HUD
+    // ships native and full-size; only the reticle element is hidden via the
+    // verified 0x2EDF24 element hook. See docs/RE-notes.md HUD dead ends.)
 
     // ------------------------------------------------------- XR swapchains
 
@@ -477,13 +538,20 @@ float4 ps_pass(VSOut i) : SV_Target
             return false;
         }
         uint32_t count = 0;
-        xrEnumerateSwapchainImages(chain, 0, &count, nullptr);
+        r=xrEnumerateSwapchainImages(chain,0,&count,nullptr);
+        if (XR_FAILED(r) || !count)
+        {
+            LOG("xrEnumerateSwapchainImages(%s) count failed: %s",what,XrStr(r));
+            DestroyChain(chain,images,rtvs);
+            return false;
+        }
         std::vector<XrSwapchainImageD3D11KHR> xrImages(count, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
         r = xrEnumerateSwapchainImages(chain, count, &count,
                                        reinterpret_cast<XrSwapchainImageBaseHeader*>(xrImages.data()));
         if (XR_FAILED(r))
         {
             LOG("xrEnumerateSwapchainImages(%s) failed: %s", what, XrStr(r));
+            DestroyChain(chain,images,rtvs);
             return false;
         }
         images.clear();
@@ -813,19 +881,12 @@ float4 ps_pass(VSOut i) : SV_Target
     // reticle into it a single time.  Four cyan arc segments and short inner
     // ticks echo Halo 3's original blue CHUD reticle, but at a VR-friendly
     // angular size. A dark-blue outline keeps it legible without a black disc.
-    bool EnsureReticleChain()
+    // Paint the reticle image in the given color (0-1 per channel). The bright
+    // arcs/ticks take the color; the outline is a darkened version of the same
+    // hue so it reads at any color. Called on first use and whenever the color
+    // changes (user edit, or the enemy-red switch below) — not per frame.
+    bool PaintReticle(float cr, float cg, float cb)
     {
-        if (g_reticleChain != XR_NULL_HANDLE)
-            return true;
-        static bool failed = false;
-        if (failed)
-            return false;
-        if (!CreateChain(kReticleSize, kReticleSize, g_reticleChain, g_reticleImages,
-                         g_reticleRtvs, "crosshair"))
-        {
-            failed = true;
-            return false;
-        }
         std::vector<uint32_t> px(kReticleSize * kReticleSize);
         const float c = (kReticleSize - 1) * 0.5f;
         // coverage: 1 inside the shape, 0 outside, ~1px linear edge for AA
@@ -833,6 +894,11 @@ float4 ps_pass(VSOut i) : SV_Target
             const float v = halfWidth - d + 0.5f;
             return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
         };
+        // Bright fill = the requested color at full brightness; outline = the
+        // same color at ~28% (a legible dark rim without a black disc).
+        const float brR=fminf(cr,1.0f)*255.0f, brG=fminf(cg,1.0f)*255.0f,
+                    brB=fminf(cb,1.0f)*255.0f;
+        const float olR=brR*0.28f, olG=brG*0.28f, olB=brB*0.28f;
         for (uint32_t y = 0; y < kReticleSize; ++y)
             for (uint32_t x = 0; x < kReticleSize; ++x)
             {
@@ -849,9 +915,9 @@ float4 ps_pass(VSOut i) : SV_Target
                 const float tickOutline=(tickDistance>=5.8f && tickDistance<=12.7f)?cov(tickWidth,2.6f):0.0f;
                 const float bright=fmaxf(arc,tick);
                 const float outline=fmaxf(arcOutline,tickOutline);
-                const uint32_t r8=(uint32_t)(fminf(255.0f,12.0f*outline+62.0f*bright)+0.5f);
-                const uint32_t g8=(uint32_t)(fminf(255.0f,55.0f*outline+185.0f*bright)+0.5f);
-                const uint32_t b8=(uint32_t)(fminf(255.0f,125.0f*outline+130.0f*bright)+0.5f);
+                const uint32_t r8=(uint32_t)(fminf(255.0f,olR*outline+brR*bright)+0.5f);
+                const uint32_t g8=(uint32_t)(fminf(255.0f,olG*outline+brG*bright)+0.5f);
+                const uint32_t b8=(uint32_t)(fminf(255.0f,olB*outline+brB*bright)+0.5f);
                 const uint32_t a8=(uint32_t)(outline*255.0f+0.5f);
                 // OpenXR's preferred swapchain is RGBA8 on this runtime.
                 px[y*kReticleSize+x]=(a8<<24)|(b8<<16)|(g8<<8)|r8;
@@ -863,14 +929,53 @@ float4 ps_pass(VSOut i) : SV_Target
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         if (XR_FAILED(xrAcquireSwapchainImage(g_reticleChain, &ai, &idx)) ||
             XR_FAILED(xrWaitSwapchainImage(g_reticleChain, &wi)))
+            return false;
+        g_context->UpdateSubresource(g_reticleImages[idx], 0, nullptr, px.data(),
+                                     kReticleSize * 4, 0);
+        xrReleaseSwapchainImage(g_reticleChain, &ri);
+        return true;
+    }
+
+    bool EnsureReticleChain()
+    {
+        static bool failed = false;
+        if (failed)
+            return false;
+        if (g_reticleChain == XR_NULL_HANDLE)
+        {
+            if (!CreateChain(kReticleSize, kReticleSize, g_reticleChain, g_reticleImages,
+                             g_reticleRtvs, "crosshair"))
+            {
+                failed = true;
+                return false;
+            }
+        }
+        // Enemy target-lock -> OG-style red; otherwise the user's base color.
+        const bool enemy = g_reticleEnemy.load(std::memory_order_relaxed);
+        const float wantR = enemy ? 1.0f : g_config.reticle_r;
+        const float wantG = enemy ? 0.18f : g_config.reticle_g;
+        const float wantB = enemy ? 0.14f : g_config.reticle_b;
+        // Repaint only when the desired color changed (compositor keeps showing
+        // the last released image, so a static color costs nothing per frame).
+        const bool colorChanged =
+            g_reticleEnemyPainted != enemy ||
+            (!enemy && (g_reticlePaintedColor[0] != g_config.reticle_r ||
+                        g_reticlePaintedColor[1] != g_config.reticle_g ||
+                        g_reticlePaintedColor[2] != g_config.reticle_b));
+        if (!colorChanged)
+            return true;
+        if (!PaintReticle(wantR, wantG, wantB))
         {
             failed = true;
             return false;
         }
-        g_context->UpdateSubresource(g_reticleImages[idx], 0, nullptr, px.data(),
-                                     kReticleSize * 4, 0);
-        xrReleaseSwapchainImage(g_reticleChain, &ri);
-        LOG("M3: crosshair reticle drawn (%ux%u)", kReticleSize, kReticleSize);
+        g_reticlePaintedColor[0]=wantR;
+        g_reticlePaintedColor[1]=wantG;
+        g_reticlePaintedColor[2]=wantB;
+        g_reticleEnemyPainted=enemy;
+        LOG("M3: crosshair reticle painted (%ux%u) rgb=(%.2f,%.2f,%.2f)%s",
+            kReticleSize, kReticleSize, wantR, wantG, wantB,
+            enemy?" [enemy red]":"");
         return true;
     }
 
@@ -1134,6 +1239,62 @@ float4 ps_pass(VSOut i) : SV_Target
         return true;
     }
 
+    // Two-handed aim state. `latched` = two-hand engaged this frame; decided
+    // ONCE per frame in UpdateTwoHandLatch (edge detection can't live in the
+    // multi-call aim getter). `active` mirrors it for the menu indicator.
+    std::atomic<bool> g_twoHandLatched{false};
+    std::atomic<bool> g_twoHandActive{false};
+
+    // Called once per frame from the pose capture. Toggle mode (default): a
+    // left-grip press while the left hand is inside the thin/long barrel zone
+    // flips two-hand ON; the next left-grip press flips it OFF (anywhere). Hold
+    // mode: engaged only while the grip is held with the hand in the zone.
+    // The OpenXR aim pose sits back at the wrist; the user grabs the gun with
+    // the HAND, ~8 cm forward of that along the controller. Shift the left-hand
+    // sample point forward so activation (and the two-hand line) is measured at
+    // the hand, not the wrist. Shared by the latch AND the aim so they agree.
+    XrVector3f LeftHandPoint(const XrPosef& lpose)
+    {
+        const XrVector3f lfwd = Rotate(lpose.orientation, {0,0,-1});
+        const float k = 0.12f; // wrist -> middle of palm / base of fingers
+        return {lpose.position.x + lfwd.x*k,
+                lpose.position.y + lfwd.y*k,
+                lpose.position.z + lfwd.z*k};
+    }
+
+    void UpdateTwoHandLatch(bool rightValid, const XrPosef& rpose,
+                            bool leftValid, const XrPosef& lpose, float gripL)
+    {
+        if (!g_config.two_handed_aim || !rightValid || !leftValid)
+        { g_twoHandLatched.store(false); return; }
+        const XrVector3f rfwd = Rotate(rpose.orientation, {0,0,-1});
+        const XrVector3f lh = LeftHandPoint(lpose);
+        const XrVector3f v{lh.x-rpose.position.x,
+                           lh.y-rpose.position.y,
+                           lh.z-rpose.position.z};
+        const float along = v.x*rfwd.x + v.y*rfwd.y + v.z*rfwd.z;
+        const XrVector3f perp{v.x-along*rfwd.x, v.y-along*rfwd.y, v.z-along*rfwd.z};
+        const float lateral = sqrtf(perp.x*perp.x+perp.y*perp.y+perp.z*perp.z);
+        const bool inZone = along>0.08f && along<0.80f && lateral<0.09f;
+        const bool gripHeld = gripL > 0.5f;
+
+        if (g_config.two_hand_toggle)
+        {
+            static bool prevGrip=false;
+            const bool rising = gripHeld && !prevGrip;
+            prevGrip = gripHeld;
+            if (rising)
+            {
+                if (g_twoHandLatched.load()) g_twoHandLatched.store(false);      // toggle off
+                else if (inZone)             g_twoHandLatched.store(true);       // toggle on
+            }
+        }
+        else // hold mode
+        {
+            g_twoHandLatched.store(gripHeld && inZone);
+        }
+    }
+
     void CaptureRightControllerPose(XrTime time)
     {
         if (g_gameplayActions == XR_NULL_HANDLE || g_rightAimAction == XR_NULL_HANDLE ||
@@ -1234,6 +1395,7 @@ float4 ps_pass(VSOut i) : SV_Target
         EnterCriticalSection(&g_headCs);
         g_padState = pad;
         LeaveCriticalSection(&g_headCs);
+        UpdateTwoHandLatch(valid, location.pose, leftValid, leftLocation.pose, pad.gripL);
         static bool padLogged = false;
         if (pad.valid && !padLogged)
         {
@@ -1440,8 +1602,12 @@ float4 ps_pass(VSOut i) : SV_Target
 
         XrCompositionLayerQuad screenQuad, menuQuad, reticleQuad;
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-        std::vector<XrCompositionLayerProjectionView> projectionViews;
-        std::vector<XrCompositionLayerBaseHeader*> layers;
+        // Reused across frames (Frame runs only on the render thread) so the
+        // per-frame layer assembly allocates nothing in steady state.
+        static std::vector<XrCompositionLayerProjectionView> projectionViews;
+        static std::vector<XrCompositionLayerBaseHeader*> layers;
+        projectionViews.clear();
+        layers.clear();
 
         // Build the descriptors every frame from the predicted eye poses/FOV.
         // A later M2 render hook only needs to fill/release both swapchain
@@ -1531,9 +1697,17 @@ float4 ps_pass(VSOut i) : SV_Target
                         // for this displayed frame. Routing the quad through
                         // Halo's virtual-stick aim introduced visible catch-up
                         // lag and placed its ray origin at the player's head.
-                        const XrVector3f aimRay=Rotate(g_rightAimPose.orientation,{0,0,-1});
+                        // Raw aim -Z, matching Game_ComputeAimStick: the cursor
+                        // is a fixed laser from the controller; the mount trim
+                        // rotates only the gun mesh toward it.
+                        // Shared aim pose so the reticle rides the SAME ray as
+                        // the bullets + barrel (two-hand line when engaged).
+                        float aimQ[4], aimP[3];
+                        const bool haveAim = VR_GetAimPose(aimQ, aimP);
+                        const XrQuaternionf aimOri{aimQ[0],aimQ[1],aimQ[2],aimQ[3]};
+                        const XrVector3f aimRay=Rotate(aimOri,{0.0f,0.0f,-1.0f});
                         const float aimDir[3]={aimRay.x,aimRay.y,aimRay.z};
-                        if (g_config.crosshair && g_rightAimPoseValid && EnsureReticleChain())
+                        if (g_config.crosshair && haveAim && EnsureReticleChain())
                         {
                             const float dist = g_config.crosshair_distance_m;
                             const float yaw = atan2f(aimDir[0], -aimDir[2]);
@@ -1561,9 +1735,9 @@ float4 ps_pass(VSOut i) : SV_Target
                                 {{0, 0}, {(int32_t)kReticleSize, (int32_t)kReticleSize}};
                             reticleQuad.subImage.imageArrayIndex = 0;
                             reticleQuad.pose.orientation = q;
-                            reticleQuad.pose.position = {g_rightAimPose.position.x + aimDir[0] * dist,
-                                                         g_rightAimPose.position.y + aimDir[1] * dist,
-                                                         g_rightAimPose.position.z + aimDir[2] * dist};
+                            reticleQuad.pose.position = {aimP[0] + aimDir[0] * dist,
+                                                         aimP[1] + aimDir[1] * dist,
+                                                         aimP[2] + aimDir[2] * dist};
                             const float w = 2.0f * dist *
                                 tanf(g_config.crosshair_size_deg * 0.5f * 0.0174533f);
                             reticleQuad.size = {w, w};
@@ -1691,6 +1865,17 @@ void VR_InitInstance()
 void VR_OnPresent(IDXGISwapChain* sc)
 {
     g_gameSwapchain = sc;
+    if (!g_gameBackbufferDescValid && sc)
+    {
+        ID3D11Texture2D* backbuffer = nullptr;
+        if (SUCCEEDED(sc->GetBuffer(0, __uuidof(ID3D11Texture2D),
+                                    reinterpret_cast<void**>(&backbuffer))) && backbuffer)
+        {
+            backbuffer->GetDesc(&g_gameBackbufferDesc);
+            g_gameBackbufferDescValid = true;
+            backbuffer->Release();
+        }
+    }
     if (g_state == State::Failed)
         return;
     if (g_state == State::Uninitialized)
@@ -1743,6 +1928,9 @@ void VR_OnPresent(IDXGISwapChain* sc)
     if (g_state != State::Ready || !g_sessionRunning)
         return;
 
+    // Auto-enter/exit VR when a level loads/unloads (no F2/F11 needed).
+    Game_AutoVrTick();
+
     Frame(sc);
 }
 
@@ -1752,6 +1940,13 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
     // references it must go first or the resize fails. The tracked history
     // targets are resolution-dependent too — drop and re-learn them.
     ReleaseSourceViews();
+    if (g_sceneColorRtv)
+    {
+        g_sceneColorRtv->Release();
+        g_sceneColorRtv = nullptr;
+    }
+    g_gameBackbufferDesc = {};
+    g_gameBackbufferDescValid = false;
 }
 
 void VR_RequestRecenter()
@@ -1801,27 +1996,44 @@ void VR_CaptureRenderedEye(int eye)
     }
 }
 
+void VR_TraceEvent(const char* tag, int a, int b)
+{
+    // Arms ~8s after first call (a level is up), then logs the next 60 events
+    // and disarms forever. One burst, zero steady-state cost beyond two loads.
+    static std::atomic<DWORD> firstMs{0};
+    static std::atomic<int> budget{-1};
+    DWORD f = firstMs.load();
+    if (f == 0 && firstMs.compare_exchange_strong(f, GetTickCount())) f = firstMs.load();
+    int have = budget.load();
+    if (have == -1)
+    {
+        if (GetTickCount() - f < 8000) return;
+        int expect = -1;
+        if (!budget.compare_exchange_strong(expect, 60)) {}
+        have = budget.load();
+    }
+    if (have <= 0) return;
+    if (budget.fetch_sub(1) <= 0) return;
+    LOG("TRACE %s a=%d b=%d rasterEye=%d redir0=%d", tag, a, b,
+        g_rasterEye.load(), g_rasterRedirected[0] ? 1 : 0);
+}
+
 void VR_BeginRasterEye(int eye)
 {
     if (eye < 0 || eye > 1 || !g_gameSwapchain || !g_device)
-        return;
-    ID3D11Texture2D* backbuffer = nullptr;
-    if (FAILED(g_gameSwapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer)) || !backbuffer)
         return;
     // Eye caches are created lazily when Halo binds its final scene-color RTV.
     // That RTV's typed view format (not the swapchain resource format) controls
     // the required sRGB conversion.
     g_rasterRedirected[eye] = false;
     g_rasterEye = eye;
-    backbuffer->Release();
+    VR_TraceEvent("eye-begin", eye, 0);
 }
-
-
-
 
 
 void VR_EndRasterEye()
 {
+    VR_TraceEvent("eye-end", g_rasterEye.load(), 0);
     // Promote any newly identified history, then save this eye's copies of
     // every tracked target before the other eye (or next frame) overwrites
     // them. A ping-pong pair only reveals its read side a frame after its
@@ -1838,40 +2050,28 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
     const int eye = g_rasterEye.load();
     if (eye < 0 || eye > 1 || !input || !output || !g_gameSwapchain)
         return false;
-    ID3D11Texture2D* backbuffer = nullptr;
-    if (FAILED(g_gameSwapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer)) || !backbuffer)
-        return false;
     bool changed = false;      // any slot rewritten (scene color or sun shaft)
     bool sceneChanged = false; // scene-color redirect only: marks the eye image valid
     for (UINT i = 0; i < count; ++i)
     {
         output[i] = input[i];
         if (!input[i]) continue;
+
+        // Normal steady-state path: two pointer comparisons and no COM calls.
+        if (g_sceneColorRtv)
+        {
+            if (input[i] == g_sceneColorRtv && g_eyeCacheRtvs[eye])
+            {
+                output[i] = g_eyeCacheRtvs[eye];
+                changed = true;
+                sceneChanged = true;
+            }
+            continue;
+        }
+
+        // One-time discovery, before the exact scene RTV has been learned.
         ID3D11Resource* resource = nullptr;
         input[i]->GetResource(&resource);
-        if (resource)
-        {
-            static ID3D11Resource* seenResources[128]{};
-            static unsigned seenResourceCount = 0;
-            bool seen = false;
-            for (unsigned n = 0; n < seenResourceCount; ++n)
-                if (seenResources[n] == resource) { seen = true; break; }
-            if (!seen && seenResourceCount < 128)
-            {
-                seenResources[seenResourceCount++] = resource;
-                ID3D11Texture2D* texture = nullptr;
-                if (SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D),
-                                                       reinterpret_cast<void**>(&texture))))
-                {
-                    D3D11_TEXTURE2D_DESC desc{};
-                    texture->GetDesc(&desc);
-                    LOG("M2 RTV CENSUS eye=%d slot=%u resource=%p size=%ux%u format=%u samples=%u bind=0x%X",
-                        eye, i, resource, desc.Width, desc.Height, (unsigned)desc.Format,
-                        desc.SampleDesc.Count, desc.BindFlags);
-                    texture->Release();
-                }
-            }
-        }
         ID3D11Texture2D* candidate = nullptr;
         D3D11_TEXTURE2D_DESC candidateDesc{};
         const bool isTexture = resource &&
@@ -1880,17 +2080,15 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         if (isTexture)
             candidate->GetDesc(&candidateDesc);
 
-        D3D11_TEXTURE2D_DESC backbufferDesc{};
-        backbuffer->GetDesc(&backbufferDesc);
-
         // Halo 3's completed frame is the unique full-resolution typeless RGBA
         // resource with RTV+SRV+UAV bindings at the end of the inner render.  The
         // preceding typed RGBA RT is an intermediate and can remain black.  Keep
         // our eye caches typed (from the game backbuffer) so they can be sampled
         // directly by the OpenXR blit.
         const bool isInternalSceneColor = i == 0 && candidate &&
-            candidateDesc.Width == backbufferDesc.Width &&
-            candidateDesc.Height == backbufferDesc.Height &&
+            g_gameBackbufferDescValid &&
+            candidateDesc.Width == g_gameBackbufferDesc.Width &&
+            candidateDesc.Height == g_gameBackbufferDesc.Height &&
             candidateDesc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS &&
             (candidateDesc.BindFlags & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE |
                                         D3D11_BIND_UNORDERED_ACCESS)) ==
@@ -1906,17 +2104,21 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
 
         if (isInternalSceneColor && EnsureEyeCaches(eyeDesc) && g_eyeCacheRtvs[eye])
         {
+            input[i]->AddRef();
+            g_sceneColorRtv = input[i];
             output[i] = g_eyeCacheRtvs[eye];
             changed = true;
             sceneChanged = true;
+            LOG("M2 RASTER: learned scene-color RTV %p; steady-state redirect is pointer-only",
+                g_sceneColorRtv);
         }
         if (candidate) candidate->Release();
         if (resource) resource->Release();
     }
-    backbuffer->Release();
     if (sceneChanged)
     {
         g_rasterRedirected[eye] = true;
+        VR_TraceEvent("rtv-redirect", eye, 0);
         static std::atomic<unsigned> logged{0};
         if (logged.fetch_add(1) < 4)
             LOG("M2 RASTER: redirected internal scene-color RTV to eye %d target", eye);
@@ -1996,6 +2198,80 @@ bool VR_GetEyeCantQuat(int eye, float outQuat[4])
     outQuat[1] = cw * e.y + cx * e.z - cy * e.w - cz * e.x;
     outQuat[2] = cw * e.z - cx * e.y + cy * e.x - cz * e.w;
     outQuat[3] = cw * e.w + cx * e.x + cy * e.y + cz * e.z;
+    return true;
+}
+
+void VR_SetReticleEnemy(bool enemy)
+{
+    g_reticleEnemy.store(enemy, std::memory_order_relaxed);
+}
+
+bool VR_IsTwoHandAiming() { return g_twoHandActive.load(); }
+
+// The weapon-hand aim pose used by ALL aim consumers (bullet steering, the
+// reticle, and the visible-gun barrel). Position is always the right hand.
+// Orientation is the right controller's — UNLESS two-handed aim is engaged, in
+// which case -Z is swung onto the line from the right hand to the left (support)
+// hand, with roll kept from the right controller. Two-hand engages smoothly by
+// pose (support hand up near the barrel line) so there is no button to hold.
+bool VR_GetAimPose(float outQuat[4], float outPos[3])
+{
+    if (!g_headCsInit) return false;
+    EnterCriticalSection(&g_headCs);
+    const bool okR = g_rightAimPoseValid;
+    XrQuaternionf rq = g_rightAimPose.orientation;
+    XrVector3f rp = g_rightAimPose.position;
+    const bool okL = g_leftAimPoseValid;
+    XrPosef lpose = g_leftAimPose;
+    const float gripL = g_padState.gripL;
+    LeaveCriticalSection(&g_headCs);
+    if (!okR) return false;
+    // Match the activation point: measure the two-hand line to the HAND, not the
+    // wrist (same forward shift used by the latch).
+    const XrVector3f lp = LeftHandPoint(lpose);
+
+    outPos[0]=rp.x; outPos[1]=rp.y; outPos[2]=rp.z;
+    outQuat[0]=rq.x; outQuat[1]=rq.y; outQuat[2]=rq.z; outQuat[3]=rq.w;
+
+    (void)gripL;
+    // Engagement is decided once per frame in UpdateTwoHandLatch (toggle/hold +
+    // barrel-zone). Here we only APPLY it: when latched, aim along the current
+    // right->left hand line.
+    if (!g_config.two_handed_aim || !okL || !g_twoHandLatched.load())
+    { g_twoHandActive.store(false); return true; }
+
+    const XrVector3f rup  = Rotate(rq, {0,1,0});
+    XrVector3f v{lp.x-rp.x, lp.y-rp.y, lp.z-rp.z};
+    const float len = sqrtf(v.x*v.x+v.y*v.y+v.z*v.z);
+    if (len < 1e-4f) { g_twoHandActive.store(false); return true; }
+
+    XrVector3f af{v.x/len, v.y/len, v.z/len};
+
+    // Orthonormal basis: X=right, Y=up, Z=-forward, roll from the right hand up.
+    auto cross=[](const XrVector3f&a,const XrVector3f&b){
+        return XrVector3f{a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x}; };
+    XrVector3f xa=cross(af,rup);
+    float xl=sqrtf(xa.x*xa.x+xa.y*xa.y+xa.z*xa.z);
+    if (xl<1e-4f) { g_twoHandActive.store(false); return true; }
+    xa={xa.x/xl,xa.y/xl,xa.z/xl};
+    const XrVector3f ya=cross(xa,af);          // up
+    const XrVector3f za{-af.x,-af.y,-af.z};     // -forward
+
+    // Rotation matrix (columns xa,ya,za) -> quaternion.
+    const float m00=xa.x,m10=xa.y,m20=xa.z;
+    const float m01=ya.x,m11=ya.y,m21=ya.z;
+    const float m02=za.x,m12=za.y,m22=za.z;
+    const float tr=m00+m11+m22;
+    float qx,qy,qz,qw;
+    if (tr>0){ float s=sqrtf(tr+1.0f)*2; qw=0.25f*s; qx=(m21-m12)/s; qy=(m02-m20)/s; qz=(m10-m01)/s; }
+    else if (m00>m11 && m00>m22){ float s=sqrtf(1.0f+m00-m11-m22)*2; qw=(m21-m12)/s; qx=0.25f*s; qy=(m01+m10)/s; qz=(m02+m20)/s; }
+    else if (m11>m22){ float s=sqrtf(1.0f+m11-m00-m22)*2; qw=(m02-m20)/s; qx=(m01+m10)/s; qy=0.25f*s; qz=(m12+m21)/s; }
+    else { float s=sqrtf(1.0f+m22-m00-m11)*2; qw=(m10-m01)/s; qx=(m02+m20)/s; qy=(m12+m21)/s; qz=0.25f*s; }
+    const float ql=sqrtf(qx*qx+qy*qy+qz*qz+qw*qw);
+    if (ql<1e-5f) { g_twoHandActive.store(false); return true; }
+    outQuat[0]=qx/ql; outQuat[1]=qy/ql; outQuat[2]=qz/ql; outQuat[3]=qw/ql;
+    const bool wasActive=g_twoHandActive.exchange(true);
+    if (!wasActive) LOG("M3: two-handed aim engaged (left grip held, hand on barrel)");
     return true;
 }
 

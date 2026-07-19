@@ -21,7 +21,12 @@ static DWORD WINAPI InitThread(LPVOID)
     dir.resize(dir.find_last_of(L'\\') + 1);
 
     LogInit((dir + L"halo3xr.log").c_str());
-    LOG("halo3xr M0 loaded into pid %lu", GetCurrentProcessId());
+    // The build stamp makes every log self-identifying: after the silent-deploy
+    // incident (2026-07-19, three headset sessions burned on one stale DLL) the
+    // FIRST line of any log must prove WHICH build actually ran. deploy.bat
+    // touches this file so the stamp recompiles on every build.
+    LOG("halo3xr M0 loaded into pid %lu (build " __DATE__ " " __TIME__ ")",
+        GetCurrentProcessId());
     ConfigLoad((dir + L"halo3xr.cfg").c_str());
 
     if (MH_Initialize() != MH_OK)

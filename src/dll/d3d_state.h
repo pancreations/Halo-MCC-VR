@@ -7,7 +7,7 @@
 
 struct D3DStateBackup
 {
-    ID3D11RenderTargetView* rtv = nullptr;
+    ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
     ID3D11DepthStencilView* dsv = nullptr;
     D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
     UINT numViewports = 0;
@@ -27,7 +27,7 @@ struct D3DStateBackup
 
     void Capture(ID3D11DeviceContext* ctx)
     {
-        ctx->OMGetRenderTargets(1, &rtv, &dsv);
+        ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, &dsv);
         numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
         ctx->RSGetViewports(&numViewports, viewports);
         ctx->RSGetState(&rasterizer);
@@ -44,7 +44,7 @@ struct D3DStateBackup
 
     void Restore(ID3D11DeviceContext* ctx)
     {
-        ctx->OMSetRenderTargets(1, &rtv, dsv);
+        ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
         if (numViewports)
             ctx->RSSetViewports(numViewports, viewports);
         ctx->RSSetState(rasterizer);
@@ -63,7 +63,11 @@ struct D3DStateBackup
     void Release()
     {
         auto rel = [](IUnknown* p) { if (p) p->Release(); };
-        rel(rtv); rtv = nullptr;
+        for (auto*& rtv : rtvs)
+        {
+            rel(rtv);
+            rtv = nullptr;
+        }
         rel(dsv); dsv = nullptr;
         rel(rasterizer); rasterizer = nullptr;
         rel(blend); blend = nullptr;

@@ -8,8 +8,14 @@ void Game_Init();
 bool Game_IsHooked();
 bool Game_IsHeadTracking(); // true while F2 head tracking is on
 
+// HUD element ids seen so far (for the menu's reticle picker). Returns the count.
+int Game_CopySeenHudIds(unsigned short* out, int maxOut);
+void Game_CycleReticleElement(); // F4: hide the next HUD element (find the crosshair)
+void Game_ClearReticleElement(); // F5: stop hiding (show all HUD elements)
+
 // Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
 void Game_ToggleHeadTracking(); // F2
+void Game_AutoVrTick();         // per-frame: auto-enter/exit VR on level load/exit
 void Game_Recenter();           // F3
 void Game_FlipYaw();            // F1 menu only (was F4: SteamVR's Alt+F4 kept triggering it)
 void Game_FlipPitch();          // F1 menu only (was F5)
@@ -43,6 +49,11 @@ int Input_ClaimXInputIat();
 // left/right render camera for the next game frame.
 void Game_SetStereoEye(int eye);
 float Game_GetWorldScale();
+// >1 while the player is zoomed (weapon scope); 1.0 at hip. Drives the scope.
+float Game_GetZoomFactor();
+// The mount-trimmed controller-local aim direction (unit, OpenXR local axes).
+// Shared by bullet steering (game.cpp) and the reticle (vr.cpp) so barrel,
+// flash, reticle and bullets stay on one ray as the user trims the mount.
 // Symmetric half-frustum tangents from Halo's active world camera.
 void Game_GetProjectionTangents(float& tanX, float& tanY);
 void Game_GetRenderHalfFov(float& halfX, float& halfY);

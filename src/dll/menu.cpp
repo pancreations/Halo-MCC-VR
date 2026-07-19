@@ -71,6 +71,8 @@ namespace
             case VK_F1: g_open = !g_open; LOG("menu %s", g_open ? "opened" : "closed"); return 0;
             case VK_F2: Game_ToggleHeadTracking(); return 0;
             case VK_F3: Game_Recenter(); return 0;
+            case VK_F4: Game_CycleReticleElement(); return 0; // find/hide the center crosshair
+            case VK_F5: Game_ClearReticleElement(); return 0; // undo (show all HUD)
             case VK_F6: Game_TogglePositional(); return 0;
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
@@ -168,15 +170,46 @@ namespace
         ImGui::Separator();
         ImGui::Text("Hand-held weapon");
         changed |= ImGui::SliderFloat("Weapon size", &g_config.gun_scale, 0.3f, 3.0f, "%.2fx");
-        ImGui::TextDisabled("Size is NOT applied yet (the scale path zoomed the camera; lever pending).");
+        ImGui::TextDisabled("Uniform scale of hand + weapon about your grip (Home/End in-game).");
         changed |= ImGui::SliderFloat("Weapon pitch (deg)", &g_config.gun_pitch_deg, -180.0f, 180.0f, "%.0f");
         changed |= ImGui::SliderFloat("Weapon yaw (deg)", &g_config.gun_yaw_deg, -180.0f, 180.0f, "%.0f");
         changed |= ImGui::SliderFloat("Weapon roll (deg)", &g_config.gun_roll_deg, -180.0f, 180.0f, "%.0f");
-        ImGui::TextDisabled("Mounting angle on the controller. If the gun points up/sideways, tune these.");
-        changed |= ImGui::SliderFloat("HUD size (experimental)", &g_config.hud_scale, 0.5f, 3.0f, "%.2f");
-        changed |= ImGui::Checkbox("Weapon probe (diagnostic)", &g_config.weapon_probe);
-        ImGui::TextDisabled("Ignores your hand and pushes the gun 1m left. Does the GUN move,\n"
-                            "or only the muzzle flash? That answers why the gun follows your head.");
+        ImGui::TextDisabled("Barrel-to-cursor alignment is AUTOMATIC now. These only fine-tune");
+        ImGui::TextDisabled("hand posture/roll around that line. 0/0/0 is the right default.");
+        changed |= ImGui::SliderFloat("Gun forward offset (m)", &g_config.gun_forward_m, -0.3f, 0.5f, "%.2f");
+        ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
+        changed |= ImGui::Checkbox("Hide game reticle (use VR reticle only)", &g_config.kill_reticle);
+        ImGui::TextDisabled("EASIEST: close this menu, have a weapon out, and tap F4 while\n"
+                            "watching the center. Each tap hides a different HUD element;\n"
+                            "stop when the old crosshair vanishes (F5 undoes it). Or step here:");
+        if (g_config.kill_reticle)
+        {
+            ImGui::Indent();
+            uint16_t ids[64];
+            const int nids = Game_CopySeenHudIds(ids, 64);
+            int cur = -1;
+            for (int i = 0; i < nids; ++i)
+                if ((int)ids[i] == g_config.reticle_element_id) { cur = i; break; }
+            if (g_config.reticle_element_id < 0)
+                ImGui::Text("Hiding: nothing picked yet  (%d HUD elements seen)", nids);
+            else
+                ImGui::Text("Hiding element id 0x%X  (%d of %d)",
+                            g_config.reticle_element_id, cur + 1, nids);
+            if (ImGui::Button("< prev##ret") && nids > 0)
+            { cur = (cur <= 0) ? nids - 1 : cur - 1; g_config.reticle_element_id = ids[cur]; changed = true; }
+            ImGui::SameLine();
+            if (ImGui::Button("Step to next element##ret") && nids > 0)
+            { cur = (cur + 1 >= nids) ? 0 : cur + 1; g_config.reticle_element_id = ids[cur]; changed = true; }
+            ImGui::SameLine();
+            if (ImGui::Button("None##ret"))
+            { g_config.reticle_element_id = -1; changed = true; }
+            ImGui::TextDisabled("Have a weapon out, then click 'Step' until the centered\n"
+                                "crosshair vanishes, and leave it there.");
+            ImGui::Unindent();
+        }
+        changed |= ImGui::Checkbox("Bone probe (diagnostic)", &g_config.weapon_probe);
+        ImGui::TextDisabled("Pushes every composed skeleton (bipeds/NPCs + FP) 1m left.\n"
+                            "Bodies visibly shifting = their bones are writable (VRIK stage A2).");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -188,8 +221,76 @@ namespace
                                           0.3f, 5.0f, "%.1f");
             changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
                                           2.0f, 50.0f, "%.0f");
+            float col[3] = {g_config.reticle_r, g_config.reticle_g, g_config.reticle_b};
+            if (ImGui::ColorEdit3("Crosshair color", col))
+            {
+                g_config.reticle_r = col[0];
+                g_config.reticle_g = col[1];
+                g_config.reticle_b = col[2];
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Halo blue"))
+            {
+                g_config.reticle_r = 0.62f;
+                g_config.reticle_g = 0.87f;
+                g_config.reticle_b = 1.0f;
+                changed = true;
+            }
         }
-        ImGui::TextDisabled("The game's own reticle follows your head, not your hand; this one is true.");
+        ImGui::TextDisabled("The game's own reticle follows your head, not your hand; this one is true.\n"
+                            "It turns red over enemies (once target-lock is wired in).");
+
+        ImGui::Spacing();
+        changed |= ImGui::Checkbox("Two-handed aiming", &g_config.two_handed_aim);
+        ImGui::SameLine();
+        ImGui::TextDisabled(VR_IsTwoHandAiming() ? "[engaged]" : "[one-handed]");
+        if (g_config.two_handed_aim)
+        {
+            ImGui::Indent();
+            if (ImGui::RadioButton("Toggle (click grip)", g_config.two_hand_toggle))
+            { g_config.two_hand_toggle = true; changed = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Hold grip", !g_config.two_hand_toggle))
+            { g_config.two_hand_toggle = false; changed = true; }
+            ImGui::Unindent();
+        }
+        ImGui::TextDisabled("Put your left hand on the front of the gun, click/hold the LEFT GRIP.\n"
+                            "Engages only when your hand is on the barrel line.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Body (VRIK)");
+        changed |= ImGui::Checkbox("Arm IK (bend arm to controller)", &g_config.arm_ik);
+        ImGui::TextDisabled("ON: shoulder stays, elbow bends, hand+gun follow your controller.\n"
+                            "OFF: the whole arm rigid-parents to the controller (old behavior).");
+        if (g_config.arm_ik)
+        {
+            changed |= ImGui::SliderFloat("Right shoulder drop", &g_config.right_shoulder_drop,
+                                          0.0f, 0.3f, "%.3f");
+            ImGui::TextDisabled("Lowers Chief's right arm so it doesn't clip your face.\n"
+                                "Raise until the right shoulder matches your left.");
+            changed |= ImGui::Checkbox("Level shoulders (don't pitch with head)",
+                                       &g_config.shoulder_level);
+            ImGui::TextDisabled("ON: shoulders stay level with the horizon when you look up/down.\n"
+                                "OFF: shoulders ride your head pitch (old). Hand+gun unaffected.");
+        }
+        changed |= ImGui::Checkbox("Show body (VRIK stage A1)", &g_config.body_wip);
+        ImGui::TextDisabled("Shows Chief's game-animated body via the engine's own director switches.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Picture");
+        changed |= ImGui::SliderFloat("Game brightness", &g_config.game_brightness, 0.5f, 2.0f, "%.2f");
+        ImGui::TextDisabled("Brightens/darkens the whole game. 1.0 = the game's own brightness.");
+        changed |= ImGui::Checkbox("Motion blur", &g_config.motion_blur);
+        ImGui::TextDisabled("Off is the VR standard. In stereo the game's blur is fed the wrong\n"
+                            "previous frame and smears bright edges into repeating echoes.");
+
+        ImGui::Spacing();
+        changed |= ImGui::Checkbox("Auto-enter VR on level load", &g_config.auto_vr);
+        ImGui::TextDisabled("Turns head tracking + stereo on when a level starts and off in the\n"
+                            "menu - no F2/F11. F2 still toggles by hand (and vetoes auto until reload).");
 
         ImGui::Spacing();
         changed |= ImGui::Checkbox("Render right eye first (diagnostic)",

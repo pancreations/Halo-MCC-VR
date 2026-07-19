@@ -1,5 +1,9 @@
 # Reverse-engineering notes — halo3.dll camera (M1)
 
+> **Current weapon/HUD authority:**
+> [`TEST-CHECKPOINT-2026-07-18.md`](TEST-CHECKPOINT-2026-07-18.md) supersedes older theories and
+> intermediate fixes retained below as historical evidence.
+
 **Game build:** MCC `1.3528.0.0`, `halo3.dll` (~10.6 MB on disk, ~71 MB mapped image).
 **All addresses below are RVAs (offset from halo3.dll's runtime base).** They are specific to
 this build and WILL move on an MCC update — they must be turned into AOB signature scans before
@@ -409,6 +413,132 @@ why it appears to have zero xrefs. The interpolation shape (`0x183DC0(prev, cur,
 bone, two frame buffers selected via `TLS+0x88`) is real, but the function's identity and entry
 point are NOT established.
 
+**Identity established offline (2026-07-18):** x64 `.pdata` gives the real function boundary
+`0x184B08..0x184CB8`. It validates matching first-person packets at
+`player*0x1A23EF4 + view*0x67AC + slot*0x33D4 + 0x1A09E84`, publishes the output pointer through
+the caller's fourth argument at `0x184C21`, and loops over `count@+0x1A09E88`. The per-bone
+call at `0x184C7F` is `0x183DC0(prev=rcx, cur=rdx, out=r9, t=xmm2)`; output stride is `0x34`.
+After the call, the current output is recoverable without volatile registers as
+`[*r12 + rbx]`. The unique bytes at `0x184C84` are
+`48 83 C3 34 49 83 EF 01 75 A9`. The CE proof table
+`tools/halo3_weapon_render_probe.CT` intercepts there and adds +0.30 to translation Y for every
+interpolated FP bone. It does not touch the gameplay camera, HUD camera, bank, or composed output.
+
+Headset result: gun/arms moved sideways, while the gameplay camera/world remained head-tracked and
+the HUD did not move. This proves 0x184B08 is the gun/arms-only render boundary. The DLL now hooks
+that true function entry, calls the original, then rigidly maps the complete interpolated assembly
+from its authored wrist/camera_control frame to Root_render^-1*RightController. While this hook is live,
+the sim bank writer and older object-root/sway patches are bypassed, preventing camera feedback and
+double application. A normal compiled detour is ABI-safe at this externally callable function
+boundary; the LTCG volatile-register prohibition still applies to internal call-site shims.
+
+**Exact render-root provenance (2026-07-18):** 0x2C13B8 passes the mapped player index in ECX to
+0x184B08. In the same invocation it reads current-thread `GS:[0x58]`, loads `TLS+0x568`, addresses
+`player*0x2430`, and at 0x2C17F7 passes that allocation's `+0x23F0` to 0x120DF8 for every completed
+packet matrix. A sim-thread TLS weapon pointer is therefore the wrong root even when its memory is
+valid. The failed algebra was `Root_render * Root_sim^-1 * Controller`; the corrected hook reads
+`TLS_render+0x568 + player*0x2430 + 0x23F0`, yielding exact cancellation. This is the proven cause
+of the residual head tracking and malformed forward reach. It writes no camera memory.
+
+CHUD is conclusively separate. Script descriptor `chud_show` points to halo3+0x1F44F8, whose
+handler writes the script boolean to `TLS+0x220 -> chud+0x144`. Adjacent handlers write weapon
+stats at +0x145 and crosshair at +0x146. Thus +0x144 is a proven safe whole-HUD visibility control,
+but it only hides/shows the HUD; it is not a placement transform. Hand placement still requires
+finding the CHUD draw transform or isolating its render target for an OpenXR quad.
+
+**CHUD render split (2026-07-18):** the broad overlay function 0x285378..0x285C4F calls three
+sibling CHUD boundaries: 0x2D27E8 at 0x285AE9, 0x2D289C at 0x285B99, and 0x2D2670 at 0x285BD5.
+The first quad build hooked only 0x2D2670, so its success markers proved only that a partial/empty
+quad was submitted; they did not prove native HUD pixels were isolated. The corrected capture hooks
+all three siblings, accumulates the first-eye passes, suppresses their other-eye duplicates, and
+forces any scene-color OM rebind inside those scoped calls back to the transparent HUD target.
+The enclosing 0x285378 function must not be captured: it also renders gun/effects and uses shared
+overlay-camera state.
+
+**AUTHORITATIVE final-palette correction (2026-07-18):** the two paragraphs above that identify
+0x2C13B8 as the visible-packet/root consumer are superseded. 0x2C13B8 builds 0x70-byte
+marker/effect packets. The visible skin palette follows
+`0x2C0D20 -> 0x184B08 -> 0x2C5A38 -> 0x2C561C`. The unique 0x2C561C function boundary has the ABI
+`tag RCX, root RDX, destination R8, unused R9, source stack arg5, map stack arg6`. It applies the
+actual root to mapped source bones, and its only direct caller returns immediately afterward, so a
+normal MinHook at this pdata boundary is safe.
+
+0x184B08 now preserves an untouched per-thread interpolation snapshot for the visible consumer while
+its live output still receives the already headset-verified marker/muzzle controller transform.
+0x2C561C consumes a private reconstructed copy. The composer caches the authored
+`wrist^-1 * camera_control` relation before the caller applies common camera lag to every bone except
+camera_control. At final reconstruction, `currentWrist * cachedRelation` synthesizes a lag-consistent
+camera_control; one rigid delta then maps the full assembly to `root^-1 * controller`. This removes
+the mismatched lag phase that produced residual inverse-head motion without changing the proven
+barrel orientation.
+
+**AUTHORITATIVE CHUD execution-boundary correction (2026-07-18):** all three CHUD siblings build
+queued CPU commands. Their actual D3D11 draws execute after those functions return, so scoped RTV
+capture cannot contain HUD pixels. The current implementation alternates the selected CHUD eye for
+ten valid samples, classifies exclusive VS/PS pairs at hooked D3D11 draw calls, and redirects only
+those GPU draws into the transparent hand-HUD target. The other-eye CHUD commands are suppressed.
+The OpenXR quad uses the predicted right-controller pose in local space and never reads or writes a
+game camera. Zero-candidate batches retry and stale shader identities auto-reset.
+
+**RETIRED (2026-07-18 evening): the entire CHUD steal-and-requad machinery above.** Headset
+result: HUD invisible in both eyes (draws stolen from the eyes, quad never displayed usefully) and
+the classifier's auto-reset looped (calibration restarted ~46x in 5 s), costing ~30 fps. All of it
+is deleted from the code; the native HUD renders untouched again.
+
+### AUTHORITATIVE first-person camera chain (2026-07-18 evening, offline; the flat-gun root cause)
+
+All addresses build 1.3528, proven by static disassembly + the 08:2x live log:
+
+- The "view struct" the per-view renderer `0x286A14` receives IS overlay camera object 0
+  (`0x2D2F680`): the engine's view loop passes `rcx = r13` at `0x185D65` while walking the 4-slot
+  `0x2820`-stride array (`add r13, 0x2820` at `0x185D77`).
+- The object holds two camera pairs: world `{compact @+0x08 -> derived @+0x98}` and first-person
+  `{@+0x158, derived @+0x1E8}`, plus a source-camera POINTER at `+0x2A8` and per-view fields
+  (`+0x27F4`, `+0x27FC`, `+0x2800`, `+0x2814`). **This settles the ghost-notes open question:
+  `{+0x158, +0x1E8}` is the FP overlay view, NOT previous-frame temporal state.**
+- Frame flow: view loop `0x1857CC` calls `0x282EC4(cam, index, count, ...)` per active view,
+  which calls CamCopy `0x2A628C(cam+8, src)` (our M1 hook; head look lands here) and derives the
+  world pair via `0x2A63E4` (== our resolved buildViewport, byte-verified) and `0x2A6980`
+  (== buildMatrices) into `cam+0x98`. Then `0x185D70` calls the per-view renderer `0x286A14`
+  (our RenderViewHook runs it twice, once per eye, world pair made per-eye).
+- INSIDE that per-view render, the render driver calls `0x279BEC(subView, byteFlag)` six times,
+  immediately before the first-person draw passes. **CORRECTION (2026-07-19, from the first run's
+  log + deeper disassembly): ALL SIX calls pass the FIRST-PERSON SUB-VIEW at `view+0x6C8`**, not
+  the view base — the driver at `0x2835D4` does `mov rbx,rcx; lea rdi,[rbx+0x6C8]` and every call
+  uses that pointer (the last two via `add rbx,0x6C8`). So the FP camera pair in absolute view
+  offsets is `{compact @+0x6D0, derived @+0x8B0}`, and the FP source pointer is `[view+0x970]`.
+  Relative to the pointer `0x279BEC` receives, its behavior is as described: copies 0x90 bytes
+  from `[sub+0x2A8]` into `sub+0x08`, normalizes the tangents to a fixed viewmodel FOV (publishes
+  `render_first_person_fov_scale`, value slot `0x8AC588`, WRITTEN at `0x279C7A`, no static
+  readers), derives into `sub+0x1E8`, and tail-jumps into `0x2770F0(camera, derived)` — the
+  shader-constant uploader (pushes `0x2F0003`/`0x2F0004` viewport constants and `0x270000` = the
+  view-projection matrix from `derived+0x78`).
+- The driver `0x2835D4` has NO direct callers: it is reached via vtable dispatch. Two .rdata
+  vtables reference this render-method family: `0x7FFAF0` region (slots include `0x2A3BE4`,
+  `0x285378` = gun/CHUD overlay render, `0x282DC0`, `0x28331C`, `0x282DEC`) and `0x800A28` region
+  (`0x286C44`, `0x286C18`, `0x2A5BB0`, `0x2A59B0`, `0x28331C`, `0x2A5B84`, `0x2A5ACC`).
+- The MAIN view's second pair `{+0x158, +0x1E8}` is therefore NOT the FP pair. Its known
+  consumer: vtable method `0x28331C` passes `{view+0x158, view+0x1E8}` to
+  `0x295DC0 -> 0x2B8124/0x1B8148`. Its role is OPEN (see CONTINUATION: the ghost-bug
+  previous-frame/temporal reading is back on the table).
+- `0x2798E4`/`0x279908` are a push/pop camera stack (global array at `~0xA10790`) whose entries
+  are applied via `[[cam]+8]` vtable calls, used by the driver around these passes.
+- ABI: all six `0x279BEC` call sites reload arguments from callee-saved registers after the call;
+  no volatile registers stay live across it, so a compiled MinHook detour is safe here (unlike
+  the banned `0x120DF8`).
+
+Consequence: the FP layer (gun + arms + CHUD) always rendered from the center-eye pose with the
+viewmodel FOV — zero stereo disparity, a flat mono layer over the stereo world. That is the
+morning report's "own near field with different depth", the forward-reach wall, and the residual
+head-follow, and it is unreachable by any bone-transform edit. The fix in game.cpp hooks
+`0x279BEC`, and (while an eye render is active and the argument equals eyeView+0x6C8) overwrites
+`sub+0x08` / `sub+0x1E8` with the eye's world camera + derived block and re-calls `0x2770F0`.
+The first build of this hook compared against the view BASE, never matched, and did nothing —
+log proof: `FP camera rebuild hooked` present, `per-eye FP camera active` absent. Corrected
+2026-07-19. Note the older "do not modify shader constant 0x270000" warning refers to blanket
+edits of the WORLD pass constant; re-running the engine's own uploader inside the FP rebuild
+boundary with a coherent camera is the engine's normal mechanism.
+
 ### Weapon-fire / projectile-spawn hunt (open)
 
 Goal: HaloCEVR-style hook that swaps aim origin+direction around the fire call so bullets leave
@@ -468,3 +598,78 @@ head pose. That's the M1 mechanism to build next.
 Halo forward is a unit vector `(i, j, k)` with **k = vertical** (up/down look → k changes) and
 `(i, j)` = horizontal heading. Engine appears **Z-up**. OpenXR head is Y-up, -Z forward, meters —
 so mapping head→game forward needs an axis swap + a yaw recenter (to be calibrated in-headset).
+
+## CHUD element visibility — CONFIRMED offsets (2026-07-19, offline disasm)
+
+Each `chud_show_*` script command has its own setter handler that writes a boolean to
+`TLS[engine_tls_index] + 0x220` (the chud struct) at a fixed offset. Disassembled all seven:
+
+| chud offset | element            | setter handler RVA |
+|-------------|--------------------|--------------------|
+| +0x144      | whole HUD (master) | 0x1F44F8           |
+| +0x145      | ammo / weapon stats| 0x1F4540           |
+| +0x146      | **crosshair** (native per-weapon reticle) | 0x1F4588 |
+| +0x147      | health / shield    | 0x1F45D0           |
+| +0x148      | grenades           | 0x1F4618           |
+| +0x149      | fire grenades      | 0x1F4660           |
+| +0x14A      | motion sensor      | 0x1F46A8           |
+
+**Only reader of these flags: `0x32F97C`** — a small routine that snapshots the whole
+`chud+0x144..0x14A` block (as words) into a per-frame CHUD render state (`dest+0x68/0x6A/...`)
+right before the HUD draws. `__fastcall(rcx = chud, rdx = dest)`. Reads `movzx eax,[rcx+0x144]`
+→ `[rdx+0x68]`, `movzx eax,[rcx+0x146]` → `[rdx+0x6A]`, etc. Ends `ret` at 0x32F9CA.
+
+Consequence: writing `chud+0x146=0` from CamCopyHook raced weapon-switch re-inits (the block is
+reset to 1 on weapon change) and lost intermittently — the crosshair "kept coming back." The
+mod now **hooks 0x32F97C** (`ChudStateCopyHook`, sig prologue
+`B8 00 00 80 3F 45 33 C0 89 42 20 89 42 24 89 42 28 48 89 42 2C 4C 89 42 34`, unique) and forces
+the source bytes there, so the crosshair kill and the per-element set are race-free.
+
+The `chud_show_*` names DO NOT resolve as writable debug-var value slots (unlike
+`motion_blur_scale_x`): they share a getter at 0x1E1BAC and each descriptor's unique field is the
+setter pointer at desc+0x18, not a value slot. So `FindDebugVarFloat` cannot drive them — the
+struct-offset write is the correct lever. The refresh function the handlers call (0x105858) walks
+global object tables and is NOT safe to call out of context.
+
+## CORRECTION + HUD levers (2026-07-19, headset-disproven `chud+0x146`, offline disasm)
+
+**`chud+0x146` is NOT the weapon aiming reticle — disproven in the headset.** Forcing it 0 via
+`ChudStateCopyHook` installs and runs (log: "crosshair OFF") but the centered weapon reticle stays.
+`0x32F97C` copies only `chud+0x144..0x147` (whole-HUD, ammo, crosshair, health) into `dest+0x68/0x6A`
+— it does NOT copy 0x148-0x14A (grenades/motion), so the earlier "0x144..0x14A" span was wrong. The
+`+0x146`/`dest+0x6A` flag gates an unrelated nav/target dot; the on-screen weapon reticle's
+visibility is decided from live weapon/unit state in **0x2EDE38** (called by submit primitive
+0x2EDF24), so no 0x220 script byte can hide it.
+
+**Weapon reticle = a dedicated draw at `0x28443C`** (called at 0x2859F8 inside overlay 0x285378).
+One centered textured quad → its own const group 0x560000, issued AFTER the FP weapon model and
+BEFORE the health/ammo/motion element siblings (0x2D27E8/0x2D289C/0x2D2670), so skipping just this
+draw removes the reticle and nothing else. Takes no params (pure globals). Suppressed by MinHooking
+it and not calling through (`ReticleDrawHook`, config `kill_reticle`). Prologue sig (unique):
+`48 89 7C 24 08 41 55 48 83 EC 30 41 BD 10 00 00 00 41 8B D5 41 8D 4D FC`.
+
+**`0x278EE0` is NOT HUD size — headset-disproven (2026-07-19).** The earlier read of this note was
+wrong: MinHooking it and scaling a0/a1 changes the whole game's BRIGHTNESS, not any element's size
+(the user's long-standing "only the opacity changed" result). The hook survives repurposed as the
+`game_brightness` slider (`HudXformHook`, sig `40 55 48 8B EC 48 83 EC 50 0F 29 74 24 40 0F 28 F1
+0F 29 7C 24 30 0F 28 CA 0F 28 F8`). Do not present 0x278EE0 as a size lever again.
+
+**HUD on-screen size: CLOSED — no working lever exists, and the render-side capture-diff panel is
+headset-DISPROVEN (2026-07-19).** Every game-side size variable failed, and the vr.cpp diff panel
+(per-eye pre-HUD snapshots vs finished eyes, both-eye union, native-HUD erase) showed ONLY the
+objective text in the headset — the rest of the HUD did not survive the diff. All of it is removed
+from the code. Accepted state per the user: native full-size HUD in both eyes (elements split:
+grenades+radar left eye, ammo right eye), with only the reticle element hidden via the verified
+0x2EDF24 element hook. Observed fact for any future attempt: at the FpDriverHook capture point vs
+Present, the finished-minus-preHUD diff does NOT contain health/ammo/radar — where those elements
+are composited remains unknown; establish that with a probe before building anything again.
+
+**Dead ends recorded (don't retry):** (1) scaling the 3D CHUD *camera* projection at 0x285AF4 —
+headset-proven no effect (HUD is 2D screen-space, not through that camera). (2) HaloCEVR-style
+capture-HUD-to-RT — Halo 3 stages HUD draws through global buffers (TLS[0xA39F9C]+0xF0 widgets,
+render-state shadows 0xA70540/0xA70610, const buffers via 0x2AF478) and flushes them later in a
+generic executor NOT locatable statically; there is no single RTV-swap bracket like Halo CE's D3D9
+`H_DrawHUD`. (3) `render_first_person_fov_scale`, `render_debug_*` scale vars — null static value
+slots, `FindDebugVarFloat` can't drive them. (4) the layout factor `[view+0x2B0]+0x174` (multiplied
+into element bounds by writer 0x284920) — scaled live per frame via the `hud_zoom` slider and never
+resized the visible HUD; poke removed 2026-07-19.

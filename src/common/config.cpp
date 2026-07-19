@@ -19,11 +19,16 @@ static void Clamp()
     g_config.turn_smooth_deg_s = std::clamp(g_config.turn_smooth_deg_s, 30.0f, 360.0f);
     g_config.crosshair_distance_m = std::clamp(g_config.crosshair_distance_m, 2.0f, 50.0f);
     g_config.crosshair_size_deg = std::clamp(g_config.crosshair_size_deg, 0.3f, 5.0f);
+    g_config.reticle_r = std::clamp(g_config.reticle_r, 0.0f, 1.0f);
+    g_config.reticle_g = std::clamp(g_config.reticle_g, 0.0f, 1.0f);
+    g_config.reticle_b = std::clamp(g_config.reticle_b, 0.0f, 1.0f);
     g_config.gun_scale = std::clamp(g_config.gun_scale, 0.3f, 3.0f);
+    g_config.game_brightness = std::clamp(g_config.game_brightness, 0.5f, 2.0f);
+    g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
     g_config.gun_roll_deg = std::clamp(g_config.gun_roll_deg, -180.0f, 180.0f);
-    g_config.hud_scale = std::clamp(g_config.hud_scale, 0.5f, 3.0f);
+    g_config.gun_forward_m = std::clamp(g_config.gun_forward_m, -0.3f, 0.5f);
 }
 
 void ConfigLoad(const wchar_t* path)
@@ -66,8 +71,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.turn_smooth_deg_s = (float)atof(val);
         else if (!strcmp(key, "ghost_fix") || !strcmp(key, "stereo_alternate_order") ||
                  !strcmp(key, "stereo_warmup_pass") || !strcmp(key, "per_eye_history") ||
-                 !strcmp(key, "stereo_sun_shafts"))
-            continue; // retired ghost-fix switches; accept old config files quietly
+                 !strcmp(key, "stereo_sun_shafts") || !strcmp(key, "gun_length_scale"))
+            continue; // retired switches; accept old config files quietly
         else if (!strcmp(key, "dpad_hand"))
             g_config.dpad_hand = atoi(val) != 0 ? 1 : 0;
         else if (!strcmp(key, "crosshair"))
@@ -76,8 +81,20 @@ void ConfigLoad(const wchar_t* path)
             g_config.crosshair_distance_m = (float)atof(val);
         else if (!strcmp(key, "crosshair_size_deg"))
             g_config.crosshair_size_deg = (float)atof(val);
+        else if (!strcmp(key, "reticle_r"))
+            g_config.reticle_r = (float)atof(val);
+        else if (!strcmp(key, "reticle_g"))
+            g_config.reticle_g = (float)atof(val);
+        else if (!strcmp(key, "reticle_b"))
+            g_config.reticle_b = (float)atof(val);
         else if (!strcmp(key, "gun_scale"))
             g_config.gun_scale = (float)atof(val);
+        else if (!strcmp(key, "bullet_snap"))
+            continue; // retired: the composed-wrist snap was reverted (hand spin); accept old cfgs quietly
+        else if (!strcmp(key, "hud_probe"))
+            g_config.hud_probe = atoi(val) != 0;
+        else if (!strcmp(key, "bullet_probe"))
+            g_config.bullet_probe = atoi(val) != 0;
         else if (!strcmp(key, "weapon_probe"))
             g_config.weapon_probe = atoi(val) != 0;
         else if (!strcmp(key, "gun_pitch_deg"))
@@ -86,8 +103,44 @@ void ConfigLoad(const wchar_t* path)
             g_config.gun_yaw_deg = (float)atof(val);
         else if (!strcmp(key, "gun_roll_deg"))
             g_config.gun_roll_deg = (float)atof(val);
-        else if (!strcmp(key, "hud_scale"))
-            g_config.hud_scale = (float)atof(val);
+        else if (!strcmp(key, "gun_forward_m"))
+            g_config.gun_forward_m = (float)atof(val);
+        else if (!strcmp(key, "show_hud") || !strcmp(key, "hud_ammo") ||
+                 !strcmp(key, "hud_health") || !strcmp(key, "hud_motion") ||
+                 !strcmp(key, "hud_grenades"))
+            continue; // retired: chud byte writes used a disproven offset map; accept old cfgs quietly
+        else if (!strcmp(key, "kill_reticle"))
+            g_config.kill_reticle = atoi(val) != 0;
+        else if (!strcmp(key, "reticle_element_id"))
+            g_config.reticle_element_id = atoi(val);
+        else if (!strcmp(key, "game_brightness"))
+            g_config.game_brightness = (float)atof(val);
+        else if (!strcmp(key, "hud_offset_x") || !strcmp(key, "hud_offset_y") ||
+                 !strcmp(key, "hud_elem_scale"))
+            continue; // retired placement-experiment keys; accept old cfgs quietly
+        else if (!strcmp(key, "hud_scale") || !strcmp(key, "hud_forward") ||
+                 !strcmp(key, "hud_fov_scale") || !strcmp(key, "hud_zoom") ||
+                 !strcmp(key, "hud_panel") || !strcmp(key, "hud_panel_size_m") ||
+                 !strcmp(key, "hud_panel_dist_m"))
+            continue; // retired levers (hud_scale was brightness; hud_zoom + the capture-diff panel both disproven); accept old cfgs quietly
+        else if (!strcmp(key, "auto_vr"))
+            g_config.auto_vr = atoi(val) != 0;
+        else if (!strcmp(key, "two_handed_aim"))
+            g_config.two_handed_aim = atoi(val) != 0;
+        else if (!strcmp(key, "two_hand_toggle"))
+            g_config.two_hand_toggle = atoi(val) != 0;
+        else if (!strcmp(key, "crouch_by_height") || !strcmp(key, "crouch_threshold_m"))
+            continue; // removed feature; accept old config files quietly
+        else if (!strcmp(key, "body_wip"))
+            g_config.body_wip = atoi(val) != 0;
+        else if (!strcmp(key, "arm_ik"))
+            g_config.arm_ik = atoi(val) != 0;
+        else if (!strcmp(key, "right_shoulder_drop"))
+            g_config.right_shoulder_drop = (float)atof(val);
+        else if (!strcmp(key, "shoulder_level"))
+            g_config.shoulder_level = atoi(val) != 0;
+        else if (!strcmp(key, "motion_blur"))
+            g_config.motion_blur = atoi(val) != 0;
         else if (!strcmp(key, "right_eye_first"))
             g_config.right_eye_first = atoi(val) != 0;
         else if (*key)
@@ -132,18 +185,57 @@ void ConfigSave()
     fprintf(f, "crosshair_distance_m = %.1f\n\n", g_config.crosshair_distance_m);
     fprintf(f, "# Apparent size of the crosshair, in degrees (0.3-5).\n");
     fprintf(f, "crosshair_size_deg = %.1f\n\n", g_config.crosshair_size_deg);
+    fprintf(f, "# Crosshair color, 0-1 per channel (default = Halo 3 light blue).\n");
+    fprintf(f, "reticle_r = %.3f\n", g_config.reticle_r);
+    fprintf(f, "reticle_g = %.3f\n", g_config.reticle_g);
+    fprintf(f, "reticle_b = %.3f\n\n", g_config.reticle_b);
     fprintf(f, "# Size of the hand-held weapon and arms (0.3-3). 1 = authored size;\n");
     fprintf(f, "# Home/End adjust this in-game.\n");
     fprintf(f, "gun_scale = %.2f\n\n", g_config.gun_scale);
-    fprintf(f, "# Weapon mounting rotation on the controller, in degrees.\n");
+    fprintf(f, "# Weapon mounting rotation on the controller, in degrees. Rotates only\n");
+    fprintf(f, "# the visible gun; the cursor/bullet ray stays fixed on the controller.\n");
     fprintf(f, "gun_pitch_deg = %.0f\n", g_config.gun_pitch_deg);
     fprintf(f, "gun_yaw_deg = %.0f\n", g_config.gun_yaw_deg);
     fprintf(f, "gun_roll_deg = %.0f\n\n", g_config.gun_roll_deg);
-    fprintf(f, "# HUD size (experimental): >1 draws the game HUD smaller/toward center.\n");
-    fprintf(f, "hud_scale = %.2f\n\n", g_config.hud_scale);
+    fprintf(f, "# Push the gun forward of the controller, in meters (-0.3 to 0.5).\n");
+    fprintf(f, "# Negative seats the gun back into your fist.\n");
+    fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
+    fprintf(f, "# Hide the game's centered weapon reticle. It works by skipping one\n");
+    fprintf(f, "# HUD element; pick which one in the menu (step until the crosshair is\n");
+    fprintf(f, "# gone). kill_reticle = master on/off; reticle_element_id = which element.\n");
+    fprintf(f, "kill_reticle = %d\n", g_config.kill_reticle ? 1 : 0);
+    fprintf(f, "reticle_element_id = %d\n", g_config.reticle_element_id);
+    fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
+    fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);
+    fprintf(f, "# Automatically enter VR when a level loads (no F2/F11 needed).\n");
+    fprintf(f, "auto_vr = %d\n\n", g_config.auto_vr ? 1 : 0);
+    fprintf(f, "# Two-handed aiming: put your left hand on the gun front and use the\n");
+    fprintf(f, "# left grip to steady aim along the two-hand line. 1 = on.\n");
+    fprintf(f, "two_handed_aim = %d\n", g_config.two_handed_aim ? 1 : 0);
+    fprintf(f, "# Engage style: 1 = toggle (click grip on/off), 0 = hold.\n");
+    fprintf(f, "two_hand_toggle = %d\n\n", g_config.two_hand_toggle ? 1 : 0);
+    fprintf(f, "# VRIK arm IK: 1 = bend the arm to your controller (shoulder planted,\n");
+    fprintf(f, "# elbow solved); 0 = rigid-parent the whole arm assembly.\n");
+    fprintf(f, "arm_ik = %d\n", g_config.arm_ik ? 1 : 0);
+    fprintf(f, "# Lower the right (weapon) shoulder so the arm doesn't clip your face\n");
+    fprintf(f, "# (0 = authored, higher = lower; ~world units). Range 0-0.3.\n");
+    fprintf(f, "right_shoulder_drop = %.3f\n", g_config.right_shoulder_drop);
+    fprintf(f, "# Keep the IK shoulders level with the horizon instead of pitching\n");
+    fprintf(f, "# with your head. 1 = level torso (shoulders stay put); 0 = old.\n");
+    fprintf(f, "shoulder_level = %d\n\n", g_config.shoulder_level ? 1 : 0);
+    fprintf(f, "# VRIK stage A1: show the player's game-animated body (experimental).\n");
+    fprintf(f, "body_wip = %d\n\n", g_config.body_wip ? 1 : 0);
+    fprintf(f, "# Halo's camera motion blur: 0 = off (VR default; also removes the\n");
+    fprintf(f, "# repeating echo artifacts in stereo), 1 = the game's normal blur.\n");
+    fprintf(f, "motion_blur = %d\n\n", g_config.motion_blur ? 1 : 0);
     fprintf(f, "# Diagnostic: 1 ignores the controller and pushes the weapon a fixed\n");
     fprintf(f, "# distance left, to test whether the gun mesh reads our matrices.\n");
     fprintf(f, "weapon_probe = %d\n\n", g_config.weapon_probe ? 1 : 0);
+    fprintf(f, "# Diagnostic: 1 logs the CHUD state-byte window on change (finds the\n");
+    fprintf(f, "# enemy-red reticle state and per-element HUD flags). Log-only.\n");
+    fprintf(f, "hud_probe = %d\n\n", g_config.hud_probe ? 1 : 0);
+    fprintf(f, "# Diagnostic: log camera-vs-muzzle offset on each shot (bullet origin).\n");
+    fprintf(f, "bullet_probe = %d\n\n", g_config.bullet_probe ? 1 : 0);
     fprintf(f, "# Ghosting diagnostic: 1 renders the right eye first.\n");
     fprintf(f, "right_eye_first = %d\n", g_config.right_eye_first ? 1 : 0);
     fclose(f);

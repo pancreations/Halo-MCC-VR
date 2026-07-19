@@ -58,6 +58,7 @@ add_library(halo3xr SHARED
     src/dll/menu.cpp
     src/dll/sigscan.cpp
     src/dll/game.cpp
+    src/dll/ik.cpp
     src/dll/input.cpp)
 target_compile_definitions(halo3xr PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN

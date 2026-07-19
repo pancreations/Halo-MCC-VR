@@ -21,7 +21,8 @@ def load():
         name = b[0:8].rstrip(b"\0").decode(errors="ignore")
         vsize, vaddr, rawsize, rawptr = struct.unpack_from("<IIII", b, 8)
         chars = struct.unpack_from("<I", b, 36)[0]
-        secs.append(dict(name=name, va=vaddr, vsize=vsize, raw=rawptr, rawsize=rawsize, exec=bool(chars & 0x20000000)))
+        secs.append(dict(name=name, va=vaddr, vsize=vsize, raw=rawptr,
+                         rawsize=rawsize, **{"exec": bool(chars & 0x20000000)}))
         off += 40
     return data, secs, imgbase
 
@@ -32,6 +33,17 @@ def rva2off(secs, rva):
             if d < s["rawsize"]:
                 return s["raw"] + d
     return None
+
+def peek(rvas):
+    for rva in rvas:
+        off = rva2off(secs, rva)
+        if off is None or off + 16 > len(data):
+            print("0x%X: not mapped" % rva)
+            continue
+        raw = data[off:off+16]
+        floats = struct.unpack_from("<ffff", raw)
+        print("0x%X file=0x%X bytes=%s floats=%s" %
+              (rva, off, raw.hex(), ", ".join("%.9g" % v for v in floats)))
 
 md = Cs(CS_ARCH_X86, CS_MODE_64)
 md.detail = True
@@ -126,6 +138,24 @@ def off2rva(secs, off):
             return s["va"] + (off - s["raw"])
     return None
 
+def runtime(rva):
+    """Print the x64 RUNTIME_FUNCTION containing an RVA (offline .pdata)."""
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    opt = pe + 24
+    # PE32+ data directory index 3 = exception directory (.pdata).
+    pdata_rva, pdata_size = struct.unpack_from("<II", data, opt + 112 + 3 * 8)
+    pdata_off = rva2off(secs, pdata_rva)
+    if pdata_off is None:
+        print("exception directory not mapped")
+        return
+    for off in range(pdata_off, pdata_off + pdata_size, 12):
+        begin, end, unwind = struct.unpack_from("<III", data, off)
+        if begin <= rva < end:
+            print("function containing 0x%X: 0x%X..0x%X size=0x%X unwind=0x%X" %
+                  (rva, begin, end, end - begin, unwind))
+            return
+    print("no runtime function contains 0x%X" % rva)
+
 def sig(pattern):
     import re
     pat = b""
@@ -200,3 +230,7 @@ if __name__ == "__main__":
         xref([int(x, 16) for x in sys.argv[2:]])
     elif cmd == "imm":
         imm([int(x, 16) for x in sys.argv[2:]])
+    elif cmd == "runtime":
+        runtime(int(sys.argv[2], 16))
+    elif cmd == "peek":
+        peek([int(x, 16) for x in sys.argv[2:]])

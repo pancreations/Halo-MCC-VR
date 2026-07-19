@@ -1,7 +1,7 @@
 # CLAUDE.md — project context for Claude sessions
 
 ## What this project is
-
+0000000000000000000000000000000
 A native OpenXR VR mod for Halo 3 + Halo 3: ODST in Halo: The Master Chief Collection (Steam).
 Injected C++ DLL that hooks the game's D3D11 renderer and camera, submits stereo frames via
 OpenXR, drives weapon aim from motion controllers, and shows a Dear ImGui settings menu on an

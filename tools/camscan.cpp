@@ -477,6 +477,37 @@ static void ClearDrAllThreads(DWORD pid, uint64_t addr)
     CloseHandle(snap);
 }
 
+// Arm DR0 on EVERY existing thread. DebugActiveProcess only reports the main
+// thread plus threads created after attach, so render/worker threads that
+// already exist (which is where the per-frame render palette is written) never
+// get the watchpoint unless we set it on them explicitly here. Returns the
+// count armed.
+static int SetDrAllThreads(DWORD pid, uint64_t addr)
+{
+    int armed = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    THREADENTRY32 te{ sizeof(te) };
+    if (Thread32First(snap, &te))
+        do {
+            if (te.th32OwnerProcessID == pid)
+            {
+                HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
+                                       FALSE, te.th32ThreadID);
+                if (th)
+                {
+                    SuspendThread(th);
+                    SetDr0(th, addr, true);
+                    ResumeThread(th);
+                    CloseHandle(th);
+                    ++armed;
+                }
+            }
+        } while (Thread32Next(snap, &te));
+    CloseHandle(snap);
+    return armed;
+}
+
 // Attach as a debugger, set a hardware write-watchpoint on an absolute
 // address, and record the game instructions (and CPU registers) that write
 // it. The register that holds a value near the target is the base pointer of
@@ -499,7 +530,11 @@ static int FindWriteAt(uint64_t addr, int wantHits, double timeoutSecs, WriteHit
 
     if (!DebugActiveProcess(pid)) { printf("DebugActiveProcess failed (%lu).\n", GetLastError()); return 1; }
     DebugSetProcessKillOnExit(FALSE); // if we die, the game must survive
-    printf("watching writes to 0x%llX:\n", addr);
+    // Arm every pre-existing thread — the render/worker thread that writes the
+    // per-frame palette existed before we attached, so the event-driven arming
+    // below (main + new threads only) would miss it.
+    const int armed = SetDrAllThreads(pid, addr);
+    printf("watching writes to 0x%llX (armed %d existing threads):\n", addr, armed);
 
     int hits = 0;
     const DWORD start = GetTickCount();

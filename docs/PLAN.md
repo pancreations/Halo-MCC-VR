@@ -4,6 +4,17 @@ Last updated: 2026-07-13 (M0 built, entering headset testing)
 
 ## Progress log
 
+- **2026-07-19 — HUD: every approach closed out; native full-size HUD is the accepted state.**
+  All game-side "HUD size" levers are disproven and deleted (0x278EE0 = brightness,
+  `[view+0x2B0]+0x174` layout poke = no visible effect, key `hud_zoom` retired). The capture-diff
+  panel (per-eye pre-HUD snapshots + ps_huddiff extraction + native-HUD erase) was completed and
+  **headset-disproven the same day: the panel carried only the objective text** — the entire
+  machinery is removed, including its per-frame full-res capture copies (real GPU cost). Final,
+  user-directed state: the game's own HUD renders untouched and full-size in both eyes; only the
+  centered weapon reticle is hidden via the verified 0x2EDF24 element hook (F4-picked id). Bloat
+  cleanup: dead `bullet_snap` key removed, `bullet_probe` logger defaults off, brightness slider
+  moved to its own "Picture" menu section.
+
 - **2026-07-14 — M1 head rotation WORKING in headset.** Turning your head looks around the Halo
   world (correct direction, level horizon, no flicker). How we got there:
   - Built our own read-only RE toolkit instead of Cheat Engine (AV-blocked): `tools/camscan.cpp`

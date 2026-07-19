@@ -26,31 +26,132 @@ struct Config
     float crosshair_distance_m = 10.0f; // how far along the aim ray it floats
     float crosshair_size_deg = 2.25f;   // apparent (angular) size
 
+    // Crosshair color (0-1 per channel). Default approximates Halo 3's own
+    // light CHUD blue; edit live in the F1 menu (a reset button restores it).
+    float reticle_r = 0.62f;
+    float reticle_g = 0.87f;
+    float reticle_b = 1.0f;
+
     // Hand-anchored first-person weapon: uniform size multiplier applied to
-    // the whole arms+gun assembly around the wrist. 1 = the size the model
-    // was authored at (the overlay frustum matches the world projection, so
-    // authored size = true physical size). Home/End adjust it live.
-    float gun_scale = 0.75f;
+    // the wrist subtree (hand + weapon) around the wrist. Under the true
+    // world projection the authored viewmodels read oversized; 0.85 is the
+    // new-pipeline starting point. Home/End adjust live.
+    float gun_scale = 0.85f;
+
+    // (gun_length_scale removed 2026-07-19: a barrel-only squash is not
+    // expressible in the engine's uniform-scale bone format; moving bone
+    // origins just translated the rigid gun mesh.)
 
     // Fixed mounting rotation between the weapon bone's authored frame and
-    // the controller (degrees). Defaults are identity: the -90 pitch guess
-    // rotated the gun out of view (2026-07-15 04:3x). Tune LIVE in the F1
-    // menu while looking at the gun; save keeps your calibration.
+    // the controller (degrees). Rotates ONLY the visible gun + muzzle flash;
+    // the cursor/bullet ray stays fixed on the controller, so tune these
+    // until the barrel lies on the cursor line. Tune LIVE in the F1 menu;
+    // save keeps your calibration.
     float gun_pitch_deg = 0.0f;
     float gun_yaw_deg = 0.0f;
     float gun_roll_deg = 0.0f;
 
-    // Experimental: scales the non-weapon overlay cameras' frustum (HUD).
-    // 1 = untouched. >1 draws the HUD smaller / closer to center. The weapon
-    // camera is never scaled (its projection must match the world exactly for
-    // controller registration).
-    float hud_scale = 1.0f;
+    // Push the whole arms+gun assembly along the controller's forward axis,
+    // in meters. 0 = anchored at the controller; negative seats the gun back
+    // into/behind your fist (the practical "gun feels too long" trim);
+    // positive moves it out of your face. Never touches aim.
+    float gun_forward_m = 0.0f;
+
+    // (show_hud / hud_ammo / hud_health / hud_motion / hud_grenades retired
+    // 2026-07-19 evening: their chud+0x144..0x14A byte writes used a
+    // headset-disproven offset map and suppressed the whole HUD except the
+    // objective text. The native HUD is fully game-managed now; the only
+    // element control is the reticle kill below.)
+
+    // Hide the game's centered weapon reticle. It's head-locked (causes eye
+    // strain in VR) and redundant with our floating VR reticle. This works by
+    // skipping ONE HUD element at draw time — but the reticle's element id is
+    // runtime tag data, so the user identifies it in the menu (reticle_element_id
+    // below) by stepping until the crosshair disappears. ON = hide that element.
+    bool kill_reticle = true;
+    // Which HUD element id to hide as the reticle. -1 = none picked yet. Set from
+    // the in-headset menu once the user finds the id that removes the crosshair.
+    int reticle_element_id = -1;
+
+    // Game brightness / gamma (0x278EE0's screen color constant). 1.0 = the game's
+    // own brightness; higher = brighter, lower = darker. NOT a HUD control — the
+    // function once thought to size the HUD actually adjusts brightness.
+    float game_brightness = 1.0f;
+
+    // (The 0x2EEFC8 placement-slider experiment is retired: measured 2026-07-19,
+    // that struct holds colors/alpha/animation only — Halo's HUD has no position
+    // data to edit. The HUD panel below is the real fix.)
+
+    // (HUD sizing experiments all retired 2026-07-19 at the user's direction.
+    // The capture-diff HUD panel was headset-disproven — it showed only the
+    // objective text and cost GPU time every frame — and the hud_zoom
+    // [view+0x2B0]+0x174 layout poke never resized anything. The HUD ships
+    // native and full-size; only the reticle element is hidden, above.)
+
+    // Automatically enter VR (head tracking + stereo) when a level loads, and
+    // drop back to the flat menu screen when you leave — no F2/F11 needed.
+    bool auto_vr = true;
+
+    // Two-handed weapon aiming: when you bring your left hand up to the gun
+    // (support-hand grip), aim along the line from the right hand to the left
+    // hand instead of the right wrist alone — steadier, and the barrel points
+    // exactly where you look down the gun. Auto-engages by hand pose; drops
+    // when you lower the support hand. The right grip still cycles grenades.
+    bool two_handed_aim = true;
+    // Two-hand engage style: true = toggle (click left grip on/off), false =
+    // hold (engaged only while the left grip is held).
+    bool two_hand_toggle = true;
+
+    // VRIK stage A1: show the player's real body (game-animated) by flipping
+    // the engine's director/viewmodel switches. Experimental gate for the
+    // upper-body VRIK plan (docs/VRIK-ROADMAP.md).
+    bool body_wip = false;
+
+    // VRIK arm IK: bend the first-person arm (shoulder planted, elbow solved,
+    // hand+gun to the controller) instead of rigid-parenting the whole
+    // assembly. ON = articulated arm; OFF = the previous rigid parent.
+    bool arm_ik = true;
+
+    // Lower the RIGHT (weapon) shoulder so Master Chief's arm doesn't clip up
+    // into your face — drops the shoulder anchor along your view-down axis.
+    // 0 = the game's authored (high) shoulder; higher = lower shoulder. Tune
+    // to match your left shoulder. In world units (~1 wu = 3 m).
+    float right_shoulder_drop = 0.06f;
+
+    // Keep the IK shoulders LEVEL with the horizon instead of pitching with your
+    // head — anchor the arms to a torso frame that turns with your heading (yaw)
+    // but not pitch/roll, so looking up/down no longer swings the shoulder into
+    // your face. The gravity/up axis is now MEASURED from the engine's camera-up
+    // (the first attempt hardcoded the wrong axis). ON by default; OFF = the old
+    // behavior (shoulders ride the camera). Hand and gun are unaffected either way.
+    bool shoulder_level = true;
+
+    // Halo 3's camera motion blur. In two-render stereo its "previous frame"
+    // camera is the other eye's, smearing bright content into repeated echoes
+    // (the long-standing first-eye ghost). Off is also the VR comfort
+    // standard. 0 = blur scales forced to zero (default), 1 = engine values.
+    bool motion_blur = false;
+
+    // (bullet_snap retired: the composed-wrist snap spun the right hand and
+    // sent bullets stage-left; reverted. The real fix is a runtime fire hook —
+    // see docs and the bullet_probe diagnostic below.)
 
     // DIAGNOSTIC (off by default). Ignores the controller and shoves the whole
     // composed first-person assembly a fixed distance to the left. Answers one
     // binary question that the disassembly cannot: does the visible gun MESH
     // consume the bone matrices we edit? See docs/CONTINUATION.md 2026-07-15.
     bool weapon_probe = false;
+
+    // DIAGNOSTIC (off by default). Logs the CHUD state-byte window whenever it
+    // changes, to locate the reticle "on target" (enemy red) state and the
+    // per-element visibility flags. Log-only; changes nothing.
+    bool hud_probe = false;
+
+    // DIAGNOSTIC (off by default; set bullet_probe=1 in the cfg for the
+    // fire-hook hunt). On each shot, logs the camera (where Halo spawns your
+    // bullet) vs the gun muzzle world position, to measure the "bullets from
+    // thin air" gap. Log-only; the actual origin-move needs a runtime fire hook.
+    bool bullet_probe = false;
 
     // Ghosting diagnostic, and the one reliable way to reproduce the open
     // left-eye ghost bug on demand: render the right eye first and the trails
