@@ -4,6 +4,7 @@
 #include <d3dcompiler.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
+#include <algorithm>
 #include <vector>
 #include <array>
 #include <string>
@@ -1249,14 +1250,14 @@ float4 ps_pass(VSOut i) : SV_Target
     // left-grip press while the left hand is inside the thin/long barrel zone
     // flips two-hand ON; the next left-grip press flips it OFF (anywhere). Hold
     // mode: engaged only while the grip is held with the hand in the zone.
-    // The OpenXR aim pose sits back at the wrist; the user grabs the gun with
-    // the HAND, ~8 cm forward of that along the controller. Shift the left-hand
-    // sample point forward so activation (and the two-hand line) is measured at
-    // the hand, not the wrist. Shared by the latch AND the aim so they agree.
+    // The OpenXR aim pose sits back at the wrist. Shift the left-hand sample to
+    // the palm so activation and the two-hand line are measured at the rendered
+    // support hand. The same configured correction is used by game.cpp's left
+    // arm target, keeping the visible wrist and the aiming point together.
     XrVector3f LeftHandPoint(const XrPosef& lpose)
     {
         const XrVector3f lfwd = Rotate(lpose.orientation, {0,0,-1});
-        const float k = 0.12f; // wrist -> middle of palm / base of fingers
+        const float k = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
         return {lpose.position.x + lfwd.x*k,
                 lpose.position.y + lfwd.y*k,
                 lpose.position.z + lfwd.z*k};

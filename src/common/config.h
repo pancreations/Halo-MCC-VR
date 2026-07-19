@@ -107,6 +107,9 @@ struct Config
     // Two-hand engage style: true = toggle (click left grip on/off), false =
     // hold (engaged only while the left grip is held).
     bool two_hand_toggle = true;
+    // Wrist-to-palm correction for the left controller. This same point drives
+    // the rendered support hand and the two-hand aiming line so they stay aligned.
+    float left_hand_forward_m = 0.12f;
 
     // VRIK stage A1: show the player's real body (game-animated) by flipping
     // the engine's director/viewmodel switches. Experimental gate for the

@@ -239,6 +239,10 @@ namespace
             ImGui::SameLine();
             if (ImGui::RadioButton("Hold grip", !g_config.two_hand_toggle))
             { g_config.two_hand_toggle = false; changed = true; }
+            changed |= ImGui::SliderFloat("Left hand forward offset (m)",
+                                          &g_config.left_hand_forward_m,
+                                          -0.15f, 0.30f, "%.3f");
+            ImGui::TextDisabled("Moves the visible support hand and the two-hand aim point together.");
             ImGui::Unindent();
         }
         ImGui::TextDisabled("Put your left hand on the front of the gun, click/hold the LEFT GRIP.\n"

@@ -2615,11 +2615,12 @@ namespace
             (sg*roomForward-cg*roomRight)*s,
             dy*s};
         const float cam[3] = {g_baseCamX.load(),g_baseCamY.load(),g_baseCamZ.load()};
-        // Optional forward standoff along the controller's own aim direction
-        // (basis column 0 = forward), so the grip isn't inside the fist/face.
-        // Weapon (right) hand only — the bare left hand gets no standoff.
-        const float standoff = left ? 0.0f
-            : Clamp(g_config.gun_forward_m, -0.3f, 0.5f) * s;
+        // Forward standoff along the controller's own aim direction (basis
+        // column 0 = forward). Left is the shared wrist-to-palm correction;
+        // right retains its independent weapon offset.
+        const float standoff = (left
+            ? Clamp(g_config.left_hand_forward_m, -0.15f, 0.30f)
+            : Clamp(g_config.gun_forward_m, -0.3f, 0.5f)) * s;
         for (int j = 0; j < 3; ++j)
             pos[j] = cam[j] + off[j] + basis[j] * standoff;
         scale = Clamp(g_config.gun_scale, 0.3f, 3.0f);

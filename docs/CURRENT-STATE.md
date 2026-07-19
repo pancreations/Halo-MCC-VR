@@ -9,6 +9,7 @@ Authoritative as of 2026-07-19. If another note conflicts with this file, this f
 - Safe documentation-cleanup branch: cleanup/production-baseline-20260719; runtime restored by ddfe109
 - Failed broad runtime-cleanup commit: 42a1276 (preserved for diagnosis; never deploy)
 - Pre-recovery master: ad61f8d
+- Lean HUD scaling and reticle-hider checkpoint: 65113ab
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
@@ -21,6 +22,8 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
 - The shotgun support arm is free and follows the left controller. The user confirmed this after the native weapon-IK bypass.
 - The assault rifle and pistol were the known-good comparison behavior before the shotgun fix.
 - The game's native HUD renders in both eyes. The centered game reticle can be hidden by its observed HUD element id.
+- Native HUD scaling at 0.38, centered-reticle hiding, and normal pre-regression GPU performance are headset-confirmed.
+- The left support-hand wrist-to-palm correction is headset-confirmed. `left_hand_forward_m` defaults to 0.12 m and drives both the rendered left-hand IK target and the two-handed aiming point; the F1 slider tunes them together.
 - Halo motion blur is off by default because its previous-camera state creates stereo echo trails.
 - deploy.bat auto prevents stale-DLL testing by refusing to deploy while MCC is open and comparing the built/deployed files byte-for-byte.
 
@@ -77,6 +80,13 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - The attempted automatic type-2 visibility hook at halo3+0x2EDE38 installed but did not hide the visible weapon crosshair in-headset; do not restore it.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
+
+## 2026-07-19 session closeout
+
+- Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
+- Confirmed left-hand test build: Release/deployed SHA-256 `70E3CC78DCA878FEEC218ED2124C9B55896D53421C7A0DE7049C87D653EFBFB1`.
+- Left support-hand visual alignment and two-handed aiming remained aligned with the shared 0.12 m forward correction. User result: "fantastic it worked."
+- Continue from the tip of `fix/left-hand-wrist-offset`; do not reintroduce the HUD toast/status path or per-camera-copy HUD verification.
 
 ## Required test/deploy sequence
 

@@ -25,6 +25,7 @@ static void Clamp()
     g_config.gun_scale = std::clamp(g_config.gun_scale, 0.3f, 3.0f);
     g_config.game_brightness = std::clamp(g_config.game_brightness, 0.5f, 2.0f);
     g_config.hud_size = std::clamp(g_config.hud_size, 0.30f, 1.00f);
+    g_config.left_hand_forward_m = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
@@ -132,6 +133,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.two_handed_aim = atoi(val) != 0;
         else if (!strcmp(key, "two_hand_toggle"))
             g_config.two_hand_toggle = atoi(val) != 0;
+        else if (!strcmp(key, "left_hand_forward_m"))
+            g_config.left_hand_forward_m = (float)atof(val);
         else if (!strcmp(key, "crouch_by_height") || !strcmp(key, "crouch_threshold_m"))
             continue; // removed feature; accept old config files quietly
         else if (!strcmp(key, "body_wip"))
@@ -220,7 +223,10 @@ void ConfigSave()
     fprintf(f, "# left grip to steady aim along the two-hand line. 1 = on.\n");
     fprintf(f, "two_handed_aim = %d\n", g_config.two_handed_aim ? 1 : 0);
     fprintf(f, "# Engage style: 1 = toggle (click grip on/off), 0 = hold.\n");
-    fprintf(f, "two_hand_toggle = %d\n\n", g_config.two_hand_toggle ? 1 : 0);
+    fprintf(f, "two_hand_toggle = %d\n", g_config.two_hand_toggle ? 1 : 0);
+    fprintf(f, "# Left controller wrist-to-palm correction, shared by support-hand IK\n");
+    fprintf(f, "# and the two-hand aim point. Tune live in F1. Range -0.15 to 0.30 m.\n");
+    fprintf(f, "left_hand_forward_m = %.3f\n\n", g_config.left_hand_forward_m);
     fprintf(f, "# VRIK arm IK: 1 = bend the arm to your controller (shoulder planted,\n");
     fprintf(f, "# elbow solved); 0 = rigid-parent the whole arm assembly.\n");
     fprintf(f, "arm_ik = %d\n", g_config.arm_ik ? 1 : 0);
