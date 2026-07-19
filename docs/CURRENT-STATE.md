@@ -80,6 +80,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - The centered game reticle still depends on the remembered observed element id. The current config retains the headset-picked id 4425; a multi-id hide list remains the next fix if weapon variance persists.
 - The attempted automatic type-2 visibility hook at halo3+0x2EDE38 installed but did not hide the visible weapon crosshair in-headset; do not restore it.
+- The attempted scripting-class classifier inside the element-submit hook at halo3+0x2EDF24 caused a black headset view when stereo entered a level (2026-07-19 16:45 build). It was fully removed; do not restore its runtime tag-table dereferences.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
 
