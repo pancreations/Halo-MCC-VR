@@ -23,6 +23,7 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
 - The assault rifle and pistol were the known-good comparison behavior before the shotgun fix.
 - The game's native HUD renders in both eyes. The centered game reticle can be hidden by its observed HUD element id.
 - Native HUD scaling at 0.38, centered-reticle hiding, and normal pre-regression GPU performance are headset-confirmed.
+- Runtime-FOV HUD aspect correction is headset-confirmed on both Quest 3 and PSVR2 with OpenXR Toolkit disabled. It substantially improves the layout; a mild overall squeeze remains and is accepted for now.
 - The left support-hand wrist-to-palm correction is headset-confirmed. `left_hand_forward_m` defaults to 0.12 m and drives both the rendered left-hand IK target and the two-handed aiming point; the F1 slider tunes them together.
 - Halo motion blur is off by default because its previous-camera state creates stereo echo trails.
 - deploy.bat auto prevents stale-DLL testing by refusing to deploy while MCC is open and comparing the built/deployed files byte-for-byte.
@@ -76,6 +77,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
 - HUD size: the chud_globals safe-frame lever and the automatic hud_size slider are headset-confirmed. A value of 0.38 visibly and correctly scaled the native HUD layout (2026-07-19).
+- HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - The centered game reticle still depends on the remembered observed element id. The current config retains the headset-picked id 4425; a multi-id hide list remains the next fix if weapon variance persists.
 - The attempted automatic type-2 visibility hook at halo3+0x2EDE38 installed but did not hide the visible weapon crosshair in-headset; do not restore it.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).

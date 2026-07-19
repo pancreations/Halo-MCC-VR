@@ -328,6 +328,43 @@ namespace
     // hides an element itself — not a new, untested code path.
     typedef uint64_t (__fastcall *HudElementFn)(uint64_t, uint64_t, uint64_t, uint64_t);
     HudElementFn g_realHudElement = nullptr;
+    uintptr_t g_hudLookupTableSlot = 0;
+    uintptr_t g_hudTagDataBaseSlot = 0;
+
+    // Resolve the top-level widget collection selected by this submit. The
+    // shipped H3EK tags identify every weapon reticle collection (including
+    // fullscreen/halfscreen variants) with scripting class 2, crosshair.
+    // This reproduces the engine's own lookup at the start of 0x2EDF24 and
+    // lets one hook cover every weapon without guessing per-weapon ids.
+    static bool IsCrosshairHudCollection(uint64_t descriptor, uint16_t id)
+    {
+        if (!descriptor) return false;
+        if (!g_hudLookupTableSlot) return false;
+        if (!g_hudTagDataBaseSlot) return false;
+        __try
+        {
+            const uintptr_t lookup =
+                *reinterpret_cast<const uintptr_t*>(g_hudLookupTableSlot);
+            const uintptr_t tagData =
+                *reinterpret_cast<const uintptr_t*>(g_hudTagDataBaseSlot);
+            if (!lookup || !tagData) return false;
+            const uint32_t definitionOffset =
+                *reinterpret_cast<const uint32_t*>(lookup + id * 8ull + 4);
+            if (!definitionOffset) return false;
+            const uintptr_t definition = tagData + definitionOffset * 4ull;
+            const uint32_t collectionsOffset =
+                *reinterpret_cast<const uint32_t*>(definition + 4);
+            if (!collectionsOffset) return false;
+            const int collectionIndex =
+                *reinterpret_cast<const int8_t*>(descriptor + 3);
+            if (collectionIndex < 0) return false;
+            const uintptr_t collection = tagData + collectionsOffset * 4ull +
+                                         static_cast<uintptr_t>(collectionIndex) * 80ull;
+            return *reinterpret_cast<const uint16_t*>(collection + 4) == 2;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
     uint64_t __fastcall HudElementHook(uint64_t player, uint64_t descriptor,
                                        uint64_t r8, uint64_t r9)
     {
@@ -337,9 +374,13 @@ namespace
         // that lived here were stripped: the one run carrying them froze the
         // render thread at the first HUD element submit. This is the minimal
         // body that was live when the reticle kill was headset-verified.)
-        if (g_config.kill_reticle && g_config.reticle_element_id >= 0 &&
-            id == static_cast<uint16_t>(g_config.reticle_element_id))
-            return 0;   // hide this element (the reticle, once the user picks it)
+        if (g_config.kill_reticle)
+        {
+            const bool remembered = g_config.reticle_element_id >= 0 &&
+                id == static_cast<uint16_t>(g_config.reticle_element_id);
+            if (IsCrosshairHudCollection(descriptor, id) || remembered)
+                return 0;   // hide native reticle; preserve every other HUD class
+        }
         return g_realHudElement(player, descriptor, r8, r9);
     }
 
@@ -3627,16 +3668,38 @@ namespace
                 LOG("M3: brightness signature missing/ambiguous; brightness fixed at 1.0");
         }
 
-        // HUD ELEMENT HIDER: restore the headset-proven element-submit boundary.
+        // HUD ELEMENT HIDER: use the headset-proven element-submit boundary.
         // The attempted type-2 visibility predicate at 0x2EDE38 did not hide the
         // visible weapon crosshair in-headset (2026-07-19), so it is not retained.
-        // The menu stays simple; the last proven element id remains in the config.
+        // Reproduce this function's own tag lookup and classify the selected
+        // collection by its H3EK-defined scripting class. The last proven id
+        // remains as a safe fallback.
         {
             const char* kHudElemSig =
                 "48 89 5C 24 10 57 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 41 8A F9 45 0F B7 C0";
             uintptr_t hudElem = sig::Find(base, size, kHudElemSig);
             if (hudElem && !sig::Find(hudElem+1, base+size-hudElem-1, kHudElemSig))
             {
+                const unsigned char lookupOp[] = {0x48, 0x8B, 0x05};
+                const unsigned char dataOp[] = {0x48, 0x8B, 0x0D};
+                bool lookupLayout =
+                    memcmp(reinterpret_cast<const void*>(hudElem + 0x0A), lookupOp, 3) == 0;
+                if (memcmp(reinterpret_cast<const void*>(hudElem + 0x1E), dataOp, 3) != 0)
+                    lookupLayout = false;
+                if (lookupLayout)
+                {
+                    const uintptr_t lookupSlot = sig::RipTarget(hudElem + 0x0D, hudElem + 0x11);
+                    const uintptr_t dataSlot = sig::RipTarget(hudElem + 0x21, hudElem + 0x25);
+                    bool slotsInModule = lookupSlot >= base;
+                    if (lookupSlot + 8 > base + size) slotsInModule = false;
+                    if (dataSlot < base) slotsInModule = false;
+                    if (dataSlot + 8 > base + size) slotsInModule = false;
+                    if (slotsInModule)
+                    {
+                        g_hudLookupTableSlot = lookupSlot;
+                        g_hudTagDataBaseSlot = dataSlot;
+                    }
+                }
                 if (MH_CreateHook(reinterpret_cast<void*>(hudElem),
                                   reinterpret_cast<void*>(&HudElementHook),
                                   reinterpret_cast<void**>(&g_realHudElement)) == MH_OK &&
