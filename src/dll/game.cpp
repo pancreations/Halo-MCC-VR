@@ -3475,10 +3475,21 @@ namespace
             return false;
         __try
         {
-            const uintptr_t storage =
+            const uintptr_t slot =
                 *reinterpret_cast<const uintptr_t*>(record + 16);
-            if (storage < 0x10000)
-                return false;
+            if (slot <= 1)
+            {
+                paused = slot != 0;
+                static bool loggedInline = false;
+                if (!loggedInline)
+                {
+                    loggedInline = true;
+                    LOG("pause state: game_paused uses inline boolean storage "
+                        "(initial=%d)", paused ? 1 : 0);
+                }
+                return true;
+            }
+            const uintptr_t storage = slot;
             MEMORY_BASIC_INFORMATION mbi{};
             if (!VirtualQuery(reinterpret_cast<const void*>(storage), &mbi, sizeof(mbi)) ||
                 mbi.State != MEM_COMMIT ||
