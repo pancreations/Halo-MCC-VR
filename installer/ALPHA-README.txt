@@ -19,7 +19,8 @@ WHAT THE TEST LAPTOP NEEDS
 - Windows 10 or 11 (64-bit)
 - The Steam version of Halo: The Master Chief Collection, with Halo 3 installed
 - A working OpenXR headset/runtime (PSVR2 and Quest 3 through SteamVR have been
-  used during development; other setups may behave differently)
+  used during development; Quest Pro is untested, and other headset/controller
+  combinations may not work out of the box)
 - Steam and the headset runtime running before launch
 
 No compiler, CMake, source code, or Visual C++ redistributable is required.
@@ -109,3 +110,7 @@ Send the tester's description of what appeared in the headset plus these logs:
 
 Also include the BUILD-INFO.txt from the unzipped test package and say which
 headset, GPU, and OpenXR runtime the laptop used.
+
+Quest Pro and additional headset/controller playtesters are specifically
+needed. A Touch Pro aim-profile compatibility candidate is included, but it
+must not be treated as confirmed until a Quest Pro tester reports the result.

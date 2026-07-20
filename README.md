@@ -23,7 +23,7 @@ Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-K
 The headset-proven recovery baseline is Git commit 330a568 on branch recovery/best-working-20260719-1300.
 The safe cleanup branch retains that exact runtime source and changes documentation/repository hygiene only. A broader runtime cleanup was rejected after a headset fatal error during level transition.
 
-Working in Halo 3 on PSVR2 through SteamVR OpenXR:
+Working in Halo 3 on PSVR2 and Quest 3 through SteamVR OpenXR:
 
 - true per-eye stereo and 6DOF head tracking;
 - Sense-controller input, snap/smooth turning, melee, grenades, and menu control;
@@ -35,6 +35,12 @@ Working in Halo 3 on PSVR2 through SteamVR OpenXR:
 - verified build/deploy workflow.
 
 This is a development build, not yet a public release. ODST, every weapon, scopes, vehicles, cutscenes, performance targets, and friend-machine installation still need systematic validation. See docs/CURRENT-STATE.md.
+
+Quest Pro support is currently untested. Its Touch Pro OpenXR aim profile is
+included as a compatibility candidate, but it has not been confirmed on that
+headset. More headset and controller playtesters are needed: unsupported
+combinations may not work out of the box. Please report the headset, controller,
+OpenXR runtime, GPU, and both mod logs when reporting a compatibility problem.
 
 ## Build
 

@@ -284,7 +284,7 @@ void ConfigSave()
     fprintf(f, "crosshair = %d\n\n", g_config.crosshair ? 1 : 0);
     fprintf(f, "# How far away the crosshair floats, in meters (2-50).\n");
     fprintf(f, "crosshair_distance_m = %.1f\n\n", g_config.crosshair_distance_m);
-    fprintf(f, "# Apparent size of the crosshair, in degrees (0.3-5).\n");
+    fprintf(f, "# Apparent size of the crosshair, in degrees (0.3-20).\n");
     fprintf(f, "crosshair_size_deg = %.1f\n\n", g_config.crosshair_size_deg);
     fprintf(f, "# Crosshair color, 0-1 per channel (default = Halo 3 light blue).\n");
     fprintf(f, "reticle_r = %.3f\n", g_config.reticle_r);

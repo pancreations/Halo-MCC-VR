@@ -1142,7 +1142,7 @@ float4 ps_pass(VSOut i) : SV_Target
     // arcs/ticks take the color; the outline is a darkened version of the same
     // hue so it reads at any color. Called on first use and whenever the color
     // changes (user edit, or the enemy-red switch below) — not per frame.
-    bool PaintReticle(float cr, float cg, float cb)
+    bool PaintReticle(float cr, float cg, float cb, float opacity)
     {
         std::vector<uint32_t> px(kReticleSize * kReticleSize);
         const float c = (kReticleSize - 1) * 0.5f;
@@ -1173,10 +1173,13 @@ float4 ps_pass(VSOut i) : SV_Target
                 const float tickOutline=(tickDistance>=5.8f && tickDistance<=12.7f)?cov(tickWidth,2.6f):0.0f;
                 const float bright=fmaxf(arc,tick);
                 const float outline=fmaxf(arcOutline,tickOutline);
-                const uint32_t r8=(uint32_t)(fminf(255.0f,olR*outline+brR*bright)+0.5f);
-                const uint32_t g8=(uint32_t)(fminf(255.0f,olG*outline+brG*bright)+0.5f);
-                const uint32_t b8=(uint32_t)(fminf(255.0f,olB*outline+brB*bright)+0.5f);
-                const uint32_t a8=(uint32_t)(outline*255.0f+0.5f);
+                const uint32_t r8=(uint32_t)(opacity*
+                    fminf(255.0f,olR*outline+brR*bright)+0.5f);
+                const uint32_t g8=(uint32_t)(opacity*
+                    fminf(255.0f,olG*outline+brG*bright)+0.5f);
+                const uint32_t b8=(uint32_t)(opacity*
+                    fminf(255.0f,olB*outline+brB*bright)+0.5f);
+                const uint32_t a8=(uint32_t)(opacity*outline*255.0f+0.5f);
                 // OpenXR's preferred swapchain is RGBA8 on this runtime.
                 px[y*kReticleSize+x]=(a8<<24)|(b8<<16)|(g8<<8)|r8;
             }
@@ -1253,7 +1256,11 @@ float4 ps_pass(VSOut i) : SV_Target
         if (authoredThisFrame)
             return true;
 
-        // Procedural fallback when Halo has no active authored widget.
+        // Halo can stop drawing its authored widget during death and other
+        // non-gameplay states. Keep the old procedural fallback fully
+        // transparent so it cannot appear close to the viewer; authored
+        // crosshairs use UploadAuthoredReticle below and are unaffected.
+        constexpr float kProceduralOpacity = 0.0f;
         const bool enemy = g_reticleEnemy.load(std::memory_order_relaxed);
         const float wantR = enemy ? 1.0f : g_config.reticle_r;
         const float wantG = enemy ? 0.18f : g_config.reticle_g;
@@ -1267,7 +1274,7 @@ float4 ps_pass(VSOut i) : SV_Target
                         g_reticlePaintedColor[2] != g_config.reticle_b));
         if (!colorChanged)
             return true;
-        if (!PaintReticle(wantR, wantG, wantB))
+        if (!PaintReticle(wantR, wantG, wantB, kProceduralOpacity))
         {
             failed = true;
             return false;
@@ -1277,9 +1284,7 @@ float4 ps_pass(VSOut i) : SV_Target
         g_reticlePaintedColor[2]=wantB;
         g_reticleEnemyPainted=enemy;
         g_reticleContainsAuthored=false;
-        LOG("M3: crosshair reticle painted (%ux%u) rgb=(%.2f,%.2f,%.2f)%s",
-            kReticleSize, kReticleSize, wantR, wantG, wantB,
-            enemy?" [enemy red]":"");
+        LOG("M3: procedural crosshair fallback cleared (authored texture only)");
         return true;
     }
 

@@ -39,6 +39,20 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
+- Exact-time OpenXR pipeline candidate 619ce49 is Quest 3
+  headset-confirmed smooth at about 100 fps through Virtual Desktop. Authored
+  per-weapon crosshairs and stock target-color states from 0ff031a are also
+  headset-confirmed working on Quest 3. 1897b43 expands their angular-size
+  control from a 5-degree maximum to 20 degrees.
+- Quest Pro Touch Pro profile candidate 846abc1 is untested. It enables and
+  suggests the official OpenXR Touch Pro aim-pose profile only when advertised
+  by the runtime. Quest Pro and additional headset/controller playtesters are
+  needed; do not claim compatibility until headset confirmation.
+- The current post-846abc1 candidate makes the obsolete procedural reticle
+  fallback fully transparent so it cannot appear close to the viewer during
+  death. The authored weapon texture upload is unchanged. Death/respawn
+  headset confirmation is pending.
+
 ## Headset-confirmed behavior
 
 - Halo 3 level load, OpenXR session, true stereo, head rotation, and positional tracking work.
