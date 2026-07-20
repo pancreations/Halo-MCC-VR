@@ -31,6 +31,7 @@ void VR_RequestRecenter();
 // pause/menu screen. Requests are comfort-faded on the render thread.
 void VR_RequestPausePresentation(bool paused);
 bool VR_IsPausePresentation();
+bool VR_IsPausePresentationTarget();
 
 // F10: toggle whether the flat screen follows the head (vs. staying pinned in
 // the world). Only matters while head tracking is on.

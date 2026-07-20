@@ -165,6 +165,7 @@ namespace
     // fade-out, presentation switch, and fade-in.
     std::atomic<int> g_pauseRequest{-1};
     std::atomic<bool> g_pausePresentation{false};
+    std::atomic<bool> g_pauseTarget{false};
 
     // Latest head pose in the LOCAL space, captured every frame on the render
     // thread and read by the game camera hook (M1) on the game thread — hence
@@ -2262,12 +2263,19 @@ void VR_RequestRecenter()
 
 void VR_RequestPausePresentation(bool paused)
 {
-    g_pauseRequest = paused ? 1 : 0;
+    const bool previous = g_pauseTarget.exchange(paused);
+    if (previous != paused || g_pausePresentation.load() != paused)
+        g_pauseRequest = paused ? 1 : 0;
 }
 
 bool VR_IsPausePresentation()
 {
     return g_pausePresentation.load();
+}
+
+bool VR_IsPausePresentationTarget()
+{
+    return g_pauseTarget.load();
 }
 
 void VR_ToggleScreenFollow()

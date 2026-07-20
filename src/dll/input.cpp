@@ -80,8 +80,8 @@ namespace
         if (pad.clickL && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
         if (pad.clickR && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
-        if (pad.menu && !previousMenu)
-            VR_RequestPausePresentation(!VR_IsPausePresentation());
+        if (pad.menu && !previousMenu && !Game_HasAuthoritativePauseState())
+            VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
         previousMenu = pad.menu;
         if (pad.menu || GetTickCount64() < g_startPulseUntilMs.load())
             btn |= XINPUT_GAMEPAD_START;
@@ -316,13 +316,16 @@ namespace
 
 void Input_RequestPauseToggle()
 {
-    const bool paused = !VR_IsPausePresentation();
+    const bool paused = !VR_IsPausePresentationTarget();
     // Hold Start long enough to cross MCC's input polling boundary, then let
     // the normal released state provide the edge needed by a later toggle.
     g_startPulseUntilMs = GetTickCount64() + 350;
-    VR_RequestPausePresentation(paused);
-    LOG("pause fallback: injecting Start, target presentation=%s",
-        paused ? "head-locked 2D" : "stereo 3D");
+    const bool authoritative = Game_HasAuthoritativePauseState();
+    if (!authoritative)
+        VR_RequestPausePresentation(paused);
+    LOG("pause fallback: injecting Start, presentation control=%s%s",
+        authoritative ? "engine game_paused" : "edge fallback, target=",
+        authoritative ? "" : (paused ? "head-locked 2D" : "stereo 3D"));
 }
 
 int Input_ClaimXInputIat()

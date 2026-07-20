@@ -562,6 +562,8 @@ namespace
     // Freshness beacon shared with auto-VR: CamCopyHook updates it only while a
     // level camera is running. HUD discovery reads it from Present.
     std::atomic<uint64_t> g_lastCamCopyMs{0};
+    std::atomic<uintptr_t> g_gamePausedRecord{0};
+    std::atomic<bool> g_enginePauseValidated{false};
     // Addresses that verified in a previous locate this session. The tag
     // allocator tends to reuse the same block on map reload, so re-checking
     // these (anchor + payload, same certainty as the scan) usually re-acquires
@@ -3390,8 +3392,120 @@ namespace
     const char* kFpCameraUploadSig =
         "48 8B C4 48 89 58 08 48 89 70 10 48 89 78 18 55 48 8D 68 A1 48 81 EC C0 00 00 00 0F 29 70 E8 48 8B FA F3 0F 10 35 ?? ?? ?? ?? 48 8D 55 B7";
 
+    void LocateGamePausedRecord(uintptr_t base, size_t size)
+    {
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        if (!dos || dos->e_magic != IMAGE_DOS_SIGNATURE)
+            return;
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+            base + dos->e_lfanew);
+        if (nt->Signature != IMAGE_NT_SIGNATURE)
+            return;
+        const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
+        const char pausedName[] = "game_paused";
+        uintptr_t pausedString = 0;
+        unsigned stringMatches = 0;
+
+        for (unsigned s = 0; s < nt->FileHeader.NumberOfSections; ++s)
+        {
+            if (!(sections[s].Characteristics & IMAGE_SCN_MEM_READ) ||
+                (sections[s].Characteristics & IMAGE_SCN_MEM_WRITE))
+                continue;
+            const size_t sectionRva = sections[s].VirtualAddress;
+            const size_t bytes = sections[s].Misc.VirtualSize;
+            if (sectionRva >= size || bytes > size - sectionRva)
+                continue;
+            const uintptr_t begin = base + sectionRva;
+            for (size_t off = 0; off + sizeof(pausedName) <= bytes; ++off)
+            {
+                if (memcmp(reinterpret_cast<const void*>(begin + off),
+                           pausedName, sizeof(pausedName)) == 0)
+                {
+                    pausedString = begin + off;
+                    ++stringMatches;
+                }
+            }
+        }
+
+        uintptr_t pausedRecord = 0;
+        unsigned recordMatches = 0;
+        if (stringMatches == 1)
+        {
+            for (unsigned s = 0; s < nt->FileHeader.NumberOfSections; ++s)
+            {
+                if (!(sections[s].Characteristics & IMAGE_SCN_MEM_WRITE))
+                    continue;
+                const size_t sectionRva = sections[s].VirtualAddress;
+                const size_t bytes = sections[s].Misc.VirtualSize;
+                if (sectionRva >= size || bytes > size - sectionRva)
+                    continue;
+                const uintptr_t begin = base + sectionRva;
+                for (size_t off = 0; off + 24 <= bytes; off += sizeof(uintptr_t))
+                {
+                    const uintptr_t candidate = begin + off;
+                    if (*reinterpret_cast<const uintptr_t*>(candidate) == pausedString &&
+                        *reinterpret_cast<const uint32_t*>(candidate + 8) == 5)
+                    {
+                        pausedRecord = candidate;
+                        ++recordMatches;
+                    }
+                }
+            }
+        }
+
+        if (stringMatches == 1 && recordMatches == 1)
+        {
+            g_gamePausedRecord = pausedRecord;
+            LOG("pause state: unique game_paused boolean record located by "
+                "signature at halo3.dll+0x%llX",
+                (unsigned long long)(pausedRecord - base));
+        }
+        else
+        {
+            LOG("pause state: game_paused signature unavailable "
+                "(strings=%u records=%u); using transition fallback",
+                stringMatches, recordMatches);
+        }
+    }
+
+    bool ReadEnginePaused(bool& paused)
+    {
+        const uintptr_t record = g_gamePausedRecord.load(std::memory_order_acquire);
+        if (!record)
+            return false;
+        __try
+        {
+            const uintptr_t storage =
+                *reinterpret_cast<const uintptr_t*>(record + 16);
+            if (storage < 0x10000)
+                return false;
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (!VirtualQuery(reinterpret_cast<const void*>(storage), &mbi, sizeof(mbi)) ||
+                mbi.State != MEM_COMMIT ||
+                (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+                return false;
+            const uint8_t value = *reinterpret_cast<const uint8_t*>(storage);
+            if (value > 1)
+                return false;
+            paused = value != 0;
+            static uintptr_t loggedStorage = 0;
+            if (loggedStorage != storage)
+            {
+                loggedStorage = storage;
+                LOG("pause state: game_paused storage active at %p (initial=%d)",
+                    reinterpret_cast<void*>(storage), paused ? 1 : 0);
+            }
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     void InstallHook(uintptr_t base, size_t size)
     {
+        LocateGamePausedRecord(base, size);
         uintptr_t hit = sig::Find(base, size, kCamCopySig);
         if (!hit)
         {
@@ -3966,6 +4080,7 @@ void Game_Init()
 
 bool Game_IsHooked() { return g_hooked; }
 bool Game_IsHeadTracking() { return g_enabled.load(); }
+bool Game_HasAuthoritativePauseState() { return g_enginePauseValidated.load(); }
 
 // HUD size (F1 menu): manual rescan + status. The scan normally starts itself
 // (HudSizeAutoTick) whenever hud_size is non-stock and no slots are located.
@@ -4078,6 +4193,47 @@ void Game_AutoVrTick()
 
     const TitleDescriptor* activeTitle = TitleAdapter_GetActive();
     const bool pausePresentation = VR_IsPausePresentation();
+    bool enginePaused = false;
+    static bool previousEnginePaused = false;
+    static bool enginePauseLogged = false;
+    static uint64_t pauseMismatchSince = 0;
+    static bool pauseMismatchValue = false;
+    if (ReadEnginePaused(enginePaused))
+    {
+        if (!enginePauseLogged || enginePaused != previousEnginePaused)
+        {
+            LOG("pause state: engine game_paused=%d, presentation target=%d",
+                enginePaused ? 1 : 0,
+                VR_IsPausePresentationTarget() ? 1 : 0);
+            previousEnginePaused = enginePaused;
+            enginePauseLogged = true;
+        }
+        if (enginePaused && VR_IsPausePresentationTarget() &&
+            !g_enginePauseValidated.exchange(true))
+        {
+            LOG("pause state: engine flag validated by live pause transition");
+        }
+
+        const bool targetPaused = VR_IsPausePresentationTarget();
+        if (g_enginePauseValidated.load() && enginePaused != targetPaused)
+        {
+            if (pauseMismatchSince == 0 || pauseMismatchValue != enginePaused)
+            {
+                pauseMismatchSince = now;
+                pauseMismatchValue = enginePaused;
+            }
+            else if (now - pauseMismatchSince >= 300)
+            {
+                VR_RequestPausePresentation(enginePaused);
+                LOG("pause state: authoritative engine value corrected "
+                    "presentation to %s",
+                    enginePaused ? "head-locked 2D" : "stereo 3D");
+                pauseMismatchSince = 0;
+            }
+        }
+        else
+            pauseMismatchSince = 0;
+    }
     static PauseLevelRecovery pauseLevelRecovery;
     if (pauseLevelRecovery.Update(pausePresentation, cameraStale, inLevelStable))
     {

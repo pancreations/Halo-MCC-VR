@@ -46,6 +46,9 @@ int Input_ClaimXInputIat();
 // Injects a real XINPUT_GAMEPAD_START pulse and requests the matching
 // stereo/flat pause presentation. Used when a runtime reserves its system key.
 void Input_RequestPauseToggle();
+// True only after Halo's signature-resolved game_paused flag has changed to
+// paused during a live transition. Once true, presentation follows the engine.
+bool Game_HasAuthoritativePauseState();
 
 
 // M2 alternate-eye proof. -1 removes the stereo eye offset; 0/1 selects the
