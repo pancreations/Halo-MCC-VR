@@ -44,14 +44,20 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
   per-weapon crosshairs and stock target-color states from 0ff031a are also
   headset-confirmed working on Quest 3. 1897b43 expands their angular-size
   control from a 5-degree maximum to 20 degrees.
-- Quest Pro Touch Pro profile candidate 846abc1 is untested. It enables and
-  suggests the official OpenXR Touch Pro aim-pose profile only when advertised
-  by the runtime. Quest Pro and additional headset/controller playtesters are
-  needed; do not claim compatibility until headset confirmation.
-- The current post-846abc1 candidate makes the obsolete procedural reticle
-  fallback fully transparent so it cannot appear close to the viewer during
-  death. The authored weapon texture upload is unchanged. Death/respawn
-  headset confirmation is pending.
+- Quest Pro has limited early coverage, not full validation. The tester reported
+  smooth HMD timing; their skyward aim was traced to MCC's inverted-Y game
+  setting, not a Quest Pro pose failure. Touch Pro profile support from 846abc1
+  remains enabled when advertised by the runtime. The latest shared
+  weapon-calibration path still needs a Quest Pro result.
+- Commit 4089b34 makes the obsolete procedural reticle fallback fully
+  transparent so it cannot appear close to the viewer during death. The
+  authored weapon texture upload is unchanged. The user confirmed the
+  death-state crosshair problem is fixed.
+- Shared-pose calibration commit 361789c moves gun pitch/yaw/roll offsets from
+  mesh-only transforms into VR_GetAimPose and removes the duplicate right-hand
+  mesh rotations. The visible weapon, muzzle, authored crosshair, target state,
+  and bullet steering now consume one corrected pose. Quest 3 headset result:
+  user loves the new implementation. Quest Pro confirmation remains pending.
 
 ## Headset-confirmed behavior
 

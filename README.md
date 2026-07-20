@@ -36,9 +36,11 @@ Working in Halo 3 on PSVR2 and Quest 3 through SteamVR OpenXR:
 
 This is a development build, not yet a public release. ODST, every weapon, scopes, vehicles, cutscenes, performance targets, and friend-machine installation still need systematic validation. See docs/CURRENT-STATE.md.
 
-Quest Pro support is currently untested. Its Touch Pro OpenXR aim profile is
-included as a compatibility candidate, but it has not been confirmed on that
-headset. More headset and controller playtesters are needed: unsupported
+Quest Pro has limited early testing, not full validation. Headset timing was
+reported smooth; an initial skyward-aim report was traced to MCC's inverted-Y
+game setting rather than the headset. The Touch Pro OpenXR aim profile is
+included, but the latest shared weapon-calibration path still needs a Quest Pro
+result. More headset and controller playtesters are needed: unsupported
 combinations may not work out of the box. Please report the headset, controller,
 OpenXR runtime, GPU, and both mod logs when reporting a compatibility problem.
 
