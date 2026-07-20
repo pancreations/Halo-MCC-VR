@@ -64,10 +64,10 @@ working OpenXR runtime. No compiler, CMake, or Visual C++ redistributable needed
 
 ## Checksums
 
-    halo3xr.dll          SHA-256: C40B6A28A5DD29ECBB92C3000F3283B30446C1050D0D6C44CAF1AB4676306690
-    halo3xr_launcher.exe SHA-256: BBC1DB60309E007864BB53475057336BCAA72C350301A25793311131F563C16D
+    halo3xr.dll          SHA-256: E4F70A6C4827F3442F85D6D55480074B84AC4712EB00B159FBF0DE06A72697FA
+    halo3xr_launcher.exe SHA-256: D3C12C4ECAF1784011927DC60573BC5708BDD0D947DCE36D5C810679AC166042
 
-Built from commit 6db2a25. The same values are in the ZIP's BUILD-INFO.txt.
+Built from commit 7fe358f. The same values are in the ZIP's BUILD-INFO.txt.
 
 ## Reporting problems
 
