@@ -65,10 +65,13 @@ int main()
         std::ofstream file(primary);
         file << "config_version = 1\n";
         file << "haptic_intensity = 2.0\n";
+        file << "headset_smoothing = 1.0\n";
         file << "aim_stabilization = -1.0\n";
     }
     ConfigLoad(primary.c_str());
     Check(g_config.haptic_intensity == 1.0f, "Haptic intensity is safely clamped");
+    Check(g_config.headset_smoothing == 0.25f,
+        "Headset smoothing is capped at the low-latency maximum");
     Check(g_config.aim_stabilization == 0.0f, "Aim stabilization is safely clamped");
     std::filesystem::remove_all(configDir);
 

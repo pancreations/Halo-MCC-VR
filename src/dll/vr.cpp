@@ -178,6 +178,10 @@ namespace
     bool g_rightAimPoseValid = false;
     XrPosef g_leftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_leftAimPoseValid = false;
+    // Render-thread-only filtered copy for the compositor crosshair. Keeping it
+    // separate is intentional: weapon steering and bullets stay on raw aim.
+    XrPosef g_reticleAimPose{{0, 0, 0, 1}, {0, 0, 0}};
+    bool g_reticleAimPoseValid = false;
 
     // Blit (copy-with-format-conversion) resources, created on demand
     ID3D11VertexShader* g_blitVs = nullptr;
@@ -283,6 +287,50 @@ namespace
         c1.x += q.w * v.x; c1.y += q.w * v.y; c1.z += q.w * v.z;
         const XrVector3f c2 = cross(u, c1);
         return {v.x + 2 * c2.x, v.y + 2 * c2.y, v.z + 2 * c2.z};
+    }
+
+    bool NormalizeTrackedPose(XrPosef& pose)
+    {
+        const float ql2 = pose.orientation.x * pose.orientation.x +
+                          pose.orientation.y * pose.orientation.y +
+                          pose.orientation.z * pose.orientation.z +
+                          pose.orientation.w * pose.orientation.w;
+        if (!std::isfinite(ql2) || ql2 < 1e-8f ||
+            !std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
+            !std::isfinite(pose.position.z))
+            return false;
+        const float inv = 1.0f / sqrtf(ql2);
+        pose.orientation.x *= inv;
+        pose.orientation.y *= inv;
+        pose.orientation.z *= inv;
+        pose.orientation.w *= inv;
+        return true;
+    }
+
+    // One-pole previous-frame blend. `historyWeight` is deliberately expressed
+    // as the UI percentage: 0 = raw current pose, .05 = 5% previous + 95% current.
+    // Quaternion sign correction keeps equivalent q/-q samples from cancelling.
+    XrPosef SmoothTrackedPose(const XrPosef& current, const XrPosef& previous,
+                              float historyWeight)
+    {
+        const float h = std::clamp(historyWeight, 0.0f, 0.95f);
+        const float n = 1.0f - h;
+        float sign = current.orientation.x * previous.orientation.x +
+                     current.orientation.y * previous.orientation.y +
+                     current.orientation.z * previous.orientation.z +
+                     current.orientation.w * previous.orientation.w < 0.0f ? -1.0f : 1.0f;
+        XrPosef result{};
+        result.orientation = {
+            previous.orientation.x * h + current.orientation.x * n * sign,
+            previous.orientation.y * h + current.orientation.y * n * sign,
+            previous.orientation.z * h + current.orientation.z * n * sign,
+            previous.orientation.w * h + current.orientation.w * n * sign};
+        result.position = {
+            previous.position.x * h + current.position.x * n,
+            previous.position.y * h + current.position.y * n,
+            previous.position.z * h + current.position.z * n};
+        NormalizeTrackedPose(result);
+        return result;
     }
 
     const char* SessionStateName(XrSessionState s)
@@ -936,10 +984,34 @@ float4 ps_pass(VSOut i) : SV_Target
             XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
         if ((loc.locationFlags & need) != need)
             return;
+        if (!NormalizeTrackedPose(loc.pose))
+            return;
         EnterCriticalSection(&g_headCs);
-        g_headPose = loc.pose;
+        // Filter exactly once per OpenXR frame. CamCopyHook can run several
+        // times inside that frame, so smoothing there would compound and vary
+        // with Halo's number of camera passes.
+        const float smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.25f);
+        g_headPose = g_headPoseValid && smoothing > 0.0f
+            ? SmoothTrackedPose(loc.pose, g_headPose, smoothing)
+            : loc.pose;
         g_headPoseValid = true;
         LeaveCriticalSection(&g_headCs);
+
+        // Runtime proof for headset logs: successful pose sampling must equal
+        // the OpenXR/game presentation rate. Camera-copy transforms are logged
+        // independently in game.cpp and normally exceed this count.
+        static uint64_t rateStartMs = 0;
+        static unsigned samples = 0;
+        ++samples;
+        const uint64_t now = GetTickCount64();
+        if (!rateStartMs) rateStartMs = now;
+        else if (now - rateStartMs >= 10000)
+        {
+            LOG("M1 timing: HMD pose samples %.1f/sec (one predicted sample per presented frame)",
+                samples * 1000.0 / (now - rateStartMs));
+            samples = 0;
+            rateStartMs = now;
+        }
     }
 
     // Create the crosshair swapchain on first use (lazily, once the session is
@@ -1550,7 +1622,8 @@ float4 ps_pass(VSOut i) : SV_Target
         {
             constexpr XrSpaceLocationFlags required =
                 XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
-            valid = (location.locationFlags & required) == required;
+            valid = (location.locationFlags & required) == required &&
+                    NormalizeTrackedPose(location.pose);
         }
         // Left hand: position only matters (D-pad gesture), same locate path.
         bool leftValid = false;
@@ -1566,7 +1639,8 @@ float4 ps_pass(VSOut i) : SV_Target
             {
                 constexpr XrSpaceLocationFlags required =
                     XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
-                leftValid = (leftLocation.locationFlags & required) == required;
+                leftValid = (leftLocation.locationFlags & required) == required &&
+                            NormalizeTrackedPose(leftLocation.pose);
             }
         }
 
@@ -2009,18 +2083,25 @@ float4 ps_pass(VSOut i) : SV_Target
                         // for this displayed frame. Routing the quad through
                         // Halo's virtual-stick aim introduced visible catch-up
                         // lag and placed its ray origin at the player's head.
-                        // Raw aim -Z, matching Game_ComputeAimStick: the cursor
-                        // is a fixed laser from the controller; the mount trim
-                        // rotates only the gun mesh toward it.
-                        // Shared aim pose so the reticle rides the SAME ray as
-                        // the bullets + barrel (two-hand line when engaged).
+                        // Start from the same aim pose as bullet steering, then
+                        // optionally stabilize ONLY the displayed reticle. At
+                        // 0% it is the exact current bullet ray; higher values
+                        // deliberately trade visual reticle response for calm.
                         float aimQ[4], aimP[3];
                         const bool haveAim = VR_GetAimPose(aimQ, aimP);
-                        const XrQuaternionf aimOri{aimQ[0],aimQ[1],aimQ[2],aimQ[3]};
-                        const XrVector3f aimRay=Rotate(aimOri,{0.0f,0.0f,-1.0f});
-                        const float aimDir[3]={aimRay.x,aimRay.y,aimRay.z};
                         if (g_config.crosshair && haveAim && EnsureReticleChain())
                         {
+                            XrPosef rawAim{{aimQ[0],aimQ[1],aimQ[2],aimQ[3]},
+                                           {aimP[0],aimP[1],aimP[2]}};
+                            const float smoothing =
+                                std::clamp(g_config.aim_stabilization, 0.0f, 0.95f);
+                            g_reticleAimPose = g_reticleAimPoseValid && smoothing > 0.0f
+                                ? SmoothTrackedPose(rawAim, g_reticleAimPose, smoothing)
+                                : rawAim;
+                            g_reticleAimPoseValid = true;
+                            const XrVector3f aimRay = Rotate(
+                                g_reticleAimPose.orientation, {0.0f,0.0f,-1.0f});
+                            const float aimDir[3] = {aimRay.x,aimRay.y,aimRay.z};
                             const float dist = g_config.crosshair_distance_m;
                             const float yaw = atan2f(aimDir[0], -aimDir[2]);
                             const float sp = fminf(fmaxf(aimDir[1], -1.0f), 1.0f);
@@ -2047,14 +2128,21 @@ float4 ps_pass(VSOut i) : SV_Target
                                 {{0, 0}, {(int32_t)kReticleSize, (int32_t)kReticleSize}};
                             reticleQuad.subImage.imageArrayIndex = 0;
                             reticleQuad.pose.orientation = q;
-                            reticleQuad.pose.position = {aimP[0] + aimDir[0] * dist,
-                                                         aimP[1] + aimDir[1] * dist,
-                                                         aimP[2] + aimDir[2] * dist};
+                            reticleQuad.pose.position = {
+                                g_reticleAimPose.position.x + aimDir[0] * dist,
+                                g_reticleAimPose.position.y + aimDir[1] * dist,
+                                g_reticleAimPose.position.z + aimDir[2] * dist};
                             const float w = 2.0f * dist *
                                 tanf(g_config.crosshair_size_deg * 0.5f * 0.0174533f);
                             reticleQuad.size = {w, w};
                             layers.push_back(
                                 reinterpret_cast<XrCompositionLayerBaseHeader*>(&reticleQuad));
+                        }
+                        else
+                        {
+                            // Never blend from a stale pose after tracking or
+                            // the crosshair is restored.
+                            g_reticleAimPoseValid = false;
                         }
                     }
                 }
@@ -2592,6 +2680,26 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3])
     if (len < 1e-4f) { g_twoHandActive.store(false); return true; }
 
     XrVector3f af{v.x/len, v.y/len, v.z/len};
+
+    // Toggle mode stays latched after the support hand leaves the barrel. A
+    // hand moving above/below the weapon could therefore swing the shared aim
+    // line close to vertical even though the weapon controller is horizontal.
+    // Keep two-hand aim only inside a generous cone around the raw weapon ray;
+    // outside it, fall back to the valid one-hand pose until the hands realign.
+    const XrVector3f rawForward = Rotate(rq, {0,0,-1});
+    const float agreement = af.x*rawForward.x + af.y*rawForward.y + af.z*rawForward.z;
+    if (!std::isfinite(agreement) || agreement < 0.35f)
+    {
+        g_twoHandActive.store(false);
+        static uint64_t lastRejectLogMs = 0;
+        const uint64_t now = GetTickCount64();
+        if (now - lastRejectLogMs >= 2000)
+        {
+            LOG("M3: rejected extreme two-hand aim (ray agreement %.2f); using right controller", agreement);
+            lastRejectLogMs = now;
+        }
+        return true;
+    }
 
     // Orthonormal basis: X=right, Y=up, Z=-forward, roll from the right hand up.
     auto cross=[](const XrVector3f&a,const XrVector3f&b){

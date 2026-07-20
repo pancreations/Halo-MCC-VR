@@ -2010,13 +2010,15 @@ namespace
         BasisFromAngles(sign * g_config.gun_yaw_deg * 0.0174533f,
                         g_config.gun_pitch_deg * 0.0174533f,
                         sign * g_config.gun_roll_deg * 0.0174533f, mount);
-        MultiplyBases(basisC, mount, mounted);
-        // AUTO BARREL ALIGNMENT (weapon hands only): swing the mounted hand by
+        // Begin with the controller basis. Automatic authored-barrel alignment
+        // establishes the zero-slider pose first; user trim is applied later.
+        memcpy(mounted, basisC, sizeof(mounted));
+        // AUTO BARREL ALIGNMENT (weapon hands only): swing the default hand by
         // the minimal world rotation that puts the measured authored barrel
         // axis exactly on the controller ray (basis column 0) — the SAME ray
         // the cursor and bullet steering use. The barrel therefore sits on the
-        // cursor line by construction; the trim sliders adjust hand posture
-        // and roll about that fixed line, they can no longer misalign it.
+        // cursor line by construction at zero trim. User calibration comes
+        // afterward so pitch, yaw, and roll remain independent controls.
         // Weapon hand = the right hand only: the dual-wield secondary is
         // seated by its weapon NODE directly at the palm point, so the
         // wrist-row-0 swing heuristic must not fight it (23:04 headset
@@ -2051,6 +2053,12 @@ namespace
                 }
             }
         }
+        // Apply local calibration after automatic alignment. Previously the
+        // alignment ran after this trim and cancelled pitch/yaw, leaving roll
+        // as the only effective slider. Identity trim preserves today's default.
+        float trimmed[9];
+        MultiplyBases(mounted, mount, trimmed);
+        memcpy(mounted, trimmed, sizeof(trimmed));
         out = BoneMatrix{};
         out.scale = 1.0f;
         memcpy(out.rotation, mounted, sizeof(mounted));
@@ -3133,7 +3141,22 @@ namespace
 
     void* __fastcall CamCopyHook(void* dst, void* src)
     {
-        g_lastCamCopyMs.store(GetTickCount64(), std::memory_order_relaxed);
+        const uint64_t cameraNowMs = GetTickCount64();
+        g_lastCamCopyMs.store(cameraNowMs, std::memory_order_relaxed);
+        // Low-frequency timing proof paired with vr.cpp's HMD sample-rate log.
+        // The hook normally runs multiple times per presented frame, and every
+        // call below reads the latest once-per-OpenXR-frame predicted pose.
+        static uint64_t cameraRateStartMs = 0;
+        static unsigned cameraTransforms = 0;
+        ++cameraTransforms;
+        if (!cameraRateStartMs) cameraRateStartMs = cameraNowMs;
+        else if (cameraNowMs - cameraRateStartMs >= 10000)
+        {
+            LOG("M1 timing: camera transforms %.1f/sec (latest predicted HMD pose consumed each call)",
+                cameraTransforms * 1000.0 / (cameraNowMs - cameraRateStartMs));
+            cameraTransforms = 0;
+            cameraRateStartMs = cameraNowMs;
+        }
         ChudProbe();
         ApplyMotionBlurSetting();
         ProbeBulletOrigin();

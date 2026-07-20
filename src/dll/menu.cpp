@@ -185,6 +185,14 @@ namespace
         {
         changed |= ImGui::SliderFloat("Screen width (m)", &g_config.screen_width_m, 1.0f, 10.0f, "%.1f");
         changed |= ImGui::SliderFloat("Screen distance (m)", &g_config.screen_distance_m, 0.5f, 10.0f, "%.1f");
+        float headsetSmoothPercent = g_config.headset_smoothing * 100.0f;
+        if (ImGui::SliderFloat("Headset micro-smoothing", &headsetSmoothPercent,
+                               0.0f, 25.0f, "%.0f%%", ImGuiSliderFlags_None))
+        {
+            g_config.headset_smoothing = headsetSmoothPercent / 100.0f;
+            changed = true;
+        }
+        ImGui::TextDisabled("Default 5%%. Sampled once per OpenXR display frame; capped at 25%% to limit latency.");
         changed |= ImGui::Checkbox("Auto-enter VR on level load", &g_config.auto_vr);
         ImGui::TextDisabled("Turns head tracking + stereo on when a level starts and off in the menu.");
         ImGui::EndTabItem();
@@ -247,8 +255,8 @@ namespace
         changed |= ImGui::SliderFloat("Weapon pitch (deg)", &g_config.gun_pitch_deg, -180.0f, 180.0f, "%.0f");
         changed |= ImGui::SliderFloat("Weapon yaw (deg)", &g_config.gun_yaw_deg, -180.0f, 180.0f, "%.0f");
         changed |= ImGui::SliderFloat("Weapon roll (deg)", &g_config.gun_roll_deg, -180.0f, 180.0f, "%.0f");
-        ImGui::TextDisabled("Barrel-to-cursor alignment is AUTOMATIC now. These only fine-tune");
-        ImGui::TextDisabled("hand posture/roll around that line. 0/0/0 is the right default.");
+        ImGui::TextDisabled("Pitch, yaw, and roll rotate on their matching local gun axes.");
+        ImGui::TextDisabled("0/0/0 keeps the current automatic barrel alignment.");
         changed |= ImGui::SliderFloat("Gun forward offset (m)", &g_config.gun_forward_m, -0.3f, 0.5f, "%.2f");
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         changed |= ImGui::Checkbox("Hide game reticle (use VR reticle only)", &g_config.kill_reticle);
@@ -260,6 +268,13 @@ namespace
         changed |= ImGui::Checkbox("Show a crosshair where the weapon shoots", &g_config.crosshair);
         if (g_config.crosshair)
         {
+            float crosshairSmoothPercent = g_config.aim_stabilization * 100.0f;
+            if (ImGui::SliderFloat("Crosshair smoothing", &crosshairSmoothPercent,
+                                   0.0f, 95.0f, "%.0f%%", ImGuiSliderFlags_None))
+            {
+                g_config.aim_stabilization = crosshairSmoothPercent / 100.0f;
+                changed = true;
+            }
             changed |= ImGui::SliderFloat("Crosshair size (deg)", &g_config.crosshair_size_deg,
                                           0.3f, 5.0f, "%.1f");
             changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
@@ -281,8 +296,8 @@ namespace
                 changed = true;
             }
         }
-        ImGui::TextDisabled("The game's own reticle follows your head, not your hand; this one is true.\n"
-                            "It turns red over enemies (once target-lock is wired in).");
+        ImGui::TextDisabled("Crosshair smoothing is visual only; bullets keep the current controller ray.\n"
+                            "Set it to 0%% for exact raw tracking.");
 
         ImGui::Spacing();
         changed |= ImGui::Checkbox("Two-handed aiming", &g_config.two_handed_aim);
