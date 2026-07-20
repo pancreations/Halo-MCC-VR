@@ -104,9 +104,16 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - The attempted scripting-class classifier inside the element-submit hook at halo3+0x2EDF24 caused a black headset view when stereo entered a level (2026-07-19 16:45 build). It was fully removed; do not restore its runtime tag-table dereferences.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
-- Dual wield is not complete. The left dual-wield arm/weapon can collapse near
-  the face and must be solved from H3EK weapon/skeleton slot evidence without
-  disturbing the working single-weapon support-hand path.
+- Dual wield: first fix build deployed 2026-07-19 22:51, commit `d691672` on
+  `feature/dual-wield`, DLL SHA-256
+  `AD76B201C919E9E899071CC4D00592C038B718E8C4CE17E61CA30B1D12997E09`.
+  Evidence: the 22:29:18 session log proved slot 1 activates during dual wield
+  with the canonical fp skeleton (wrist 6/elbow 4/shoulder 2, gun bones under
+  the wrist). The build extends the proven slot-0 palette/IK/marker treatment
+  to slot 1 on the LEFT controller. AWAITING HEADSET RESULT — expected: left
+  weapon + arm track the left controller with elbow IK; watch for mirrored/
+  crossed arm (would prove an engine-side model mirror) and for any duplicate
+  left arm from slot 0. Single-weapon behavior must be unchanged.
 - The native pause-state build is the current best-working checkpoint, but the
   focused Pause -> Resume -> Restart Level -> 3D acceptance sequence still
   needs an explicit recorded headset result before pause transitions are called
