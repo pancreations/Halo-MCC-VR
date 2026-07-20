@@ -28,6 +28,12 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
   User result: the unwanted firing shake is fixed.
+- Pose-smoothing/gun-calibration headset candidate: `a229dfb` on
+  `fix/pose-smoothing-and-gun-calibration`. Deployed DLL build 2026-07-20
+  05:26 AM, SHA-256
+  `6A1DD74D52DC932D3AEE0D97D9C51661C8239485C86F7F53DAFD9689E77DF516`.
+  Headset validation is pending; do not promote this over `56dad79` until the
+  timing, smoothing, all three trim axes, and Quest vertical-aim guard pass.
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
@@ -76,6 +82,14 @@ The active path is deliberately small:
    are bypassed so the HMD view remains owned by OpenXR. With head tracking off,
    Halo's original function runs unchanged. Firing-recoil suppression is
    headset-confirmed in build `56dad79`.
+10. Candidate `a229dfb` samples and filters the HMD exactly once per predicted
+    OpenXR frame. Headset micro-smoothing defaults to 5% and is capped at 25%;
+    the independent crosshair-only filter uses the existing aim-stabilization
+    setting. Runtime logs report HMD samples/sec and camera transforms/sec.
+    Weapon automatic alignment now establishes the zero-trim pose before local
+    pitch/yaw/roll calibration, so the default is preserved while all axes work.
+    Extreme latched two-hand lines fall back to the right-controller ray instead
+    of allowing a support hand far off the barrel to aim vertically.
 
 The working runtime still contains dormant diagnostic and fallback code inherited from 330a568. Its defaults are the headset-proven behavior. Do not enable, remove, or consolidate those paths in bulk: commit 42a1276 performed a broad cleanup, built successfully, then produced a fatal error at the first level transition. Remove only one independently understood path per branch and headset test.
 
