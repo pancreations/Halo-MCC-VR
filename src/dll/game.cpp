@@ -1857,14 +1857,19 @@ namespace
                 root.translation[2]=g_camZ.load();
             }
         }
-        // IDENTICAL wrist target as the visible gun (one shared definition) so
-        // muzzle flash and weapon can never diverge. The dual-wield secondary
-        // (slot 1) rides the LEFT controller at the shared hand point.
+        // IDENTICAL hand target as the visible gun (one shared definition) so
+        // muzzle flash and weapon can never diverge. A dual-wield secondary is
+        // carried by the slot's LEFT hand; the hand follows the controller and
+        // the weapon/marker assembly inherits that same rigid hand delta.
+        const int transformAnchor=dual
+            ? g_fpLWristIndex[1].load(std::memory_order_acquire)
+            : wrist;
+        if (transformAnchor<0 || transformAnchor>=count) return false;
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
         if (!DesiredWristWorld(dual,desiredWristWorld,meshScale)) return false;
         BoneMatrix wristWorld{},inverseWristWorld{},t{},inverseRoot{},tRoot{},m{};
-        if (!ComposeBoneMatrices(root,bones[wrist],wristWorld) ||
+        if (!ComposeBoneMatrices(root,bones[transformAnchor],wristWorld) ||
             !InvertBoneMatrix(wristWorld,inverseWristWorld) ||
             !ComposeBoneMatrices(desiredWristWorld,inverseWristWorld,t) ||
             !InvertBoneMatrix(root,inverseRoot) ||
@@ -1878,8 +1883,9 @@ namespace
         }
         if (meshScale!=1.0f)
         {
-            const float anchor[3]={bones[wrist].translation[0],bones[wrist].translation[1],
-                                   bones[wrist].translation[2]};
+            const float anchor[3]={bones[transformAnchor].translation[0],
+                                   bones[transformAnchor].translation[1],
+                                   bones[transformAnchor].translation[2]};
             for (int i=0;i<count;++i)
             {
                 for (int r=0;r<3;++r)
@@ -2060,11 +2066,10 @@ namespace
             context.count<=0 || context.count>64 ||
             context.wrist<0 || context.wrist>=context.count) return false;
 
-        // Dual-wield secondary (slot 1): the SAME treatment as the primary,
-        // but the weapon chain (its gun bones hang under context.wrist, per
-        // the 2026-07-19 skeleton dumps) follows the LEFT controller with the
-        // weapon seat depth. Slot-1 failures never touch the arm-failure
-        // diagnostics — they describe the primary weapon's arms.
+        // Dual-wield secondary (slot 1): its LEFT hand follows the left
+        // controller. The separate weapon subtree then inherits that solved
+        // hand's rigid delta; it is never independently seated on a controller.
+        // Slot-1 failures never touch the primary arm diagnostics.
         const bool dual=(context.slot==1);
         const BoneMatrix* const unmodified=g_fpUnmodifiedInterpolations[context.slot];
 
@@ -2147,9 +2152,13 @@ namespace
         // planted, elbows solved analytically (ik.cpp), hand + gun ride the
         // wrist rigidly. Right arm is required; the left arm applies when its
         // chain resolved and the left controller is tracked.
-        if (g_config.arm_ik &&
-            context.shoulder>=0 && context.shoulder<context.count &&
-            context.elbow>=0 && context.elbow<context.count)
+        const bool carrierChainValid=dual
+            ? (context.lShoulder>=0 && context.lShoulder<context.count &&
+               context.lElbow>=0 && context.lElbow<context.count &&
+               context.lWrist>=0 && context.lWrist<context.count)
+            : (context.shoulder>=0 && context.shoulder<context.count &&
+               context.elbow>=0 && context.elbow<context.count);
+        if (g_config.arm_ik && carrierChainValid)
         {
             const BoneMatrix* unmod=unmodified;
             memcpy(g_fpPaletteScratch,unmod,
@@ -2275,28 +2284,39 @@ namespace
                     g_armFailWhy=nullptr;
                     return true;
                 };
-                // Dual-wield secondary: its weapon chain bends toward the LEFT
-                // side (outSign +1) with no shoulder drop; the primary keeps
-                // the right-hand treatment unchanged.
-                // UNIVERSAL DUAL SEAT (23:3x headset results): weapon-node
-                // anchoring was disproven — node origin/axes are arbitrary per
-                // weapon (plasma center, spiker backwards). The carrier IS the
-                // secondary model's gripping hand, and its authored grip on
-                // the gun is correct for every weapon, exactly like r_hand on
-                // the primary. Anchor the carrier at the SAME left-hand point
-                // the visible hand uses; the gun rides its authored grip.
-                if (applyArm(context.shoulder,context.elbow,context.wrist,
-                             context.wristDescendants,desiredWristWorld,
-                             dual?1.0f:-1.0f,nullptr,
-                             dual?0.0f:g_config.right_shoulder_drop))
+                // Primary keeps its right-hand path. A dual weapon is owned by
+                // the actual LEFT hand, which follows the left controller.
+                const bool handApplied=dual
+                    ? applyArm(context.lShoulder,context.lElbow,context.lWrist,
+                               context.lWristDescendants,desiredWristWorld,
+                               1.0f,nullptr,0.0f)
+                    : applyArm(context.shoulder,context.elbow,context.wrist,
+                               context.wristDescendants,desiredWristWorld,
+                               -1.0f,nullptr,g_config.right_shoulder_drop);
+                if (handApplied)
                 {
                     if (dual)
                     {
+                        BoneMatrix authoredLeftWorld{},invAuthoredLeft{},handDelta{};
+                        if (!ComposeBoneMatrices(armRoot,unmod[context.lWrist],
+                                                 authoredLeftWorld) ||
+                            !InvertBoneMatrix(authoredLeftWorld,invAuthoredLeft) ||
+                            !ComposeBoneMatrices(desiredWristWorld,invAuthoredLeft,
+                                                 handDelta)) return false;
+                        for (int i=0;i<context.count && i<64;++i)
+                        {
+                            if (!(context.wristDescendants&(1ull<<i))) continue;
+                            BoneMatrix authoredWorld{},lockedWorld{};
+                            if (!ComposeBoneMatrices(armRoot,unmod[i],authoredWorld) ||
+                                !ComposeBoneMatrices(handDelta,authoredWorld,lockedWorld) ||
+                                !ComposeBoneMatrices(invRoot,lockedWorld,
+                                                     g_fpPaletteScratch[i])) return false;
+                        }
                         static std::atomic<bool> loggedDualIk{false};
                         if (!loggedDualIk.exchange(true))
                             LOG("DUAL VRIK: slot 1 arm IK active on the LEFT "
                                 "controller (wrist %d, elbow %d, shoulder %d)",
-                                context.wrist,context.elbow,context.shoulder);
+                                context.lWrist,context.lElbow,context.lShoulder);
                     }
                     // Left SUPPORT arm (primary weapon only): same treatment
                     // onto the left controller. During dual wield the left
@@ -2401,10 +2421,11 @@ namespace
                     // Uniform size trim about the gripping hand (grip stays put).
                     if (meshScale!=1.0f)
                     {
+                        const int scaleBone=dual?context.lWrist:context.wrist;
                         const float anchor[3]={
-                            g_fpPaletteScratch[context.wrist].translation[0],
-                            g_fpPaletteScratch[context.wrist].translation[1],
-                            g_fpPaletteScratch[context.wrist].translation[2]};
+                            g_fpPaletteScratch[scaleBone].translation[0],
+                            g_fpPaletteScratch[scaleBone].translation[1],
+                            g_fpPaletteScratch[scaleBone].translation[2]};
                         const uint64_t mask=context.wristDescendants;
                         for (int i=0;i<context.count && i<64;++i)
                         {
@@ -2841,6 +2862,7 @@ namespace
         if (!FindFirstPersonWeapon(output,slot,weapon)) return false;
         const int count=g_fpBoneCount[slot].load(std::memory_order_acquire);
         const int wrist=g_fpWristIndex[slot].load(std::memory_order_acquire);
+        const int lWrist=g_fpLWristIndex[slot].load(std::memory_order_acquire);
         const uint64_t mask=g_fpWristDescendants[slot].load(std::memory_order_acquire);
         if (count<=0 || count>64 || wrist<0 || wrist>=count ||
             *reinterpret_cast<int*>(weapon+0x49C)!=count) return false;
@@ -2850,8 +2872,10 @@ namespace
         // controller, matching its visible weapon — anchored on the carrier
         // hand bone exactly like the visible seat.
         const bool dual=(slot==1);
+        const int transformAnchor=dual?lWrist:wrist;
+        if (transformAnchor<0 || transformAnchor>=count) return false;
         if (!DesiredWristWorld(dual,desired,meshScale)) return false;
-        if (!InvertBoneMatrix(output[wrist],invWrist) ||
+        if (!InvertBoneMatrix(output[transformAnchor],invWrist) ||
             !ComposeBoneMatrices(desired,invWrist,t)) return false;
         for (int i=0;i<count;++i)
         {
