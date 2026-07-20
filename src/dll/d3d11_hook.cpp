@@ -62,9 +62,12 @@ static thread_local int g_presentDepth = 0;
 static HRESULT STDMETHODCALLTYPE PresentHook(IDXGISwapChain* sc, UINT syncInterval, UINT flags)
 {
     const bool topLevel = (g_presentDepth++ == 0);
-    if (topLevel && !(flags & DXGI_PRESENT_TEST))
-        VR_OnPresent(sc);
+    const bool runVrFrame = topLevel && !(flags & DXGI_PRESENT_TEST);
+    if (runVrFrame)
+        VR_BeforePresent(sc);
     HRESULT hr = g_origPresent(sc, syncInterval, flags);
+    if (runVrFrame)
+        VR_AfterPresent(sc);
     g_presentDepth--;
     return hr;
 }
@@ -73,9 +76,12 @@ static HRESULT STDMETHODCALLTYPE Present1Hook(IDXGISwapChain1* sc, UINT syncInte
                                               const DXGI_PRESENT_PARAMETERS* params)
 {
     const bool topLevel = (g_presentDepth++ == 0);
-    if (topLevel && !(flags & DXGI_PRESENT_TEST))
-        VR_OnPresent(sc);
+    const bool runVrFrame = topLevel && !(flags & DXGI_PRESENT_TEST);
+    if (runVrFrame)
+        VR_BeforePresent(sc);
     HRESULT hr = g_origPresent1(sc, syncInterval, flags, params);
+    if (runVrFrame)
+        VR_AfterPresent(sc);
     g_presentDepth--;
     return hr;
 }

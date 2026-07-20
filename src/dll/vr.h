@@ -8,9 +8,17 @@ struct IDXGISwapChain;
 // and finds the headset (slow), so the render thread never blocks on it.
 void VR_InitInstance();
 
-// Called from the D3D11 hooks, once per game frame on the game's render thread.
-void VR_OnPresent(IDXGISwapChain* swapchain);
+// Called around the game's real DXGI Present. The completed OpenXR frame is
+// submitted before Present; after Present returns, OpenXR supplies the exact
+// predicted display time that Halo will use while rendering its next frame.
+void VR_BeforePresent(IDXGISwapChain* swapchain);
+void VR_AfterPresent(IDXGISwapChain* swapchain);
 void VR_OnResizeBuffers(IDXGISwapChain* swapchain);
+
+// Timing beacon from Halo's camera-copy hook. The first call after
+// VR_AfterPresent proves how quickly the freshly predicted pose reaches the
+// render camera; subsequent calls prove camera transforms keep up with FPS.
+void VR_NotifyCameraTransform();
 
 // HUD panel capture: called from the FP driver hook (render thread, left-eye
 // pass, before the HUD elements draw). Snapshots the left-eye scene-only image;

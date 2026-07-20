@@ -3141,6 +3141,7 @@ namespace
 
     void* __fastcall CamCopyHook(void* dst, void* src)
     {
+        VR_NotifyCameraTransform();
         const uint64_t cameraNowMs = GetTickCount64();
         g_lastCamCopyMs.store(cameraNowMs, std::memory_order_relaxed);
         // Low-frequency timing proof paired with vr.cpp's HMD sample-rate log.

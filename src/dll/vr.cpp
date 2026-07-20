@@ -201,6 +201,52 @@ namespace
     LARGE_INTEGER g_fpsTimer{};
     int g_fpsFrames = 0;
 
+    // One OpenXR frame stays begun while Halo renders. VR_BeforePresent
+    // submits it; after DXGI Present returns, VR_AfterPresent obtains the
+    // runtime's exact prediction for the next Halo render.
+    struct PreparedFrame
+    {
+        XrFrameState state{XR_TYPE_FRAME_STATE};
+        bool begun = false;
+        bool viewsValid = false;
+        uint32_t viewCount = 0;
+        uint64_t serial = 0;
+    };
+    PreparedFrame g_preparedFrame{};
+    uint64_t g_nextPreparedSerial = 0;
+
+    template <size_t N>
+    struct TimingRing
+    {
+        std::array<double, N> values{};
+        size_t next = 0;
+        size_t count = 0;
+        void Add(double value)
+        {
+            if (!std::isfinite(value) || value < 0.0)
+                return;
+            values[next] = value;
+            next = (next + 1) % N;
+            if (count < N) ++count;
+        }
+    };
+    TimingRing<512> g_presentIntervalsMs;
+    TimingRing<512> g_presentDurationsMs;
+    TimingRing<512> g_waitDurationsMs;
+    TimingRing<512> g_predictionErrorMs;
+    LARGE_INTEGER g_qpcFrequency{};
+    LARGE_INTEGER g_lastBeforePresentQpc{};
+    LARGE_INTEGER g_dxgiPresentStartQpc{};
+    uint64_t g_timingLogStartMs = 0;
+    XrTime g_lastPredictedDisplayTime = 0;
+    uint64_t g_missedPredictions = 0;
+    uint64_t g_duplicatePredictions = 0;
+    uint64_t g_frameOrderFailures = 0;
+    std::atomic<uint64_t> g_preparedSerialPublished{0};
+    std::atomic<uint64_t> g_prepareQpcPublished{0};
+    std::atomic<uint64_t> g_cameraSerialObserved{0};
+    std::atomic<uint64_t> g_firstCameraDelayUs{0};
+
     // ---------------------------------------------------------------- utils
 
     const char* XrStr(XrResult r)
@@ -210,6 +256,27 @@ namespace
             return buf;
         snprintf(buf, sizeof(buf), "XrResult(%d)", (int)r);
         return buf;
+    }
+
+    double QpcMs(LONGLONG ticks)
+    {
+        if (!g_qpcFrequency.QuadPart)
+            QueryPerformanceFrequency(&g_qpcFrequency);
+        return ticks * 1000.0 / static_cast<double>(g_qpcFrequency.QuadPart);
+    }
+
+    template <size_t N>
+    double TimingPercentile(const TimingRing<N>& ring, double percentile)
+    {
+        if (!ring.count)
+            return 0.0;
+        std::array<double, N> sorted{};
+        for (size_t i = 0; i < ring.count; ++i)
+            sorted[i] = ring.values[i];
+        std::sort(sorted.begin(), sorted.begin() + ring.count);
+        const size_t index = static_cast<size_t>(
+            std::clamp(percentile, 0.0, 1.0) * static_cast<double>(ring.count - 1));
+        return sorted[index];
     }
 
     // Tell the user VR failed without freezing the game (own thread) and let
@@ -852,6 +919,32 @@ float4 ps_pass(VSOut i) : SV_Target
         g_stereoValidationDone = true;
     }
 
+    void ResetPreparedFrame()
+    {
+        g_preparedFrame.begun = false;
+        g_preparedFrame.viewsValid = false;
+        g_preparedFrame.viewCount = 0;
+    }
+
+    void EndPreparedFrameWithoutLayers(const char* reason)
+    {
+        if (!g_preparedFrame.begun || g_session == XR_NULL_HANDLE)
+        {
+            ResetPreparedFrame();
+            return;
+        }
+        XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO};
+        end.displayTime = g_preparedFrame.state.predictedDisplayTime;
+        end.environmentBlendMode = g_blendMode;
+        const XrResult r = xrEndFrame(g_session, &end);
+        if (XR_FAILED(r))
+        {
+            ++g_frameOrderFailures;
+            LOG("timing: empty xrEndFrame during %s failed: %s", reason, XrStr(r));
+        }
+        ResetPreparedFrame();
+    }
+
     // -------------------------------------------------------------- events
 
     void PollEvents()
@@ -882,12 +975,14 @@ float4 ps_pass(VSOut i) : SV_Target
                 else if (sc.state == XR_SESSION_STATE_STOPPING)
                 {
                     StopControllerHaptics();
+                    EndPreparedFrameWithoutLayers("session stopping");
                     xrEndSession(g_session);
                     g_sessionRunning = false;
                 }
                 else if (sc.state == XR_SESSION_STATE_EXITING || sc.state == XR_SESSION_STATE_LOSS_PENDING)
                 {
                     StopControllerHaptics();
+                    ResetPreparedFrame();
                     g_sessionRunning = false;
                     Fail("The VR runtime ended the session (headset off / SteamVR closed?)");
                 }
@@ -895,6 +990,7 @@ float4 ps_pass(VSOut i) : SV_Target
             }
             case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
                 StopControllerHaptics();
+                ResetPreparedFrame();
                 g_sessionRunning = false;
                 Fail("The OpenXR runtime is shutting down");
                 break;
@@ -1935,20 +2031,97 @@ float4 ps_pass(VSOut i) : SV_Target
             LOG("frame %d: %s", g_frameNo, step);
     }
 
-    void Frame(IDXGISwapChain* sc)
+    void LocateViewsForUpcomingRender(XrTime displayTime);
+
+    void PrepareNextFrame()
     {
-        g_frameNo++;
-        FLog("xrWaitFrame");
-        XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};
-        XrFrameState fs{XR_TYPE_FRAME_STATE};
-        if (XR_FAILED(xrWaitFrame(g_session, &wi, &fs)))
-            return;
-        FLog("xrBeginFrame");
-        XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
-        if (XR_FAILED(xrBeginFrame(g_session, &bi)))
+        if (g_preparedFrame.begun)
             return;
 
-        CaptureRightControllerPose(fs.predictedDisplayTime);
+        ++g_frameNo;
+        FLog("xrWaitFrame after DXGI Present");
+        XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
+        XrFrameState frameState{XR_TYPE_FRAME_STATE};
+        LARGE_INTEGER waitStart{}, waitEnd{};
+        QueryPerformanceCounter(&waitStart);
+        const XrResult waitResult = xrWaitFrame(g_session, &waitInfo, &frameState);
+        QueryPerformanceCounter(&waitEnd);
+        g_waitDurationsMs.Add(QpcMs(waitEnd.QuadPart - waitStart.QuadPart));
+        if (XR_FAILED(waitResult))
+        {
+            ++g_frameOrderFailures;
+            LOG("timing: xrWaitFrame failed: %s", XrStr(waitResult));
+            return;
+        }
+
+        FLog("xrBeginFrame before Halo render");
+        XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+        const XrResult beginResult = xrBeginFrame(g_session, &beginInfo);
+        if (XR_FAILED(beginResult))
+        {
+            ++g_frameOrderFailures;
+            LOG("timing: xrBeginFrame failed: %s", XrStr(beginResult));
+            return;
+        }
+
+        g_preparedFrame.state = frameState;
+        g_preparedFrame.begun = true;
+        g_preparedFrame.serial = ++g_nextPreparedSerial;
+
+        if (g_lastPredictedDisplayTime)
+        {
+            const XrDuration delta =
+                frameState.predictedDisplayTime - g_lastPredictedDisplayTime;
+            const XrDuration period = frameState.predictedDisplayPeriod;
+            if (delta <= 0)
+                ++g_duplicatePredictions;
+            else if (period > 0)
+            {
+                g_predictionErrorMs.Add(
+                    std::fabs(static_cast<double>(delta - period)) / 1000000.0);
+                if (delta > period + period / 2)
+                    g_missedPredictions += static_cast<uint64_t>(
+                        std::max<XrDuration>(1, delta / period - 1));
+            }
+        }
+        g_lastPredictedDisplayTime = frameState.predictedDisplayTime;
+
+        // Input first, then views/head as late as possible. Every locate uses
+        // the exact predicted time associated with this begun frame.
+        CaptureRightControllerPose(frameState.predictedDisplayTime);
+        LocateViewsForUpcomingRender(frameState.predictedDisplayTime);
+        CaptureHeadPose(frameState.predictedDisplayTime);
+
+        LARGE_INTEGER preparedAt{};
+        QueryPerformanceCounter(&preparedAt);
+        g_prepareQpcPublished.store(static_cast<uint64_t>(preparedAt.QuadPart),
+                                    std::memory_order_release);
+        g_preparedSerialPublished.store(g_preparedFrame.serial,
+                                        std::memory_order_release);
+        if (g_frameNo == 1)
+            LOG("timing: exact OpenXR pipeline active; headset smoothing %.1f%%",
+                std::clamp(g_config.headset_smoothing, 0.0f, 0.10f) * 100.0f);
+    }
+
+    void LocateViewsForUpcomingRender(XrTime displayTime)
+    {
+        if (g_views.empty())
+            return;
+        XrViewLocateInfo info{XR_TYPE_VIEW_LOCATE_INFO};
+        info.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        info.displayTime = displayTime;
+        info.space = g_localSpace;
+        XrViewState state{XR_TYPE_VIEW_STATE};
+        uint32_t count = 0;
+        xrLocateViews(g_session, &info, &state, static_cast<uint32_t>(g_views.size()),
+                      &count, g_views.data());
+    }
+
+    void SubmitPreparedFrame(IDXGISwapChain* sc)
+    {
+        if (!g_preparedFrame.begun)
+            return;
+        const XrFrameState fs = g_preparedFrame.state;
         const float comfortFadeAlpha = UpdatePauseTransition();
 
         // M2: per-eye pose + field of view for this frame (foundation for
@@ -2236,22 +2409,17 @@ float4 ps_pass(VSOut i) : SV_Target
             }
         }
 
-        // VR_OnPresent runs after Halo has rendered the current image. Sampling
-        // fs.predictedDisplayTime here would therefore feed that pose to Halo's
-        // NEXT image one display period late. Ask OpenXR for the next predicted
-        // display pose instead, as late in Present as possible; CamCopyHook then
-        // consumes it during the render that immediately follows this Present.
-        CaptureHeadPose(fs.predictedDisplayTime + fs.predictedDisplayPeriod);
-
-        FLog("xrEndFrame");
+        FLog("xrEndFrame before DXGI Present");
         XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
         ei.displayTime = fs.predictedDisplayTime;
         ei.environmentBlendMode = g_blendMode;
         ei.layerCount = (uint32_t)layers.size();
         ei.layers = layers.data();
         XrResult r = xrEndFrame(g_session, &ei);
+        ResetPreparedFrame();
         if (XR_FAILED(r))
         {
+            ++g_frameOrderFailures;
             static bool logged = false;
             if (!logged)
             {
@@ -2280,7 +2448,7 @@ void VR_InitInstance()
         g_instanceFailed = true; // Fail() already showed a message
 }
 
-void VR_OnPresent(IDXGISwapChain* sc)
+void VR_BeforePresent(IDXGISwapChain* sc)
 {
     g_gameSwapchain = sc;
     if (!g_gameBackbufferDescValid && sc)
@@ -2323,6 +2491,10 @@ void VR_OnPresent(IDXGISwapChain* sc)
     LARGE_INTEGER now, freq;
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
+    if (g_lastBeforePresentQpc.QuadPart)
+        g_presentIntervalsMs.Add(
+            QpcMs(now.QuadPart - g_lastBeforePresentQpc.QuadPart));
+    g_lastBeforePresentQpc = now;
     g_fpsFrames++;
     if (g_fpsTimer.QuadPart == 0)
         g_fpsTimer = now;
@@ -2342,6 +2514,27 @@ void VR_OnPresent(IDXGISwapChain* sc)
         }
     }
 
+    const uint64_t timingNowMs = GetTickCount64();
+    if (!g_timingLogStartMs)
+        g_timingLogStartMs = timingNowMs;
+    else if (timingNowMs - g_timingLogStartMs >= 10000)
+    {
+        LOG("timing: frame interval p95 %.2fms p99 %.2fms; "
+            "DXGI Present p95 %.2fms; xrWait p95 %.2fms; "
+            "prediction error p95 %.3fms; missed=%llu duplicate=%llu "
+            "orderFailures=%llu firstCamera=%.3fms",
+            TimingPercentile(g_presentIntervalsMs, 0.95),
+            TimingPercentile(g_presentIntervalsMs, 0.99),
+            TimingPercentile(g_presentDurationsMs, 0.95),
+            TimingPercentile(g_waitDurationsMs, 0.95),
+            TimingPercentile(g_predictionErrorMs, 0.95),
+            static_cast<unsigned long long>(g_missedPredictions),
+            static_cast<unsigned long long>(g_duplicatePredictions),
+            static_cast<unsigned long long>(g_frameOrderFailures),
+            g_firstCameraDelayUs.load(std::memory_order_relaxed) / 1000.0);
+        g_timingLogStartMs = timingNowMs;
+    }
+
     PollEvents();
     if (g_state != State::Ready || !g_sessionRunning)
         return;
@@ -2349,7 +2542,49 @@ void VR_OnPresent(IDXGISwapChain* sc)
     // Auto-enter/exit VR when a level loads/unloads (no F2/F11 needed).
     Game_AutoVrTick();
 
-    Frame(sc);
+    SubmitPreparedFrame(sc);
+    QueryPerformanceCounter(&g_dxgiPresentStartQpc);
+}
+
+void VR_AfterPresent(IDXGISwapChain*)
+{
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    if (g_dxgiPresentStartQpc.QuadPart)
+        g_presentDurationsMs.Add(
+            QpcMs(now.QuadPart - g_dxgiPresentStartQpc.QuadPart));
+    g_dxgiPresentStartQpc = {};
+
+    if (g_state != State::Ready || !g_sessionRunning)
+        return;
+    PrepareNextFrame();
+}
+
+void VR_NotifyCameraTransform()
+{
+    const uint64_t serial =
+        g_preparedSerialPublished.load(std::memory_order_acquire);
+    if (!serial)
+        return;
+    uint64_t observed =
+        g_cameraSerialObserved.load(std::memory_order_relaxed);
+    if (observed == serial ||
+        !g_cameraSerialObserved.compare_exchange_strong(
+            observed, serial, std::memory_order_acq_rel))
+        return;
+
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    const uint64_t prepared =
+        g_prepareQpcPublished.load(std::memory_order_acquire);
+    if (prepared && static_cast<uint64_t>(now.QuadPart) >= prepared)
+    {
+        const double delayMs =
+            QpcMs(now.QuadPart - static_cast<LONGLONG>(prepared));
+        g_firstCameraDelayUs.store(
+            static_cast<uint64_t>(delayMs * 1000.0),
+            std::memory_order_relaxed);
+    }
 }
 
 void VR_OnResizeBuffers(IDXGISwapChain*)
