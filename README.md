@@ -36,38 +36,6 @@ Working in Halo 3 on PSVR2 and Quest 3 through SteamVR OpenXR:
 
 This is a development build, not yet a public release. ODST, every weapon, scopes, vehicles, cutscenes, performance targets, and friend-machine installation still need systematic validation. See docs/CURRENT-STATE.md.
 
-Quest Pro has limited early testing, not full validation. Headset timing was
-reported smooth; an initial skyward-aim report was traced to MCC's inverted-Y
-game setting rather than the headset. The Touch Pro OpenXR aim profile is
-included, but the latest shared weapon-calibration path still needs a Quest Pro
-result. More headset and controller playtesters are needed: unsupported
-combinations may not work out of the box. Please report the headset, controller,
-OpenXR runtime, GPU, and both mod logs when reporting a compatibility problem.
-
-## Build
-
-Requirements: Visual Studio 2022 C++ workload, CMake, Git, and x64.
-
-    cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-    cmake --build build --config Release
-
-For the development machine, close MCC and run:
-
-    .\deploy.bat auto
-
-The deploy script stops on build failure and byte-compares the built and installed DLL.
-
-## Export an alpha test build
-
-To make a clean package for another PC, run:
-
-    .\export-alpha.bat
-
-It rebuilds Release, verifies the packaged DLL and launcher byte-for-byte, and creates both
-`dist\HaloMCCVR-alpha-0.1\` and `dist\HaloMCCVR-alpha-0.1.zip`. Copy the ZIP to the test PC, unzip the
-whole folder, read `ALPHA-README.txt`, and run `install.bat`. The test PC does not need the
-source tree, CMake, Visual Studio, or a Visual C++ redistributable.
-
 ## Manual install (no scripts)
 
 You do not have to run `install.bat` or `uninstall.bat`.
