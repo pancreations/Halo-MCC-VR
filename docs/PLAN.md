@@ -4,7 +4,7 @@ CURRENT-STATE.md is the authority for what works and what must not be repeated.
 
 ## Gate 1: lock the recovered baseline
 
-- Preserve 330a568 and recovery/best-working-20260719-1300 as the protected rollback baseline. The active user-designated best-working checkpoint is `8ea1c04` on `feature/menu-controls`; it includes the earlier HUD/crosshair/resolution work plus the native pause-state path, F2/F11 menu controls, and unified recentering.
+- Preserve 330a568 and recovery/best-working-20260719-1300 as the protected rollback baseline. The active user-designated best-working runtime checkpoint is `c2e6a27` on `feature/dual-wield`; it includes the earlier HUD/crosshair/resolution and pause/control work plus the headset-confirmed secondary-gun ownership fix.
 - The broad cleanup at 42a1276 caused a fatal level-transition regression and was reverted at ddfe109. The runtime tag-table reticle classifier at f0d5a88 separately caused a black headset view and was narrowly reverted at 7fdf019. Neither failed path is a fallback.
 - Headset regression test: level load, stereo, head tracking, movement, firing, reload, melee, grenade, VR reticle, absence of native class-2 crosshairs, native HUD, and both arms.
 - Weapon check: spawn shotgun first, then assault rifle and pistol. Confirm the left hand stays under controller control before and after switching or melee.
@@ -14,11 +14,20 @@ CURRENT-STATE.md is the authority for what works and what must not be repeated.
 
 Create a repeatable weapon matrix for rifles, pistols, shotguns, dual wield, heavy weapons, turrets, reloads, melee, grenades, pickup/drop, death/respawn, and level transitions. Fix only headset-reproduced failures. No generic "all weapons" claim until the matrix passes.
 
-The next isolated milestone is dual wielding from `8ea1c04`: identify the real
-left/right weapon slots and chains with H3EK, reproduce the left weapon/arm
-collapsing near the face, and route each hand independently. Keep the existing
-single-weapon support-hand behavior and centered two-hand barrel alignment as
-regression checks.
+The dual-wield ownership milestone passed in `c2e6a27`. The headset-confirmed
+result is nearly perfect: the left hand tracks the controller and owns the
+secondary gun. Keep the existing single-weapon support-hand behavior and
+centered two-hand barrel alignment as permanent regression checks. Broader
+weapon-pair coverage remains part of the matrix.
+
+## Next isolated milestones
+
+1. Fix smooth-turn jitter. Identify whether the discontinuity enters through
+   input accumulation, camera yaw, frame timing, or stereo reuse before making
+   a narrow change. Do not touch VRIK or weapon ownership in this milestone.
+2. Add an optional floating-hands mode. It defaults OFF and shows only hands
+   and held guns, with no arms, torso, or legs. The accepted VRIK path stays the
+   default and must remain behaviorally unchanged when the option is off.
 
 ## Gate 3: gameplay completeness
 

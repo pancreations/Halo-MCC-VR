@@ -1,6 +1,6 @@
 # Current state
 
-Authoritative as of 2026-07-19. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
+Authoritative as of 2026-07-20. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
 
 ## Recovery points
 
@@ -16,6 +16,9 @@ Authoritative as of 2026-07-19. If another note conflicts with this file, this f
 - Current resolution-preset checkpoint: 1fc56c8 on feature/resolution-scale
 - User-designated best-working pause/controls checkpoint: `8ea1c04` on
   `feature/menu-controls` (runtime changes in `73f81f1` and `a06ebd5`)
+- User-designated best-working dual-wield runtime checkpoint: `c2e6a27` on
+  `feature/dual-wield`; deployed DLL SHA-256
+  `4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
@@ -26,6 +29,9 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
 - The right controller drives the weapon and aim. The floating VR reticle follows the actual aim ray.
 - First-person arm IK bends the right and left arms from stable shoulder anchors.
 - The shotgun support arm is free and follows the left controller. The user confirmed this after the native weapon-IK bypass.
+- Dual wield is headset-confirmed nearly perfect in `c2e6a27`: the secondary
+  gun is owned by the solved left hand, and the hand tracks the left controller.
+  The user designated this the best checkpoint yet.
 - The assault rifle and pistol were the known-good comparison behavior before the shotgun fix.
 - The game's native HUD renders in both eyes. The class-gated CHUD fix hides native weapon crosshairs across the tested weapons while preserving the VR reticle and the rest of the HUD.
 - Native HUD scaling at 0.38, CHUD scripting-class-2 crosshair hiding, and normal pre-regression GPU performance are headset-confirmed.
@@ -44,8 +50,8 @@ The active path is deliberately small:
 
 1. RenderViewHook renders two eye passes and supplies each eye's camera/projection.
 2. FpDriverHook and FpCameraRebuildHook stamp the active eye camera into Halo's first-person draw path.
-3. The interpolation and visible-palette hooks preserve the authored skeleton, solve both arms once per stereo pair, and provide the render palette.
-4. The marker/muzzle path receives the same controller transform as the visible weapon.
+3. The interpolation and visible-palette hooks preserve the authored skeleton, solve both arms once per stereo pair, and provide the render palette. During dual wield, slot 1 solves the left arm and then applies that solved hand delta to the gun/right-hand descendant subtree.
+4. The marker/muzzle path follows the same ownership as the visible weapon: slot 0 keeps the established controller path, while dual slot 1 inherits the solved left-hand transform.
 5. Halo's normal input/aim path steers projectile direction through the VR reticle point.
 6. A signature-located chud_draw_widget patch removes only the normal-playback short-circuit around Halo's own scripting-class check. The hooked visibility predicate hides the widget only after Halo identifies it as class 2 (crosshair), preserving the VR reticle and all other HUD classes without runtime tag-table dereferences.
 7. At startup, a unique signature changes the stock first-person weapon-IK decision from 74 05 to EB 18. This selects Halo's own no-weapon-IK branch and prevents shotgun-specific authored pump grip IK from overriding the left controller arm.
@@ -104,16 +110,10 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - The attempted scripting-class classifier inside the element-submit hook at halo3+0x2EDF24 caused a black headset view when stereo entered a level (2026-07-19 16:45 build). It was fully removed; do not restore its runtime tag-table dereferences.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
-- Dual wield: first fix build deployed 2026-07-19 22:51, commit `d691672` on
-  `feature/dual-wield`, DLL SHA-256
-  `AD76B201C919E9E899071CC4D00592C038B718E8C4CE17E61CA30B1D12997E09`.
-  Evidence: the 22:29:18 session log proved slot 1 activates during dual wield
-  with the canonical fp skeleton (wrist 6/elbow 4/shoulder 2, gun bones under
-  the wrist). The build extends the proven slot-0 palette/IK/marker treatment
-  to slot 1 on the LEFT controller. AWAITING HEADSET RESULT — expected: left
-  weapon + arm track the left controller with elbow IK; watch for mirrored/
-  crossed arm (would prove an engine-side model mirror) and for any duplicate
-  left arm from slot 0. Single-weapon behavior must be unchanged.
+- Dual wield is no longer awaiting its first headset result. Commit `c2e6a27`
+  is headset-confirmed nearly perfect for the tested pairing and is the current
+  best checkpoint. Broader per-weapon dual-wield coverage remains pending; do
+  not generalize this result to every pairing until the weapon matrix passes.
 - The native pause-state build is the current best-working checkpoint, but the
   focused Pause -> Resume -> Restart Level -> 3D acceptance sequence still
   needs an explicit recorded headset result before pause transitions are called
@@ -136,8 +136,30 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - Generated process-memory snapshots were deleted after analysis and
   `pause_scan/` is ignored. Game/editing-kit binaries and memory dumps must not
   enter Git or release packages.
-- Next isolated task: dual wielding. Start from `8ea1c04`, preserve it, and do
-  not mix dual-wield experiments with pause/menu changes.
+- Historical handoff: dual-wield work started from `8ea1c04` and remained
+  isolated from the pause/menu implementation.
+
+## Dual-wield checkpoint and next work (2026-07-20)
+
+- Runtime checkpoint: `c2e6a27` on `feature/dual-wield`.
+- Release/deployed DLL SHA-256:
+  `4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`.
+  Build timestamp: 2026-07-20 00:12:19 local time. The installed DLL
+  byte-matched the Release output before the headset test.
+- Headset result: dual wield is almost perfect and this is the best checkpoint
+  yet. The left hand follows the left controller; the secondary gun follows the
+  solved hand rather than being independently locked to the controller.
+- The accepted implementation applies the desired-left-wrist versus authored-
+  left-wrist delta to the secondary gun/right-hand descendant subtree and uses
+  the left wrist as the dual marker/muzzle ownership anchor.
+- Slot 0 and the previously accepted two-handed support-hand/barrel-alignment
+  path were not changed by this final ownership correction. Preserve them.
+- Next isolated task 1: diagnose and fix smooth-turn jitter. Do not combine it
+  with weapon offsets, palette ownership, or presentation-mode work.
+- Next isolated task 2: add an optional floating-hands mode, OFF by default,
+  showing hands and held guns only, with no arms, torso, or legs. Keep the
+  existing VRIK path as the untouched default; gate the alternate presentation
+  independently rather than disabling or rewriting VRIK globally.
 
 ## 2026-07-19 session closeout
 

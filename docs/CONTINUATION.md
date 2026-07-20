@@ -4,10 +4,11 @@ Start with CURRENT-STATE.md; it contains the current behavior, recovery commits,
 
 Current protected recovery baseline: 330a568 on recovery/best-working-20260719-1300.
 
-Current user-designated best-working checkpoint: `8ea1c04` on
-`feature/menu-controls`. Begin new dual-wielding work from this exact commit and
-do not fold pause/menu experiments into it. The deployed DLL for this checkpoint
-is `D7484C404F19A16979FB6A9F0789FB2C7C70AD36AC7ACDBEDD4BFADF96069AE9`.
+Current user-designated best-working runtime checkpoint: `c2e6a27` on
+`feature/dual-wield`. The deployed Release DLL byte-matched the build output at
+SHA-256 `4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`.
+The user tested this exact build in the headset and described dual wield as
+almost perfect and the best checkpoint yet. Preserve it before any new work.
 
 The current build includes L3+R3 F1 access, a working VR pointer, controller
 vibration, separate F2 head-tracking and F11 stereo controls in the Status tab,
@@ -17,10 +18,22 @@ a signature-resolved native Halo pause byte. The focused Restart Level return-
 to-3D sequence still needs an explicit recorded headset result before it is
 called complete.
 
-The next task is dual wielding. The known failure is the left dual-wield
-arm/weapon collapsing near the face. Use H3EK skeleton, weapon, marker, and slot
-evidence to identify the real left/right paths; preserve the working
-single-weapon support arm and centered two-hand barrel alignment.
+Dual wield now gives the left hand ownership of the secondary weapon: the left
+hand tracks the left controller, while the gun and its marker/muzzle descendants
+inherit the solved hand delta. Do not return to independently anchoring the gun
+to the controller, and do not modify the working slot-0/two-handed path while
+tuning dual wield.
+
+The next work belongs in a new chat and must be split into two isolated tasks:
+
+1. Fix smooth-turn jitter without changing the first-person hand, weapon,
+   marker, camera-stereo, or VRIK ownership paths.
+2. Add an optional floating-hands presentation mode, OFF by default. It should
+   render only hands and held guns, with no arms, torso, or legs. The current
+   VRIK presentation remains the default and must not be weakened, globally
+   disabled, or repurposed to implement the optional mode.
+
+There are no further weapon-placement offset tasks currently requested.
 
 The five restart-applied resolution presets remain Potato 50%, Low 67%, Medium
 80%, High 100%, and Ultra 110%; Low is headset-confirmed, while the other four
