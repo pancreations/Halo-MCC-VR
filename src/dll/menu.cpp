@@ -345,7 +345,7 @@ namespace
 
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextDisabled("F1 closes this menu. Settings save to halo3xr.cfg automatically.");
+        ImGui::TextDisabled("F1 closes this menu. Settings save to halomccvr.cfg automatically.");
         ImGui::End();
     }
 } // namespace

@@ -25,9 +25,11 @@ static DWORD WINAPI InitThread(LPVOID)
     // incident (2026-07-19, three headset sessions burned on one stale DLL) the
     // FIRST line of any log must prove WHICH build actually ran. deploy.bat
     // touches this file so the stamp recompiles on every build.
-    LOG("halo3xr M0 loaded into pid %lu (build " __DATE__ " " __TIME__ ")",
+    LOG("HaloMCCVR loaded into pid %lu (build " __DATE__ " " __TIME__ ")",
         GetCurrentProcessId());
-    ConfigLoad((dir + L"halo3xr.cfg").c_str());
+    const std::wstring primaryConfig = dir + L"halomccvr.cfg";
+    const std::wstring legacyConfig = dir + L"halo3xr.cfg";
+    ConfigLoadMigrating(primaryConfig.c_str(), legacyConfig.c_str());
 
     if (MH_Initialize() != MH_OK)
     {

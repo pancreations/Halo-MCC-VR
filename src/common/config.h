@@ -1,11 +1,18 @@
 #pragma once
 
-// Settings live in halo3xr.cfg next to the DLL, as plain "key = value" text
+// Settings live in halomccvr.cfg next to the DLL, as plain "key = value" text
 // so users can edit them by hand. The in-headset menu edits the same values
 // live and saves them back.
 
 struct Config
 {
+    int config_version = 1;
+
+    // Portable OpenXR feedback and controller-ray stabilization. These are
+    // shared defaults; title adapters may disable features they cannot prove.
+    float haptic_intensity = 0.70f;
+    float aim_stabilization = 0.35f;
+
     float screen_width_m = 4.0f;    // width of the virtual screen, in meters
     float screen_distance_m = 2.4f; // how far away the screen floats, in meters
 
@@ -172,4 +179,5 @@ struct Config
 extern Config g_config;
 
 void ConfigLoad(const wchar_t* path); // missing file -> file is created with defaults
+void ConfigLoadMigrating(const wchar_t* primaryPath, const wchar_t* legacyPath);
 void ConfigSave();

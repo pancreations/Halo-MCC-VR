@@ -209,8 +209,13 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
     // GPU-limited systems; it cannot remove CPU/per-render engine cost.
     constexpr int kNativeRenderWidth = 2912;
     constexpr int kNativeRenderHeight = 2100;
+    const std::wstring primaryConfig = dir + L"/halomccvr.cfg";
+    const std::wstring legacyConfig = dir + L"/halo3xr.cfg";
+    const DWORD primaryAttributes = GetFileAttributesW(primaryConfig.c_str());
+    const bool primaryExists = primaryAttributes != INVALID_FILE_ATTRIBUTES &&
+        (primaryAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
     const float resolutionScale =
-        ReadResolutionScale(dir + L"/halo3xr.cfg");
+        ReadResolutionScale(primaryExists ? primaryConfig : legacyConfig);
     const int renderWidth = ScaleEven(kNativeRenderWidth, resolutionScale);
     const int renderHeight = ScaleEven(kNativeRenderHeight, resolutionScale);
     wchar_t renderArgs[96];

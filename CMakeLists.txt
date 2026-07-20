@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(halo3xr LANGUAGES C CXX)
+project(halomccvr LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 include(FetchContent)
+include(CTest)
 
 # --- OpenXR loader (static) ---
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
@@ -52,6 +53,7 @@ target_include_directories(imgui_lib PUBLIC
 add_library(halo3xr SHARED
     src/common/log.cpp
     src/common/config.cpp
+    src/common/title_registry.cpp
     src/dll/dllmain.cpp
     src/dll/d3d11_hook.cpp
     src/dll/vr.cpp
@@ -59,7 +61,8 @@ add_library(halo3xr SHARED
     src/dll/sigscan.cpp
     src/dll/game.cpp
     src/dll/ik.cpp
-    src/dll/input.cpp)
+    src/dll/input.cpp
+    src/dll/title_adapter.cpp)
 target_compile_definitions(halo3xr PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
     XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32)
@@ -76,6 +79,18 @@ target_compile_definitions(halo3xr_launcher PRIVATE
 add_executable(camscan tools/camscan.cpp)
 target_compile_definitions(camscan PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(camscan PRIVATE psapi)
+
+if(BUILD_TESTING)
+    add_executable(halomccvr_core_tests
+        tests/core_tests.cpp
+        src/common/title_registry.cpp
+        src/common/config.cpp
+        src/common/log.cpp)
+    target_include_directories(halomccvr_core_tests PRIVATE src/common)
+    target_compile_definitions(halomccvr_core_tests PRIVATE
+        UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
+endif()
 
 # --- "dist" layout: everything a user needs, in one folder ---
 # (installed via:  cmake --install build --config Release --prefix dist --component dist

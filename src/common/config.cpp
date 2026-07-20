@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 #include <algorithm>
@@ -11,8 +13,34 @@
 Config g_config;
 static std::wstring g_path;
 
+static bool ParseFloatSetting(const char* key, const char* text, float& destination)
+{
+    char* end = nullptr;
+    errno = 0;
+    const float parsed = strtof(text, &end);
+    while (end && isspace(static_cast<unsigned char>(*end)))
+        ++end;
+    if (end == text || !end || *end != 0 || errno == ERANGE || !std::isfinite(parsed))
+    {
+        LOG("config: malformed value for '%s' ignored; keeping %.3f", key, destination);
+        return false;
+    }
+    destination = parsed;
+    return true;
+}
+
+static bool FileExists(const wchar_t* path)
+{
+    const DWORD attributes = GetFileAttributesW(path);
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 static void Clamp()
 {
+    g_config.config_version = 1;
+    g_config.haptic_intensity = std::clamp(g_config.haptic_intensity, 0.0f, 1.0f);
+    g_config.aim_stabilization = std::clamp(g_config.aim_stabilization, 0.0f, 1.0f);
     g_config.screen_width_m = std::clamp(g_config.screen_width_m, 0.5f, 20.0f);
     g_config.screen_distance_m = std::clamp(g_config.screen_distance_m, 0.3f, 20.0f);
     g_config.turn_snap_deg = std::clamp(g_config.turn_snap_deg, 5.0f, 90.0f);
@@ -45,6 +73,7 @@ static void Clamp()
 
 void ConfigLoad(const wchar_t* path)
 {
+    g_config = Config{};
     g_path = path;
     FILE* f = nullptr;
     _wfopen_s(&f, path, L"rt");
@@ -71,7 +100,22 @@ void ConfigLoad(const wchar_t* path)
         };
         const char* key = trim(line);
         const char* val = trim(eq + 1);
-        if (!strcmp(key, "screen_width_m"))
+        if (!strcmp(key, "config_version"))
+        {
+            char* end = nullptr;
+            const long parsed = strtol(val, &end, 10);
+            while (end && isspace(static_cast<unsigned char>(*end)))
+                ++end;
+            if (end == val || !end || *end != 0 || parsed < 1)
+                LOG("config: malformed value for 'config_version' ignored; using version 1");
+            else if (parsed > 1)
+                LOG("config: version %ld is newer than supported version 1; known keys will be loaded", parsed);
+        }
+        else if (!strcmp(key, "haptic_intensity"))
+            ParseFloatSetting(key, val, g_config.haptic_intensity);
+        else if (!strcmp(key, "aim_stabilization"))
+            ParseFloatSetting(key, val, g_config.aim_stabilization);
+        else if (!strcmp(key, "screen_width_m"))
             g_config.screen_width_m = (float)atof(val);
         else if (!strcmp(key, "screen_distance_m"))
             g_config.screen_distance_m = (float)atof(val);
@@ -169,6 +213,25 @@ void ConfigLoad(const wchar_t* path)
     LOG("config: loaded (screen %.2fm wide at %.2fm)", g_config.screen_width_m, g_config.screen_distance_m);
 }
 
+void ConfigLoadMigrating(const wchar_t* primaryPath, const wchar_t* legacyPath)
+{
+    if (FileExists(primaryPath))
+    {
+        ConfigLoad(primaryPath);
+        return;
+    }
+    if (legacyPath && FileExists(legacyPath))
+    {
+        ConfigLoad(legacyPath);
+        g_path = primaryPath;
+        ConfigSave();
+        LOG("config: imported legacy %ls into %ls (legacy file retained)",
+            legacyPath, primaryPath);
+        return;
+    }
+    ConfigLoad(primaryPath);
+}
+
 void ConfigSave()
 {
     if (g_path.empty())
@@ -181,8 +244,13 @@ void ConfigSave()
         LOG("config: FAILED to write %ls", g_path.c_str());
         return;
     }
-    fprintf(f, "# Halo 3 VR mod settings. Edit while the game is closed, or use the\n");
+    fprintf(f, "# HaloMCCVR settings. Edit while the game is closed, or use the\n");
     fprintf(f, "# in-headset menu (F1) which saves this file automatically.\n\n");
+    fprintf(f, "config_version = %d\n\n", g_config.config_version);
+    fprintf(f, "# OpenXR controller vibration strength, 0 = off and 1 = full.\n");
+    fprintf(f, "haptic_intensity = %.2f\n\n", g_config.haptic_intensity);
+    fprintf(f, "# Adaptive controller aim smoothing, 0 = raw and 1 = strongest.\n");
+    fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
     fprintf(f, "# Width of the virtual screen in meters.\n");
     fprintf(f, "screen_width_m = %.2f\n\n", g_config.screen_width_m);
     fprintf(f, "# Distance from your head to the screen in meters.\n");

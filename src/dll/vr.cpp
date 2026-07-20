@@ -1016,7 +1016,7 @@ float4 ps_pass(VSOut i) : SV_Target
     {
         const char* ext = XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
         XrInstanceCreateInfo ici{XR_TYPE_INSTANCE_CREATE_INFO};
-        strcpy_s(ici.applicationInfo.applicationName, "halo3xr");
+        strcpy_s(ici.applicationInfo.applicationName, "HaloMCCVR");
         ici.applicationInfo.applicationVersion = 1;
         strcpy_s(ici.applicationInfo.engineName, "halo3xr");
         ici.applicationInfo.apiVersion = XR_API_VERSION_1_0;

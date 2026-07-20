@@ -9,6 +9,7 @@
 #include "sigscan.h"
 #include "vr.h"
 #include "ik.h"
+#include "title_adapter.h"
 #include "../common/log.h"
 #include "../common/config.h"
 
@@ -3934,13 +3935,15 @@ namespace
         {
             Input_InstallXInputHook();
             Input_ClaimXInputIat(); // re-assert if Steam replaces MCC's import slot
-            if (!gameHooked)
+            const TitleDescriptor* activeTitle = TitleAdapter_PollLoaded();
+            if (!gameHooked && activeTitle && activeTitle->title == GameTitle::Halo3)
             {
                 uintptr_t base = 0;
                 size_t size = 0;
-                if (sig::ModuleRange(L"halo3.dll", base, size))
+                if (sig::ModuleRange(activeTitle->moduleName, base, size))
                 {
-                    LOG("halo3.dll loaded at %p, size 0x%zX", (void*)base, size);
+                    LOG("%ls loaded at %p, size 0x%zX",
+                        activeTitle->moduleName, (void*)base, size);
                     InstallHook(base, size);
                     g_hooked = true;
                     gameHooked = true;
@@ -4060,7 +4063,6 @@ void Game_AutoVrTick()
             ++loggedCount;
         }
     }
-    if (!g_config.auto_vr) return;
     const uint64_t now = GetTickCount64();
     const uint64_t last = g_lastCamCopyMs.load(std::memory_order_relaxed);
     const bool cameraFresh = last != 0 && (now - last) < 500;    // camera driving now
@@ -4072,6 +4074,14 @@ void Game_AutoVrTick()
     if (cameraFresh) { if (freshSince == 0) freshSince = now; }
     else freshSince = 0;
     const bool inLevelStable = freshSince != 0 && (now - freshSince) > 1000;
+
+    const TitleDescriptor* activeTitle = TitleAdapter_GetActive();
+    if (activeTitle && activeTitle->title == GameTitle::Halo3)
+        TitleAdapter_SetRuntimeMode(inLevelStable ? RuntimeMode::Gameplay : RuntimeMode::Loading);
+    else if (activeTitle && !activeTitle->runtimeSupported)
+        TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
+
+    if (!g_config.auto_vr) return;
 
     if (inLevelStable)
     {
