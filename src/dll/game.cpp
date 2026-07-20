@@ -2303,32 +2303,31 @@ namespace
                     };
                     if (dual)
                     {
-                        // HEADSET RESULT (22:51 build): the gun moved with the
-                        // driven chain but the VISIBLE arm stayed HUD-posed —
-                        // the secondary model's arm mesh is skinned to the
-                        // OTHER chain (lWrist/lElbow/lShoulder). Carry that arm
-                        // with the SAME rigid weapon delta D = desired *
-                        // inv(authored wrist) the gun received, so its hand
-                        // keeps the exact authored grip on the moved weapon,
-                        // then bend it with the standard elbow solve.
+                        // HEADSET RESULTS: 22:51 build — the visible arm is
+                        // skinned to the lWrist/lElbow/lShoulder chain, not the
+                        // gun chain. 22:59 build — carrying that arm at its
+                        // AUTHORED offset from the gun put the hand ~1 m left:
+                        // with the stock weapon-IK branch patched off, the
+                        // secondary's animation never poses l_hand on the grip,
+                        // so there is no authored grip relation to preserve.
+                        // Target the visible hand at the LEFT CONTROLLER itself
+                        // — the identical, user-tuned support-hand treatment
+                        // (palm correction + mirrored trim, F1 slider applies).
                         if (context.lShoulder>=0 && context.lShoulder<context.count &&
                             context.lElbow>=0 && context.lElbow<context.count &&
                             context.lWrist>=0 && context.lWrist<context.count)
                         {
-                            BoneMatrix wrW{},invWrW{},D{},lWrW{},desiredL{};
-                            if (ComposeBoneMatrices(armRoot,unmod[context.wrist],wrW) &&
-                                InvertBoneMatrix(wrW,invWrW) &&
-                                ComposeBoneMatrices(desiredWristWorld,invWrW,D) &&
-                                ComposeBoneMatrices(armRoot,unmod[context.lWrist],lWrW) &&
-                                ComposeBoneMatrices(D,lWrW,desiredL))
+                            BoneMatrix desiredL{}; float leftScale=1.0f;
+                            if (DesiredWristWorld(true,desiredL,leftScale,false))
                             {
                                 static std::atomic<bool> loggedDualArm{false};
                                 if (applyArm(context.lShoulder,context.lElbow,
                                              context.lWrist,context.lWristDescendants,
                                              desiredL,1.0f,nullptr,0.0f) &&
                                     !loggedDualArm.exchange(true))
-                                    LOG("DUAL VRIK: secondary VISIBLE arm riding the "
-                                        "weapon delta (wrist %d, elbow %d, shoulder %d)",
+                                    LOG("DUAL VRIK: secondary VISIBLE hand bound to "
+                                        "the left controller (wrist %d, elbow %d, "
+                                        "shoulder %d)",
                                         context.lWrist,context.lElbow,context.lShoulder);
                             }
                         }
