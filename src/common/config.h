@@ -123,6 +123,12 @@ struct Config
     // visible barrel. Headset request 2026-07-19: the AR's barrel sat right of
     // the zone and the left hand reached past it.
     float two_hand_zone_right_m = 0.03f;
+    // Wrist-bone-to-palm distance of the rendered left hand, along the left
+    // controller forward. The left-hand target anchors the hand's WRIST bone;
+    // the visible palm sits this much further out. Seats the dual-wield gun in
+    // the palm and puts the two-hand grab line through it (23:26 headset
+    // result: the gun landed on the rendered wrist, not the palm).
+    float left_grip_forward_m = 0.10f;
 
     // VRIK stage A1: show the player's real body (game-animated) by flipping
     // the engine's director/viewmodel switches. Experimental gate for the

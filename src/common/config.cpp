@@ -65,6 +65,7 @@ static void Clamp()
     g_config.hud_size = std::clamp(g_config.hud_size, 0.30f, 1.00f);
     g_config.left_hand_forward_m = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
+    g_config.left_grip_forward_m = std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
@@ -194,6 +195,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.left_hand_forward_m = (float)atof(val);
         else if (!strcmp(key, "two_hand_zone_right_m"))
             g_config.two_hand_zone_right_m = (float)atof(val);
+        else if (!strcmp(key, "left_grip_forward_m"))
+            g_config.left_grip_forward_m = (float)atof(val);
         else if (!strcmp(key, "crouch_by_height") || !strcmp(key, "crouch_threshold_m"))
             continue; // removed feature; accept old config files quietly
         else if (!strcmp(key, "body_wip"))
@@ -315,7 +318,10 @@ void ConfigSave()
     fprintf(f, "left_hand_forward_m = %.3f\n", g_config.left_hand_forward_m);
     fprintf(f, "# Sideways nudge of the two-hand grab zone (+ = player's right),\n");
     fprintf(f, "# so the grab line sits on the visible barrel. Range -0.10 to 0.10 m.\n");
-    fprintf(f, "two_hand_zone_right_m = %.3f\n\n", g_config.two_hand_zone_right_m);
+    fprintf(f, "two_hand_zone_right_m = %.3f\n", g_config.two_hand_zone_right_m);
+    fprintf(f, "# Rendered left hand wrist-to-palm distance. Seats the dual-wield gun\n");
+    fprintf(f, "# in the palm and the two-hand grab line through it. -0.05 to 0.25 m.\n");
+    fprintf(f, "left_grip_forward_m = %.3f\n\n", g_config.left_grip_forward_m);
     fprintf(f, "# VRIK arm IK: 1 = bend the arm to your controller (shoulder planted,\n");
     fprintf(f, "# elbow solved); 0 = rigid-parent the whole arm assembly.\n");
     fprintf(f, "arm_ik = %d\n", g_config.arm_ik ? 1 : 0);

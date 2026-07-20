@@ -996,6 +996,7 @@ namespace
     bool ControllerWorldPose(float basis[9],float pos[3],float& scale);
     bool ControllerWorldPoseEx(bool left,float basis[9],float pos[3],float& scale);
     bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale);
+    void ApplyDualPalmDepth(BoneMatrix& desired);
 
     void BuildTrackedGameBasis(const float q[4], bool head, float basis[9])
     {
@@ -1871,6 +1872,7 @@ namespace
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
         if (!DesiredWristWorld(dual,desiredWristWorld,meshScale)) return false;
+        if (dual) ApplyDualPalmDepth(desiredWristWorld);
         BoneMatrix wristWorld{},inverseWristWorld{},t{},inverseRoot{},tRoot{},m{};
         if (!ComposeBoneMatrices(root,bones[wrist],wristWorld) ||
             !InvertBoneMatrix(wristWorld,inverseWristWorld) ||
@@ -2066,6 +2068,18 @@ namespace
         return true;
     }
 
+    // The left-hand target anchors the rendered hand's WRIST bone; the visible
+    // palm sits left_grip_forward_m further along the hand forward (rotation
+    // column 0). Push a dual-wield desired pose out to the palm so the gun
+    // sits IN the rendered hand, not on its wrist (23:26 headset result).
+    void ApplyDualPalmDepth(BoneMatrix& desired)
+    {
+        const float k=Clamp(g_config.left_grip_forward_m,-0.05f,0.25f)*
+                      g_worldScale.load();
+        if (!isfinite(k)) return;
+        for(int j=0;j<3;++j) desired.translation[j]+=desired.rotation[j]*k;
+    }
+
     bool ReconstructVisiblePaletteSource(const FpInterpolationContext& context,
                                          const BoneMatrix& root,
                                          const BoneMatrix* source,
@@ -2093,6 +2107,7 @@ namespace
             g_armFailureSide.store(1,std::memory_order_release);
             return false;
         }
+        if (dual) ApplyDualPalmDepth(desiredWristWorld);
 
         // CENTER-ROOT WORLD SOLVE (2026-07-19): this function runs once per
         // EYE, and the palette consumer's `root` is that eye's camera. Any
@@ -2889,6 +2904,7 @@ namespace
         const int gunRoot=g_fpGunRootIndex[slot].load(std::memory_order_acquire);
         const int anchorBone=(dual && gunRoot>=0 && gunRoot<count)?gunRoot:wrist;
         if (!DesiredWristWorld(dual,desired,meshScale)) return false;
+        if (dual) ApplyDualPalmDepth(desired);
         if (!InvertBoneMatrix(output[anchorBone],invWrist) ||
             !ComposeBoneMatrices(desired,invWrist,t)) return false;
         for (int i=0;i<count;++i)

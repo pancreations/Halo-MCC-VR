@@ -1420,7 +1420,11 @@ float4 ps_pass(VSOut i) : SV_Target
     XrVector3f LeftHandPoint(const XrPosef& lpose)
     {
         const XrVector3f lfwd = Rotate(lpose.orientation, {0,0,-1});
-        const float k = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
+        // Hand-target correction PLUS the rendered wrist-to-palm depth: the
+        // two-hand line and grab zone meet the visible PALM, not the wrist
+        // bone the hand target anchors (23:26 headset result).
+        const float k = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f)
+                      + std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
         return {lpose.position.x + lfwd.x*k,
                 lpose.position.y + lfwd.y*k,
                 lpose.position.z + lfwd.z*k};

@@ -304,6 +304,11 @@ namespace
                                           &g_config.two_hand_zone_right_m,
                                           -0.10f, 0.10f, "%.3f");
             ImGui::TextDisabled("Slides the grip-click zone sideways (+ = right) onto the visible barrel.");
+            changed |= ImGui::SliderFloat("Left palm depth (m)",
+                                          &g_config.left_grip_forward_m,
+                                          -0.05f, 0.25f, "%.3f");
+            ImGui::TextDisabled("Wrist-to-palm depth of the rendered hand: seats the dual-wield gun\n"
+                                "in your palm and puts the grab line through it.");
             ImGui::Unindent();
         }
         ImGui::TextDisabled("Put your left hand on the front of the gun, click/hold the LEFT GRIP.\n"
