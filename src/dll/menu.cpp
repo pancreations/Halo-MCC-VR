@@ -265,12 +265,9 @@ namespace
         ImGui::TextDisabled("0/0/0 keeps the current automatic barrel alignment.");
         changed |= ImGui::SliderFloat("Gun forward offset (m)", &g_config.gun_forward_m, -0.3f, 0.5f, "%.2f");
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
-        changed |= ImGui::Checkbox("Hide game reticle (use VR reticle only)", &g_config.kill_reticle);
-        ImGui::TextDisabled("Hides every native CHUD crosshair class.\n"
-                            "The motion-control VR reticle stays visible.");
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Aim crosshair (stereo)");
+        ImGui::Text("Authored weapon crosshair (stereo)");
         changed |= ImGui::Checkbox("Show a crosshair where the weapon shoots", &g_config.crosshair);
         if (g_config.crosshair)
         {
@@ -285,22 +282,7 @@ namespace
                                           0.3f, 5.0f, "%.1f");
             changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
                                           2.0f, 50.0f, "%.0f");
-            float col[3] = {g_config.reticle_r, g_config.reticle_g, g_config.reticle_b};
-            if (ImGui::ColorEdit3("Crosshair color", col))
-            {
-                g_config.reticle_r = col[0];
-                g_config.reticle_g = col[1];
-                g_config.reticle_b = col[2];
-                changed = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Halo blue"))
-            {
-                g_config.reticle_r = 0.62f;
-                g_config.reticle_g = 0.87f;
-                g_config.reticle_b = 1.0f;
-                changed = true;
-            }
+            ImGui::TextDisabled("Uses the equipped weapon's Halo crosshair and stock target colors.");
         }
         ImGui::TextDisabled("Crosshair smoothing is visual only; bullets keep the current controller ray.\n"
                             "Set it to 0%% for exact raw tracking.");

@@ -90,7 +90,7 @@ namespace
     XrSwapchain g_reticleChain = XR_NULL_HANDLE;
     std::vector<ID3D11Texture2D*> g_reticleImages;
     std::vector<ID3D11RenderTargetView*> g_reticleRtvs;
-    constexpr uint32_t kReticleSize = 64;
+    constexpr uint32_t kReticleSize = 512;
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
     float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
@@ -98,6 +98,27 @@ namespace
     // Set by the game layer when the crosshair is over an enemy (the engine's
     // target-lock state). While set, the reticle repaints red like the OG HUD.
     std::atomic<bool> g_reticleEnemy{false};
+
+    // Halo's class-2 CHUD widget is rendered into this small transparent
+    // target instead of either eye. The resulting game-owned, per-weapon
+    // artwork is uploaded to the existing controller-ray OpenXR quad.
+    ID3D11Texture2D* g_authoredReticleTexture = nullptr;
+    ID3D11RenderTargetView* g_authoredReticleRtv = nullptr;
+    bool g_authoredReticleReady = false;
+    uint64_t g_authoredReticleSerial = 0;
+    uint64_t g_authoredReticleUploadedSerial = 0;
+    bool g_reticleContainsAuthored = false;
+    struct ReticleCaptureState
+    {
+        ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+        ID3D11DepthStencilView* dsv = nullptr;
+        D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        UINT viewportCount = 0;
+        D3D11_RECT scissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        UINT scissorCount = 0;
+        bool active = false;
+    };
+    ReticleCaptureState g_reticleCaptureState{};
 
     // The CHUD steal-and-requad machinery (capture texture, shader
     // classifier, hand-HUD swapchain) was removed 2026-07-18: it removed the
@@ -1124,9 +1145,10 @@ float4 ps_pass(VSOut i) : SV_Target
     {
         std::vector<uint32_t> px(kReticleSize * kReticleSize);
         const float c = (kReticleSize - 1) * 0.5f;
+        const float scale = kReticleSize / 64.0f;
         // coverage: 1 inside the shape, 0 outside, ~1px linear edge for AA
-        auto cov = [](float d, float halfWidth) {
-            const float v = halfWidth - d + 0.5f;
+        auto cov = [scale](float d, float halfWidth) {
+            const float v = (halfWidth - d) * scale + 0.5f;
             return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
         };
         // Bright fill = the requested color at full brightness; outline = the
@@ -1137,7 +1159,7 @@ float4 ps_pass(VSOut i) : SV_Target
         for (uint32_t y = 0; y < kReticleSize; ++y)
             for (uint32_t x = 0; x < kReticleSize; ++x)
             {
-                const float dx = x - c, dy = y - c;
+                const float dx = (x - c) / scale, dy = (y - c) / scale;
                 const float r = sqrtf(dx * dx + dy * dy);
                 const float ax=fabsf(dx), ay=fabsf(dy);
                 const bool cardinal=ax>ay*1.22f || ay>ax*1.22f;
@@ -1171,6 +1193,45 @@ float4 ps_pass(VSOut i) : SV_Target
         return true;
     }
 
+    bool EnsureAuthoredReticleTexture()
+    {
+        if (g_authoredReticleTexture && g_authoredReticleRtv)
+            return true;
+        if (!g_device)
+            return false;
+
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = kReticleSize;
+        desc.Height = kReticleSize;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(g_device->CreateTexture2D(&desc, nullptr,
+                                             &g_authoredReticleTexture)) ||
+            FAILED(g_device->CreateRenderTargetView(g_authoredReticleTexture,
+                                                     nullptr,
+                                                     &g_authoredReticleRtv)))
+        {
+            if (g_authoredReticleRtv)
+            {
+                g_authoredReticleRtv->Release();
+                g_authoredReticleRtv = nullptr;
+            }
+            if (g_authoredReticleTexture)
+            {
+                g_authoredReticleTexture->Release();
+                g_authoredReticleTexture = nullptr;
+            }
+            return false;
+        }
+        LOG("M3: authored crosshair capture target ready (%ux%u)",
+            kReticleSize, kReticleSize);
+        return true;
+    }
+
     bool EnsureReticleChain()
     {
         static bool failed = false;
@@ -1185,14 +1246,20 @@ float4 ps_pass(VSOut i) : SV_Target
                 return false;
             }
         }
-        // Enemy target-lock -> OG-style red; otherwise the user's base color.
+        const bool authoredThisFrame =
+            g_authoredReticleReady &&
+            g_authoredReticleSerial == g_preparedFrame.serial;
+        if (authoredThisFrame)
+            return true;
+
+        // Procedural fallback when Halo has no active authored widget.
         const bool enemy = g_reticleEnemy.load(std::memory_order_relaxed);
         const float wantR = enemy ? 1.0f : g_config.reticle_r;
         const float wantG = enemy ? 0.18f : g_config.reticle_g;
         const float wantB = enemy ? 0.14f : g_config.reticle_b;
         // Repaint only when the desired color changed (compositor keeps showing
         // the last released image, so a static color costs nothing per frame).
-        const bool colorChanged =
+        const bool colorChanged = g_reticleContainsAuthored ||
             g_reticleEnemyPainted != enemy ||
             (!enemy && (g_reticlePaintedColor[0] != g_config.reticle_r ||
                         g_reticlePaintedColor[1] != g_config.reticle_g ||
@@ -1208,9 +1275,43 @@ float4 ps_pass(VSOut i) : SV_Target
         g_reticlePaintedColor[1]=wantG;
         g_reticlePaintedColor[2]=wantB;
         g_reticleEnemyPainted=enemy;
+        g_reticleContainsAuthored=false;
         LOG("M3: crosshair reticle painted (%ux%u) rgb=(%.2f,%.2f,%.2f)%s",
             kReticleSize, kReticleSize, wantR, wantG, wantB,
             enemy?" [enemy red]":"");
+        return true;
+    }
+
+    bool UploadAuthoredReticle()
+    {
+        if (!g_authoredReticleReady ||
+            g_authoredReticleSerial != g_preparedFrame.serial ||
+            !g_authoredReticleTexture ||
+            g_reticleChain == XR_NULL_HANDLE)
+            return false;
+        if (g_authoredReticleUploadedSerial == g_authoredReticleSerial)
+            return true;
+
+        uint32_t index = 0;
+        XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+        wait.timeout = 1000000000;
+        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        if (XR_FAILED(xrAcquireSwapchainImage(g_reticleChain, &acquire, &index)) ||
+            XR_FAILED(xrWaitSwapchainImage(g_reticleChain, &wait)))
+            return false;
+
+        D3D11_TEXTURE2D_DESC sourceDesc{};
+        g_authoredReticleTexture->GetDesc(&sourceDesc);
+        const bool copied = Blit(g_authoredReticleTexture, sourceDesc,
+                                 g_reticleImages[index], kReticleSize,
+                                 kReticleSize,
+                                 GetRtv(g_reticleImages, g_reticleRtvs, index));
+        xrReleaseSwapchainImage(g_reticleChain, &release);
+        if (!copied)
+            return false;
+        g_authoredReticleUploadedSerial = g_authoredReticleSerial;
+        g_reticleContainsAuthored = true;
         return true;
     }
 
@@ -2264,6 +2365,15 @@ float4 ps_pass(VSOut i) : SV_Target
                         const bool haveAim = VR_GetAimPose(aimQ, aimP);
                         if (g_config.crosshair && haveAim && EnsureReticleChain())
                         {
+                            if (g_authoredReticleReady &&
+                                g_authoredReticleSerial == g_preparedFrame.serial &&
+                                !UploadAuthoredReticle())
+                            {
+                                // Never expose stale or undefined swapchain
+                                // contents if the authored upload fails.
+                                g_authoredReticleReady = false;
+                                EnsureReticleChain();
+                            }
                             XrPosef rawAim{{aimQ[0],aimQ[1],aimQ[2],aimQ[3]},
                                            {aimP[0],aimP[1],aimP[2]}};
                             const float smoothing =
@@ -2875,6 +2985,100 @@ bool VR_GetEyeCantQuat(int eye, float outQuat[4])
     outQuat[2] = cw * e.z - cx * e.y + cy * e.x - cz * e.w;
     outQuat[3] = cw * e.w + cx * e.x + cy * e.y + cz * e.z;
     return true;
+}
+
+bool VR_BeginAuthoredReticleCapture()
+{
+    if (!g_context || !g_config.crosshair ||
+        !g_stereoEnabled.load(std::memory_order_relaxed) ||
+        !g_preparedFrame.begun || g_reticleCaptureState.active ||
+        !EnsureAuthoredReticleTexture())
+        return false;
+
+    const uint64_t serial = g_preparedFrame.serial;
+    if (g_authoredReticleSerial != serial)
+    {
+        const float clear[4] = {0, 0, 0, 0};
+        g_context->ClearRenderTargetView(g_authoredReticleRtv, clear);
+        g_authoredReticleSerial = serial;
+        g_authoredReticleReady = false;
+    }
+
+    auto& saved = g_reticleCaptureState;
+    g_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  saved.rtvs, &saved.dsv);
+    saved.viewportCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    g_context->RSGetViewports(&saved.viewportCount, saved.viewports);
+    saved.scissorCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    g_context->RSGetScissorRects(&saved.scissorCount, saved.scissors);
+
+    D3D11_VIEWPORT captureViewport{};
+    if (saved.viewportCount)
+        captureViewport = saved.viewports[0];
+    else
+    {
+        captureViewport.Width =
+            static_cast<float>(g_gameBackbufferDesc.Width);
+        captureViewport.Height =
+            static_cast<float>(g_gameBackbufferDesc.Height);
+        captureViewport.MinDepth = 0.0f;
+        captureViewport.MaxDepth = 1.0f;
+    }
+    // Preserve Halo's screen-pixel authored proportions while cropping around
+    // screen center. A 2x viewport zoom makes the stock reticles legible in
+    // the angular-size range previously used by the procedural VR reticle.
+    constexpr float kCaptureZoom = 2.0f;
+    captureViewport.Width *= kCaptureZoom;
+    captureViewport.Height *= kCaptureZoom;
+    captureViewport.TopLeftX =
+        (static_cast<float>(kReticleSize) - captureViewport.Width) * 0.5f;
+    captureViewport.TopLeftY =
+        (static_cast<float>(kReticleSize) - captureViewport.Height) * 0.5f;
+    const D3D11_RECT captureScissor{
+        0, 0, static_cast<LONG>(kReticleSize),
+        static_cast<LONG>(kReticleSize)};
+    g_context->OMSetRenderTargets(1, &g_authoredReticleRtv, nullptr);
+    g_context->RSSetViewports(1, &captureViewport);
+    g_context->RSSetScissorRects(1, &captureScissor);
+    saved.active = true;
+    return true;
+}
+
+void VR_EndAuthoredReticleCapture()
+{
+    auto& saved = g_reticleCaptureState;
+    if (!saved.active || !g_context)
+        return;
+
+    g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  saved.rtvs, saved.dsv);
+    if (saved.viewportCount)
+        g_context->RSSetViewports(saved.viewportCount, saved.viewports);
+    if (saved.scissorCount)
+        g_context->RSSetScissorRects(saved.scissorCount, saved.scissors);
+
+    for (auto*& rtv : saved.rtvs)
+    {
+        if (rtv) rtv->Release();
+        rtv = nullptr;
+    }
+    if (saved.dsv)
+    {
+        saved.dsv->Release();
+        saved.dsv = nullptr;
+    }
+    saved.viewportCount = 0;
+    saved.scissorCount = 0;
+    saved.active = false;
+    g_authoredReticleReady = true;
+    static bool logged = false;
+    if (!logged)
+    {
+        LOG("M3: Halo authored per-weapon crosshair redirected to VR aim quad");
+        logged = true;
+    }
 }
 
 void VR_SetReticleEnemy(bool enemy)

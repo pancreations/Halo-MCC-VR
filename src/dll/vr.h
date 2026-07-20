@@ -74,6 +74,11 @@ bool VR_GetHeadPose(float outQuat[4], float outPos[3]);
 bool VR_GetRightControllerPose(float outQuat[4], float outPos[3]);
 // Left controller pose (used by the D-pad gesture; false until tracked).
 bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3]);
+// Called only from Halo's already-validated class-2 CHUD path. The active
+// weapon reticle is redirected into the controller-ray quad texture instead
+// of being drawn at the center of either VR eye.
+bool VR_BeginAuthoredReticleCapture();
+void VR_EndAuthoredReticleCapture();
 // M3: the game layer sets this when the crosshair is over an enemy (engine
 // target-lock). While true, the floating reticle repaints red like the OG HUD.
 void VR_SetReticleEnemy(bool enemy);

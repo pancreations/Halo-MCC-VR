@@ -315,14 +315,51 @@ namespace
     // below enables the existing check and hooks its visibility predicate.
     typedef bool (__fastcall *HudCrosshairVisibleFn)(int);
     typedef bool (__fastcall *GameIsPlaybackFn)();
+    typedef void (__fastcall *HudDrawWidgetFn)(
+        int, void*, unsigned short, unsigned char, void*);
     HudCrosshairVisibleFn g_realHudCrosshairVisible = nullptr;
     GameIsPlaybackFn g_gameIsPlayback = nullptr;
+    HudDrawWidgetFn g_realHudDrawWidget = nullptr;
+    thread_local bool g_insideHudDrawWidget = false;
+    thread_local bool g_authoredReticleCaptureStarted = false;
+
+    void __fastcall HudDrawWidgetHook(int userIndex, void* descriptor,
+                                      unsigned short widgetIndex,
+                                      unsigned char useAlternatePath,
+                                      void* drawState)
+    {
+        const bool previousInside = g_insideHudDrawWidget;
+        const bool previousCapture = g_authoredReticleCaptureStarted;
+        g_insideHudDrawWidget = true;
+        g_authoredReticleCaptureStarted = false;
+        g_realHudDrawWidget(userIndex, descriptor, widgetIndex,
+                            useAlternatePath, drawState);
+        if (g_authoredReticleCaptureStarted)
+            VR_EndAuthoredReticleCapture();
+        g_insideHudDrawWidget = previousInside;
+        g_authoredReticleCaptureStarted = previousCapture;
+    }
 
     bool __fastcall HudCrosshairVisibleHook(int userIndex)
     {
-        if (g_config.kill_reticle)
+        // Halo has already proved this widget is scripting class 2 before this
+        // predicate runs. During VR, redirect that one widget into the hand-ray
+        // texture. If capture is unavailable, keep the native center reticle
+        // hidden and let vr.cpp show its procedural hand-ray fallback.
+        if (g_enabled.load(std::memory_order_relaxed) && VR_IsStereoEnabled())
+        {
+            const int eye = g_stereoEye.load(std::memory_order_relaxed);
+            const int captureEye = g_config.right_eye_first ? 1 : 0;
+            if ((eye < 0 || eye == captureEye) &&
+                g_insideHudDrawWidget && VR_BeginAuthoredReticleCapture())
+            {
+                g_authoredReticleCaptureStarted = true;
+                return true;
+            }
             return false;
-        // Preserve the original short-circuit exactly when hiding is disabled.
+        }
+
+        // Flat/non-VR rendering retains Halo's stock crosshair behavior.
         if (!g_gameIsPlayback)
             return true;
         if (!g_gameIsPlayback())
@@ -3987,6 +4024,20 @@ namespace
                         if (hookReady)
                             hookReady = MH_EnableHook(
                                 reinterpret_cast<void*>(visibleTarget)) == MH_OK;
+                        bool drawHookReady = false;
+                        if (hookReady)
+                        {
+                            const MH_STATUS drawCreate = MH_CreateHook(
+                                reinterpret_cast<void*>(hudElem),
+                                reinterpret_cast<void*>(&HudDrawWidgetHook),
+                                reinterpret_cast<void**>(&g_realHudDrawWidget));
+                            drawHookReady = drawCreate == MH_OK;
+                            if (drawHookReady)
+                                drawHookReady = MH_EnableHook(
+                                    reinterpret_cast<void*>(hudElem)) == MH_OK;
+                            if (!drawHookReady && drawCreate == MH_OK)
+                                MH_RemoveHook(reinterpret_cast<void*>(hudElem));
+                        }
                         if (hookReady)
                         {
                             DWORD oldProtect = 0;
@@ -3999,12 +4050,21 @@ namespace
                                                       classGate, 2);
                                 DWORD ignored = 0;
                                 VirtualProtect(classGate, 2, oldProtect, &ignored);
-                                LOG("M3: native CHUD crosshair class hider active "
-                                    "at halo3.dll+0x%llX",
-                                    (unsigned long long)(hudElem - base));
+                                if (drawHookReady)
+                                    LOG("M3: authored CHUD crosshair redirect active "
+                                        "at halo3.dll+0x%llX",
+                                        (unsigned long long)(hudElem - base));
+                                else
+                                    LOG("M3: CHUD class hider active but authored "
+                                        "draw wrapper unavailable; using VR fallback");
                             }
                             else
                             {
+                                if (drawHookReady)
+                                {
+                                    MH_DisableHook(reinterpret_cast<void*>(hudElem));
+                                    MH_RemoveHook(reinterpret_cast<void*>(hudElem));
+                                }
                                 MH_DisableHook(reinterpret_cast<void*>(visibleTarget));
                                 MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
                                 LOG("M3: CHUD class gate protection failed; "
