@@ -12,7 +12,8 @@ Target used for these findings: MCC Halo 3 build 1.3528.0.0. RVAs are evidence f
   bypasses this stage only while VR head tracking is active, removing recoil
   and other artificial screen shake without filtering locomotion or headset
   leaning. Its 60-byte AOB is unique in the 1.3528 DLL; a missing or ambiguous
-  match leaves stock behavior active. Headset confirmation is pending.
+  match leaves stock behavior active. Firing-recoil suppression was
+  headset-confirmed on 2026-07-20.
 - halo3+0x286A14: inner prepared-view renderer used for the two eye passes.
 - The view contains current and first-person camera/derived pairs. FpDriverHook and FpCameraRebuildHook stamp the active eye values immediately before the corresponding first-person draw/upload.
 - First-person camera upload is called through Halo's own uploader after a stamp. Do not replace this with a guessed constant-buffer hook.
