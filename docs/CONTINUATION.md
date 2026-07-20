@@ -2,9 +2,31 @@
 
 Start with CURRENT-STATE.md; it contains the current behavior, recovery commits, safety rules, failure ledger, limitations, and test sequence. Read RE-notes.md only when changing a verified engine boundary.
 
-Current protected baseline: 330a568 on recovery/best-working-20260719-1300.
+Current protected recovery baseline: 330a568 on recovery/best-working-20260719-1300.
 
-Current work branch: feature/resolution-scale at `1fc56c8`. The five restart-applied resolution presets are Potato 50%, Low 67%, Medium 80%, High 100%, and Ultra 110%; Low is headset-confirmed, while the other four tiers still need Quest 3 and PSVR2 coverage after a full restart. Halo's internal 2912x2100 raster is scaled uniformly, but the OpenXR swapchain and imageRect stay at the full runtime size.
+Current user-designated best-working checkpoint: `8ea1c04` on
+`feature/menu-controls`. Begin new dual-wielding work from this exact commit and
+do not fold pause/menu experiments into it. The deployed DLL for this checkpoint
+is `D7484C404F19A16979FB6A9F0789FB2C7C70AD36AC7ACDBEDD4BFADF96069AE9`.
+
+The current build includes L3+R3 F1 access, a working VR pointer, controller
+vibration, separate F2 head-tracking and F11 stereo controls in the Status tab,
+and a recenter action that resets both Halo and OpenXR. Commit `73f81f1`
+replaces the non-working H3EK/HaloScript `game_paused` developer variable with
+a signature-resolved native Halo pause byte. The focused Restart Level return-
+to-3D sequence still needs an explicit recorded headset result before it is
+called complete.
+
+The next task is dual wielding. The known failure is the left dual-wield
+arm/weapon collapsing near the face. Use H3EK skeleton, weapon, marker, and slot
+evidence to identify the real left/right paths; preserve the working
+single-weapon support arm and centered two-hand barrel alignment.
+
+The five restart-applied resolution presets remain Potato 50%, Low 67%, Medium
+80%, High 100%, and Ultra 110%; Low is headset-confirmed, while the other four
+tiers still need Quest 3 and PSVR2 coverage after a full restart. Halo's
+internal 2912x2100 raster is scaled uniformly, but the OpenXR swapchain and
+imageRect stay at the full runtime size.
 
 The current native-crosshair solution is `c923842`, confirmed in-headset at `8aa45d7`. It uses Halo's validated CHUD scripting-class-2 gate and preserves the VR reticle plus the rest of the HUD. Do not restore the `f0d5a88` runtime tag-table classifier; it caused a black headset view. Do not use `0x62C`, `0xF70`, or `0x1A90` as defaults: they are runtime chud_definition tag indices, not portable reticle ids.
 

@@ -14,6 +14,8 @@ Authoritative as of 2026-07-19. If another note conflicts with this file, this f
 - Failed runtime reticle-classifier experiment: f0d5a88; narrowly reverted at 7fdf019
 - Headset-confirmed native CHUD crosshair-class fix: c923842; confirmation notes at 8aa45d7
 - Current resolution-preset checkpoint: 1fc56c8 on feature/resolution-scale
+- User-designated best-working pause/controls checkpoint: `8ea1c04` on
+  `feature/menu-controls` (runtime changes in `73f81f1` and `a06ebd5`)
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
@@ -31,6 +33,10 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
 - The left support-hand wrist-to-palm correction is headset-confirmed. `left_hand_forward_m` defaults to 0.12 m and drives both the rendered left-hand IK target and the two-handed aiming point; the F1 slider tunes them together.
 - Halo motion blur is off by default because its previous-camera state creates stereo echo trails.
 - deploy.bat auto prevents stale-binary testing by refusing to deploy while MCC is open and comparing both the DLL and launcher byte-for-byte with the fresh Release outputs.
+- L3+R3 opens the F1 menu and the headset pointer is usable. Controller
+  vibration is working. The Status tab exposes independent F2 head-tracking and
+  F11 stereo buttons plus their live state, and recenter resets both Halo's
+  camera reference and the OpenXR screen reference.
 
 ## Production implementation
 
@@ -43,6 +49,10 @@ The active path is deliberately small:
 5. Halo's normal input/aim path steers projectile direction through the VR reticle point.
 6. A signature-located chud_draw_widget patch removes only the normal-playback short-circuit around Halo's own scripting-class check. The hooked visibility predicate hides the widget only after Halo identifies it as class 2 (crosshair), preserving the VR reticle and all other HUD classes without runtime tag-table dereferences.
 7. At startup, a unique signature changes the stock first-person weapon-IK decision from 74 05 to EB 18. This selects Halo's own no-weapon-IK branch and prevents shotgun-specific authored pump grip IK from overriding the left controller arm.
+8. A unique owner-code signature resolves Halo 3's native pause byte. The H3EK
+   `game_paused` external global is not used because live testing proved it does
+   not follow MCC's pause menu. When the native byte is available it owns the
+   2D/3D transition; missing or ambiguous signatures retain the edge fallback.
 
 The working runtime still contains dormant diagnostic and fallback code inherited from 330a568. Its defaults are the headset-proven behavior. Do not enable, remove, or consolidate those paths in bulk: commit 42a1276 performed a broad cleanup, built successfully, then produced a fatal error at the first level transition. Remove only one independently understood path per branch and headset test.
 
@@ -94,6 +104,33 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - The attempted scripting-class classifier inside the element-submit hook at halo3+0x2EDF24 caused a black headset view when stereo entered a level (2026-07-19 16:45 build). It was fully removed; do not restore its runtime tag-table dereferences.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).
 - Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
+- Dual wield is not complete. The left dual-wield arm/weapon can collapse near
+  the face and must be solved from H3EK weapon/skeleton slot evidence without
+  disturbing the working single-weapon support-hand path.
+- The native pause-state build is the current best-working checkpoint, but the
+  focused Pause -> Resume -> Restart Level -> 3D acceptance sequence still
+  needs an explicit recorded headset result before pause transitions are called
+  complete.
+
+## Pause, controls, and menu checkpoint (2026-07-19)
+
+- Checkpoint commit: `8ea1c04` on `feature/menu-controls`.
+- Pause implementation commit: `73f81f1`. Four alternating read-only snapshots
+  and a 2 ms transition trace located the native engine state; production code
+  resolves it by a unique signature rather than retaining the observed RVA.
+- Controls/recenter commit: `a06ebd5`. F1 Status has separate F2 and F11
+  controls and a live head-tracking/stereo/view readout. Every public recenter
+  path resets Halo and OpenXR together.
+- Deployed Release DLL SHA-256:
+  `D7484C404F19A16979FB6A9F0789FB2C7C70AD36AC7ACDBEDD4BFADF96069AE9`.
+  Deployed launcher SHA-256:
+  `AABE5EBFFFBBA332C07A8DBA0B4B3C92ED8D2CE4714C3F355DE8158AF0B7928B`.
+  Both installed files byte-matched the Release outputs.
+- Generated process-memory snapshots were deleted after analysis and
+  `pause_scan/` is ignored. Game/editing-kit binaries and memory dumps must not
+  enter Git or release packages.
+- Next isolated task: dual wielding. Start from `8ea1c04`, preserve it, and do
+  not mix dual-wield experiments with pause/menu changes.
 
 ## 2026-07-19 session closeout
 
