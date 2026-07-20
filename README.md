@@ -1,5 +1,7 @@
 # Halo 3 MCC OpenXR
 
+Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-KIT-EVIDENCE.md).
+
 A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 
 ## Current status
