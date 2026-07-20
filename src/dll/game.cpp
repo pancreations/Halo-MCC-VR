@@ -3071,10 +3071,20 @@ namespace
         VR_GetPadState(pad);
         if (!pad.valid)
             return;
-        static DWORD lastMs = GetTickCount();
-        const DWORD now = GetTickCount();
-        float dt = (now - lastMs) / 1000.0f;
-        lastMs = now;
+        // Smooth turn needs a sub-frame timebase. GetTickCount only updates on
+        // the ~15.6 ms system tick, but this runs several times per 11 ms (90 Hz)
+        // frame from CamCopyHook, so a GetTickCount delta was 0 on most frames
+        // and ~15 ms in a lump on others -> a visible ~5 Hz yaw stutter. The
+        // performance counter gives the true elapsed time between calls, so the
+        // yaw advances evenly regardless of how many calls land in a frame.
+        static LARGE_INTEGER freq{}, last{};
+        if (freq.QuadPart == 0)
+            QueryPerformanceFrequency(&freq);
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        float dt = last.QuadPart == 0 ? 0.0f
+                       : (float)(now.QuadPart - last.QuadPart) / (float)freq.QuadPart;
+        last = now;
         if (dt > 0.1f) dt = 0.1f;
         const float x = pad.turnX; // stick right = turn right = yaw decreases
         if (g_config.turn_smooth)

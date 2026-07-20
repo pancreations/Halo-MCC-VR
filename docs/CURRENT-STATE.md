@@ -154,8 +154,14 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   the left wrist as the dual marker/muzzle ownership anchor.
 - Slot 0 and the previously accepted two-handed support-hand/barrel-alignment
   path were not changed by this final ownership correction. Preserve them.
-- Next isolated task 1: diagnose and fix smooth-turn jitter. Do not combine it
-  with weapon offsets, palette ownership, or presentation-mode work.
+- Isolated task 1 DONE (headset-confirmed 2026-07-20): smooth-turn jitter fixed
+  on branch `fix/smooth-turn-jitter`. Root cause was `ApplyVrTurn` timing its dt
+  with `GetTickCount` (~15.6 ms resolution) while running several times per 90 Hz
+  frame from CamCopyHook, so the yaw advanced in ~15 ms lumps on ~every third
+  frame (a ~5 Hz stutter). Fixed by switching that dt to QueryPerformanceCounter;
+  no other path changed. Deployed DLL build 2026-07-20 12:25 AM, SHA-256
+  `f83e7ee03f193ab4fd64b591c7a4d5a9c0a35bbed20bb113b2d6eeae448f12ec`. User result:
+  "flawless... smooth as butter."
 - Next isolated task 2: add an optional floating-hands mode, OFF by default,
   showing hands and held guns only, with no arms, torso, or legs. Keep the
   existing VRIK path as the untouched default; gate the alternate presentation
