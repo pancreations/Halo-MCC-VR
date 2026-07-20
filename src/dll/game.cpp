@@ -2550,6 +2550,28 @@ namespace
         if (root && source)
             reconstructed=ReconstructVisiblePaletteSource(
                 context,*root,source,selectedSource);
+
+        // FLOATING HANDS (optional, OFF by default): a pure presentation filter
+        // over the already-solved palette. The VRIK solve above still tracks the
+        // hands to the controllers exactly as normal; here we only collapse the
+        // bones that are NOT part of either hand-or-gun subtree — the shoulders,
+        // elbows, and forearms — so their skinned geometry vanishes and only the
+        // hands and held guns remain. Scale is a PROVEN render input (the same
+        // field the gun_scale trim resizes the visible mesh with), so shrinking a
+        // bone's scale toward zero drives its vertices to the joint origin: an
+        // invisible speck, no crash risk. Only runs when we own the scratch
+        // buffer (reconstruction succeeded); otherwise the arms simply show this
+        // frame rather than risk mutating an engine-owned buffer.
+        if (g_config.floating_hands && reconstructed && context.valid &&
+            selectedSource==g_fpPaletteScratch &&
+            context.count>0 && context.count<=64)
+        {
+            const uint64_t keep=context.wristDescendants|context.lWristDescendants;
+            for (int i=0;i<context.count;++i)
+                if (!(keep&(1ull<<i)))
+                    g_fpPaletteScratch[i].scale=0.0001f; // collapse to the joint
+        }
+
         g_origFpVisiblePalette(tag,root,destination,unused,selectedSource,boneMap);
 
         // Collect every UNIQUE final-palette submission, not just the first

@@ -203,6 +203,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.body_wip = atoi(val) != 0;
         else if (!strcmp(key, "arm_ik"))
             g_config.arm_ik = atoi(val) != 0;
+        else if (!strcmp(key, "floating_hands"))
+            g_config.floating_hands = atoi(val) != 0;
         else if (!strcmp(key, "right_shoulder_drop"))
             g_config.right_shoulder_drop = (float)atof(val);
         else if (!strcmp(key, "shoulder_level"))
@@ -325,6 +327,9 @@ void ConfigSave()
     fprintf(f, "# VRIK arm IK: 1 = bend the arm to your controller (shoulder planted,\n");
     fprintf(f, "# elbow solved); 0 = rigid-parent the whole arm assembly.\n");
     fprintf(f, "arm_ik = %d\n", g_config.arm_ik ? 1 : 0);
+    fprintf(f, "# Floating hands: 1 = show only the hands and the guns they hold\n");
+    fprintf(f, "# (arms hidden); 0 = full arms. Pure render filter over VRIK.\n");
+    fprintf(f, "floating_hands = %d\n", g_config.floating_hands ? 1 : 0);
     fprintf(f, "# Lower the right (weapon) shoulder so the arm doesn't clip your face\n");
     fprintf(f, "# (0 = authored, higher = lower; ~world units). Range 0-0.3.\n");
     fprintf(f, "right_shoulder_drop = %.3f\n", g_config.right_shoulder_drop);

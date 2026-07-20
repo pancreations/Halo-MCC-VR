@@ -139,6 +139,14 @@ struct Config
     // assembly. ON = articulated arm; OFF = the previous rigid parent.
     bool arm_ik = true;
 
+    // Floating-hands presentation (OFF by default). Shows only the hands and the
+    // guns they hold; the upper arms and forearms are hidden. This is a pure
+    // render filter layered ON TOP of the untouched VRIK solve: the hands are
+    // still tracked to the controllers exactly as before, and every arm/aim/
+    // dual-wield calculation is unchanged. It only collapses the non-hand,
+    // non-gun bones in the final visible palette so their geometry disappears.
+    bool floating_hands = false;
+
     // Lower the RIGHT (weapon) shoulder so Master Chief's arm doesn't clip up
     // into your face — drops the shoulder anchor along your view-down axis.
     // 0 = the game's authored (high) shoulder; higher = lower shoulder. Tune

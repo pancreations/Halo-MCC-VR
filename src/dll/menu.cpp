@@ -334,6 +334,11 @@ namespace
             ImGui::TextDisabled("ON: shoulders stay level with the horizon when you look up/down.\n"
                                 "OFF: shoulders ride your head pitch (old). Hand+gun unaffected.");
         }
+        ImGui::Spacing();
+        changed |= ImGui::Checkbox("Floating hands (hide arms)", &g_config.floating_hands);
+        ImGui::TextDisabled("Shows only your hands and the guns they hold; the arms are hidden.\n"
+                            "Hands still track your controllers exactly as with full arms.");
+        ImGui::Spacing();
         changed |= ImGui::Checkbox("Show body (VRIK stage A1)", &g_config.body_wip);
         ImGui::TextDisabled("Shows Chief's game-animated body via the engine's own director switches.");
         ImGui::TextDisabled("Room-scale unit movement is gated until the player-biped boundary is headset-proven.");
