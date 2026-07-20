@@ -1,4 +1,4 @@
-# Halo 3 MCC OpenXR
+# Halo MCC VR
 
 A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 
