@@ -279,7 +279,7 @@ namespace
                 changed = true;
             }
             changed |= ImGui::SliderFloat("Crosshair size (deg)", &g_config.crosshair_size_deg,
-                                          0.3f, 5.0f, "%.1f");
+                                          0.3f, 20.0f, "%.1f");
             changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
                                           2.0f, 50.0f, "%.0f");
             ImGui::TextDisabled("Uses the equipped weapon's Halo crosshair and stock target colors.");
