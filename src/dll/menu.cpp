@@ -147,7 +147,6 @@ namespace
         if (ImGui::Button("Re-center headset and screen"))
         {
             Game_Recenter();
-            VR_RequestRecenter();
         }
         ImGui::SameLine();
         if (ImGui::Button(VR_IsPausePresentation()
@@ -158,6 +157,24 @@ namespace
             Menu_Toggle();
         }
         ImGui::TextDisabled("PSVR2 fallback: press Y+B together to Pause/Resume.");
+        ImGui::Separator();
+        if (ImGui::Button(Game_IsHeadTracking()
+                ? "Turn head tracking OFF (F2)"
+                : "Turn head tracking ON (F2)"))
+        {
+            Game_ToggleHeadTracking();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(VR_IsStereoEnabled()
+                ? "Turn stereo 3D OFF (F11)"
+                : "Turn stereo 3D ON (F11)"))
+        {
+            VR_ToggleStereo();
+        }
+        ImGui::Text("Head tracking: %s   |   Stereo rendering: %s   |   View: %s",
+                    Game_IsHeadTracking() ? "ON" : "OFF",
+                    VR_IsStereoEnabled() ? "ON" : "OFF",
+                    VR_IsPausePresentation() ? "head-locked 2D" : "immersive 3D");
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::TextDisabled("L3+R3 or F1 closes this menu.");

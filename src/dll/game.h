@@ -16,7 +16,7 @@ void Game_GetHudSafeFrameStatus(int& matches, bool& scanning);
 // Head-tracking controls, driven by hotkeys so we can tune it live in-headset.
 void Game_ToggleHeadTracking(); // F2
 void Game_AutoVrTick();         // per-frame: auto-enter/exit VR on level load/exit
-void Game_Recenter();           // F3
+void Game_Recenter();           // F3; Halo camera + OpenXR screen origin
 void Game_FlipYaw();            // F1 menu only (was F4: SteamVR's Alt+F4 kept triggering it)
 void Game_FlipPitch();          // F1 menu only (was F5)
 void Game_TogglePositional();   // F6: leaning / positional tracking on/off

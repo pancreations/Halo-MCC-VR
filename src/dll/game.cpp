@@ -4252,7 +4252,14 @@ void Game_AutoVrTick()
     }
 }
 
-void Game_Recenter() { g_needRecenter = true; }
+void Game_Recenter()
+{
+    // One public recenter action owns both references: Halo's camera/position
+    // origin and the OpenXR head-locked screen origin. This keeps keyboard F3,
+    // the F1 button, and transition-triggered recentering behavior identical.
+    g_needRecenter = true;
+    VR_RequestRecenter();
+}
 void Game_FlipYaw()   { g_yawSign = -g_yawSign.load();   LOG("yaw sign %+.0f", g_yawSign.load()); }
 void Game_FlipPitch() { g_pitchSign = -g_pitchSign.load(); LOG("pitch sign %+.0f", g_pitchSign.load()); }
 void Game_ToggleUp()  { g_writeUp = !g_writeUp.load();   LOG("write up-vector %s", g_writeUp.load() ? "on" : "off"); }
