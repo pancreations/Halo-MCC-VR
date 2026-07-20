@@ -1261,12 +1261,7 @@ namespace
         if (slot!=0 || !g_vrAim.load() || !g_enabled.load()) return false;
         if (!g_aimSeen.load()) return false;
         float hq[4],hp[3],cq[4],cp[3];
-        if (!VR_GetHeadPose(hq,hp) || !VR_GetRightControllerPose(cq,cp)) return false;
-
-        float mount[9];
-        BasisFromAngles(g_config.gun_yaw_deg*0.0174533f,
-                        g_config.gun_pitch_deg*0.0174533f,
-                        g_config.gun_roll_deg*0.0174533f,mount);
+        if (!VR_GetHeadPose(hq,hp) || !VR_GetAimPose(cq,cp)) return false;
 
         // The visible renderer supplies the head camera as the skeleton root:
         //     World = Head * record
@@ -1319,7 +1314,7 @@ namespace
         for(int i=0;i<9;++i)
             maxError=fmaxf(maxError,fabsf(reconstructedController[i]-controllerBasis[i]));
         if (!isfinite(maxError) || maxError>0.002f) return false;
-        MultiplyBases(rel,mount,desired);
+        memcpy(desired,rel,sizeof(rel));
 
         return true;
     }
@@ -1333,14 +1328,9 @@ namespace
 
         float controllerBasis[9],controllerPosition[3];
         if (!ControllerWorldPose(controllerBasis,controllerPosition,meshScale)) return false;
-        float mountedController[9],mount[9];
-        BasisFromAngles(g_config.gun_yaw_deg*0.0174533f,
-                        g_config.gun_pitch_deg*0.0174533f,
-                        g_config.gun_roll_deg*0.0174533f,mount);
-        MultiplyBases(controllerBasis,mount,mountedController);
         // This is the actual root pointer passed to the visible-palette
         // consumer, not a TLS re-read or a separately sampled head matrix.
-        MultiplyInverseBasis(rootBasis,mountedController,desiredCameraControl);
+        MultiplyInverseBasis(rootBasis,controllerBasis,desiredCameraControl);
 
         const float delta[3]={controllerPosition[0]-root.translation[0],
                               controllerPosition[1]-root.translation[1],
@@ -2042,11 +2032,7 @@ namespace
         float basisC[9], posC[3];
         if (!ControllerWorldPoseEx(left, basisC, posC, meshScale))
             return false;
-        const float sign = left ? -1.0f : 1.0f;
-        float mount[9], mounted[9];
-        BasisFromAngles(sign * g_config.gun_yaw_deg * 0.0174533f,
-                        g_config.gun_pitch_deg * 0.0174533f,
-                        sign * g_config.gun_roll_deg * 0.0174533f, mount);
+        float mounted[9];
         // Begin with the controller basis. Automatic authored-barrel alignment
         // establishes the zero-slider pose first; user trim is applied later.
         memcpy(mounted, basisC, sizeof(mounted));
@@ -2090,12 +2076,18 @@ namespace
                 }
             }
         }
-        // Apply local calibration after automatic alignment. Previously the
-        // alignment ran after this trim and cancelled pitch/yaw, leaving roll
-        // as the only effective slider. Identity trim preserves today's default.
-        float trimmed[9];
-        MultiplyBases(mounted, mount, trimmed);
-        memcpy(mounted, trimmed, sizeof(trimmed));
+        // Right-hand calibration is already part of VR_GetAimPose, so applying
+        // it here again would rotate only the mesh a second time. Preserve the
+        // existing mirrored presentation trim for the independent left hand.
+        if (left)
+        {
+            float mount[9], trimmed[9];
+            BasisFromAngles(-g_config.gun_yaw_deg * 0.0174533f,
+                             g_config.gun_pitch_deg * 0.0174533f,
+                            -g_config.gun_roll_deg * 0.0174533f, mount);
+            MultiplyBases(mounted, mount, trimmed);
+            memcpy(mounted, trimmed, sizeof(trimmed));
+        }
         out = BoneMatrix{};
         out.scale = 1.0f;
         memcpy(out.rotation, mounted, sizeof(mounted));
@@ -4654,12 +4646,9 @@ bool Game_ComputeAimStick(float& outRx, float& outRy)
         return blocked(5, "headset not tracked");
     lastAimBlock = 0;
 
-    // Controller forward: the RAW aim-pose -Z, deliberately NOT mount-trimmed.
-    // Bullets and the reticle share this fixed "laser" ray; the mount trim
-    // (gun_pitch/yaw/roll) rotates only the visible gun + flash, so the user
-    // can turn the mesh until its barrel lies on the cursor line. Coupling the
-    // ray to the trim made that tuning non-convergent (2026-07-19: "the
-    // rotation moves the cursor too").
+    // Controller forward from the shared, mount-calibrated aim pose. The
+    // visible weapon, muzzle, authored reticle and bullets all consume this
+    // same corrected controller-local ray.
     const float localDir[3] = {0.0f, 0.0f, -1.0f};
     float f3[3];
     RotateByQuat(q, localDir, f3);

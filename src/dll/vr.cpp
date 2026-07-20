@@ -3148,17 +3148,48 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3])
     outPos[0]=rp.x; outPos[1]=rp.y; outPos[2]=rp.z;
     outQuat[0]=rq.x; outQuat[1]=rq.y; outQuat[2]=rq.z; outQuat[3]=rq.w;
 
+    // Apply the user's controller-local mount calibration to the shared aim
+    // pose itself. Every right-hand consumer (visible weapon, muzzle, authored
+    // reticle and bullet steering) receives this same corrected orientation.
+    // The axis/order mapping is equivalent to game.cpp's former local
+    // BasisFromAngles(yaw,pitch,roll): OpenXR +Y yaw, +X pitch, -Z roll.
+    auto finishAimPose = [&]() {
+        auto multiply = [](const XrQuaternionf& a, const XrQuaternionf& b) {
+            return XrQuaternionf{
+                a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+                a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+                a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+                a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z};
+        };
+        constexpr float kDegToRad = 0.01745329252f;
+        const float yaw = g_config.gun_yaw_deg * kDegToRad;
+        const float pitch = g_config.gun_pitch_deg * kDegToRad;
+        const float roll = g_config.gun_roll_deg * kDegToRad;
+        const XrQuaternionf qYaw{0.0f, sinf(yaw*0.5f), 0.0f, cosf(yaw*0.5f)};
+        const XrQuaternionf qPitch{sinf(pitch*0.5f), 0.0f, 0.0f, cosf(pitch*0.5f)};
+        const XrQuaternionf qRoll{0.0f, 0.0f, sinf(-roll*0.5f), cosf(roll*0.5f)};
+        const XrQuaternionf base{outQuat[0],outQuat[1],outQuat[2],outQuat[3]};
+        XrQuaternionf corrected = multiply(base, multiply(multiply(qYaw,qPitch),qRoll));
+        const float length = sqrtf(corrected.x*corrected.x + corrected.y*corrected.y +
+                                   corrected.z*corrected.z + corrected.w*corrected.w);
+        if (!std::isfinite(length) || length < 1e-5f)
+            return false;
+        outQuat[0]=corrected.x/length; outQuat[1]=corrected.y/length;
+        outQuat[2]=corrected.z/length; outQuat[3]=corrected.w/length;
+        return true;
+    };
+
     (void)gripL;
     // Engagement is decided once per frame in UpdateTwoHandLatch (toggle/hold +
     // barrel-zone). Here we only APPLY it: when latched, aim along the current
     // right->left hand line.
     if (!g_config.two_handed_aim || !okL || !g_twoHandLatched.load())
-    { g_twoHandActive.store(false); return true; }
+    { g_twoHandActive.store(false); return finishAimPose(); }
 
     const XrVector3f rup  = Rotate(rq, {0,1,0});
     XrVector3f v{lp.x-rp.x, lp.y-rp.y, lp.z-rp.z};
     const float len = sqrtf(v.x*v.x+v.y*v.y+v.z*v.z);
-    if (len < 1e-4f) { g_twoHandActive.store(false); return true; }
+    if (len < 1e-4f) { g_twoHandActive.store(false); return finishAimPose(); }
 
     XrVector3f af{v.x/len, v.y/len, v.z/len};
 
@@ -3179,7 +3210,7 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3])
             LOG("M3: rejected extreme two-hand aim (ray agreement %.2f); using right controller", agreement);
             lastRejectLogMs = now;
         }
-        return true;
+        return finishAimPose();
     }
 
     // Orthonormal basis: X=right, Y=up, Z=-forward, roll from the right hand up.
@@ -3187,7 +3218,7 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3])
         return XrVector3f{a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x}; };
     XrVector3f xa=cross(af,rup);
     float xl=sqrtf(xa.x*xa.x+xa.y*xa.y+xa.z*xa.z);
-    if (xl<1e-4f) { g_twoHandActive.store(false); return true; }
+    if (xl<1e-4f) { g_twoHandActive.store(false); return finishAimPose(); }
     xa={xa.x/xl,xa.y/xl,xa.z/xl};
     const XrVector3f ya=cross(xa,af);          // up
     const XrVector3f za{-af.x,-af.y,-af.z};     // -forward
@@ -3203,11 +3234,11 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3])
     else if (m11>m22){ float s=sqrtf(1.0f+m11-m00-m22)*2; qw=(m02-m20)/s; qx=(m01+m10)/s; qy=0.25f*s; qz=(m12+m21)/s; }
     else { float s=sqrtf(1.0f+m22-m00-m11)*2; qw=(m10-m01)/s; qx=(m02+m20)/s; qy=(m12+m21)/s; qz=0.25f*s; }
     const float ql=sqrtf(qx*qx+qy*qy+qz*qz+qw*qw);
-    if (ql<1e-5f) { g_twoHandActive.store(false); return true; }
+    if (ql<1e-5f) { g_twoHandActive.store(false); return finishAimPose(); }
     outQuat[0]=qx/ql; outQuat[1]=qy/ql; outQuat[2]=qz/ql; outQuat[3]=qw/ql;
     const bool wasActive=g_twoHandActive.exchange(true);
     if (!wasActive) LOG("M3: two-handed aim engaged (left grip held, hand on barrel)");
-    return true;
+    return finishAimPose();
 }
 
 bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3])
