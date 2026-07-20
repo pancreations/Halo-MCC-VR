@@ -68,6 +68,18 @@ It rebuilds Release, verifies the packaged DLL and launcher byte-for-byte, and c
 whole folder, read `ALPHA-README.txt`, and run `install.bat`. The test PC does not need the
 source tree, CMake, Visual Studio, or a Visual C++ redistributable.
 
+## Manual install (no scripts)
+
+You do not have to run `install.bat` or `uninstall.bat`.
+
+1. In Steam, open MCC's **Manage > Browse local files** folder.
+2. Create a folder named exactly `halo3xr` inside the main **Halo The Master Chief Collection** folder.
+3. Copy only `halo3xr.dll` and `halo3xr_launcher.exe` from the unzipped package into that new `halo3xr` folder.
+4. Start Steam and your OpenXR headset runtime, then run `halo3xr_launcher.exe`.
+5. Optionally right-click the launcher and use **Send to > Desktop (create shortcut)**.
+
+The final layout must be `Halo The Master Chief Collection\halo3xr\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder. To uninstall manually, close MCC and delete only the dedicated `halo3xr` folder you created. The mod does not patch game files.
+
 ## Required MCC settings
 
 Set these in MCC before playing in VR. The mod does not change them for you.

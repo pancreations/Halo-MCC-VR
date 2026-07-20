@@ -47,8 +47,8 @@ the culling out past what the headset shows and the popping goes away.
 Leaving V-Sync on or the frame rate limit at 60 will cap the headset at that
 rate and feel bad regardless of how fast your PC is.
 
-INSTALL
--------
+AUTOMATIC INSTALL
+-----------------
 1. Unzip the entire HaloMCCVR-alpha-0.1 folder. Do not run files from inside the
    ZIP.
 2. Close MCC if it is running, then double-click install.bat.
@@ -61,6 +61,28 @@ INSTALL
 Installing over an older copy of the mod is fine: run install.bat again and it
 updates the mod folder in place, keeping the settings you tuned with F1. Game
 files are never modified.
+
+MANUAL INSTALL (NO SCRIPTS)
+---------------------------
+You do not have to run install.bat or uninstall.bat.
+
+1. In Steam, open MCC's Manage > Browse local files folder.
+2. Inside the main "Halo The Master Chief Collection" folder, create a folder
+   named exactly "halo3xr".
+3. From this unzipped package, copy only halo3xr.dll and
+   halo3xr_launcher.exe into that new halo3xr folder.
+4. Start Steam and your OpenXR headset runtime, then double-click
+   halo3xr_launcher.exe.
+5. Optional: right-click halo3xr_launcher.exe and choose
+   Send to > Desktop (create shortcut).
+
+The final path must be:
+
+  Halo The Master Chief Collection\halo3xr\halo3xr_launcher.exe
+
+Do not place the files loose in the main MCC folder. To uninstall manually,
+close MCC and delete only the dedicated halo3xr folder you created. The mod
+does not patch game files.
 
 PICTURE QUALITY
 ---------------
@@ -102,6 +124,9 @@ Run uninstall.bat from the installed game's "halo3xr" folder. It removes only
 known mod-owned files and its desktop shortcut. It validates that the target is
 literally a "halo3xr" folder beneath a real MCC install, never recursively
 deletes a directory, and leaves unknown files untouched.
+
+For a no-script uninstall, close MCC and manually delete only the dedicated
+"halo3xr" folder. Steam game files elsewhere are not modified by the mod.
 
 SAFETY WARNING: uninstall.bat from packages exported before the 2026-07-20
 safety fix must not be used. If an old package was extracted directly into the
