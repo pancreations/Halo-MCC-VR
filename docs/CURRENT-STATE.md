@@ -28,12 +28,14 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
   User result: the unwanted firing shake is fixed.
-- Pose-smoothing/gun-calibration headset candidate: `a229dfb` on
-  `fix/pose-smoothing-and-gun-calibration`. Deployed DLL build 2026-07-20
-  05:26 AM, SHA-256
-  `6A1DD74D52DC932D3AEE0D97D9C51661C8239485C86F7F53DAFD9689E77DF516`.
-  Headset validation is pending; do not promote this over `56dad79` until the
-  timing, smoothing, all three trim axes, and Quest vertical-aim guard pass.
+- Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
+  crosshair-smoothing slider and all three local gun-trim axes in the headset,
+  but its HMD path caused nausea and 0% did not remove the perceived delay.
+  Comfort correction `8d81f61` samples the next predicted display pose, makes
+  raw 0% the default, caps opt-in smoothing at 10%, and adds a Raw button.
+  Deployed DLL build 2026-07-20 05:41 AM, SHA-256
+  `939DC5F9E86F5FCED1244BBB2AA584B0F277C6815AD855494FA6DEBB2413820D`.
+  HMD comfort validation is pending; do not promote it over `56dad79` yet.
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
@@ -82,10 +84,12 @@ The active path is deliberately small:
    are bypassed so the HMD view remains owned by OpenXR. With head tracking off,
    Halo's original function runs unchanged. Firing-recoil suppression is
    headset-confirmed in build `56dad79`.
-10. Candidate `a229dfb` samples and filters the HMD exactly once per predicted
-    OpenXR frame. Headset micro-smoothing defaults to 5% and is capped at 25%;
-    the independent crosshair-only filter uses the existing aim-stabilization
-    setting. Runtime logs report HMD samples/sec and camera transforms/sec.
+10. Candidate `8d81f61` samples and filters the HMD exactly once per predicted
+    OpenXR frame. Because Present occurs after Halo rasterizes, it locates the
+    next display-period pose for the image Halo is about to render. Headset
+    smoothing is raw by default and capped at 10%; the independent confirmed
+    crosshair-only filter uses the existing aim-stabilization setting. Runtime
+    logs report HMD samples/sec and camera transforms/sec.
     Weapon automatic alignment now establishes the zero-trim pose before local
     pitch/yaw/roll calibration, so the default is preserved while all axes work.
     Extreme latched two-hand lines fall back to the right-controller ray instead
@@ -124,6 +128,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 | Hook only halo3+0x2EDE38 | No crosshair change in normal gameplay | Normal play short-circuits before the class check; use the validated c923842 path |
 | OpenXR Toolkit FSR with the current stereo-array path | VR View showed tiled/overlapping stereo regions rather than an intact lower-resolution eye | Do not bundle or depend on Toolkit FSR; scale Halo's internal raster and keep the OpenXR projection full-sized |
 | Broad runtime/config cleanup at 42a1276 | Built and launched, then fatal error at the first level transition before weapon/palette logging | Never deploy 42a1276; clean one independently verified path per headset build |
+| Filter the current-display HMD pose in Present (`a229dfb`) | Crosshair smoothing and gun axes passed, but head motion felt delayed/nauseating and 0% could not remove the stale-frame feel | Present is after Halo rasterization; sample the next predicted display pose for the upcoming game render |
 
 ## Known limitations
 
@@ -142,7 +147,10 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - The earlier 0x2EDE38 hook alone did nothing because normal gameplay short-circuits before Halo's class-2 check. Commit c923842 validates and removes only that short-circuit, then uses the existing class-gated predicate. Headset testing confirmed the result across multiple weapons: native crosshairs are gone, the VR reticle and remaining HUD stay visible, and the prior black-screen failure is absent.
 - The attempted scripting-class classifier inside the element-submit hook at halo3+0x2EDF24 caused a black headset view when stereo entered a level (2026-07-19 16:45 build). It was fully removed; do not restore its runtime tag-table dereferences.
 - HUD performance regression resolved: remove the status/toast render path, keep HUD writes out of CamCopyHook, apply only on slider changes, and validate the three safe-frame pairs once per second. The user confirmed normal performance returned with the 0.38 HUD scale and remembered-id crosshair hider active (2026-07-19 15:39 build).
-- Projectile direction is controller-aligned, but Halo still owns the actual fire origin; do not claim a muzzle-origin hook exists.
+- Projectile direction is controller-aligned, but Halo still owns the actual
+  fire origin. The user headset-confirmed the symptom on 2026-07-20: bullets
+  appear to spawn from the wrong place but land perfectly at the VR crosshair.
+  Do not claim a muzzle-origin hook exists.
 - Dual wield is no longer awaiting its first headset result. Commit `c2e6a27`
   is headset-confirmed nearly perfect for the tested pairing and is the current
   best checkpoint. Broader per-weapon dual-wield coverage remains pending; do
