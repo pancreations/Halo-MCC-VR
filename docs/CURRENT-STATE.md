@@ -10,6 +10,10 @@ Authoritative as of 2026-07-19. If another note conflicts with this file, this f
 - Failed broad runtime-cleanup commit: 42a1276 (preserved for diagnosis; never deploy)
 - Pre-recovery master: ad61f8d
 - Lean HUD scaling and reticle-hider checkpoint: 65113ab
+- Runtime-FOV HUD aspect checkpoint: 1b53139
+- Failed runtime reticle-classifier experiment: f0d5a88; narrowly reverted at 7fdf019
+- Headset-confirmed native CHUD crosshair-class fix: c923842; confirmation notes at 8aa45d7
+- Current resolution-preset checkpoint: 1fc56c8 on feature/resolution-scale
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
@@ -21,12 +25,12 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
 - First-person arm IK bends the right and left arms from stable shoulder anchors.
 - The shotgun support arm is free and follows the left controller. The user confirmed this after the native weapon-IK bypass.
 - The assault rifle and pistol were the known-good comparison behavior before the shotgun fix.
-- The game's native HUD renders in both eyes. The centered game reticle can be hidden by its observed HUD element id.
-- Native HUD scaling at 0.38, centered-reticle hiding, and normal pre-regression GPU performance are headset-confirmed.
+- The game's native HUD renders in both eyes. The class-gated CHUD fix hides native weapon crosshairs across the tested weapons while preserving the VR reticle and the rest of the HUD.
+- Native HUD scaling at 0.38, CHUD scripting-class-2 crosshair hiding, and normal pre-regression GPU performance are headset-confirmed.
 - Runtime-FOV HUD aspect correction is headset-confirmed on both Quest 3 and PSVR2 with OpenXR Toolkit disabled. It substantially improves the layout; a mild overall squeeze remains and is accepted for now.
 - The left support-hand wrist-to-palm correction is headset-confirmed. `left_hand_forward_m` defaults to 0.12 m and drives both the rendered left-hand IK target and the two-handed aiming point; the F1 slider tunes them together.
 - Halo motion blur is off by default because its previous-camera state creates stereo echo trails.
-- deploy.bat auto prevents stale-DLL testing by refusing to deploy while MCC is open and comparing the built/deployed files byte-for-byte.
+- deploy.bat auto prevents stale-binary testing by refusing to deploy while MCC is open and comparing both the DLL and launcher byte-for-byte with the fresh Release outputs.
 
 ## Production implementation
 
@@ -37,7 +41,7 @@ The active path is deliberately small:
 3. The interpolation and visible-palette hooks preserve the authored skeleton, solve both arms once per stereo pair, and provide the render palette.
 4. The marker/muzzle path receives the same controller transform as the visible weapon.
 5. Halo's normal input/aim path steers projectile direction through the VR reticle point.
-6. The CHUD element-submit hook hides only the configured centered reticle.
+6. A signature-located chud_draw_widget patch removes only the normal-playback short-circuit around Halo's own scripting-class check. The hooked visibility predicate hides the widget only after Halo identifies it as class 2 (crosshair), preserving the VR reticle and all other HUD classes without runtime tag-table dereferences.
 7. At startup, a unique signature changes the stock first-person weapon-IK decision from 74 05 to EB 18. This selects Halo's own no-weapon-IK branch and prevents shotgun-specific authored pump grip IK from overriding the left controller arm.
 
 The working runtime still contains dormant diagnostic and fallback code inherited from 330a568. Its defaults are the headset-proven behavior. Do not enable, remove, or consolidate those paths in bulk: commit 42a1276 performed a broad cleanup, built successfully, then produced a fatal error at the first level transition. Remove only one independently understood path per branch and headset test.
@@ -68,6 +72,10 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 | Synthetic shotgun palette fallback | Did not affect the stuck support hand | Native weapon IK was the overriding consumer |
 | Unverified manual deployment | Re-tested a stale DLL across sessions | Use deploy.bat auto and compare timestamps/hashes |
 | Right-eye-first/trace/census modes | Useful once, no production behavior | Recreate temporary probes on a disposable branch only |
+| Runtime tag-table classifier in the CHUD submit hook (f0d5a88) | OpenXR initialized and submitted frames, then the headset went black when stereo entered the level | Keep 7fdf019's narrow rollback; never dereference the runtime tag table from this hot hook |
+| Treat 0x62C, 0xF70, or 0x1A90 as a portable crosshair element id | One chosen weapon could lose its cursor while other weapons retained theirs; the F1 checkbox could also hide a weapon HUD icon | r8w is a runtime chud_definition tag index, not a universal reticle id; use Halo's validated class-2 gate |
+| Hook only halo3+0x2EDE38 | No crosshair change in normal gameplay | Normal play short-circuits before the class check; use the validated c923842 path |
+| OpenXR Toolkit FSR with the current stereo-array path | VR View showed tiled/overlapping stereo regions rather than an intact lower-resolution eye | Do not bundle or depend on Toolkit FSR; scale Halo's internal raster and keep the OpenXR projection full-sized |
 | Broad runtime/config cleanup at 42a1276 | Built and launched, then fatal error at the first level transition before weapon/palette logging | Never deploy 42a1276; clean one independently verified path per headset build |
 
 ## Known limitations
@@ -80,6 +88,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - Resolution scaling is headset-confirmed at the 0.67 Low setting with Toolkit scaling disabled: the complete eye remains intact and fills the unchanged OpenXR projection. F1 now exposes five restart-applied presets: Potato 50%, Low 67%, Medium 80%, High 100%, and Ultra 110%. The launcher scales Halo's 2912x2100 internal raster evenly; the tiers other than Low still need headset coverage.
 - Built-in FSR is intentionally out of scope. The user prefers the simpler resolution scale and can use external tools separately; do not bundle FSR into this test.
+- OpenXR Toolkit FSR produced a tiled/overlapping VR View in the observed configuration. The exact third-party incompatibility was not isolated; the supported mod path is the internal resolution preset with a full-size runtime swapchain/imageRect.
 - H3EK/ManagedDonkey evidence replaces the runtime-ID theory: all native reticle collections are scripting class 2, while 0x62C / 0xF70 / 0x1A90 are runtime chud_definition tag indices and cannot be universal defaults.
 - The earlier 0x2EDE38 hook alone did nothing because normal gameplay short-circuits before Halo's class-2 check. Commit c923842 validates and removes only that short-circuit, then uses the existing class-gated predicate. Headset testing confirmed the result across multiple weapons: native crosshairs are gone, the VR reticle and remaining HUD stay visible, and the prior black-screen failure is absent.
 - The attempted scripting-class classifier inside the element-submit hook at halo3+0x2EDF24 caused a black headset view when stereo entered a level (2026-07-19 16:45 build). It was fully removed; do not restore its runtime tag-table dereferences.
@@ -93,10 +102,30 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - Left support-hand visual alignment and two-handed aiming remained aligned with the shared 0.12 m forward correction. User result: "fantastic it worked."
 - Continue from the tip of `fix/left-hand-wrist-offset`; do not reintroduce the HUD toast/status path or per-camera-copy HUD verification.
 
+## HUD, crosshair, and resolution checkpoint (2026-07-19)
+
+- HUD aspect: commit 1b53139 derives an anisotropic safe-frame correction from the runtime eye FOV instead of assuming the PSVR2-derived 2912x2100 aspect. Quest 3 and PSVR2 testing with OpenXR Toolkit disabled showed a substantial improvement; a mild squeeze remains accepted.
+- Unsafe reticle attempt: f0d5a88 classified widgets by dereferencing runtime tag-table data in the submit hook and caused a black headset view on level entry. 7fdf019 reverted only that classifier and preserved the working HUD-aspect change. Deployed rollback DLL SHA-256: 1F7CB7822D51521C62A24969FE463B05C719A1AE4515A02A49011A42CF621488.
+- Picker evidence: f462f17 restored the safe F1 observer, and a06d48c briefly defaulted the observed 0x62C value. Further observations 0xF70 and 0x1A90 proved these values varied by loaded chud_definition and were not crosshair IDs. The picker/default approach is retired.
+- Production crosshair fix: H3EK's 65 ui/chud definitions and ManagedDonkey/disassembly evidence identified scripting class 2 as the stable native-crosshair semantic. Commit c923842 uses that engine gate; the user confirmed multiple weapons had no native crosshair while the VR reticle and HUD remained intact. Test DLL SHA-256: BC408423BADB187C83AAB44A16F926D77CF91BB4C7C00464724FC3B9F5EB1F60.
+- Resolution architecture: d3af87d added a restart-applied internal render scale. Halo's 2912x2100 raster is scaled evenly and rounded to even dimensions, while the OpenXR stereo-array swapchain and submitted imageRect remain at the runtime-recommended full size. This preserves the complete image and lets the existing normalized shader blit upscale it.
+- Preset checkpoint: 1fc56c8 exposes Potato 50% (1456x1050), Low 67% (1952x1408), Medium 80% (2330x1680), High 100% (2912x2100), and Ultra 110% (3204x2310). Arbitrary/legacy values normalize to the nearest tier. F1 states that a full game restart/relaunch is required. Low is headset-confirmed; the other four tiers remain unverified.
+- Deployed 1fc56c8 hashes: DLL FDDF3364462B187BE17D4234541965631CA4BC02C93A27BE2596C76D678EDDD5; launcher D3317325C7158B6D897A58ACD3BF8CCF30A30D9BFDF7D9EB4B37A4B3E40FA7C4. Both installed files byte-matched the Release outputs.
+- Product decision: no FOV slider and no built-in FSR. Resolution presets are the supported performance control; third-party upscalers remain external and unsupported.
+
+## Alpha distribution (2026-07-19)
+
+- Alpha package exported 2026-07-19 18:10 to `dist\Halo3VR-alpha.zip` from commit `1fc56c8` (dirty tree). DLL SHA-256 `20B3CB0C...DA2D04`, launcher SHA-256 `F7B50B3F...EBCC7F` (full hashes in the package's BUILD-INFO.txt).
+- `export-alpha.bat` is the required distribution workflow. It selects the exact CMake recorded in the configured build tree, removes only the two expected Release outputs, rebuilds them, assembles `dist\Halo3VR-alpha`, byte-compares both packaged binaries to the fresh outputs, writes build identity/SHA-256 values, and creates `dist\Halo3VR-alpha.zip`. A failed or stale build must not produce a testable package.
+- The dist files were audited for personal information before sharing: no user paths, names, or email in any file; the binaries carry no PDB/debug record and empty version resources; the ZIP byte-matches the exported folder.
+- First separate-machine clean install and launch passed on an RTX 4060 laptop GPU. A perceived 60 FPS cap was attributed to MCC's own V-Sync/framerate limit on the 60Hz laptop panel (the tester had not checked the in-game fps lock); the mod adds no cap and passes the game's sync interval through unchanged.
+- Decision: the mod must NOT auto-force vsync off or override MCC video settings. Testers set V-Sync/framerate limit themselves; point future "capped at 60" reports to MCC Settings → Video.
+- Still pending: reinstall/update behavior, uninstall, non-default Steam-library discovery, and broader external hardware/runtime coverage.
+
 ## Required test/deploy sequence
 
     git status --short
     cmake --build build --config Release
     .\deploy.bat auto
 
-Then verify the DLL build time/hash, launch without anti-cheat, and test only the behavior named for that build. Record the result before the next change.
+Then verify both DLL and launcher build times/hashes, launch without anti-cheat, and test only the behavior named for that build. Record the result before the next change.

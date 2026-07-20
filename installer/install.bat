@@ -1,15 +1,17 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Halo 3 VR mod - installer
+title Halo 3 VR alpha - installer
 
 echo ==============================================
-echo   Halo 3 VR mod  (Halo 3 + ODST, MCC on Steam)
-echo   Installer
+echo   Halo 3 VR - ALPHA TEST BUILD
+echo   Installer for Halo 3 in MCC on Steam
 echo ==============================================
 echo.
 echo This copies the mod into a "halo3xr" folder inside the game's install
 echo folder and puts a "Halo 3 VR" shortcut on your desktop.
 echo No game files are modified.
+echo This is an early test build. See ALPHA-README.txt for tested features,
+echo requirements, known limitations, and the logs to send after a failure.
 echo.
 
 rem --- sanity: are the mod files next to this script? ---
@@ -97,8 +99,9 @@ echo.
 echo   Notes:
 echo    - Only that shortcut loads the mod (with anti-cheat off).
 echo      Launching from Steam gives you the normal, unmodded game.
-echo    - Online matchmaking does not work while modded. Campaign,
-echo      custom games and Forge do.
+echo    - Test Halo 3 campaign first. ODST, online play, custom games,
+echo      Forge, and other modes are not yet validated for this alpha.
+echo    - Never use the mod in anti-cheat-enabled matchmaking.
 echo    - To remove the mod completely, run uninstall.bat.
 echo.
 pause

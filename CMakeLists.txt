@@ -81,4 +81,8 @@ target_link_libraries(camscan PRIVATE psapi)
 # (installed via:  cmake --install build --config Release --prefix dist --component dist
 #  so the dependencies' own install rules don't pollute the folder)
 install(TARGETS halo3xr halo3xr_launcher RUNTIME DESTINATION . COMPONENT dist)
-install(FILES installer/install.bat installer/uninstall.bat DESTINATION . COMPONENT dist)
+install(FILES
+    installer/install.bat
+    installer/uninstall.bat
+    installer/ALPHA-README.txt
+    DESTINATION . COMPONENT dist)

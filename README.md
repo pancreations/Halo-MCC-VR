@@ -33,6 +33,17 @@ For the development machine, close MCC and run:
 
 The deploy script stops on build failure and byte-compares the built and installed DLL.
 
+## Export an alpha test build
+
+To make a clean package for another PC, run:
+
+    .\export-alpha.bat
+
+It rebuilds Release, verifies the packaged DLL and launcher byte-for-byte, and creates both
+`dist\Halo3VR-alpha\` and `dist\Halo3VR-alpha.zip`. Copy the ZIP to the test PC, unzip the
+whole folder, read `ALPHA-README.txt`, and run `install.bat`. The test PC does not need the
+source tree, CMake, Visual Studio, or a Visual C++ redistributable.
+
 ## Requirements and safety
 
 - Steam copy of MCC and an OpenXR headset/runtime.
