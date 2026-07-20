@@ -97,6 +97,24 @@ The user confirmed that this frees the shotgun left arm. The removed synthetic p
 - Halo still owns projectile origin. There is no verified fire-origin hook.
 - The visible weapon mount trim must not rotate the reticle/projectile ray; otherwise calibration cannot converge.
 
+## Native pause state
+
+- H3EK/HaloScript evidence exposes an external boolean named `game_paused`, but
+  live MCC pause/unpause testing proved that record remains zero. It is a
+  developer override, not the native MCC pause-menu state.
+- Four read-only module snapshots (paused, unpaused, paused, unpaused) reduced
+  the state search to repeated candidates. A 2 ms timing trace then showed
+  `halo3.dll+0xA3CA9A` changing before MCC's generic suspension flags on both
+  entry and exit.
+- Production code does not retain that RVA. A unique 45-byte owner signature at
+  `halo3.dll+0xB682` resolves the final RIP-relative write target and requires a
+  boolean initial value. Missing, ambiguous, out-of-module, or non-boolean
+  results disable authority and retain the controller-edge fallback.
+- When the native flag is available, it owns the head-locked 2D/stereo 3D
+  transition and the camera-heartbeat restart heuristic is disabled. This is
+  intended to fix Restart Level clearing Halo's pause state without a matching
+  controller edge; headset confirmation is still required.
+
 ## Forbidden and fragile boundaries
 
 - Never hook halo3+0x120DF8. A pass-through MinHook detour crashed on level load.

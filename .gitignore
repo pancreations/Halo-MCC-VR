@@ -26,6 +26,7 @@ cmake_install.cmake
 *.log
 local/
 camscan_*.bin
+pause_scan/
 recovery-*/
 tools/__pycache__/
 tools/*.CT

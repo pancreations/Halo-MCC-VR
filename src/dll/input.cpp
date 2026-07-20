@@ -324,7 +324,7 @@ void Input_RequestPauseToggle()
     if (!authoritative)
         VR_RequestPausePresentation(paused);
     LOG("pause fallback: injecting Start, presentation control=%s%s",
-        authoritative ? "engine game_paused" : "edge fallback, target=",
+        authoritative ? "native engine flag" : "edge fallback, target=",
         authoritative ? "" : (paused ? "head-locked 2D" : "stereo 3D"));
 }
 
