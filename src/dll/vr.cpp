@@ -18,8 +18,10 @@
 #include "game.h"
 #include "d3d11_hook.h"
 #include "d3d_state.h"
+#include "title_adapter.h"
 #include "../common/log.h"
 #include "../common/config.h"
+#include "../common/input_logic.h"
 
 // M0 "virtual cinema": every frame the game presents, we copy its backbuffer
 // into an OpenXR swapchain and submit it as a world-locked quad layer (a flat
@@ -51,11 +53,14 @@ namespace
     XrSpace g_rightAimSpace = XR_NULL_HANDLE;
     XrAction g_leftAimAction = XR_NULL_HANDLE;
     XrSpace g_leftAimSpace = XR_NULL_HANDLE;
+    XrAction g_hapticAction = XR_NULL_HANDLE;
     XrPath g_leftHandPath = XR_NULL_PATH;
     XrPath g_rightHandPath = XR_NULL_PATH;
     XrEnvironmentBlendMode g_blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     bool g_sessionRunning = false;
     XrSessionState g_sessionState = XR_SESSION_STATE_UNKNOWN;
+    std::atomic<float> g_requestedHaptics{0.0f};
+    void StopControllerHaptics();
 
     // M2 stereo: per-eye recommended render size and per-eye pose/FOV.
     std::vector<XrViewConfigurationView> g_viewConfigs;
@@ -805,6 +810,8 @@ float4 ps_pass(VSOut i) : SV_Target
                 g_sessionState = sc.state;
                 strcpy_s(g_status.sessionState, SessionStateName(sc.state));
                 LOG("XR session state -> %s", SessionStateName(sc.state));
+                if (sc.state != XR_SESSION_STATE_FOCUSED)
+                    StopControllerHaptics();
                 if (sc.state == XR_SESSION_STATE_READY)
                 {
                     XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
@@ -817,17 +824,20 @@ float4 ps_pass(VSOut i) : SV_Target
                 }
                 else if (sc.state == XR_SESSION_STATE_STOPPING)
                 {
+                    StopControllerHaptics();
                     xrEndSession(g_session);
                     g_sessionRunning = false;
                 }
                 else if (sc.state == XR_SESSION_STATE_EXITING || sc.state == XR_SESSION_STATE_LOSS_PENDING)
                 {
+                    StopControllerHaptics();
                     g_sessionRunning = false;
                     Fail("The VR runtime ended the session (headset off / SteamVR closed?)");
                 }
                 break;
             }
             case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
+                StopControllerHaptics();
                 g_sessionRunning = false;
                 Fail("The OpenXR runtime is shutting down");
                 break;
@@ -1115,6 +1125,19 @@ float4 ps_pass(VSOut i) : SV_Target
         makeAction(g_actClickR, XR_ACTION_TYPE_BOOLEAN_INPUT,  "click_r",    "Right Stick Click");
         makeAction(g_actMenu,   XR_ACTION_TYPE_BOOLEAN_INPUT,  "menu",       "Menu / Start");
 
+        XrPath hapticPaths[2] = {g_leftHandPath, g_rightHandPath};
+        XrActionCreateInfo hapticInfo{XR_TYPE_ACTION_CREATE_INFO};
+        hapticInfo.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
+        strcpy_s(hapticInfo.actionName, "game_haptics");
+        strcpy_s(hapticInfo.localizedActionName, "Game Haptics");
+        hapticInfo.countSubactionPaths = 2;
+        hapticInfo.subactionPaths = hapticPaths;
+        if (XR_FAILED(xrCreateAction(g_gameplayActions, &hapticInfo, &g_hapticAction)))
+        {
+            g_hapticAction = XR_NULL_HANDLE;
+            LOG("M3: portable haptic output unavailable; controller input remains active");
+        }
+
         // Per-profile suggested bindings. SteamVR remaps these onto PSVR2
         // Sense automatically (users can rebind in SteamVR controller
         // settings); the Touch/Index layouts are the closest templates.
@@ -1156,6 +1179,8 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_actClickL, "/user/hand/left/input/thumbstick/click"},
             {g_actClickR, "/user/hand/right/input/thumbstick/click"},
             {g_actMenu,   "/user/hand/left/input/menu/click"},
+            {g_hapticAction, "/user/hand/left/output/haptic"},
+            {g_hapticAction, "/user/hand/right/output/haptic"},
         };
         const Bind index[] = {
             {g_rightAimAction, "/user/hand/right/input/aim/pose"},
@@ -1172,6 +1197,8 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_actY,      "/user/hand/left/input/b/click"},
             {g_actClickL, "/user/hand/left/input/thumbstick/click"},
             {g_actClickR, "/user/hand/right/input/thumbstick/click"},
+            {g_hapticAction, "/user/hand/left/output/haptic"},
+            {g_hapticAction, "/user/hand/right/output/haptic"},
         };
         const Bind wmr[] = {
             {g_rightAimAction, "/user/hand/right/input/aim/pose"},
@@ -1185,6 +1212,8 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_actClickL, "/user/hand/left/input/thumbstick/click"},
             {g_actClickR, "/user/hand/right/input/thumbstick/click"},
             {g_actMenu,   "/user/hand/left/input/menu/click"},
+            {g_hapticAction, "/user/hand/left/output/haptic"},
+            {g_hapticAction, "/user/hand/right/output/haptic"},
         };
         const Bind vive[] = {
             {g_rightAimAction, "/user/hand/right/input/aim/pose"},
@@ -1198,12 +1227,16 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_actClickL, "/user/hand/left/input/trackpad/click"},
             {g_actClickR, "/user/hand/right/input/trackpad/click"},
             {g_actMenu,   "/user/hand/left/input/menu/click"},
+            {g_hapticAction, "/user/hand/left/output/haptic"},
+            {g_hapticAction, "/user/hand/right/output/haptic"},
         };
         const Bind simple[] = {
             {g_rightAimAction, "/user/hand/right/input/grip/pose"},
             {g_leftAimAction, "/user/hand/left/input/grip/pose"},
             {g_actTrigR,  "/user/hand/right/input/select/click"},
             {g_actMenu,   "/user/hand/left/input/menu/click"},
+            {g_hapticAction, "/user/hand/left/output/haptic"},
+            {g_hapticAction, "/user/hand/right/output/haptic"},
         };
         unsigned accepted = 0;
         accepted += suggest("/interaction_profiles/oculus/touch_controller", touch, _countof(touch));
@@ -1294,6 +1327,59 @@ float4 ps_pass(VSOut i) : SV_Target
         {
             g_twoHandLatched.store(gripHeld && inZone);
         }
+    }
+
+    void StopControllerHaptics()
+    {
+        if (g_session == XR_NULL_HANDLE || g_hapticAction == XR_NULL_HANDLE)
+            return;
+        XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+        info.action = g_hapticAction;
+        info.subactionPath = g_leftHandPath;
+        xrStopHapticFeedback(g_session, &info);
+        info.subactionPath = g_rightHandPath;
+        xrStopHapticFeedback(g_session, &info);
+    }
+
+    void ApplyControllerHaptics(bool trackingValid)
+    {
+        static bool active = false;
+        static uint64_t lastApplyMs = 0;
+        static RuntimeMode previousMode = RuntimeMode::Shell;
+        const RuntimeMode mode = TitleAdapter_GetRuntimeMode();
+        const bool modeAllows = mode == RuntimeMode::Gameplay ||
+            mode == RuntimeMode::Vehicle || mode == RuntimeMode::Turret;
+        float amplitude = std::clamp(g_requestedHaptics.load(std::memory_order_acquire), 0.0f, 1.0f);
+        amplitude *= std::clamp(g_config.haptic_intensity, 0.0f, 1.0f);
+        const bool mustStop = amplitude <= 0.0f || !trackingValid || !modeAllows ||
+            Menu_IsOpen() || g_sessionState != XR_SESSION_STATE_FOCUSED;
+        if (mustStop)
+        {
+            if (active || mode != previousMode)
+                StopControllerHaptics();
+            active = false;
+            previousMode = mode;
+            return;
+        }
+        previousMode = mode;
+
+        const uint64_t now = GetTickCount64();
+        if (active && now - lastApplyMs < 40)
+            return;
+        XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+        vibration.amplitude = amplitude;
+        vibration.duration = 50000000;
+        vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+        XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+        info.action = g_hapticAction;
+        info.subactionPath = g_leftHandPath;
+        xrApplyHapticFeedback(g_session, &info,
+            reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+        info.subactionPath = g_rightHandPath;
+        xrApplyHapticFeedback(g_session, &info,
+            reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+        active = true;
+        lastApplyMs = now;
     }
 
     void CaptureRightControllerPose(XrTime time)
@@ -1397,12 +1483,53 @@ float4 ps_pass(VSOut i) : SV_Target
         g_padState = pad;
         LeaveCriticalSection(&g_headCs);
         UpdateTwoHandLatch(valid, location.pose, leftValid, leftLocation.pose, pad.gripL);
+        ApplyControllerHaptics(valid && leftValid);
         static bool padLogged = false;
         if (pad.valid && !padLogged)
         {
             LOG("M3: controller inputs active (sticks/buttons feeding the virtual gamepad)");
             padLogged = true;
         }
+    }
+
+    void UpdateMenuPointer(bool headLocked)
+    {
+        static bool triggerPressed = false;
+        if (!g_rightAimPoseValid || (headLocked && !g_headPoseValid) ||
+            (!headLocked && !g_haveCenter))
+        {
+            triggerPressed = false;
+            Menu_ClearVrPointer();
+            return;
+        }
+
+        const XrPosef anchor = headLocked
+            ? g_headPose
+            : XrPosef{g_centerRot, g_centerPos};
+        const XrQuaternionf inverseAnchor{
+            -anchor.orientation.x, -anchor.orientation.y,
+            -anchor.orientation.z, anchor.orientation.w};
+        const XrVector3f relative{
+            g_rightAimPose.position.x - anchor.position.x,
+            g_rightAimPose.position.y - anchor.position.y,
+            g_rightAimPose.position.z - anchor.position.z};
+        const XrVector3f localOrigin = Rotate(inverseAnchor, relative);
+        const XrVector3f worldDirection =
+            Rotate(g_rightAimPose.orientation, {0.0f, 0.0f, -1.0f});
+        const XrVector3f localDirection = Rotate(inverseAnchor, worldDirection);
+        const float origin[3] = {localOrigin.x, localOrigin.y, localOrigin.z};
+        const float direction[3] = {localDirection.x, localDirection.y, localDirection.z};
+        const MenuPointerHit hit = IntersectMenuQuad(origin, direction,
+            1.2f, 1.1f, 1.1f * MENU_H / MENU_W, -0.08f);
+
+        if (!triggerPressed && g_padState.trigR >= 0.65f)
+            triggerPressed = true;
+        else if (triggerPressed && g_padState.trigR <= 0.35f)
+            triggerPressed = false;
+        const float scroll = std::fabs(g_padState.turnY) > 0.25f
+            ? g_padState.turnY * 0.12f
+            : 0.0f;
+        Menu_SetVrPointer(hit.hit, hit.u, hit.v, triggerPressed, scroll);
     }
 
     // Part 2 (render thread, first frame): now that we have the game's D3D
@@ -1776,6 +1903,9 @@ float4 ps_pass(VSOut i) : SV_Target
                 // In stereo it head-locks so it is always in front of you.
                 if (Menu_IsOpen())
                 {
+                    const bool menuHeadLocked =
+                        stereo || (g_screenFollow.load() && Game_IsHeadTracking());
+                    UpdateMenuPointer(menuHeadLocked);
                     if (ID3D11Texture2D* menuTex = Menu_Render())
                     {
                         uint32_t idx = 0;
@@ -1794,10 +1924,14 @@ float4 ps_pass(VSOut i) : SV_Target
                             menuQuad = MakeQuad(g_menuChain, MENU_W, MENU_H, 1.1f, 1.2f, -0.08f,
                                                 XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
                                                     XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT,
-                                                stereo || (g_screenFollow.load() && Game_IsHeadTracking()));
+                                                menuHeadLocked);
                             layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&menuQuad));
                         }
                     }
+                }
+                else
+                {
+                    Menu_ClearVrPointer();
                 }
                 backbuffer->Release();
             }
@@ -2157,6 +2291,12 @@ void VR_GetPadState(VrPadState& out)
     EnterCriticalSection(&g_headCs);
     out = g_padState;
     LeaveCriticalSection(&g_headCs);
+}
+
+void VR_SetGameHaptics(float amplitude)
+{
+    g_requestedHaptics.store(std::clamp(amplitude, 0.0f, 1.0f),
+        std::memory_order_release);
 }
 
 bool VR_GetRightControllerPose(float outQuat[4], float outPos[3])

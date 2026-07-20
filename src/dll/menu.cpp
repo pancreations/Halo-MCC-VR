@@ -1,12 +1,14 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <atomic>
+#include <cfloat>
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 #include "menu.h"
 #include "vr.h"
 #include "game.h"
+#include "title_adapter.h"
 #include "d3d_state.h"
 #include "../common/log.h"
 #include "../common/config.h"
@@ -68,7 +70,7 @@ namespace
         {
             switch (wp)
             {
-            case VK_F1: g_open = !g_open; LOG("menu %s", g_open ? "opened" : "closed"); return 0;
+            case VK_F1: Menu_Toggle(); return 0;
             case VK_F2: Game_ToggleHeadTracking(); return 0;
             case VK_F3: Game_Recenter(); return 0;
             case VK_F6: Game_TogglePositional(); return 0;
@@ -117,20 +119,41 @@ namespace
     {
         ImGui::SetNextWindowPos(ImVec2(16, 16), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(MENU_W - 32, MENU_H - 32), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Halo 3 VR — Settings (M0: virtual screen)", nullptr, ImGuiWindowFlags_NoCollapse);
+        ImGui::Begin("HaloMCCVR Settings", nullptr, ImGuiWindowFlags_NoCollapse);
 
+        bool changed = false;
+        if (ImGui::BeginTabBar("HaloMCCVRTabs"))
+        {
+        if (ImGui::BeginTabItem("Status"))
+        {
         VrStatus st{};
         VR_GetStatus(st);
         ImGui::Text("Runtime: %s", st.runtime);
         ImGui::Text("Session: %s   |   Game: %ux%u @ %.0f fps", st.sessionState, st.gameWidth,
                     st.gameHeight, st.fps);
+        const TitleDescriptor* title = TitleAdapter_GetActive();
+        ImGui::Text("Title: %s   |   Mode: %s",
+                    title ? title->displayName : "MCC shell",
+                    RuntimeModeName(TitleAdapter_GetRuntimeMode()));
+        if (ImGui::Button("Re-center screen"))
+            VR_RequestRecenter();
         ImGui::Separator();
         ImGui::Spacing();
+        ImGui::TextDisabled("L3+R3 or F1 closes this menu.");
+        ImGui::EndTabItem();
+        }
 
-        bool changed = false;
+        if (ImGui::BeginTabItem("Gameplay"))
+        {
         changed |= ImGui::SliderFloat("Screen width (m)", &g_config.screen_width_m, 1.0f, 10.0f, "%.1f");
         changed |= ImGui::SliderFloat("Screen distance (m)", &g_config.screen_distance_m, 0.5f, 10.0f, "%.1f");
+        changed |= ImGui::Checkbox("Auto-enter VR on level load", &g_config.auto_vr);
+        ImGui::TextDisabled("Turns head tracking + stereo on when a level starts and off in the menu.");
+        ImGui::EndTabItem();
+        }
 
+        if (ImGui::BeginTabItem("Controls"))
+        {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("VR turning (right controller stick)");
@@ -163,7 +186,21 @@ namespace
             g_config.dpad_hand = 1;
             changed = true;
         }
+        float hapticPercent = g_config.haptic_intensity * 100.0f;
+        if (ImGui::SliderFloat("Controller vibration", &hapticPercent,
+                               0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_None))
+        {
+            g_config.haptic_intensity = hapticPercent / 100.0f;
+            if (g_config.haptic_intensity <= 0.0f)
+                VR_SetGameHaptics(0.0f);
+            changed = true;
+        }
+        ImGui::TextDisabled("L3+R3 toggles this menu; the right trigger clicks the VR pointer.");
+        ImGui::EndTabItem();
+        }
 
+        if (ImGui::BeginTabItem("Aim & Weapons"))
+        {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Hand-held weapon");
@@ -179,24 +216,6 @@ namespace
         changed |= ImGui::Checkbox("Hide game reticle (use VR reticle only)", &g_config.kill_reticle);
         ImGui::TextDisabled("Hides every native CHUD crosshair class.\n"
                             "The motion-control VR reticle stays visible.");
-        changed |= ImGui::Checkbox("Bone probe (diagnostic)", &g_config.weapon_probe);
-        ImGui::TextDisabled("Pushes every composed skeleton (bipeds/NPCs + FP) 1m left.\n"
-                            "Bodies visibly shifting = their bones are writable (VRIK stage A2).");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text("HUD layout");
-        changed |= ImGui::SliderFloat("HUD size", &g_config.hud_size, 0.30f, 1.00f, "%.2f");
-        if (ImGui::SmallButton("Set VR preset (0.45)##sf"))
-        { g_config.hud_size = 0.45f; changed = true; }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Back to stock (0.87)##sf"))
-        { g_config.hud_size = 0.87f; changed = true; }
-        ImGui::TextDisabled("Fraction of the view the HUD lays out into. 0.87 = Halo stock.\n"
-                            "Lower pulls shields/radar/ammo toward the center of your eyes.\n"
-                            "Small nudges (0.84) are invisible - use the preset to SEE it work.");
-        ImGui::TextDisabled("The setting applies automatically after entering a level.");
-
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Aim crosshair (stereo)");
@@ -247,7 +266,11 @@ namespace
         }
         ImGui::TextDisabled("Put your left hand on the front of the gun, click/hold the LEFT GRIP.\n"
                             "Engages only when your hand is on the barrel line.");
+        ImGui::EndTabItem();
+        }
 
+        if (ImGui::BeginTabItem("Body & Room-scale"))
+        {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Body (VRIK)");
@@ -267,7 +290,20 @@ namespace
         }
         changed |= ImGui::Checkbox("Show body (VRIK stage A1)", &g_config.body_wip);
         ImGui::TextDisabled("Shows Chief's game-animated body via the engine's own director switches.");
+        ImGui::TextDisabled("Room-scale unit movement is gated until the player-biped boundary is headset-proven.");
+        ImGui::EndTabItem();
+        }
 
+        if (ImGui::BeginTabItem("Display & HUD"))
+        {
+        ImGui::Text("HUD layout");
+        changed |= ImGui::SliderFloat("HUD size", &g_config.hud_size, 0.30f, 1.00f, "%.2f");
+        if (ImGui::SmallButton("Set VR preset (0.45)##sf"))
+        { g_config.hud_size = 0.45f; changed = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Back to stock (0.87)##sf"))
+        { g_config.hud_size = 0.87f; changed = true; }
+        ImGui::TextDisabled("0.87 is Halo stock; lower values pull HUD elements toward both eyes.");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Picture");
@@ -301,12 +337,13 @@ namespace
         ImGui::TextDisabled("Off is the VR standard. In stereo the game's blur is fed the wrong\n"
                             "previous frame and smears bright edges into repeating echoes.");
 
-        ImGui::Spacing();
-        changed |= ImGui::Checkbox("Auto-enter VR on level load", &g_config.auto_vr);
-        ImGui::TextDisabled("Turns head tracking + stereo on when a level starts and off in the\n"
-                            "menu - no F2/F11. F2 still toggles by hand (and vetoes auto until reload).");
+        ImGui::EndTabItem();
+        }
 
-        ImGui::Spacing();
+        if (ImGui::BeginTabItem("Advanced/Diagnostics"))
+        {
+        changed |= ImGui::Checkbox("Bone probe (diagnostic)", &g_config.weapon_probe);
+        ImGui::TextDisabled("Pushes every composed skeleton 1m left to prove writable palette boundaries.");
         changed |= ImGui::Checkbox("Render right eye first (diagnostic)",
                                    &g_config.right_eye_first);
 
@@ -329,6 +366,10 @@ namespace
 
         ImGui::Spacing();
         ImGui::TextDisabled("Insert toggles hand aim. Sense sticks move/turn; grips = bumpers,\ntriggers = fire/grenade, stick-click = zoom/crouch, left menu = Start.");
+        ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+        }
 
         static bool dirty = false;
         if (changed)
@@ -338,10 +379,6 @@ namespace
             ConfigSave(); // save once the slider is let go, not every frame
             dirty = false;
         }
-
-        ImGui::Spacing();
-        if (ImGui::Button("Re-center screen"))
-            VR_RequestRecenter();
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -406,6 +443,42 @@ bool Menu_Init(HWND gameWindow, ID3D11Device* device, ID3D11DeviceContext* conte
 bool Menu_IsOpen()
 {
     return g_ready && g_open;
+}
+
+bool Menu_Toggle()
+{
+    if (!g_ready)
+        return false;
+    const bool open = !g_open.load(std::memory_order_acquire);
+    g_open.store(open, std::memory_order_release);
+    LOG("menu %s", open ? "opened" : "closed");
+    return open;
+}
+
+void Menu_SetVrPointer(bool hit, float u, float v, bool pressed, float scrollY)
+{
+    if (!g_ready)
+        return;
+    EnterCriticalSection(&g_cs);
+    ImGuiIO& io = ImGui::GetIO();
+    if (hit)
+        io.AddMousePosEvent(u * MENU_W, v * MENU_H);
+    else
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    static bool previousPressed = false;
+    if (pressed != previousPressed)
+    {
+        io.AddMouseButtonEvent(0, pressed);
+        previousPressed = pressed;
+    }
+    if (hit && scrollY != 0.0f)
+        io.AddMouseWheelEvent(0.0f, scrollY);
+    LeaveCriticalSection(&g_cs);
+}
+
+void Menu_ClearVrPointer()
+{
+    Menu_SetVrPointer(false, 0.0f, 0.0f, false, 0.0f);
 }
 
 ID3D11Texture2D* Menu_Render()

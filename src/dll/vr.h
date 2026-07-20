@@ -88,6 +88,9 @@ struct VrPadState
     bool clickL = false, clickR = false, menu = false;
 };
 void VR_GetPadState(VrPadState& out);
+// Receives Halo's blended XInput rumble level (0..1). The render thread maps
+// it to portable OpenXR feedback on both hands and owns all stop conditions.
+void VR_SetGameHaptics(float amplitude);
 
 // Rotation of one eye relative to the midpoint of both eyes, as a quaternion
 // (x,y,z,w) in OpenXR view-local axes (+X right, +Y up, -Z forward). Canted

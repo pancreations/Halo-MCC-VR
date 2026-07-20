@@ -6,8 +6,10 @@
 #include <MinHook.h>
 #include "game.h"
 #include "vr.h"
+#include "menu.h"
 #include "../common/log.h"
 #include "../common/config.h"
+#include "../common/input_logic.h"
 
 // M3 VR input. MCC reads gamepads through XInputGetState; hooking it lets the
 // mod present the Sense controllers as a gamepad the game already understands
@@ -21,6 +23,7 @@ namespace
 
     using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
     using XInputGetCapsFn = DWORD(WINAPI*)(DWORD, DWORD, XINPUT_CAPABILITIES*);
+    using XInputSetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_VIBRATION*);
     // 3 candidate DLLs x 2 entry points (XInputGetState by name, and the
     // undocumented XInputGetStateEx at ordinal 100 that some titles use).
     XInputGetStateFn g_origGetState[6] = {};
@@ -29,7 +32,9 @@ namespace
     // game NEVER reads input — so the connection check is hooked too and
     // reports a standard gamepad on slot 0 whenever the VR controllers live.
     XInputGetCapsFn g_origGetCaps[3] = {};
+    XInputSetStateFn g_origSetState[3] = {};
     std::atomic<bool> g_overrideLogged{false};
+    MenuChordDetector g_menuChord;
 
     // Map |v| in 0..1 to a raw stick value that clears MCC's inner deadzone,
     // so small corrections still produce movement.
@@ -50,13 +55,23 @@ namespace
         if (!pad.valid)
             return;
 
+        const MenuChordResult chord =
+            g_menuChord.Update(GetTickCount64(), pad.clickL, pad.clickR);
+        if (chord.toggled)
+            Menu_Toggle();
+        if (Menu_IsOpen())
+        {
+            state->Gamepad = {};
+            return;
+        }
+
         WORD btn = state->Gamepad.wButtons;
         if (pad.a) btn |= XINPUT_GAMEPAD_A;
         if (pad.b) btn |= XINPUT_GAMEPAD_B;
         if (pad.x) btn |= XINPUT_GAMEPAD_X;
         if (pad.y) btn |= XINPUT_GAMEPAD_Y;
-        if (pad.clickL) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
-        if (pad.clickR) btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
+        if (pad.clickL && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
+        if (pad.clickR && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         if (pad.menu) btn |= XINPUT_GAMEPAD_START;
         if (pad.gripL > 0.6f) btn |= XINPUT_GAMEPAD_LEFT_SHOULDER;
         if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
@@ -160,7 +175,15 @@ namespace
         VrPadState pad;
         VR_GetPadState(pad);
         if (!pad.valid)
+        {
+            if (Menu_IsOpen())
+            {
+                state->Gamepad = {};
+                static std::atomic<DWORD> menuSeq{1};
+                state->dwPacketNumber += menuSeq.fetch_add(1);
+            }
             return r;
+        }
         g_diagPadValid.fetch_add(1);
         // Keep the packet number monotonically rising so MCC notices changes.
         static std::atomic<DWORD> seq{1};
@@ -215,6 +238,24 @@ namespace
     DWORD(WINAPI* const g_capsHooks[3])(DWORD, DWORD, XINPUT_CAPABILITIES*) = {
         &GetCapsHook<0>, &GetCapsHook<1>, &GetCapsHook<2>};
 
+    DWORD ProcessSetState(DWORD result, DWORD user, XINPUT_VIBRATION* vibration)
+    {
+        if (user != 0 || !vibration)
+            return result;
+        VR_SetGameHaptics(BlendXInputMotors(
+            vibration->wLeftMotorSpeed, vibration->wRightMotorSpeed));
+        return ERROR_SUCCESS;
+    }
+
+    template <int Slot>
+    DWORD WINAPI SetStateHook(DWORD user, XINPUT_VIBRATION* vibration)
+    {
+        return ProcessSetState(g_origSetState[Slot](user, vibration), user, vibration);
+    }
+
+    DWORD(WINAPI* const g_setStateHooks[3])(DWORD, XINPUT_VIBRATION*) = {
+        &SetStateHook<0>, &SetStateHook<1>, &SetStateHook<2>};
+
     // Steam Input redirects MCC's calls at the IMPORT TABLE, so they jump to
     // Steam's handler without ever executing the DLL export we detour — the
     // reason controls kept working or dying depending on session timing. These
@@ -223,6 +264,7 @@ namespace
     // periodically so a later Steam patch can't take the slot back.
     XInputGetStateFn g_iatPrevGetState = nullptr;
     XInputGetCapsFn g_iatPrevGetCaps = nullptr;
+    XInputSetStateFn g_iatPrevSetState = nullptr;
 
     DWORD WINAPI IatGetStateShim(DWORD user, XINPUT_STATE* state)
     {
@@ -236,6 +278,13 @@ namespace
         const DWORD r = g_iatPrevGetCaps ? g_iatPrevGetCaps(user, flags, caps)
                                          : ERROR_DEVICE_NOT_CONNECTED;
         return ProcessGetCaps(r, user, caps);
+    }
+
+    DWORD WINAPI IatSetStateShim(DWORD user, XINPUT_VIBRATION* vibration)
+    {
+        const DWORD r = g_iatPrevSetState ? g_iatPrevSetState(user, vibration)
+                                          : ERROR_DEVICE_NOT_CONNECTED;
+        return ProcessSetState(r, user, vibration);
     }
 
     bool ClaimIatSlot(void** slot, void* shim, void** prevOut, const char* what)
@@ -288,6 +337,10 @@ int Input_ClaimXInputIat()
                     claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetStateShim),
                                            reinterpret_cast<void**>(&g_iatPrevGetState),
                                            "XInputGetState ordinal");
+                else if (ordinal == 3)
+                    claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatSetStateShim),
+                                           reinterpret_cast<void**>(&g_iatPrevSetState),
+                                           "XInputSetState ordinal");
                 else if (ordinal == 4)
                     claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetCapsShim),
                                            reinterpret_cast<void**>(&g_iatPrevGetCaps),
@@ -298,6 +351,9 @@ int Input_ClaimXInputIat()
             if (!strcmp(imp->Name, "XInputGetState"))
                 claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetStateShim),
                                        reinterpret_cast<void**>(&g_iatPrevGetState), "XInputGetState");
+            else if (!strcmp(imp->Name, "XInputSetState"))
+                claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatSetStateShim),
+                                       reinterpret_cast<void**>(&g_iatPrevSetState), "XInputSetState");
             else if (!strcmp(imp->Name, "XInputGetCapabilities"))
                 claims += ClaimIatSlot(slot, reinterpret_cast<void*>(&IatGetCapsShim),
                                        reinterpret_cast<void**>(&g_iatPrevGetCaps), "XInputGetCapabilities");
@@ -356,6 +412,21 @@ int Input_InstallXInputHook()
             else
             {
                 g_origGetCaps[i] = nullptr;
+            }
+        }
+        if (!g_origSetState[i])
+        {
+            void* setTarget = reinterpret_cast<void*>(GetProcAddress(mod, "XInputSetState"));
+            if (setTarget &&
+                MH_CreateHook(setTarget, reinterpret_cast<void*>(g_setStateHooks[i]),
+                              reinterpret_cast<void**>(&g_origSetState[i])) == MH_OK &&
+                MH_EnableHook(setTarget) == MH_OK)
+            {
+                LOG("M3: XInputSetState hooked in %ls", candidates[i]);
+            }
+            else
+            {
+                g_origSetState[i] = nullptr;
             }
         }
     }

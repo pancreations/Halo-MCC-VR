@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "config.h"
+#include "input_logic.h"
 #include "title_registry.h"
 
 namespace
@@ -70,6 +71,40 @@ int main()
     Check(g_config.haptic_intensity == 1.0f, "Haptic intensity is safely clamped");
     Check(g_config.aim_stabilization == 0.0f, "Aim stabilization is safely clamped");
     std::filesystem::remove_all(configDir);
+
+    MenuChordDetector chord;
+    MenuChordResult chordResult = chord.Update(1000, true, false);
+    Check(!chordResult.toggled, "One stick click does not toggle the menu");
+    chordResult = chord.Update(1249, true, true);
+    Check(chordResult.toggled && chordResult.consumeClicks,
+        "L3+R3 toggles inside the 250 ms window and consumes both clicks");
+    Check(!chord.Update(1300, true, true).toggled,
+        "A held chord toggles only once");
+    Check(chord.Update(1350, false, true).consumeClicks,
+        "Chord clicks stay consumed until both are released");
+    chord.Update(1400, false, false);
+    chord.Update(2000, true, false);
+    Check(!chord.Update(2251, true, true).toggled,
+        "A chord outside the 250 ms window does not toggle");
+    chord.Update(2300, false, false);
+    Check(chord.Update(2400, true, true).toggled,
+        "A simultaneous chord works after release");
+
+    const float rayOrigin[3] = { 0.0f, 0.0f, 0.0f };
+    const float rayForward[3] = { 0.0f, 0.0f, -1.0f };
+    MenuPointerHit hit = IntersectMenuQuad(rayOrigin, rayForward,
+        1.2f, 1.1f, 0.825f, -0.08f);
+    Check(hit.hit && hit.u == 0.5f, "Forward controller ray hits the menu center column");
+    const float rayAway[3] = { 0.0f, 0.0f, 1.0f };
+    Check(!IntersectMenuQuad(rayOrigin, rayAway, 1.2f, 1.1f, 0.825f, -0.08f).hit,
+        "Controller rays pointing away from the menu miss");
+    Check(BlendXInputMotors(0, 0) == 0.0f, "Zero XInput rumble stops haptics");
+    Check(BlendXInputMotors(65535, 65535) == 1.0f,
+        "Both full XInput motors produce full portable haptics");
+    const float lowOnly = BlendXInputMotors(65535, 0);
+    const float highOnly = BlendXInputMotors(0, 65535);
+    Check(lowOnly > highOnly && highOnly > 0.0f,
+        "Both motor bands contribute to the blended haptic amplitude");
 
     if (g_failures == 0)
         std::cout << "HaloMCCVR core tests passed\n";
