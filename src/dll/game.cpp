@@ -12,6 +12,7 @@
 #include "title_adapter.h"
 #include "../common/log.h"
 #include "../common/config.h"
+#include "../common/input_logic.h"
 
 // M1 head tracking. We hook the game's per-frame camera-update function and,
 // each frame, overwrite the authoritative camera's forward/up vectors with the
@@ -4077,6 +4078,15 @@ void Game_AutoVrTick()
 
     const TitleDescriptor* activeTitle = TitleAdapter_GetActive();
     const bool pausePresentation = VR_IsPausePresentation();
+    static PauseLevelRecovery pauseLevelRecovery;
+    if (pauseLevelRecovery.Update(pausePresentation, cameraStale, inLevelStable))
+    {
+        // Restart Level leaves Halo's native pause screen without producing a
+        // second Start edge. Re-enter stereo only after the replacement
+        // level's camera has been stable for the normal debounce interval.
+        VR_RequestPausePresentation(false);
+        LOG("pause transition: restarted level is stable, restoring stereo 3D");
+    }
     static bool pauseExitClearRequested = false;
     if (pausePresentation &&
         (!activeTitle || activeTitle->title != GameTitle::Halo3))

@@ -77,3 +77,26 @@ float BlendXInputMotors(uint16_t lowFrequencyMotor, uint16_t highFrequencyMotor)
     const float blended = low * 0.65f + high * 0.35f;
     return blended > 1.0f ? 1.0f : blended;
 }
+
+void PauseLevelRecovery::Reset()
+{
+    m_sawLoading = false;
+}
+
+bool PauseLevelRecovery::Update(bool pausePresentation, bool cameraStale,
+                                bool levelStable)
+{
+    if (!pausePresentation)
+    {
+        Reset();
+        return false;
+    }
+    if (cameraStale)
+        m_sawLoading = true;
+    if (m_sawLoading && levelStable)
+    {
+        Reset();
+        return true;
+    }
+    return false;
+}

@@ -90,6 +90,19 @@ int main()
     Check(chord.Update(2400, true, true).toggled,
         "A simultaneous chord works after release");
 
+    PauseLevelRecovery pauseRecovery;
+    Check(!pauseRecovery.Update(true, false, false),
+        "Pause recovery stays armed during an ordinary pause");
+    Check(!pauseRecovery.Update(true, true, false),
+        "Pause recovery records loading without resuming early");
+    Check(pauseRecovery.Update(true, false, true),
+        "Pause recovery restores 3D when restarted level becomes stable");
+    Check(!pauseRecovery.Update(true, false, true),
+        "Pause recovery fires only once per loading gap");
+    pauseRecovery.Update(true, true, false);
+    Check(!pauseRecovery.Update(false, false, true),
+        "Leaving pause resets an incomplete restart recovery");
+
     const float rayOrigin[3] = { 0.0f, 0.0f, 0.0f };
     const float rayForward[3] = { 0.0f, 0.0f, -1.0f };
     MenuPointerHit hit = IntersectMenuQuad(rayOrigin, rayForward,

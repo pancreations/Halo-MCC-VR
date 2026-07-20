@@ -32,3 +32,16 @@ MenuPointerHit IntersectMenuQuad(const float origin[3], const float direction[3]
     float distance, float width, float height, float centerY);
 
 float BlendXInputMotors(uint16_t lowFrequencyMotor, uint16_t highFrequencyMotor);
+
+// Tracks the loading gap caused by Restart Level while Halo's pause menu owns
+// the screen. Restart bypasses the normal Start/unpause edge, so the next
+// stable gameplay camera must clear the 2D pause presentation.
+class PauseLevelRecovery
+{
+public:
+    bool Update(bool pausePresentation, bool cameraStale, bool levelStable);
+    void Reset();
+
+private:
+    bool m_sawLoading = false;
+};
