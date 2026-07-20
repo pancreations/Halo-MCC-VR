@@ -162,10 +162,28 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   no other path changed. Deployed DLL build 2026-07-20 12:25 AM, SHA-256
   `f83e7ee03f193ab4fd64b591c7a4d5a9c0a35bbed20bb113b2d6eeae448f12ec`. User result:
   "flawless... smooth as butter."
-- Next isolated task 2: add an optional floating-hands mode, OFF by default,
-  showing hands and held guns only, with no arms, torso, or legs. Keep the
-  existing VRIK path as the untouched default; gate the alternate presentation
-  independently rather than disabling or rewriting VRIK globally.
+- Isolated task 2 IMPLEMENTED, awaiting headset confirmation (2026-07-20): the
+  optional `floating_hands` mode (OFF by default) is on branch
+  `feature/floating-hands` (based on the confirmed jitter fix). It is a pure
+  presentation filter in `FpVisiblePaletteHook` applied AFTER the untouched VRIK
+  solve: it collapses every bone not in `wristDescendants | lWristDescendants`
+  to an invisible speck via the proven `BoneMatrix.scale` render input. F1 →
+  Aim & Weapons → Body (VRIK) → "Floating hands (hide arms)". Deployed DLL build
+  2026-07-20 12:35 AM, SHA-256
+  `a9da286ddd983306010a812608aaefce41f912115bd5eb6b9cc7a8bfbfc61459`.
+- SKELETON FACT (from the runtime log, FP model, `body_wip=0`): the first-person
+  model is arms only — 0=root, 1/2=L/R shoulder, 3/4=L/R elbow, 5/6=L/R hand,
+  7-36=finger bones, 37-43=weapon, 44=marker. There are NO pelvis/leg/torso
+  bones. So `floating_hands` hides the ARMS only; the legs the user sees are a
+  SEPARATE render (the player biped/third-person body, visible because the VR
+  world-camera can look down at it), which this filter does not touch.
+- Next isolated task 3 (user-requested 2026-07-20): add a SEPARATE toggle to
+  hide the body/legs (keep `floating_hands` = arms only; do not fold them into
+  one switch). Locate the biped-body render using the Halo 3 mod tools
+  (H3EK / ManagedDonkey tag definitions) for ground truth first, the same
+  prior-art-before-RE approach that produced the CHUD class-2 crosshair fix —
+  not runtime guessing. User plan: confirm the arms-only build in the headset
+  first, THEN hunt the body render.
 
 ## 2026-07-19 session closeout
 
