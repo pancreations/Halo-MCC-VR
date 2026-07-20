@@ -19,6 +19,11 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
 - User-designated best-working dual-wield runtime checkpoint: `c2e6a27` on
   `feature/dual-wield`; deployed DLL SHA-256
   `4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`
+- Current best-working checkpoint: `recovery/best-working-20260720`, also the
+  `master` tip. Adds the headset-confirmed smooth-turn jitter fix and the
+  optional floating-hands mode on top of the dual-wield build. Deployed DLL
+  build 2026-07-20 12:35 AM, SHA-256
+  `a9da286ddd983306010a812608aaefce41f912115bd5eb6b9cc7a8bfbfc61459`
 
 Do not rewrite or delete the recovery branch. Start new experiments from a named branch or commit.
 
