@@ -101,7 +101,8 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 
 ## Known limitations
 
-- Halo 3 only is validated; ODST is not.
+- Halo 3 only is validated. ODST is not, and is not a quick port: see the ODST
+  scope section below for the measured signature/layout evidence.
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
@@ -202,6 +203,50 @@ The working runtime still contains dormant diagnostic and fallback code inherite
     (~0x7CBFA0), `director_disable_first_person` (~0x7D1B88), and the `legs_shared`
     render path (string at 0x8011F8). `body_wip` already flips
     director/render_first_person switches for the opposite (show-more-body) goal.
+
+## ODST port scope (measured offline 2026-07-20)
+
+No code was changed for this survey. All 20 production AOB signatures were
+parsed out of `src/dll/game.cpp` and scanned against `halo3.dll` and
+`halo3odst.dll` on disk. Findings are static-binary facts, not theories.
+
+- 8 of 20 signatures match ODST uniquely and byte-for-byte: `kPrepareViewSig`,
+  `kBuildViewportSig`, `kBuildMatricesSig`, `kComposeBonesSig`,
+  `kComposeSpecialBonesSig`, `kFpVisiblePaletteSig`, `kHudXformSig`,
+  `kFpRootCallSig`.
+- 12 fail, and they cover the load-bearing stereo path: `kCamCopySig`,
+  `kRenderViewSig`, `kFpCameraRebuildSig`, `kFpCameraUploadSig`,
+  `kFpDriverSig`, `kFpDriverGuardSig`, `kFpInterpolateSig`, `kGunCamRefSig`,
+  `kNativePauseOwnerSig`, `kHudElemSig`, `kSwayCallSig`,
+  `kFpNativeWeaponIkDecisionSig`.
+- The failures are recompiled functions, not missing ones. Longest-prefix
+  analysis: `kFpNativeWeaponIkDecisionSig` matches 22 of 29 bytes at a single
+  ODST site and breaks on one register byte (`41 0F 28 D8` vs `41 0F 28 D9`);
+  `kCamCopySig` matches 24 of 34 at a single site and breaks where a short `je`
+  became a near `je`, so that function grew.
+- Root cause is shifted structure layouts. Confirmed concretely: the
+  gun/overlay camera-object array stride is `0x2820` in Halo 3 and `0x2810` in
+  ODST, so that camera object is 16 bytes smaller. The sway and FP-driver call
+  sites also reference different field offsets. `game.cpp` currently contains
+  53 distinct hardcoded struct offsets.
+
+Consequences for planning:
+
+- Repairing the 12 signatures is the cheap half (wildcard the volatile operand
+  bytes, then re-verify uniqueness in both DLLs). Re-deriving the camera, view,
+  and first-person struct layouts on the ODST binary and re-validating VRIK and
+  the palette path in the headset is the expensive half. It is the same class of
+  work that produced the Halo 3 build.
+- Do not reuse any Halo 3 struct offset in ODST without confirming it on the
+  ODST binary. The 0x2820/0x2810 difference proves the layouts diverge.
+- The first real ODST step is confirming the eight matching signatures land in
+  the same functions, then a live scan for the shifted camera struct. It is not
+  a code change.
+
+Shipping safety today: ODST is registered in `src/common/title_registry.cpp`
+with `runtimeSupported=false`, and hook installation in `game.cpp` is gated on
+`GameTitle::Halo3`. ODST therefore loads stock and untouched, so the Halo 3
+alpha is safe to distribute on machines that also have ODST installed.
 
 ## 2026-07-19 session closeout
 
