@@ -1820,8 +1820,12 @@ namespace
     // invRot(wrist) * (1,0,0). That is a rig constant per weapon (the gun is
     // glued to the hand); a slow EMA rides out idle sway and reload swings.
     // Written by the game thread (FpInterpolateHook), read by DesiredWristWorld.
-    std::atomic<float> g_barrelInWrist[3];
-    std::atomic<bool> g_barrelInWristValid{false};
+    // Authored barrel-in-wrist direction per held-weapon slot: the primary
+    // (slot 0) aligns to the right controller ray, the dual-wield secondary
+    // (slot 1) to the left. Each skeleton's own animated wrist is measured —
+    // the secondary's authored pose differs from the primary's.
+    std::atomic<float> g_barrelInWrist[2][3];
+    std::atomic<bool> g_barrelInWristValid[2]={{false},{false}};
 
     // Marker/effect packet builders also consume 0x184B08 directly. Preserve
     // their already headset-verified controller registration on the live
@@ -1938,29 +1942,28 @@ namespace
                 }
                 // Measure the authored barrel-in-wrist direction (row 0 of the
                 // wrist rotation = invRot * camera-forward; storage m[c*3+r]).
-                // Slot 0 only: the auto barrel alignment serves the aiming hand.
-                if (slot==0)
+                // Per slot: each weapon hand auto-aligns to its own ray.
                 {
-                    const float* wr=g_fpUnmodifiedInterpolations[0][wrist].rotation;
+                    const float* wr=g_fpUnmodifiedInterpolations[slot][wrist].rotation;
                     float b[3]={wr[0],wr[3],wr[6]};
                     const float bl=sqrtf(b[0]*b[0]+b[1]*b[1]+b[2]*b[2]);
                     if (bl>1e-4f && isfinite(bl))
                     {
                         b[0]/=bl; b[1]/=bl; b[2]/=bl;
-                        if (g_barrelInWristValid.load(std::memory_order_relaxed))
+                        if (g_barrelInWristValid[slot].load(std::memory_order_relaxed))
                         {
                             const float a=0.02f;
                             for(int j=0;j<3;++j)
-                                b[j]=g_barrelInWrist[j].load(std::memory_order_relaxed)
+                                b[j]=g_barrelInWrist[slot][j].load(std::memory_order_relaxed)
                                      *(1.0f-a)+b[j]*a;
                             const float l2=sqrtf(b[0]*b[0]+b[1]*b[1]+b[2]*b[2]);
                             if (l2>1e-4f){ b[0]/=l2; b[1]/=l2; b[2]/=l2; }
                         }
                         for(int j=0;j<3;++j)
-                            g_barrelInWrist[j].store(b[j],std::memory_order_relaxed);
-                        g_barrelInWristValid.store(true,std::memory_order_release);
+                            g_barrelInWrist[slot][j].store(b[j],std::memory_order_relaxed);
+                        g_barrelInWristValid[slot].store(true,std::memory_order_release);
                         static std::atomic<bool> loggedBarrel{false};
-                        if (!loggedBarrel.exchange(true))
+                        if (slot==0 && !loggedBarrel.exchange(true))
                             LOG("M3 VRIK: authored barrel-in-wrist measured "
                                 "(%.3f, %.3f, %.3f) — expect ~(1,0,0)+cant if the "
                                 "camera-forward invariant holds",b[0],b[1],b[2]);
@@ -2002,17 +2005,22 @@ namespace
                         g_config.gun_pitch_deg * 0.0174533f,
                         sign * g_config.gun_roll_deg * 0.0174533f, mount);
         MultiplyBases(basisC, mount, mounted);
-        // AUTO BARREL ALIGNMENT (weapon hand only): swing the mounted hand by
+        // AUTO BARREL ALIGNMENT (weapon hands only): swing the mounted hand by
         // the minimal world rotation that puts the measured authored barrel
         // axis exactly on the controller ray (basis column 0) — the SAME ray
         // the cursor and bullet steering use. The barrel therefore sits on the
         // cursor line by construction; the trim sliders adjust hand posture
         // and roll about that fixed line, they can no longer misalign it.
-        if (!left && g_barrelInWristValid.load(std::memory_order_acquire))
+        // The right hand aligns slot 0's measured barrel to the right ray; the
+        // dual-wield left hand aligns slot 1's own measured barrel to the left
+        // ray (its authored pose differs, so mirrored trim alone mis-seats it).
+        const int barrelSlot=(left && weaponGrip)?1:(left?-1:0);
+        if (barrelSlot>=0 &&
+            g_barrelInWristValid[barrelSlot].load(std::memory_order_acquire))
         {
-            const float b[3]={g_barrelInWrist[0].load(std::memory_order_relaxed),
-                              g_barrelInWrist[1].load(std::memory_order_relaxed),
-                              g_barrelInWrist[2].load(std::memory_order_relaxed)};
+            const float b[3]={g_barrelInWrist[barrelSlot][0].load(std::memory_order_relaxed),
+                              g_barrelInWrist[barrelSlot][1].load(std::memory_order_relaxed),
+                              g_barrelInWrist[barrelSlot][2].load(std::memory_order_relaxed)};
             float worldBarrel[3]={0,0,0};
             for(int c=0;c<3;++c)
                 for(int r=0;r<3;++r)
@@ -2295,7 +2303,35 @@ namespace
                     };
                     if (dual)
                     {
-                        // No support-arm pass for the secondary weapon.
+                        // HEADSET RESULT (22:51 build): the gun moved with the
+                        // driven chain but the VISIBLE arm stayed HUD-posed —
+                        // the secondary model's arm mesh is skinned to the
+                        // OTHER chain (lWrist/lElbow/lShoulder). Carry that arm
+                        // with the SAME rigid weapon delta D = desired *
+                        // inv(authored wrist) the gun received, so its hand
+                        // keeps the exact authored grip on the moved weapon,
+                        // then bend it with the standard elbow solve.
+                        if (context.lShoulder>=0 && context.lShoulder<context.count &&
+                            context.lElbow>=0 && context.lElbow<context.count &&
+                            context.lWrist>=0 && context.lWrist<context.count)
+                        {
+                            BoneMatrix wrW{},invWrW{},D{},lWrW{},desiredL{};
+                            if (ComposeBoneMatrices(armRoot,unmod[context.wrist],wrW) &&
+                                InvertBoneMatrix(wrW,invWrW) &&
+                                ComposeBoneMatrices(desiredWristWorld,invWrW,D) &&
+                                ComposeBoneMatrices(armRoot,unmod[context.lWrist],lWrW) &&
+                                ComposeBoneMatrices(D,lWrW,desiredL))
+                            {
+                                static std::atomic<bool> loggedDualArm{false};
+                                if (applyArm(context.lShoulder,context.lElbow,
+                                             context.lWrist,context.lWristDescendants,
+                                             desiredL,1.0f,nullptr,0.0f) &&
+                                    !loggedDualArm.exchange(true))
+                                    LOG("DUAL VRIK: secondary VISIBLE arm riding the "
+                                        "weapon delta (wrist %d, elbow %d, shoulder %d)",
+                                        context.lWrist,context.lElbow,context.lShoulder);
+                            }
+                        }
                     }
                     else if (context.lShoulder>=0 && context.lShoulder<context.count &&
                         context.lElbow>=0 && context.lElbow<context.count &&
