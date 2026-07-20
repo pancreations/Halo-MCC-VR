@@ -307,8 +307,7 @@ namespace
             changed |= ImGui::SliderFloat("Left palm depth (m)",
                                           &g_config.left_grip_forward_m,
                                           -0.05f, 0.25f, "%.3f");
-            ImGui::TextDisabled("Wrist-to-palm depth of the rendered hand: seats the dual-wield gun\n"
-                                "in your palm and puts the grab line through it.");
+            ImGui::TextDisabled("Extends the two-hand grab line and grip-click zone to your visible palm.");
             ImGui::Unindent();
         }
         ImGui::TextDisabled("Put your left hand on the front of the gun, click/hold the LEFT GRIP.\n"
