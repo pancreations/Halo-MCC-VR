@@ -841,6 +841,26 @@ float4 ps_pass(VSOut i) : SV_Target
                 g_sessionRunning = false;
                 Fail("The OpenXR runtime is shutting down");
                 break;
+            case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
+            {
+                auto logProfile = [](XrPath hand, const char* label) {
+                    XrInteractionProfileState state{XR_TYPE_INTERACTION_PROFILE_STATE};
+                    if (XR_FAILED(xrGetCurrentInteractionProfile(g_session, hand, &state)) ||
+                        state.interactionProfile == XR_NULL_PATH)
+                    {
+                        LOG("controller profile %s: unavailable", label);
+                        return;
+                    }
+                    char path[XR_MAX_PATH_LENGTH]{};
+                    uint32_t written = 0;
+                    if (XR_SUCCEEDED(xrPathToString(g_instance, state.interactionProfile,
+                        (uint32_t)sizeof(path), &written, path)))
+                        LOG("controller profile %s: %s", label, path);
+                };
+                logProfile(g_leftHandPath, "left");
+                logProfile(g_rightHandPath, "right");
+                break;
+            }
             default:
                 break;
             }
@@ -1197,6 +1217,7 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_actY,      "/user/hand/left/input/b/click"},
             {g_actClickL, "/user/hand/left/input/thumbstick/click"},
             {g_actClickR, "/user/hand/right/input/thumbstick/click"},
+            {g_actMenu,   "/user/hand/left/input/system/click"},
             {g_hapticAction, "/user/hand/left/output/haptic"},
             {g_hapticAction, "/user/hand/right/output/haptic"},
         };
@@ -1479,6 +1500,13 @@ float4 ps_pass(VSOut i) : SV_Target
         getB(g_actClickL, pad.clickL);
         getB(g_actClickR, pad.clickR);
         getB(g_actMenu, pad.menu);
+        static VrPadState previousPad{};
+        if (pad.menu && !previousPad.menu) LOG("controller edge: Menu/Start");
+        if (pad.a && !previousPad.a) LOG("controller edge: A");
+        if (pad.b && !previousPad.b) LOG("controller edge: B");
+        if (pad.x && !previousPad.x) LOG("controller edge: X");
+        if (pad.y && !previousPad.y) LOG("controller edge: Y");
+        previousPad = pad;
         EnterCriticalSection(&g_headCs);
         g_padState = pad;
         LeaveCriticalSection(&g_headCs);
@@ -1495,10 +1523,14 @@ float4 ps_pass(VSOut i) : SV_Target
     void UpdateMenuPointer(bool headLocked)
     {
         static bool triggerPressed = false;
+        static bool hadHit = false;
+        static float smoothU = 0.5f, smoothV = 0.5f;
+        static uint64_t lastDiagMs = 0;
         if (!g_rightAimPoseValid || (headLocked && !g_headPoseValid) ||
             (!headLocked && !g_haveCenter))
         {
             triggerPressed = false;
+            hadHit = false;
             Menu_ClearVrPointer();
             return;
         }
@@ -1529,7 +1561,32 @@ float4 ps_pass(VSOut i) : SV_Target
         const float scroll = std::fabs(g_padState.turnY) > 0.25f
             ? g_padState.turnY * 0.12f
             : 0.0f;
-        Menu_SetVrPointer(hit.hit, hit.u, hit.v, triggerPressed, scroll);
+        if (hit.hit)
+        {
+            if (!hadHit)
+            {
+                smoothU = hit.u;
+                smoothV = hit.v;
+            }
+            else
+            {
+                smoothU += (hit.u - smoothU) * 0.35f;
+                smoothV += (hit.v - smoothV) * 0.35f;
+            }
+        }
+        hadHit = hit.hit;
+        Menu_SetVrPointer(hit.hit, smoothU, smoothV, triggerPressed, scroll);
+
+        const uint64_t now = GetTickCount64();
+        if (now - lastDiagMs >= 2000)
+        {
+            lastDiagMs = now;
+            LOG("menu pointer: hit=%d uv=(%.3f,%.3f) origin=(%.2f,%.2f,%.2f) "
+                "dir=(%.2f,%.2f,%.2f) trigger=%.2f stickY=%.2f headLocked=%d",
+                hit.hit ? 1 : 0, hit.u, hit.v,
+                origin[0], origin[1], origin[2], direction[0], direction[1], direction[2],
+                g_padState.trigR, g_padState.turnY, headLocked ? 1 : 0);
+        }
     }
 
     // Part 2 (render thread, first frame): now that we have the game's D3D

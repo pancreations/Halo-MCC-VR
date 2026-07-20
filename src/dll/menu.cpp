@@ -24,6 +24,15 @@ namespace
     ID3D11DeviceContext* g_ctx = nullptr;
     ID3D11Texture2D* g_tex = nullptr;
     ID3D11RenderTargetView* g_rtv = nullptr;
+    struct VrPointerInput
+    {
+        bool hit = false;
+        bool pressed = false;
+        float u = 0.0f;
+        float v = 0.0f;
+        float scrollY = 0.0f;
+    };
+    VrPointerInput g_vrPointer;
     // ImGui gets input on the game's window thread but draws on its render
     // thread; this lock keeps the two from touching ImGui at the same time.
     CRITICAL_SECTION g_cs;
@@ -460,19 +469,11 @@ void Menu_SetVrPointer(bool hit, float u, float v, bool pressed, float scrollY)
     if (!g_ready)
         return;
     EnterCriticalSection(&g_cs);
-    ImGuiIO& io = ImGui::GetIO();
-    if (hit)
-        io.AddMousePosEvent(u * MENU_W, v * MENU_H);
-    else
-        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-    static bool previousPressed = false;
-    if (pressed != previousPressed)
-    {
-        io.AddMouseButtonEvent(0, pressed);
-        previousPressed = pressed;
-    }
-    if (hit && scrollY != 0.0f)
-        io.AddMouseWheelEvent(0.0f, scrollY);
+    g_vrPointer.hit = hit;
+    g_vrPointer.pressed = pressed;
+    g_vrPointer.u = u;
+    g_vrPointer.v = v;
+    g_vrPointer.scrollY += scrollY;
     LeaveCriticalSection(&g_cs);
 }
 
@@ -490,6 +491,22 @@ ID3D11Texture2D* Menu_Render()
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::GetIO().DisplaySize = ImVec2((float)MENU_W, (float)MENU_H); // our texture, not the window
+    // The Win32 backend updates the desktop mouse during NewFrame. Apply the
+    // VR ray afterward so it is the final pointer sample ImGui consumes.
+    ImGuiIO& io = ImGui::GetIO();
+    if (g_vrPointer.hit)
+        io.AddMousePosEvent(g_vrPointer.u * MENU_W, g_vrPointer.v * MENU_H);
+    else
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    static bool previousVrPressed = false;
+    if (g_vrPointer.pressed != previousVrPressed)
+    {
+        io.AddMouseButtonEvent(0, g_vrPointer.pressed);
+        previousVrPressed = g_vrPointer.pressed;
+    }
+    if (g_vrPointer.hit && g_vrPointer.scrollY != 0.0f)
+        io.AddMouseWheelEvent(0.0f, g_vrPointer.scrollY);
+    g_vrPointer.scrollY = 0.0f;
     ImGui::NewFrame();
     DrawUI();
     ImGui::Render();
