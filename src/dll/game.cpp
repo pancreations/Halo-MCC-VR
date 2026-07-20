@@ -914,10 +914,7 @@ namespace
     // spawns the bullet (the camera) vs the gun muzzle world position, so the
     // "bullets from thin air" gap is quantified. The true fix moves the spawn
     // to the muzzle via a fire hook (runtime hunt); this proves + measures it.
-    // weaponGrip: the left hand HOLDS a weapon (dual wield) — use the weapon
-    // seat depth (gun_forward_m) instead of the open-palm support correction.
-    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale,
-                           bool weaponGrip); // defined below
+    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale); // defined below
     void ProbeBulletOrigin()
     {
         if (!g_config.bullet_probe) return;
@@ -928,7 +925,7 @@ namespace
         {
             const float cam[3]={g_camX.load(),g_camY.load(),g_camZ.load()};
             BoneMatrix w{}; float ms=1.0f;
-            if (DesiredWristWorld(false,w,ms,false))
+            if (DesiredWristWorld(false,w,ms))
             {
                 const float dx=cam[0]-w.translation[0],dy=cam[1]-w.translation[1],
                             dz=cam[2]-w.translation[2];
@@ -997,10 +994,8 @@ namespace
     float Clamp(float v, float lo, float hi);
     float WrapPi(float a);
     bool ControllerWorldPose(float basis[9],float pos[3],float& scale);
-    bool ControllerWorldPoseEx(bool left,float basis[9],float pos[3],float& scale,
-                               bool weaponGrip);
-    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale,
-                           bool weaponGrip);
+    bool ControllerWorldPoseEx(bool left,float basis[9],float pos[3],float& scale);
+    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale);
 
     void BuildTrackedGameBasis(const float q[4], bool head, float basis[9])
     {
@@ -1872,10 +1867,10 @@ namespace
         }
         // IDENTICAL wrist target as the visible gun (one shared definition) so
         // muzzle flash and weapon can never diverge. The dual-wield secondary
-        // (slot 1) rides the LEFT controller with the weapon seat depth.
+        // (slot 1) rides the LEFT controller at the shared palm point.
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
-        if (!DesiredWristWorld(dual,desiredWristWorld,meshScale,dual)) return false;
+        if (!DesiredWristWorld(dual,desiredWristWorld,meshScale)) return false;
         BoneMatrix wristWorld{},inverseWristWorld{},t{},inverseRoot{},tRoot{},m{};
         if (!ComposeBoneMatrices(root,bones[wrist],wristWorld) ||
             !InvertBoneMatrix(wristWorld,inverseWristWorld) ||
@@ -2013,11 +2008,10 @@ namespace
     // muzzle/marker path so the gun, flash, and hands can never diverge. The
     // right hand carries the weapon mount trim + forward standoff; the left
     // hand mirrors the yaw/roll trim and has no standoff.
-    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale,
-                           bool weaponGrip)
+    bool DesiredWristWorld(bool left, BoneMatrix& out, float& meshScale)
     {
         float basisC[9], posC[3];
-        if (!ControllerWorldPoseEx(left, basisC, posC, meshScale, weaponGrip))
+        if (!ControllerWorldPoseEx(left, basisC, posC, meshScale))
             return false;
         const float sign = left ? -1.0f : 1.0f;
         float mount[9], mounted[9];
@@ -2032,9 +2026,9 @@ namespace
         // cursor line by construction; the trim sliders adjust hand posture
         // and roll about that fixed line, they can no longer misalign it.
         // Weapon hand = the right hand only: the dual-wield secondary is
-        // seated by its weapon NODE directly (whose frame already defines the
-        // barrel), so the wrist-row-0 swing heuristic must not fight it
-        // (23:04 headset result: the heuristic mis-seated the left gun).
+        // seated by its weapon NODE directly at the palm point, so the
+        // wrist-row-0 swing heuristic must not fight it (23:04 headset
+        // result: the heuristic mis-seated the left gun).
         const int barrelSlot=left?-1:0;
         if (barrelSlot>=0 &&
             g_barrelInWristValid[barrelSlot].load(std::memory_order_acquire))
@@ -2092,7 +2086,7 @@ namespace
 
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
-        if (!DesiredWristWorld(dual,desiredWristWorld,meshScale,dual))
+        if (!DesiredWristWorld(dual,desiredWristWorld,meshScale))
         {
             if (dual) return false;
             g_armFailurePublished.store("right-controller-pose",std::memory_order_relaxed);
@@ -2375,7 +2369,7 @@ namespace
                         context.lWrist>=0 && context.lWrist<context.count)
                     {
                         BoneMatrix desiredLeft{}; float leftScale=1.0f;
-                        if (DesiredWristWorld(true,desiredLeft,leftScale,false))
+                        if (DesiredWristWorld(true,desiredLeft,leftScale))
                         {
                             static std::atomic<bool> loggedLeft{false};
                             if (applyArm(context.lShoulder,context.lElbow,context.lWrist,
@@ -2755,8 +2749,7 @@ namespace
     // bounds (compose -> sway loop), so there is no race.
     alignas(8) volatile uintptr_t g_fpSkipBounds[4] = {0, 0, 0, 0}; // lo0,hi0,lo1,hi1
 
-    bool ControllerWorldPoseEx(bool left, float basis[9], float pos[3], float& scale,
-                               bool weaponGrip)
+    bool ControllerWorldPoseEx(bool left, float basis[9], float pos[3], float& scale)
     {
         if (!g_vrAim.load() || !g_enabled.load() || !g_camValid.load() ||
             !g_baseCamValid.load()) return false;
@@ -2785,10 +2778,12 @@ namespace
             dy*s};
         const float cam[3] = {g_baseCamX.load(),g_baseCamY.load(),g_baseCamZ.load()};
         // Forward standoff along the controller's own aim direction (basis
-        // column 0 = forward). The open left SUPPORT hand uses the shared
-        // wrist-to-palm correction; a hand HOLDING a weapon (the right hand,
-        // or the left hand while dual wielding) uses the weapon seat depth.
-        const float standoff = ((left && !weaponGrip)
+        // column 0 = forward). EVERY left-hand use — support hand AND the
+        // dual-wield gun seat — is the same wrist-to-palm PALM point (23:17
+        // headset result: seating the dual gun by the weapon depth put it on
+        // the wrist, ~12 cm behind the rendered hand). Right keeps its
+        // independent weapon offset.
+        const float standoff = (left
             ? Clamp(g_config.left_hand_forward_m, -0.15f, 0.30f)
             : Clamp(g_config.gun_forward_m, -0.3f, 0.5f)) * s;
         for (int j = 0; j < 3; ++j)
@@ -2802,7 +2797,7 @@ namespace
     // Legacy name: the right-hand pose (existing call sites).
     bool ControllerWorldPose(float basis[9], float pos[3], float& scale)
     {
-        return ControllerWorldPoseEx(false, basis, pos, scale, false);
+        return ControllerWorldPoseEx(false, basis, pos, scale);
     }
 
     // Repurposed 2026-07-19 as the VRIK Stage A2 probe. This call-site patch
@@ -2893,7 +2888,7 @@ namespace
         const bool dual=(slot==1);
         const int gunRoot=g_fpGunRootIndex[slot].load(std::memory_order_acquire);
         const int anchorBone=(dual && gunRoot>=0 && gunRoot<count)?gunRoot:wrist;
-        if (!DesiredWristWorld(dual,desired,meshScale,dual)) return false;
+        if (!DesiredWristWorld(dual,desired,meshScale)) return false;
         if (!InvertBoneMatrix(output[anchorBone],invWrist) ||
             !ComposeBoneMatrices(desired,invWrist,t)) return false;
         for (int i=0;i<count;++i)

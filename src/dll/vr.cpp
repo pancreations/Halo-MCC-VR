@@ -1432,19 +1432,26 @@ float4 ps_pass(VSOut i) : SV_Target
         if (!g_config.two_handed_aim || !rightValid || !leftValid)
         { g_twoHandLatched.store(false); return; }
         const XrVector3f rfwd = Rotate(rpose.orientation, {0,0,-1});
-        const XrVector3f lh = LeftHandPoint(lpose);
         // Grab-zone side nudge: the visible barrel can sit beside the raw aim
         // ray (headset report: the AR's barrel was right of the zone), so the
         // zone axis shifts along the controller's +X by the F1-tuned amount.
         const float zr = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
         const XrVector3f rright = Rotate(rpose.orientation, {1,0,0});
-        const XrVector3f v{lh.x-(rpose.position.x+rright.x*zr),
-                           lh.y-(rpose.position.y+rright.y*zr),
-                           lh.z-(rpose.position.z+rright.z*zr)};
-        const float along = v.x*rfwd.x + v.y*rfwd.y + v.z*rfwd.z;
-        const XrVector3f perp{v.x-along*rfwd.x, v.y-along*rfwd.y, v.z-along*rfwd.z};
-        const float lateral = sqrtf(perp.x*perp.x+perp.y*perp.y+perp.z*perp.z);
-        const bool inZone = along>0.08f && along<0.80f && lateral<0.09f;
+        const XrVector3f origin{rpose.position.x+rright.x*zr,
+                                rpose.position.y+rright.y*zr,
+                                rpose.position.z+rright.z*zr};
+        auto inZoneAt = [&](const XrVector3f& p) -> bool {
+            const XrVector3f v{p.x-origin.x, p.y-origin.y, p.z-origin.z};
+            const float along = v.x*rfwd.x + v.y*rfwd.y + v.z*rfwd.z;
+            const XrVector3f perp{v.x-along*rfwd.x, v.y-along*rfwd.y, v.z-along*rfwd.z};
+            const float lateral = sqrtf(perp.x*perp.x+perp.y*perp.y+perp.z*perp.z);
+            return along>0.08f && along<0.80f && lateral<0.09f;
+        };
+        // Register the grab at the PALM point or at the RAW hand position —
+        // whichever touches the line. In a cross-body grip the forward palm
+        // shift overshoots the barrel (23:17 headset report: the click zone
+        // sat past the hand), so the raw sample must also count.
+        const bool inZone = inZoneAt(LeftHandPoint(lpose)) || inZoneAt(lpose.position);
         const bool gripHeld = gripL > 0.5f;
 
         if (g_config.two_hand_toggle)
