@@ -54,6 +54,7 @@ namespace
     XrAction g_leftAimAction = XR_NULL_HANDLE;
     XrSpace g_leftAimSpace = XR_NULL_HANDLE;
     XrAction g_hapticAction = XR_NULL_HANDLE;
+    XrAction g_actMenu = XR_NULL_HANDLE;
     XrPath g_leftHandPath = XR_NULL_PATH;
     XrPath g_rightHandPath = XR_NULL_PATH;
     XrEnvironmentBlendMode g_blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -866,6 +867,32 @@ float4 ps_pass(VSOut i) : SV_Target
                 };
                 logProfile(g_leftHandPath, "left");
                 logProfile(g_rightHandPath, "right");
+                if (g_actMenu != XR_NULL_HANDLE)
+                {
+                    XrBoundSourcesForActionEnumerateInfo info{
+                        XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
+                    info.action = g_actMenu;
+                    uint32_t count = 0;
+                    if (XR_SUCCEEDED(xrEnumerateBoundSourcesForAction(
+                            g_session, &info, 0, &count, nullptr)) && count > 0)
+                    {
+                        std::vector<XrPath> sources(count);
+                        if (XR_SUCCEEDED(xrEnumerateBoundSourcesForAction(
+                                g_session, &info, count, &count, sources.data())))
+                        {
+                            for (XrPath source : sources)
+                            {
+                                char path[XR_MAX_PATH_LENGTH]{};
+                                uint32_t written = 0;
+                                if (XR_SUCCEEDED(xrPathToString(g_instance, source,
+                                        (uint32_t)sizeof(path), &written, path)))
+                                    LOG("Menu/Start bound source: %s", path);
+                            }
+                        }
+                    }
+                    else
+                        LOG("Menu/Start bound source: none");
+                }
                 break;
             }
             default:
@@ -1168,7 +1195,6 @@ float4 ps_pass(VSOut i) : SV_Target
     XrAction g_actA = XR_NULL_HANDLE, g_actB = XR_NULL_HANDLE;
     XrAction g_actX = XR_NULL_HANDLE, g_actY = XR_NULL_HANDLE;
     XrAction g_actClickL = XR_NULL_HANDLE, g_actClickR = XR_NULL_HANDLE;
-    XrAction g_actMenu = XR_NULL_HANDLE;
     VrPadState g_padState{};
 
     bool CreateControllerActions()
@@ -1280,6 +1306,7 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_actClickL, "/user/hand/left/input/thumbstick/click"},
             {g_actClickR, "/user/hand/right/input/thumbstick/click"},
             {g_actMenu,   "/user/hand/left/input/menu/click"},
+            {g_actMenu,   "/user/hand/right/input/system/click"},
             {g_hapticAction, "/user/hand/left/output/haptic"},
             {g_hapticAction, "/user/hand/right/output/haptic"},
         };
