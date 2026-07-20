@@ -64,6 +64,11 @@ The active path is deliberately small:
    `game_paused` external global is not used because live testing proved it does
    not follow MCC's pause menu. When the native byte is available it owns the
    2D/3D transition; missing or ambiguous signatures retain the edge fallback.
+9. A unique signature hooks Halo's post-observer camera-effect stage. While VR
+   head tracking is active, authored recoil/explosion screen-shake transforms
+   are bypassed so the HMD view remains owned by OpenXR. With head tracking off,
+   Halo's original function runs unchanged. This build still needs headset
+   confirmation before the recoil fix is called complete.
 
 The working runtime still contains dormant diagnostic and fallback code inherited from 330a568. Its defaults are the headset-proven behavior. Do not enable, remove, or consolidate those paths in bulk: commit 42a1276 performed a broad cleanup, built successfully, then produced a fatal error at the first level transition. Remove only one independently understood path per branch and headset test.
 
@@ -106,6 +111,11 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
+- The VR camera-effect bypass is statically verified and build-tested but not
+  yet headset-confirmed. Test sustained automatic fire plus a strong explosion;
+  the world/HMD view must remain stable while weapon animation and haptics stay
+  present. Also sanity-check walking and one vehicle so real observer movement
+  is demonstrably unchanged.
 - HUD size: the chud_globals safe-frame lever and the automatic hud_size slider are headset-confirmed. A value of 0.38 visibly and correctly scaled the native HUD layout (2026-07-19).
 - HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - Resolution scaling is headset-confirmed at the 0.67 Low setting with Toolkit scaling disabled: the complete eye remains intact and fills the unchanged OpenXR projection. F1 now exposes six restart-applied presets: Potato 50%, Low 67%, Medium 80%, High 100%, Ultra 110%, and Keith David 150% (4368x3150). The launcher scales Halo's 2912x2100 internal raster evenly; the tiers other than Low still need headset coverage, and Keith David has never been run in a headset — it is an untested top-end option, not a validated tier.

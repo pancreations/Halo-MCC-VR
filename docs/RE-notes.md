@@ -5,6 +5,14 @@ Target used for these findings: MCC Halo 3 build 1.3528.0.0. RVAs are evidence f
 ## Camera and stereo
 
 - halo3+0x2A628C: camera-copy function, fastcall(dst, src). Source projection tangents are at src+0x68/+0x6C; the hook is the stable head/look state boundary.
+- halo3+0x17DF44: `observer_apply_camera_effect`. Static disassembly and the
+  matching 0x3D0-byte observer stride show that it reads the already-computed
+  observer position/forward/up, composes Halo's authored camera-effect
+  transform, and writes those three fields back. The production comfort hook
+  bypasses this stage only while VR head tracking is active, removing recoil
+  and other artificial screen shake without filtering locomotion or headset
+  leaning. Its 60-byte AOB is unique in the 1.3528 DLL; a missing or ambiguous
+  match leaves stock behavior active. Headset confirmation is pending.
 - halo3+0x286A14: inner prepared-view renderer used for the two eye passes.
 - The view contains current and first-person camera/derived pairs. FpDriverHook and FpCameraRebuildHook stamp the active eye values immediately before the corresponding first-person draw/upload.
 - First-person camera upload is called through Halo's own uploader after a stamp. Do not replace this with a guessed constant-buffer hook.

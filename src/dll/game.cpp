@@ -120,6 +120,8 @@ namespace
 
     using CamCopyFn = void*(__fastcall*)(void* dst, void* src);
     CamCopyFn g_origCamCopy = nullptr;
+    using ObserverCameraEffectFn = void(__fastcall*)(int userIndex);
+    ObserverCameraEffectFn g_origObserverCameraEffect = nullptr;
     using RenderViewFn = void(__fastcall*)(void* view);
     RenderViewFn g_origRenderView = nullptr;
     using PrepareViewFn = void(__fastcall*)(void* view, int viewIndex);
@@ -3281,6 +3283,17 @@ namespace
         return g_origCamCopy(dst, src);
     }
 
+    void __fastcall ObserverCameraEffectHook(int userIndex)
+    {
+        // Halo applies weapon recoil, explosions, and other authored camera
+        // impulses after it computes the observer's stable camera result. A
+        // monitor can move the view independently of the player; an HMD must
+        // never do that. Keep the stock effects when VR head tracking is off,
+        // but make the tracked headset the sole owner of the VR view pose.
+        if (!g_enabled.load(std::memory_order_relaxed))
+            g_origObserverCameraEffect(userIndex);
+    }
+
     void __fastcall RenderViewHook(void* view)
     {
         if (!VR_IsStereoEnabled() || !g_enabled.load() || !view)
@@ -3518,6 +3531,18 @@ namespace
     const char* kCamCopySig =
         "48 89 5C 24 08 57 48 83 EC 30 0F 29 74 24 20 48 8B FA 48 8B D9 48 85 D2 74 ?? F3 0F 10 1D ?? ?? ?? ??";
 
+    // observer_apply_camera_effect (halo3.dll+0x17DF44 in build 1.3528).
+    // This is the dedicated post-observer camera-impulse stage: it reads the
+    // computed position/forward/up, composes the active effect transform, and
+    // writes those three fields back. Bypassing this one function leaves real
+    // observer locomotion and headset leaning untouched while preventing the
+    // game from moving the HMD view for recoil or other screen shake.
+    const char* kObserverCameraEffectSig =
+        "48 8B C4 48 89 58 08 48 89 70 10 48 89 78 18 4C 89 60 20 "
+        "55 41 56 41 57 48 8D 68 A1 48 81 EC D0 00 00 00 "
+        "0F 28 05 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 0F 28 0D ?? ?? ?? ?? "
+        "44 0F 29 40 D8";
+
     // halo3.dll+0x286A14 in build 1.3528: inner per-view renderer, called by
     // the engine's native view loop with rcx = the prepared view structure.
     const char* kRenderViewSig =
@@ -3664,6 +3689,39 @@ namespace
             return;
         }
         LOG("M1: camera hooked. F2 head tracking, F3 recenter, F6 leaning, F8/F9 pitch trim, F10 screen-follow (yaw/pitch/up flips: F1 menu)");
+
+        // Comfort invariant: the OpenXR pose, not Halo's authored screen-shake
+        // transform, owns the view while head tracking is active. This hook is
+        // independent from stereo and fails open to Halo's stock behavior.
+        {
+            uintptr_t effectHit = sig::Find(base, size, kObserverCameraEffectSig);
+            const bool uniqueEffect = effectHit &&
+                !sig::Find(effectHit + 1, base + size - effectHit - 1,
+                           kObserverCameraEffectSig);
+            bool effectHooked = false;
+            if (uniqueEffect)
+            {
+                const MH_STATUS createStatus = MH_CreateHook(
+                    reinterpret_cast<void*>(effectHit),
+                    reinterpret_cast<void*>(&ObserverCameraEffectHook),
+                    reinterpret_cast<void**>(&g_origObserverCameraEffect));
+                if (createStatus == MH_OK)
+                    effectHooked = MH_EnableHook(
+                        reinterpret_cast<void*>(effectHit)) == MH_OK;
+                if (!effectHooked && createStatus == MH_OK)
+                {
+                    MH_RemoveHook(reinterpret_cast<void*>(effectHit));
+                    g_origObserverCameraEffect = nullptr;
+                }
+            }
+            if (effectHooked)
+                LOG("VR comfort: native camera recoil/shake suppressed at "
+                    "halo3.dll+0x%llX while head tracking is active",
+                    (unsigned long long)(effectHit - base));
+            else
+                LOG("VR comfort: camera-effect signature missing/ambiguous or "
+                    "hook failed; native camera recoil/shake remains active");
+        }
 
         uintptr_t composeHit=sig::Find(base,size,kComposeBonesSig);
         uintptr_t specialHit=sig::Find(base,size,kComposeSpecialBonesSig);
