@@ -269,7 +269,8 @@ alpha is safe to distribute on machines that also have ODST installed.
 
 ## Alpha distribution (2026-07-19)
 
-- Alpha package exported 2026-07-19 18:10 to `dist\Halo3VR-alpha.zip` from commit `1fc56c8` (dirty tree). DLL SHA-256 `20B3CB0C...DA2D04`, launcher SHA-256 `F7B50B3F...EBCC7F` (full hashes in the package's BUILD-INFO.txt).
+- Release candidate exported 2026-07-20 01:44 to `dist\Halo3VR-alpha-0.1.zip` from clean commit `450f787`. DLL SHA-256 `7B33E986...F38F02`, launcher SHA-256 `1778C560...6DCFD05` (full hashes in the package's BUILD-INFO.txt). This binary is a fresh rebuild and has not itself been launched in a headset; the laptop test predates it.
+- Prior alpha package exported 2026-07-19 18:10 to `dist\Halo3VR-alpha.zip` from commit `1fc56c8` (dirty tree). DLL SHA-256 `20B3CB0C...DA2D04`, launcher SHA-256 `F7B50B3F...EBCC7F`.
 - `export-alpha.bat` is the required distribution workflow. It selects the exact CMake recorded in the configured build tree, removes only the two expected Release outputs, rebuilds them, assembles `dist\Halo3VR-alpha`, byte-compares both packaged binaries to the fresh outputs, writes build identity/SHA-256 values, and creates `dist\Halo3VR-alpha.zip`. A failed or stale build must not produce a testable package.
 - The dist files were audited for personal information before sharing: no user paths, names, or email in any file; the binaries carry no PDB/debug record and empty version resources; the ZIP byte-matches the exported folder.
 - First separate-machine clean install and launch passed on an RTX 4060 laptop GPU. A perceived 60 FPS cap was attributed to MCC's own V-Sync/framerate limit on the 60Hz laptop panel (the tester had not checked the in-game fps lock); the mod adds no cap and passes the game's sync interval through unchanged.
