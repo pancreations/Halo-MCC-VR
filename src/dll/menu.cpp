@@ -360,9 +360,9 @@ namespace
         ImGui::Text("Picture");
         const char* resolutionPresets[] = {
             "Potato (50%)", "Low (67%)", "Medium (80%)",
-            "High (100%)", "Ultra (110%)"
+            "High (100%)", "Ultra (110%)", "Keith David (150%)"
         };
-        const float resolutionScales[] = {0.50f, 0.67f, 0.80f, 1.00f, 1.10f};
+        const float resolutionScales[] = {0.50f, 0.67f, 0.80f, 1.00f, 1.10f, 1.50f};
         int resolutionPreset = 3;
         if (g_config.resolution_scale < 0.585f)
             resolutionPreset = 0;
@@ -370,17 +370,20 @@ namespace
             resolutionPreset = 1;
         else if (g_config.resolution_scale < 0.90f)
             resolutionPreset = 2;
-        else if (g_config.resolution_scale >= 1.05f)
+        else if (g_config.resolution_scale < 1.05f)
+            resolutionPreset = 3;
+        else if (g_config.resolution_scale < 1.30f)
             resolutionPreset = 4;
         else
-            resolutionPreset = 3;
+            resolutionPreset = 5;
         if (ImGui::Combo("Resolution preset", &resolutionPreset,
-                         resolutionPresets, 5))
+                         resolutionPresets, 6))
         {
             g_config.resolution_scale = resolutionScales[resolutionPreset];
             changed = true;
         }
-        ImGui::TextDisabled("Potato/Low/Medium reduce pixel count; Ultra supersamples.\n"
+        ImGui::TextDisabled("Potato/Low/Medium reduce pixel count; Ultra and Keith David\n"
+                            "supersample. Keith David renders 4368x3150 and needs a top-end GPU.\n"
                             "Changing this requires a full game restart. Close MCC and relaunch.");
         changed |= ImGui::SliderFloat("Game brightness", &g_config.game_brightness, 0.5f, 2.0f, "%.2f");
         ImGui::TextDisabled("Brightens/darkens the whole game. 1.0 = the game's own brightness.");

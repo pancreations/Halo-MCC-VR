@@ -46,6 +46,27 @@ It rebuilds Release, verifies the packaged DLL and launcher byte-for-byte, and c
 whole folder, read `ALPHA-README.txt`, and run `install.bat`. The test PC does not need the
 source tree, CMake, Visual Studio, or a Visual C++ redistributable.
 
+## Required MCC settings
+
+Set these in MCC before playing in VR. The mod does not change them for you.
+
+| Setting | Value |
+| --- | --- |
+| Settings > Video > Max Frame Rate | 120 |
+| Settings > Video > V-Sync | Off |
+| Halo 3 > Settings > Field of View | 120 |
+
+Do **not** enable FSR in MCC's video menu; it breaks the VR image scale. Use the mod's
+picture quality presets instead.
+
+Field of View is the one that visibly breaks the game if it is wrong: at the default
+FOV the engine culls geometry outside the flat-screen frustum, so scenery pops in and
+out at the edges of the headset view. FOV 120 pushes culling past the headset's field
+of view. V-Sync on or a 60 FPS limit caps the headset at that rate on any hardware.
+
+These can be changed with the headset on from inside the VR session; no flat-screen
+launch is needed and the mod does not crash when MCC video settings change.
+
 ## Requirements and safety
 
 - Steam copy of MCC and an OpenXR headset/runtime.

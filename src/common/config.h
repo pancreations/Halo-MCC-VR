@@ -80,7 +80,8 @@ struct Config
     float game_brightness = 1.0f;
 
     // Halo's internal raster preset, applied by the launcher on the next game
-    // start: potato .50, low .67, medium .80, high 1.00, ultra 1.10.
+    // start: potato .50, low .67, medium .80, high 1.00, ultra 1.10,
+    // keith david 1.50.
     // The OpenXR projection remains at the headset's full size.
     float resolution_scale = 1.0f;
 

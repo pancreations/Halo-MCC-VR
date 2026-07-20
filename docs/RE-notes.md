@@ -77,9 +77,11 @@ The user confirmed that this frees the shotgun left arm. The removed synthetic p
 - The launcher scales both dimensions by the same preset and rounds to even
   values. The existing normalized eye blit then expands the complete source eye
   into the full-size OpenXR projection, preserving the lens frame and aspect.
-- The restart-applied presets at 1fc56c8 are Potato 50% (1456x1050), Low 67%
-  (1952x1408), Medium 80% (2330x1680), High 100% (2912x2100), and Ultra 110%
-  (3204x2310). Legacy or arbitrary config values normalize to the nearest tier.
+- The restart-applied presets are Potato 50% (1456x1050), Low 67% (1952x1408),
+  Medium 80% (2330x1680), High 100% (2912x2100), Ultra 110% (3204x2310), and
+  Keith David 150% (4368x3150). Legacy or arbitrary config values normalize to
+  the nearest tier; the tier boundaries are the midpoints 0.585, 0.735, 0.90,
+  1.05, and 1.30, applied identically in config.cpp, launcher.cpp, and menu.cpp.
 - Low 67% is headset-confirmed with Toolkit scaling disabled. The other tiers
   require headset coverage; do not describe them as validated yet.
 - Enabling OpenXR Toolkit FSR produced tiled/overlapping regions in the observed

@@ -8,10 +8,16 @@ rem to another PC. Nothing is installed into MCC by this script.
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BUILD_DIR=%ROOT%\build"
-set "PACKAGE_DIR=%ROOT%\dist\Halo3VR-alpha"
-set "ZIP_PATH=%ROOT%\dist\Halo3VR-alpha.zip"
+rem Release identity. This is a packaging label only: no compiled code reads it,
+rem so bumping it never changes the DLL that testers run.
+set "PKG_VER=0.1"
+
+set "PACKAGE_LEAF=Halo3VR-alpha-%PKG_VER%"
+set "PACKAGE_DIR=%ROOT%\dist\%PACKAGE_LEAF%"
+set "ZIP_PATH=%ROOT%\dist\%PACKAGE_LEAF%.zip"
 set "H3XR_PACKAGE_DIR=%PACKAGE_DIR%"
 set "H3XR_ZIP_PATH=%ZIP_PATH%"
+set "H3XR_VERSION_STRING=alpha %PKG_VER%"
 set "H3XR_GIT_COMMIT=unknown"
 for /f "usebackq delims=" %%H in (`git -C "%ROOT%" rev-parse --short^=12 HEAD 2^>nul`) do set "H3XR_GIT_COMMIT=%%H"
 set "H3XR_GIT_DIRTY="
@@ -19,7 +25,7 @@ for /f "usebackq delims=" %%S in (`git -C "%ROOT%" status --porcelain 2^>nul`) d
 if defined H3XR_GIT_DIRTY set "H3XR_GIT_COMMIT=%H3XR_GIT_COMMIT%%H3XR_GIT_DIRTY%"
 
 echo ==============================================
-echo   Halo 3 VR - alpha package exporter
+echo   Halo 3 VR - %H3XR_VERSION_STRING% package exporter
 echo ==============================================
 echo.
 
@@ -74,7 +80,7 @@ if not exist "%BUILD_DIR%\Release\halo3xr_launcher.exe" (
 )
 
 echo [2/5] Creating a clean portable folder...
-if /I not "%PACKAGE_DIR%"=="%ROOT%\dist\Halo3VR-alpha" (
+if /I not "%PACKAGE_DIR%"=="%ROOT%\dist\%PACKAGE_LEAF%" (
     echo [ERROR] Internal package path safety check failed.
     goto :fail
 )
@@ -109,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference = 'Stop';" ^
   "$dll = Get-FileHash -LiteralPath (Join-Path $env:H3XR_PACKAGE_DIR 'halo3xr.dll') -Algorithm SHA256;" ^
   "$launcher = Get-FileHash -LiteralPath (Join-Path $env:H3XR_PACKAGE_DIR 'halo3xr_launcher.exe') -Algorithm SHA256;" ^
-  "@('Halo 3 VR alpha test build', ('Exported: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')), ('Git commit: ' + $env:H3XR_GIT_COMMIT), '', ('halo3xr.dll SHA-256: ' + $dll.Hash), ('halo3xr_launcher.exe SHA-256: ' + $launcher.Hash)) | Set-Content -LiteralPath (Join-Path $env:H3XR_PACKAGE_DIR 'BUILD-INFO.txt') -Encoding ASCII"
+  "@(('Halo 3 VR ' + $env:H3XR_VERSION_STRING), ('Exported: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')), ('Git commit: ' + $env:H3XR_GIT_COMMIT), '', ('halo3xr.dll SHA-256: ' + $dll.Hash), ('halo3xr_launcher.exe SHA-256: ' + $launcher.Hash)) | Set-Content -LiteralPath (Join-Path $env:H3XR_PACKAGE_DIR 'BUILD-INFO.txt') -Encoding ASCII"
 if errorlevel 1 (
     echo [ERROR] Could not write BUILD-INFO.txt.
     goto :fail

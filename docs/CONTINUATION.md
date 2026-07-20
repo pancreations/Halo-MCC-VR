@@ -4,11 +4,13 @@ Start with CURRENT-STATE.md; it contains the current behavior, recovery commits,
 
 Current protected recovery baseline: 330a568 on recovery/best-working-20260719-1300.
 
-Current user-designated best-working runtime checkpoint: `c2e6a27` on
-`feature/dual-wield`. The deployed Release DLL byte-matched the build output at
-SHA-256 `4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`.
-The user tested this exact build in the headset and described dual wield as
-almost perfect and the best checkpoint yet. Preserve it before any new work.
+Current best-working runtime checkpoint: `recovery/best-working-20260720`, also
+the `master` tip. Deployed DLL build 2026-07-20 12:35 AM, SHA-256
+`a9da286ddd983306010a812608aaefce41f912115bd5eb6b9cc7a8bfbfc61459`. It adds the
+headset-confirmed smooth-turn jitter fix and the optional floating-hands mode on
+top of the dual-wield build (`c2e6a27`, DLL SHA-256
+`4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`), which the
+user described as almost perfect. Preserve both before any new work.
 
 The current build includes L3+R3 F1 access, a working VR pointer, controller
 vibration, separate F2 head-tracking and F11 stereo controls in the Status tab,
@@ -24,22 +26,23 @@ inherit the solved hand delta. Do not return to independently anchoring the gun
 to the controller, and do not modify the working slot-0/two-handed path while
 tuning dual wield.
 
-The next work belongs in a new chat and must be split into two isolated tasks:
+Both previously queued isolated tasks are DONE and headset-confirmed on
+2026-07-20: the smooth-turn jitter fix ("smooth as butter") and the optional
+floating-hands mode ("works beautifully"). Leg/hip hiding was then CLOSED by
+user decision. See PLAN.md for what remains open; there are no further
+weapon-placement offset tasks currently requested.
 
-1. Fix smooth-turn jitter without changing the first-person hand, weapon,
-   marker, camera-stereo, or VRIK ownership paths.
-2. Add an optional floating-hands presentation mode, OFF by default. It should
-   render only hands and held guns, with no arms, torso, or legs. The current
-   VRIK presentation remains the default and must not be weakened, globally
-   disabled, or repurposed to implement the optional mode.
+The six restart-applied resolution presets are Potato 50%, Low 67%, Medium 80%,
+High 100%, Ultra 110%, and Keith David 150% (4368x3150). Low is headset-
+confirmed; the other five still need Quest 3 and PSVR2 coverage after a full
+restart, and Keith David has never been run in a headset. Halo's internal
+2912x2100 raster is scaled uniformly, but the OpenXR swapchain and imageRect
+stay at the full runtime size.
 
-There are no further weapon-placement offset tasks currently requested.
-
-The five restart-applied resolution presets remain Potato 50%, Low 67%, Medium
-80%, High 100%, and Ultra 110%; Low is headset-confirmed, while the other four
-tiers still need Quest 3 and PSVR2 coverage after a full restart. Halo's
-internal 2912x2100 raster is scaled uniformly, but the OpenXR swapchain and
-imageRect stay at the full runtime size.
+The installer asks for a picture-quality tier before copying and supports
+installing over a previous version: it rewrites only the `resolution_scale` line
+in the existing settings file, so other tuned settings survive an update. This
+is verified offline against a fake game tree only, not yet by a real tester.
 
 The current native-crosshair solution is `c923842`, confirmed in-headset at `8aa45d7`. It uses Halo's validated CHUD scripting-class-2 gate and preserves the VR reticle plus the rest of the HUD. Do not restore the `f0d5a88` runtime tag-table classifier; it caused a black headset view. Do not use `0x62C`, `0xF70`, or `0x1A90` as defaults: they are runtime chud_definition tag indices, not portable reticle ids.
 

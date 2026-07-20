@@ -60,8 +60,10 @@ static void Clamp()
         g_config.resolution_scale = 0.80f;
     else if (g_config.resolution_scale < 1.05f)
         g_config.resolution_scale = 1.00f;
-    else
+    else if (g_config.resolution_scale < 1.30f)
         g_config.resolution_scale = 1.10f;
+    else
+        g_config.resolution_scale = 1.50f;
     g_config.hud_size = std::clamp(g_config.hud_size, 0.30f, 1.00f);
     g_config.left_hand_forward_m = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
@@ -300,7 +302,7 @@ void ConfigSave()
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
     fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);
     fprintf(f, "# Internal render preset: 0.50 potato, 0.67 low, 0.80 medium,\n");
-    fprintf(f, "# 1.00 high, or 1.10 ultra.\n");
+    fprintf(f, "# 1.00 high, 1.10 ultra, or 1.50 keith david.\n");
     fprintf(f, "# Restart the game after changing this value.\n");
     fprintf(f, "# The headset projection stays full-size; the complete eye is upscaled.\n");
     fprintf(f, "resolution_scale = %.2f\n\n", g_config.resolution_scale);
