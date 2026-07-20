@@ -5,6 +5,15 @@ This is an early test build, not a finished public release. Halo 3 campaign is
 the currently tested path. ODST, online play, custom games, Forge, every weapon,
 vehicles, scopes, and long play sessions have not all been validated yet.
 
+This mod's code was written by AI - Anthropic's Claude and OpenAI's Codex -
+directed by a human modder who is not a programmer. He made the decisions, ran
+the builds, and confirmed each result in a headset, but no human reviewed every
+line of code. The full source is public so anyone can read it before running it:
+
+  https://github.com/pancreations/Halo-MCC-VR
+
+It is MIT licensed. Use it, learn from it, fork it, take it apart.
+
 WHAT THE TEST LAPTOP NEEDS
 --------------------------
 - Windows 10 or 11 (64-bit)

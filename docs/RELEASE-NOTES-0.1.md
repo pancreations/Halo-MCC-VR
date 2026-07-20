@@ -6,6 +6,13 @@ A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 custom games, Forge, every weapon, vehicles, scopes, and long sessions have not all
 been validated.
 
+**This code was written by AI.** Every line was written by Anthropic's Claude and
+OpenAI's Codex, directed by a human modder who is not a programmer — he made the
+decisions, ran the builds, and confirmed each result in a headset, but no human
+reviewed every line. Treat it as unaudited source: the code is public precisely so
+you can read it before you run it. Licensed MIT — fork it, learn from it, do whatever
+is useful.
+
 ## What works
 
 - True per-eye stereo and 6DOF head tracking

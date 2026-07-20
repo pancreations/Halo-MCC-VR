@@ -1,8 +1,22 @@
 # Halo 3 MCC OpenXR
 
-Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-KIT-EVIDENCE.md).
-
 A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
+
+## This code was written by AI
+
+Every line here was written by AI coding assistants — Anthropic's **Claude** and
+OpenAI's **Codex** — working under the direction of a human modder who is not a
+programmer. The human did the reverse-engineering decisions, ran every build, and
+verified every result in a VR headset; the AI wrote the C++.
+
+That is stated up front for two reasons. It is honest, and it should change how you
+read the code: no human reviewed every line, so treat it as you would any unaudited
+source. Read it before you run it. It is also why the license is as permissive as it
+is — take it, learn from it, fork it, do whatever is useful to you.
+
+Licensed [MIT](LICENSE).
+
+Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-KIT-EVIDENCE.md).
 
 ## Current status
 
