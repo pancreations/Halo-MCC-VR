@@ -144,8 +144,20 @@ namespace
         ImGui::Text("Title: %s   |   Mode: %s",
                     title ? title->displayName : "MCC shell",
                     RuntimeModeName(TitleAdapter_GetRuntimeMode()));
-        if (ImGui::Button("Re-center screen"))
+        if (ImGui::Button("Re-center headset and screen"))
+        {
+            Game_Recenter();
             VR_RequestRecenter();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(VR_IsPausePresentation()
+                ? "Resume Halo (Start)"
+                : "Pause Halo in 2D (Start)"))
+        {
+            Input_RequestPauseToggle();
+            Menu_Toggle();
+        }
+        ImGui::TextDisabled("PSVR2 fallback: press Y+B together to Pause/Resume.");
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::TextDisabled("L3+R3 or F1 closes this menu.");

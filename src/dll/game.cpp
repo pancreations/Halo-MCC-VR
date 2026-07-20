@@ -4076,12 +4076,31 @@ void Game_AutoVrTick()
     const bool inLevelStable = freshSince != 0 && (now - freshSince) > 1000;
 
     const TitleDescriptor* activeTitle = TitleAdapter_GetActive();
+    const bool pausePresentation = VR_IsPausePresentation();
+    static bool pauseExitClearRequested = false;
+    if (pausePresentation &&
+        (!activeTitle || activeTitle->title != GameTitle::Halo3))
+    {
+        // Leaving the title through Halo's pause menu must not strand the next
+        // level in the pause override. This changes presentation only; it does
+        // not inject another Start press into the MCC shell.
+        if (!pauseExitClearRequested)
+        {
+            pauseExitClearRequested = true;
+            VR_RequestPausePresentation(false);
+            LOG("pause transition: title left, clearing 2D pause override");
+        }
+    }
+    else
+        pauseExitClearRequested = false;
     if (activeTitle && activeTitle->title == GameTitle::Halo3)
-        TitleAdapter_SetRuntimeMode(inLevelStable ? RuntimeMode::Gameplay : RuntimeMode::Loading);
+        TitleAdapter_SetRuntimeMode(pausePresentation
+            ? RuntimeMode::Paused
+            : (inLevelStable ? RuntimeMode::Gameplay : RuntimeMode::Loading));
     else if (activeTitle && !activeTitle->runtimeSupported)
         TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
 
-    if (!g_config.auto_vr) return;
+    if (!g_config.auto_vr || pausePresentation) return;
 
     if (inLevelStable)
     {
@@ -4174,6 +4193,8 @@ bool Game_ComputeAimStick(float& outRx, float& outRy)
             LOG("M3 DIAG: aim steering blocked: %s", what);
         return false;
     };
+    if (VR_IsPausePresentation())
+        return blocked(6, "Halo pause presentation active");
     if (!g_vrAim.load())
         return blocked(1, "VR aim toggled OFF (press Insert)");
     if (!g_enabled.load())

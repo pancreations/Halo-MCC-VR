@@ -27,6 +27,11 @@ void VR_TraceEvent(const char* tag, int a, int b);
 // user is currently looking.
 void VR_RequestRecenter();
 
+// Switch between immersive stereo gameplay and Halo's stable head-locked
+// pause/menu screen. Requests are comfort-faded on the render thread.
+void VR_RequestPausePresentation(bool paused);
+bool VR_IsPausePresentation();
+
 // F10: toggle whether the flat screen follows the head (vs. staying pinned in
 // the world). Only matters while head tracking is on.
 void VR_ToggleScreenFollow();

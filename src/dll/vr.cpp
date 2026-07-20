@@ -79,6 +79,9 @@ namespace
     XrSwapchain g_menuChain = XR_NULL_HANDLE;
     std::vector<ID3D11Texture2D*> g_menuImages;
     std::vector<ID3D11RenderTargetView*> g_menuRtvs;
+    XrSwapchain g_fadeChain = XR_NULL_HANDLE;
+    std::vector<ID3D11Texture2D*> g_fadeImages;
+    std::vector<ID3D11RenderTargetView*> g_fadeRtvs;
 
     // M3 aim crosshair: a tiny static reticle image floated as a quad layer
     // along the weapon's true aim ray. Drawn once; the compositor keeps
@@ -157,6 +160,10 @@ namespace
     // match your head motion; head-locked keeps it pinned in front but feels
     // disconnected. Toggle with F10.
     std::atomic<bool> g_screenFollow{false};
+    // Input threads request a target; the render thread owns the 200 ms
+    // fade-out, presentation switch, and fade-in.
+    std::atomic<int> g_pauseRequest{-1};
+    std::atomic<bool> g_pausePresentation{false};
 
     // Latest head pose in the LOCAL space, captured every frame on the render
     // thread and read by the game camera hook (M1) on the game thread — hence
@@ -1038,6 +1045,80 @@ float4 ps_pass(VSOut i) : SV_Target
         return q;
     }
 
+    float UpdatePauseTransition()
+    {
+        enum class Phase { Idle, FadeOut, FadeIn };
+        static Phase phase = Phase::Idle;
+        static bool targetPaused = false;
+        static uint64_t phaseStartMs = 0;
+        const uint64_t now = GetTickCount64();
+        const int requested = g_pauseRequest.exchange(-1);
+        if (requested >= 0)
+        {
+            targetPaused = requested != 0;
+            phase = Phase::FadeOut;
+            phaseStartMs = now;
+            g_requestedHaptics = 0.0f;
+            LOG("pause transition: fade out -> %s",
+                targetPaused ? "head-locked 2D" : "stereo 3D");
+        }
+        if (phase == Phase::Idle)
+            return 0.0f;
+
+        constexpr float fadeMs = 200.0f;
+        float t = static_cast<float>(now - phaseStartMs) / fadeMs;
+        if (phase == Phase::FadeOut)
+        {
+            if (t < 1.0f)
+                return t;
+            g_pausePresentation = targetPaused;
+            if (!targetPaused)
+            {
+                Game_Recenter();
+                g_haveCenter = false;
+            }
+            phase = Phase::FadeIn;
+            phaseStartMs = now;
+            LOG("pause transition: presentation switched to %s",
+                targetPaused ? "head-locked 2D" : "stereo 3D");
+            return 1.0f;
+        }
+        if (t < 1.0f)
+            return 1.0f - t;
+        phase = Phase::Idle;
+        LOG("pause transition: comfort fade complete");
+        return 0.0f;
+    }
+
+    bool AppendComfortFade(float alpha, XrCompositionLayerQuad& quad,
+                           std::vector<XrCompositionLayerBaseHeader*>& layers)
+    {
+        if (alpha <= 0.001f)
+            return true;
+        if (g_fadeChain == XR_NULL_HANDLE &&
+            !CreateChain(4, 4, g_fadeChain, g_fadeImages, g_fadeRtvs, "comfort fade"))
+            return false;
+
+        uint32_t idx = 0;
+        XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+        wait.timeout = 1000000000;
+        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        if (XR_FAILED(xrAcquireSwapchainImage(g_fadeChain, &acquire, &idx)) ||
+            XR_FAILED(xrWaitSwapchainImage(g_fadeChain, &wait)))
+            return false;
+        const float black[4] = {0.0f, 0.0f, 0.0f,
+            std::clamp(alpha, 0.0f, 1.0f)};
+        g_context->ClearRenderTargetView(GetRtv(g_fadeImages, g_fadeRtvs, idx), black);
+        xrReleaseSwapchainImage(g_fadeChain, &release);
+        quad = MakeQuad(g_fadeChain, 4, 4, 20.0f, 0.25f, 0.0f,
+            XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+                XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT,
+            true);
+        layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad));
+        return true;
+    }
+
     // ---------------------------------------------------------------- init
 
     // Part 1 (background thread): create the OpenXR instance and find the
@@ -1749,6 +1830,7 @@ float4 ps_pass(VSOut i) : SV_Target
             return;
 
         CaptureRightControllerPose(fs.predictedDisplayTime);
+        const float comfortFadeAlpha = UpdatePauseTransition();
 
         // M2: per-eye pose + field of view for this frame (foundation for
         // stereo rendering — not used to render yet).
@@ -1785,7 +1867,7 @@ float4 ps_pass(VSOut i) : SV_Target
             }
         }
 
-        XrCompositionLayerQuad screenQuad, menuQuad, reticleQuad;
+        XrCompositionLayerQuad screenQuad, menuQuad, reticleQuad, fadeQuad;
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         // Reused across frames (Frame runs only on the render thread) so the
         // per-frame layer assembly allocates nothing in steady state.
@@ -1851,7 +1933,8 @@ float4 ps_pass(VSOut i) : SV_Target
                         Game_SetStereoEye(-1);
                     }
                 }
-                const bool stereo = g_stereoEnabled.load() && viewsValid &&
+                const bool pausedPresentation = g_pausePresentation.load();
+                const bool stereo = !pausedPresentation && g_stereoEnabled.load() && viewsValid &&
                                     g_stereoChain != XR_NULL_HANDLE && Game_IsHeadTracking();
                 if (stereo)
                 {
@@ -1947,7 +2030,8 @@ float4 ps_pass(VSOut i) : SV_Target
                              GetRtv(g_screenImages, g_screenRtvs, idx));
                         xrReleaseSwapchainImage(g_screenChain, &ri);
                         FLog("screen image released");
-                        const bool headLock = g_screenFollow.load() && Game_IsHeadTracking();
+                        const bool headLock = pausedPresentation ||
+                            (g_screenFollow.load() && Game_IsHeadTracking());
                         screenQuad = MakeQuad(g_screenChain, (int32_t)g_screenW, (int32_t)g_screenH,
                                               g_config.screen_width_m, g_config.screen_distance_m, 0.0f, 0,
                                               headLock);
@@ -1961,7 +2045,8 @@ float4 ps_pass(VSOut i) : SV_Target
                 if (Menu_IsOpen())
                 {
                     const bool menuHeadLocked =
-                        stereo || (g_screenFollow.load() && Game_IsHeadTracking());
+                        pausedPresentation || stereo ||
+                        (g_screenFollow.load() && Game_IsHeadTracking());
                     UpdateMenuPointer(menuHeadLocked);
                     if (ID3D11Texture2D* menuTex = Menu_Render())
                     {
@@ -1993,6 +2078,8 @@ float4 ps_pass(VSOut i) : SV_Target
                 backbuffer->Release();
             }
         }
+        if (fs.shouldRender)
+            AppendComfortFade(comfortFadeAlpha, fadeQuad, layers);
 
         // Heartbeat: log the session state + whether the runtime wants us to
         // render + how many layers we submitted, on any change and at least
@@ -2144,6 +2231,16 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
 void VR_RequestRecenter()
 {
     g_haveCenter = false;
+}
+
+void VR_RequestPausePresentation(bool paused)
+{
+    g_pauseRequest = paused ? 1 : 0;
+}
+
+bool VR_IsPausePresentation()
+{
+    return g_pausePresentation.load();
 }
 
 void VR_ToggleScreenFollow()

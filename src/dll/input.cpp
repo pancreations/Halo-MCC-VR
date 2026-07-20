@@ -35,6 +35,8 @@ namespace
     XInputSetStateFn g_origSetState[3] = {};
     std::atomic<bool> g_overrideLogged{false};
     MenuChordDetector g_menuChord;
+    MenuChordDetector g_pauseChord;
+    std::atomic<uint64_t> g_startPulseUntilMs{0};
 
     // Map |v| in 0..1 to a raw stick value that clears MCC's inner deadzone,
     // so small corrections still produce movement.
@@ -65,14 +67,24 @@ namespace
             return;
         }
 
+        const MenuChordResult pauseChord =
+            g_pauseChord.Update(GetTickCount64(), pad.y, pad.b);
+        if (pauseChord.toggled)
+            Input_RequestPauseToggle();
+
         WORD btn = state->Gamepad.wButtons;
         if (pad.a) btn |= XINPUT_GAMEPAD_A;
-        if (pad.b) btn |= XINPUT_GAMEPAD_B;
+        if (pad.b && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_B;
         if (pad.x) btn |= XINPUT_GAMEPAD_X;
-        if (pad.y) btn |= XINPUT_GAMEPAD_Y;
+        if (pad.y && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_Y;
         if (pad.clickL && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
         if (pad.clickR && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
-        if (pad.menu) btn |= XINPUT_GAMEPAD_START;
+        static bool previousMenu = false;
+        if (pad.menu && !previousMenu)
+            VR_RequestPausePresentation(!VR_IsPausePresentation());
+        previousMenu = pad.menu;
+        if (pad.menu || GetTickCount64() < g_startPulseUntilMs.load())
+            btn |= XINPUT_GAMEPAD_START;
         if (pad.gripL > 0.6f) btn |= XINPUT_GAMEPAD_LEFT_SHOULDER;
         if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
         state->Gamepad.wButtons = btn;
@@ -300,6 +312,17 @@ namespace
         LOG("M3: claimed game import-table slot for %s (previous handler %p)", what, *prevOut);
         return true;
     }
+}
+
+void Input_RequestPauseToggle()
+{
+    const bool paused = !VR_IsPausePresentation();
+    // Hold Start long enough to cross MCC's input polling boundary, then let
+    // the normal released state provide the edge needed by a later toggle.
+    g_startPulseUntilMs = GetTickCount64() + 350;
+    VR_RequestPausePresentation(paused);
+    LOG("pause fallback: injecting Start, target presentation=%s",
+        paused ? "head-locked 2D" : "stereo 3D");
 }
 
 int Input_ClaimXInputIat()

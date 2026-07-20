@@ -43,6 +43,9 @@ int Input_InstallXInputHook();
 // Writes our shims into MCC's import table for xinput1_3 (Steam Input patches
 // the same slots, bypassing DLL-level hooks). Call repeatedly to re-assert.
 int Input_ClaimXInputIat();
+// Injects a real XINPUT_GAMEPAD_START pulse and requests the matching
+// stereo/flat pause presentation. Used when a runtime reserves its system key.
+void Input_RequestPauseToggle();
 
 
 // M2 alternate-eye proof. -1 removes the stereo eye offset; 0/1 selects the
