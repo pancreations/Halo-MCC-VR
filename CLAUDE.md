@@ -25,8 +25,8 @@ The user is a game modder, not a programmer. Explain test steps in plain languag
 - Game: N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection
 - Host: MCC\Binaries\Win64\MCC-Win64-Shipping.exe
 - Engine: halo3\halo3.dll
-- Deployed mod: halo3xr\halo3xr.dll
-- Runtime log: halo3xr\halo3xr.log
+- Deployed mod: Halo_MCC_VR\halo3xr.dll
+- Runtime log: Halo_MCC_VR\halo3xr.log
 
 ## Definition of done
 

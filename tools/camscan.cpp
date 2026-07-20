@@ -616,7 +616,7 @@ static int CmdFindWrite(uint64_t rva, int wantHits, double timeoutSecs)
 
 // The mod's CamCopyHook logs the heap address of the game's authoritative
 // camera buffer ("src=...") into halo3xr.log. Locate that log via the running
-// game's exe path (<install>\MCC\Binaries\Win64\...exe -> <install>\halo3xr\)
+// game's exe path (<install>\MCC\Binaries\Win64\...exe -> <install>\Halo_MCC_VR\)
 // and return the most recently logged src pointer, so heap targets can be
 // watched without the user copying addresses around.
 static uint64_t FindLoggedCamSrc()
@@ -638,7 +638,7 @@ static uint64_t FindLoggedCamSrc()
         if (slash == std::wstring::npos) { printf("unexpected exe path layout\n"); return 0; }
         path.resize(slash);
     }
-    path += L"\\halo3xr\\halo3xr.log";
+    path += L"\\Halo_MCC_VR\\halo3xr.log";
 
     // The mod keeps the log open for writing; share-friendly open required.
     FILE* f = _wfsopen(path.c_str(), L"rb", _SH_DENYNO);

@@ -10,7 +10,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BUILD_DIR=%ROOT%\build"
 rem Release identity. This is a packaging label only: no compiled code reads it,
 rem so bumping it never changes the DLL that testers run.
-set "PKG_VER=0.1"
+set "PKG_VER=0.1.1"
 
 set "PACKAGE_LEAF=HaloMCCVR-alpha-%PKG_VER%"
 set "PACKAGE_DIR=%ROOT%\dist\%PACKAGE_LEAF%"
@@ -93,33 +93,20 @@ if errorlevel 1 (
 )
 
 echo [3/5] Checking every required user file...
-for %%F in (halo3xr.dll halo3xr_launcher.exe install.bat uninstall.bat ALPHA-README.txt) do (
+rem Install is manual: the package is the two binaries plus the two READMEs.
+rem There is no installer or uninstaller script to verify (removed 2026-07-20).
+for %%F in (halo3xr.dll halo3xr_launcher.exe ALPHA-README.txt MANUAL-README.txt) do (
     if not exist "%PACKAGE_DIR%\%%F" (
         echo [ERROR] Missing from package: %%F
         goto :fail
     )
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\tests\uninstall_safety_test.ps1"
-if errorlevel 1 (
-    echo [ERROR] The destructive-safety uninstaller test failed.
-    goto :fail
-)
-for %%F in (install.bat uninstall.bat ALPHA-README.txt) do (
+for %%F in (ALPHA-README.txt MANUAL-README.txt) do (
     "%SystemRoot%\System32\fc.exe" /b "%ROOT%\installer\%%F" "%PACKAGE_DIR%\%%F" >nul
     if errorlevel 1 (
         echo [ERROR] Packaged %%F does not match its verified source file.
         goto :fail
     )
-)
-findstr /r /i /c:"rd  */s" /c:"rmdir  */s" "%PACKAGE_DIR%\uninstall.bat" >nul
-if not errorlevel 1 (
-    echo [ERROR] Unsafe recursive directory deletion found in uninstall.bat.
-    goto :fail
-)
-findstr /i /c:"GetFileName($m) -ine 'halo3xr'" "%PACKAGE_DIR%\uninstall.bat" >nul
-if errorlevel 1 (
-    echo [ERROR] uninstall.bat is missing the exact halo3xr target-name guard.
-    goto :fail
 )
 "%SystemRoot%\System32\fc.exe" /b "%BUILD_DIR%\Release\halo3xr.dll" "%PACKAGE_DIR%\halo3xr.dll" >nul
 if errorlevel 1 (
@@ -160,7 +147,8 @@ echo.
 echo ZIP to copy to the laptop:
 echo   %ZIP_PATH%
 echo.
-echo On the laptop, unzip the whole ZIP and double-click install.bat.
+echo On the laptop, unzip the whole ZIP and follow MANUAL-README.txt: copy the
+echo two files into a "Halo_MCC_VR" folder inside the game folder.
 echo.
 if /I not "%~1"=="auto" pause
 exit /b 0

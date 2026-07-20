@@ -2,7 +2,17 @@
 
 // Settings live in halomccvr.cfg next to the DLL, as plain "key = value" text
 // so users can edit them by hand. The in-headset menu edits the same values
-// live and saves them back.
+// live and saves them back. Saving from the menu rewrites the whole file, so a
+// hand-editor's own comments do not survive (their VALUES do).
+
+// Halo's VR raster size at resolution_scale 1.00, and the range a hand-edited
+// scale may take. The launcher turns these into -ResX/-ResY; the DLL upscales
+// the finished eye into the unchanged full-size OpenXR projection. Both the
+// launcher and the config clamp read these so the two can never disagree.
+inline constexpr int kNativeRenderWidth = 2912;
+inline constexpr int kNativeRenderHeight = 2100;
+inline constexpr float kResolutionScaleMin = 0.35f;
+inline constexpr float kResolutionScaleMax = 2.00f;
 
 struct Config
 {
@@ -38,16 +48,24 @@ struct Config
     float crosshair_size_deg = 2.25f;   // apparent (angular) size
 
     // Crosshair color (0-1 per channel). Default approximates Halo 3's own
-    // light CHUD blue; edit live in the F1 menu (a reset button restores it).
+    // light CHUD blue. File-only: there is no F1 widget for these.
     float reticle_r = 0.62f;
     float reticle_g = 0.87f;
     float reticle_b = 1.0f;
 
     // Hand-anchored first-person weapon: uniform size multiplier applied to
-    // the wrist subtree (hand + weapon) around the wrist. Under the true
-    // world projection the authored viewmodels read oversized; 0.85 is the
-    // new-pipeline starting point. Home/End adjust live.
-    float gun_scale = 0.85f;
+    // the RIGHT wrist subtree (hand + weapon) around the wrist. Under the true
+    // world projection the authored viewmodels read oversized. 0.97 is the
+    // headset-tuned value (2026-07-20). Home/End adjust live.
+    float gun_scale = 0.97f;
+
+    // Same trim for the LEFT wrist subtree: the support hand, and the second
+    // gun when dual-wielding. Independent of gun_scale because the left hand
+    // holds no weapon most of the time. 1.00 = authored size, which is what
+    // the left hand has always rendered at — until 2026-07-20 the trim loop
+    // used the RIGHT wrist's bone mask for both sides, so no left-hand scale
+    // value ever reached a bone.
+    float left_hand_scale = 1.00f;
 
     // (gun_length_scale removed 2026-07-19: a barrel-only squash is not
     // expressible in the engine's uniform-scale bone format; moving bone
@@ -83,9 +101,10 @@ struct Config
     // function once thought to size the HUD actually adjusts brightness.
     float game_brightness = 1.0f;
 
-    // Halo's internal raster preset, applied by the launcher on the next game
-    // start: potato .50, low .67, medium .80, high 1.00, ultra 1.10,
-    // keith david 1.50.
+    // Halo's internal raster scale, applied by the launcher on the next game
+    // start. ANY value from kResolutionScaleMin to kResolutionScaleMax is
+    // honored exactly; the named tiers (potato .50, low .67, medium .80,
+    // high 1.00, ultra 1.10, keith david 1.50) are only F1 shortcuts.
     // The OpenXR projection remains at the headset's full size.
     float resolution_scale = 1.0f;
 
@@ -121,8 +140,10 @@ struct Config
     // hold (engaged only while the left grip is held).
     bool two_hand_toggle = true;
     // Wrist-to-palm correction for the left controller. This same point drives
-    // the rendered support hand and the two-hand aiming line so they stay aligned.
-    float left_hand_forward_m = 0.12f;
+    // the rendered support hand and the two-hand aiming line so they stay
+    // aligned. Negative seats the hand back toward the wrist; -0.093 is the
+    // headset-tuned value (2026-07-20).
+    float left_hand_forward_m = -0.093f;
     // Sideways nudge of the two-hand grab zone along the right controller's +X
     // (positive = toward the player's right) so the grab line sits on the
     // visible barrel. Headset request 2026-07-19: the AR's barrel sat right of

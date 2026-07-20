@@ -92,9 +92,6 @@ if(BUILD_TESTING)
     target_compile_definitions(halomccvr_core_tests PRIVATE
         UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
-    add_test(NAME uninstall_safety_test
-        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
-                -File ${CMAKE_SOURCE_DIR}/tests/uninstall_safety_test.ps1)
 endif()
 
 # --- "dist" layout: everything a user needs, in one folder ---
@@ -102,7 +99,6 @@ endif()
 #  so the dependencies' own install rules don't pollute the folder)
 install(TARGETS halo3xr halo3xr_launcher RUNTIME DESTINATION . COMPONENT dist)
 install(FILES
-    installer/install.bat
-    installer/uninstall.bat
     installer/ALPHA-README.txt
+    installer/MANUAL-README.txt
     DESTINATION . COMPONENT dist)

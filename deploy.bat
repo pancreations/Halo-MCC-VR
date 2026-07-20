@@ -17,8 +17,8 @@ set CMAKE="C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\C
 set SRC=n:\dev\halo3-openxr
 set DLL_OUT=%SRC%\build\Release\halo3xr.dll
 set LAUNCHER_OUT=%SRC%\build\Release\halo3xr_launcher.exe
-set DLL_DST=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\halo3xr\halo3xr.dll
-set LAUNCHER_DST=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\halo3xr\halo3xr_launcher.exe
+set DLL_DST=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR\halo3xr.dll
+set LAUNCHER_DST=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe
 
 echo.
 echo [1/4] Checking the game is closed...
@@ -66,7 +66,7 @@ echo.
 echo ===== DEPLOYED OK =====
 for %%F in ("%DLL_OUT%") do echo   DLL build time: %%~tF
 for %%F in ("%LAUNCHER_OUT%") do echo   launcher build time: %%~tF
-echo   The game log's first line ^("halo3xr M0 loaded ... build ..."^) must
+echo   The game log's first line ^("HaloMCCVR loaded ... build ..."^) must
 echo   show this same date/time - that is the proof the new code is running.
 if /I not "%~1"=="auto" pause
 exit /b 0

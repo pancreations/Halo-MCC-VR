@@ -1,5 +1,5 @@
-HALO MCC VR - ALPHA 0.1
-=======================
+HALO MCC VR - ALPHA 0.1.1
+=========================
 
 This is an early test build, not a finished public release. Halo 3 campaign is
 the currently tested path. ODST, online play, custom games, Forge, every weapon,
@@ -25,6 +25,13 @@ WHAT THE TEST LAPTOP NEEDS
 
 No compiler, CMake, source code, or Visual C++ redistributable is required.
 
+QUEST USERS: USE STEAM LINK
+---------------------------
+Testers report the best performance on Quest with Steam Link rather than
+Virtual Desktop. If the image stutters or feels behind your head on a Quest,
+switch to Steam Link before changing any mod setting - it has done more for
+frame pacing than any resolution change.
+
 REQUIRED MCC SETTINGS
 ---------------------
 Set these three in MCC's own menus. They are not optional and the mod does not
@@ -47,42 +54,57 @@ the culling out past what the headset shows and the popping goes away.
 Leaving V-Sync on or the frame rate limit at 60 will cap the headset at that
 rate and feel bad regardless of how fast your PC is.
 
-AUTOMATIC INSTALL
------------------
+INSTALL
+-------
+Installing is copying two files. There is no installer script: you place them
+yourself, so you can see exactly what was added and remove it just as easily.
+
 1. Unzip the entire HaloMCCVR-alpha-0.1 folder. Do not run files from inside the
    ZIP.
-2. Close MCC if it is running, then double-click install.bat.
-3. If MCC is not found automatically, paste the game's main install folder when
-   asked. It is the folder containing the "MCC" folder.
-4. Pick a picture quality when asked. Low is the safest first try; you can
-   change it any time with F1 in game (it applies after a restart).
-5. The installer creates a "Halo MCC VR" desktop shortcut.
-
-Installing over an older copy of the mod is fine: run install.bat again and it
-updates the mod folder in place, keeping the settings you tuned with F1. Game
-files are never modified.
-
-MANUAL INSTALL (NO SCRIPTS)
----------------------------
-You do not have to run install.bat or uninstall.bat.
-
-1. In Steam, open MCC's Manage > Browse local files folder.
-2. Inside the main "Halo The Master Chief Collection" folder, create a folder
-   named exactly "halo3xr".
-3. From this unzipped package, copy only halo3xr.dll and
-   halo3xr_launcher.exe into that new halo3xr folder.
-4. Start Steam and your OpenXR headset runtime, then double-click
+2. In Steam, open MCC's Manage > Browse local files folder.
+3. Inside the main "Halo The Master Chief Collection" folder, create a folder
+   named exactly "Halo_MCC_VR".
+4. From this unzipped package, copy only halo3xr.dll and
+   halo3xr_launcher.exe into that new Halo_MCC_VR folder.
+5. Start Steam and your OpenXR headset runtime, then double-click
    halo3xr_launcher.exe.
-5. Optional: right-click halo3xr_launcher.exe and choose
+6. Optional: right-click halo3xr_launcher.exe and choose
    Send to > Desktop (create shortcut).
 
 The final path must be:
 
-  Halo The Master Chief Collection\halo3xr\halo3xr_launcher.exe
+  Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe
 
-Do not place the files loose in the main MCC folder. To uninstall manually,
-close MCC and delete only the dedicated halo3xr folder you created. The mod
-does not patch game files.
+Do not place the files loose in the main MCC folder. The mod does not patch game
+files.
+
+UPDATING
+--------
+Close MCC, then copy the two new files over the old ones in Halo_MCC_VR. Your
+halomccvr.cfg settings are left alone. If your folder is still named "halo3xr"
+from an older build, close MCC and rename the whole folder to "Halo_MCC_VR" -
+do not merge two folders. If both names exist, keep the one with the settings
+and logs you want and move the other somewhere safe first.
+
+SETTINGS FILE
+-------------
+Every setting the F1 menu has, and a few it does not, live in a plain text file
+you can open in Notepad:
+
+  Halo The Master Chief Collection\Halo_MCC_VR\halomccvr.cfg
+
+It is created for you the first time the mod runs, so you do not have to install
+anything to get one. Each setting is listed with a short description, its
+default value, and the range it accepts, so you can always put one back the way
+it was without reinstalling.
+
+  - Edit it with MCC closed. Press F1 in game for the same settings live.
+  - Lost? Close MCC, DELETE the file, and start the game. A fresh one with all
+    the defaults is written for you.
+  - The F1 menu rewrites the whole file when it saves, so notes you type in
+    yourself will disappear. Your values are always kept.
+  - A line the mod does not understand is ignored and noted in halo3xr.log. It
+    cannot break the mod, and out-of-range numbers are pulled back into range.
 
 PICTURE QUALITY
 ---------------
@@ -96,9 +118,26 @@ costs more graphics card. It only changes after a full game restart.
   Ultra       110%   3204 x 2310   high-end graphics card
   Keith David 150%   4368 x 3150   top-end only. Absurdly sharp.
 
+Those six are only shortcuts. The real setting is resolution_scale in
+halomccvr.cfg, and it accepts ANY value from 0.35 to 2.00 - set it to 0.90 and
+you get exactly 90%, not "rounded down to 80". The F1 menu has the same free
+slider. 1.00 means 2912 x 2100; your number scales both sides together.
+
+YES, YOU CAN GO OVER 100%. Anything above 1.00 is supersampling: the game
+renders bigger than the headset needs and the extra detail is squeezed down,
+which is the cleanest-looking image you can get. The ceiling is 2.00, which is
+5824 x 4200 - noticeably past Keith David's 150%, and it will melt anything but
+a top-end card. Values above 2.00 are pulled back to 2.00 rather than accepted,
+because nothing renders that today and a typo (20 instead of 2.0) would leave
+you with a game that never starts.
+
+  1.25   3640 x 2626   between Ultra and Keith David
+  1.75   5096 x 3676   past Keith David
+  2.00   5824 x 4200   the ceiling
+
 Only Low has been confirmed in a headset so far. If a higher setting stutters
-or will not start, run install.bat again and pick a lower one, or drop it in
-the F1 menu and restart the game.
+or will not start, lower resolution_scale in the file, or drop it in the F1
+menu, and restart the game.
 
 PLAY
 ----
@@ -120,26 +159,27 @@ person who supplied this exact build.
 
 UNINSTALL
 ---------
-Run uninstall.bat from the installed game's "halo3xr" folder. It removes only
-known mod-owned files and its desktop shortcut. It validates that the target is
-literally a "halo3xr" folder beneath a real MCC install, never recursively
-deletes a directory, and leaves unknown files untouched.
+Close MCC completely and delete the "Halo_MCC_VR" folder you created, plus the
+desktop shortcut if you made one. That is the whole uninstall. The mod never
+patches game files, so nothing else has to be undone.
 
-For a no-script uninstall, close MCC and manually delete only the dedicated
-"halo3xr" folder. Steam game files elsewhere are not modified by the mod.
+  Delete:  Halo The Master Chief Collection\Halo_MCC_VR
 
-SAFETY WARNING: uninstall.bat from packages exported before the 2026-07-20
-safety fix must not be used. If an old package was extracted directly into the
-main MCC folder, its old uninstaller could mistake that folder for the mod and
-delete the game installation. Restore MCC with Steam's file verification, then
-use only an updated package.
+Delete only that folder. Do not delete the main "Halo The Master Chief
+Collection" folder - that is the game itself.
+
+SAFETY WARNING: earlier packages shipped an uninstall.bat script. It has been
+removed from the project. If you still have an old one, delete it rather than
+run it: a version from before 2026-07-20 could mistake the main MCC folder for
+the mod folder and delete your game installation. If that already happened,
+restore MCC with Steam's file verification.
 
 IF IT FAILS
 -----------
 Send the tester's description of what appeared in the headset plus these logs:
 
-  <MCC install folder>\halo3xr\halo3xr_launcher.log
-  <MCC install folder>\halo3xr\halo3xr.log
+  <MCC install folder>\Halo_MCC_VR\halo3xr_launcher.log
+  <MCC install folder>\Halo_MCC_VR\halo3xr.log
 
 Also include the BUILD-INFO.txt from the unzipped test package and say which
 headset, GPU, and OpenXR runtime the laptop used.

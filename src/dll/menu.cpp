@@ -2,6 +2,7 @@
 #include <windowsx.h>
 #include <atomic>
 #include <cfloat>
+#include <cmath>
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
@@ -33,6 +34,7 @@ namespace
         float scrollY = 0.0f;
     };
     VrPointerInput g_vrPointer;
+    bool g_resetArmed = false; // "reset all settings" needs a second click
     // ImGui gets input on the game's window thread but draws on its render
     // thread; this lock keeps the two from touching ImGui at the same time.
     CRITICAL_SECTION g_cs;
@@ -257,7 +259,16 @@ namespace
         ImGui::Separator();
         ImGui::Text("Hand-held weapon");
         changed |= ImGui::SliderFloat("Weapon size", &g_config.gun_scale, 0.3f, 3.0f, "%.2fx");
-        ImGui::TextDisabled("Uniform scale of hand + weapon about your grip (Home/End in-game).");
+        ImGui::TextDisabled("Uniform scale of RIGHT hand + weapon about your grip (Home/End in-game).");
+        changed |= ImGui::SliderFloat("Left hand size", &g_config.left_hand_scale,
+                                      0.3f, 3.0f, "%.2fx");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Match weapon##lhs"))
+        { g_config.left_hand_scale = g_config.gun_scale; changed = true; }
+        ImGui::TextDisabled("Sizes the left hand, and the second gun when dual-wielding.\n"
+                            "1.00 = authored size. Separate because the left hand is\n"
+                            "usually empty; use Match weapon for identical hands.\n"
+                            "Its front/back position is \"Left hand forward offset\" below.");
         changed |= ImGui::SliderFloat("Weapon pitch (deg)", &g_config.gun_pitch_deg, -180.0f, 180.0f, "%.0f");
         changed |= ImGui::SliderFloat("Weapon yaw (deg)", &g_config.gun_yaw_deg, -180.0f, 180.0f, "%.0f");
         changed |= ImGui::SliderFloat("Weapon roll (deg)", &g_config.gun_roll_deg, -180.0f, 180.0f, "%.0f");
@@ -361,32 +372,34 @@ namespace
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Picture");
-        const char* resolutionPresets[] = {
-            "Potato (50%)", "Low (67%)", "Medium (80%)",
-            "High (100%)", "Ultra (110%)", "Keith David (150%)"
+        changed |= ImGui::SliderFloat("Resolution scale", &g_config.resolution_scale,
+                                      kResolutionScaleMin, kResolutionScaleMax, "%.2fx");
+        // Same even-rounding the launcher applies, so this is the exact render
+        // size the next launch will ask Halo for.
+        auto scaleEven = [](int base, float scale) {
+            int value = (int)lroundf((float)base * scale);
+            return (value & 1) ? value + 1 : value;
         };
-        const float resolutionScales[] = {0.50f, 0.67f, 0.80f, 1.00f, 1.10f, 1.50f};
-        int resolutionPreset = 3;
-        if (g_config.resolution_scale < 0.585f)
-            resolutionPreset = 0;
-        else if (g_config.resolution_scale < 0.735f)
-            resolutionPreset = 1;
-        else if (g_config.resolution_scale < 0.90f)
-            resolutionPreset = 2;
-        else if (g_config.resolution_scale < 1.05f)
-            resolutionPreset = 3;
-        else if (g_config.resolution_scale < 1.30f)
-            resolutionPreset = 4;
-        else
-            resolutionPreset = 5;
-        if (ImGui::Combo("Resolution preset", &resolutionPreset,
-                         resolutionPresets, 6))
+        ImGui::TextDisabled("Renders %d x %d.", scaleEven(kNativeRenderWidth, g_config.resolution_scale),
+                            scaleEven(kNativeRenderHeight, g_config.resolution_scale));
+        struct ResolutionPreset { const char* name; float scale; };
+        static const ResolutionPreset kPresets[] = {
+            {"Potato", 0.50f}, {"Low", 0.67f}, {"Medium", 0.80f},
+            {"High", 1.00f}, {"Ultra", 1.10f}, {"Keith David", 1.50f}
+        };
+        for (int i = 0; i < 6; ++i)
         {
-            g_config.resolution_scale = resolutionScales[resolutionPreset];
-            changed = true;
+            if (i)
+                ImGui::SameLine();
+            if (ImGui::SmallButton(kPresets[i].name))
+            {
+                g_config.resolution_scale = kPresets[i].scale;
+                changed = true;
+            }
         }
-        ImGui::TextDisabled("Potato/Low/Medium reduce pixel count; Ultra and Keith David\n"
-                            "supersample. Keith David renders 4368x3150 and needs a top-end GPU.\n"
+        ImGui::TextDisabled("The buttons are shortcuts; the slider takes any value in between,\n"
+                            "as does resolution_scale in halomccvr.cfg. Below 1.00x trades\n"
+                            "sharpness for frame rate; above it supersamples.\n"
                             "Changing this requires a full game restart. Close MCC and relaunch.");
         changed |= ImGui::SliderFloat("Game brightness", &g_config.game_brightness, 0.5f, 2.0f, "%.2f");
         ImGui::TextDisabled("Brightens/darkens the whole game. 1.0 = the game's own brightness.");
@@ -423,6 +436,37 @@ namespace
 
         ImGui::Spacing();
         ImGui::TextDisabled("Insert toggles hand aim. Sense sticks move/turn; grips = bumpers,\ntriggers = fire/grenade, stick-click = zoom/crouch, left menu = Start.");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Start over");
+        // Two clicks: a stray VR pointer click here would otherwise wipe a
+        // headset-tuned weapon calibration with no undo. Closing the menu
+        // disarms it, so a forgotten arm can never fire on the next session.
+        if (ImGui::Button(g_resetArmed ? "Click again to confirm reset"
+                                       : "Reset ALL settings to defaults"))
+        {
+            if (g_resetArmed)
+            {
+                g_config = Config{};
+                ConfigSave();
+                LOG("config: reset to defaults from the menu");
+                g_resetArmed = false;
+            }
+            else
+            {
+                g_resetArmed = true;
+            }
+        }
+        if (g_resetArmed)
+        {
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+                g_resetArmed = false;
+        }
+        ImGui::TextDisabled("Puts every setting back to the value halomccvr.cfg lists as its\n"
+                            "default, including your weapon calibration. Resolution needs a\n"
+                            "game restart; everything else applies immediately.");
         ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -508,6 +552,7 @@ bool Menu_Toggle()
         return false;
     const bool open = !g_open.load(std::memory_order_acquire);
     g_open.store(open, std::memory_order_release);
+    g_resetArmed = false; // never leave a reset half-armed across sessions
     LOG("menu %s", open ? "opened" : "closed");
     return open;
 }

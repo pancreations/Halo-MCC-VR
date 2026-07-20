@@ -2458,23 +2458,46 @@ namespace
                         }
                     }
                     // Uniform size trim about the gripping hand (grip stays put).
-                    if (meshScale!=1.0f)
+                    // Each side scales its OWN wrist subtree. Before 2026-07-20
+                    // the mask here was always context.wristDescendants — the
+                    // RIGHT wrist's bones — even when the anchor switched to the
+                    // left wrist, so no left-hand size value ever reached a bone
+                    // ("the left arm is not scalable").
+                    auto trimSubtree=[&](int anchorBone,uint64_t mask,float scale)
                     {
-                        const int scaleBone=dual?context.lWrist:context.wrist;
+                        if (scale==1.0f || !mask ||
+                            anchorBone<0 || anchorBone>=context.count) return;
                         const float anchor[3]={
-                            g_fpPaletteScratch[scaleBone].translation[0],
-                            g_fpPaletteScratch[scaleBone].translation[1],
-                            g_fpPaletteScratch[scaleBone].translation[2]};
-                        const uint64_t mask=context.wristDescendants;
+                            g_fpPaletteScratch[anchorBone].translation[0],
+                            g_fpPaletteScratch[anchorBone].translation[1],
+                            g_fpPaletteScratch[anchorBone].translation[2]};
                         for (int i=0;i<context.count && i<64;++i)
                         {
                             if (!(mask&(1ull<<i))) continue;
                             BoneMatrix& bone=g_fpPaletteScratch[i];
                             for (int r=0;r<3;++r)
                                 bone.translation[r]=anchor[r]+
-                                    (bone.translation[r]-anchor[r])*meshScale;
-                            bone.scale*=meshScale;
+                                    (bone.translation[r]-anchor[r])*scale;
+                            bone.scale*=scale;
                         }
+                    };
+                    const float leftScale=Clamp(g_config.left_hand_scale,0.3f,3.0f);
+                    if (dual)
+                    {
+                        // The dual-wield carrier IS the left hand; its own gun
+                        // rides that subtree, so the left size governs both.
+                        trimSubtree(context.lWrist,context.lWristDescendants,leftScale);
+                    }
+                    else
+                    {
+                        trimSubtree(context.wrist,context.wristDescendants,meshScale);
+                        // The support hand is game-animated onto the gun rather
+                        // than IK-solved, but its bones are still ours to size.
+                        // Exclude anything already trimmed above so a skeleton
+                        // that nests the two subtrees cannot scale a bone twice.
+                        trimSubtree(context.lWrist,
+                                    context.lWristDescendants&~context.wristDescendants,
+                                    leftScale);
                     }
                     // NOTE: a "length squash along the barrel" is NOT possible
                     // here and must not be re-attempted: the weapon mesh is
@@ -2551,6 +2574,31 @@ namespace
                     bone.translation[r]=anchor[r]+(bone.translation[r]-anchor[r])*meshScale;
                 bone.scale*=meshScale;
                 if (!isfinite(bone.scale) || !isfinite(bone.translation[0])) return false;
+            }
+        }
+        // Left hand size in the rigid path. The loop above already scaled the
+        // WHOLE assembly by meshScale, so only the remaining ratio is applied
+        // here — the left hand ends up at left_hand_scale either way, and the
+        // slider behaves the same with arm IK on or off.
+        {
+            const float leftScale=Clamp(g_config.left_hand_scale,0.3f,3.0f);
+            const float relative=leftScale/meshScale;
+            if (context.lWristDescendants && context.lWrist>=0 &&
+                context.lWrist<context.count &&
+                isfinite(relative) && relative!=1.0f)
+            {
+                const float* lT=g_fpPaletteScratch[context.lWrist].translation;
+                const float anchor[3]={lT[0],lT[1],lT[2]};
+                for (int i=0;i<context.count && i<64;++i)
+                {
+                    if (!(context.lWristDescendants&(1ull<<i))) continue;
+                    BoneMatrix& bone=g_fpPaletteScratch[i];
+                    for (int r=0;r<3;++r)
+                        bone.translation[r]=anchor[r]+
+                            (bone.translation[r]-anchor[r])*relative;
+                    bone.scale*=relative;
+                    if (!isfinite(bone.scale) || !isfinite(bone.translation[0])) return false;
+                }
             }
         }
 

@@ -46,9 +46,12 @@ matter how fast your PC is.
 
 1. Download `HaloMCCVR-alpha-0.1.zip` below and unzip the whole folder. Do not run files
    from inside the ZIP.
-2. Close MCC, then run `install.bat`.
-3. Pick a picture quality when asked. Low is the safest first try; F1 changes it in game.
-4. Launch with the "Halo MCC VR" desktop shortcut it creates.
+2. In Steam, open MCC's **Manage > Browse local files** folder and create a folder named
+   exactly `Halo_MCC_VR` inside it.
+3. Copy `halo3xr.dll` and `halo3xr_launcher.exe` into that folder, then run
+   `halo3xr_launcher.exe` (right-click > Send to > Desktop for a shortcut).
+4. Picture quality is `resolution_scale` in `halomccvr.cfg`, which the mod writes into
+   that folder on first run. Any value from 0.35 to 2.00 works; F1 changes it in game.
 
 Requires Windows 10/11 64-bit, the Steam version of MCC with Halo 3 installed, and a
 working OpenXR runtime. No compiler, CMake, or Visual C++ redistributable needed.
@@ -60,7 +63,7 @@ working OpenXR runtime. No compiler, CMake, or Visual C++ redistributable needed
 - No game files are patched or redistributed. Normal Steam launches stay unmodded.
 - The files are unsigned, so Windows or antivirus may flag them. Do not disable your
   security software globally — only allow these files if you trust the source.
-- Uninstall with `uninstall.bat` in the game's `halo3xr` folder.
+- To uninstall, close MCC and delete only the `Halo_MCC_VR` folder you created.
 
 ## Checksums
 

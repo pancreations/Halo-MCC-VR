@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cmath>
+#include <algorithm>
+// Constants only (native raster size and the resolution_scale limits) so the
+// launcher and the DLL's config clamp can never disagree. The launcher does
+// not link config.cpp; it reads the one line it needs itself.
+#include "../common/config.h"
 
 // Starts MCC-Win64-Shipping.exe directly — which is exactly what Steam's
 // official "Play without anti-cheat" option runs, so EAC is never started —
@@ -97,24 +102,16 @@ static float ReadResolutionScale(const std::wstring& path)
         while (fgets(line, sizeof(line), f))
         {
             float parsed = 1.0f;
-            if (sscanf_s(line, " resolution_scale = %f", &parsed) == 1)
+            if (sscanf_s(line, " resolution_scale = %f", &parsed) == 1 &&
+                std::isfinite(parsed))
                 scale = parsed;
         }
         fclose(f);
     }
-    if (scale < 0.585f)
-        scale = 0.50f;
-    else if (scale < 0.735f)
-        scale = 0.67f;
-    else if (scale < 0.90f)
-        scale = 0.80f;
-    else if (scale < 1.05f)
-        scale = 1.00f;
-    else if (scale < 1.30f)
-        scale = 1.10f;
-    else
-        scale = 1.50f;
-    return scale;
+    // Any value in range is honored exactly; the named tiers are only F1
+    // shortcuts. (Before 2026-07-20 this snapped to those six tiers,
+    // so a hand-typed 0.90 silently became 0.80.)
+    return std::clamp(scale, kResolutionScaleMin, kResolutionScaleMax);
 }
 
 static int ScaleEven(int base, float scale)
@@ -145,11 +142,12 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
     if (!FileExists(dllPath))
     {
         ErrorBox(L"halo3xr.dll is missing from:\n" + dir +
-                 L"\n\nReinstall the mod (run install.bat again).");
+                 L"\n\nCopy halo3xr.dll from the package into this same folder,\n"
+                 L"next to halo3xr_launcher.exe.");
         return 1;
     }
 
-    // The launcher lives in <game>\halo3xr\, so the game exe is found by
+    // The launcher lives in <game>\Halo_MCC_VR\, so the game exe is found by
     // walking up from here. A few levels are tried so a dev copy placed
     // elsewhere inside the game folder also works.
     std::wstring gameExe, gameDir, probe = dir;
@@ -170,8 +168,8 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
     if (gameExe.empty())
     {
         ErrorBox(L"Could not find MCC-Win64-Shipping.exe near:\n" + dir +
-                 L"\n\nThe mod folder must be inside the game's install folder.\n"
-                 L"Run install.bat again.");
+                 L"\n\nThe Halo_MCC_VR folder must sit inside the game's install\n"
+                 L"folder - the one that contains the MCC folder.");
         return 1;
     }
     LauncherLog("game exe = %ls", gameExe.c_str());
@@ -209,8 +207,8 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
     // aspect and Halo's culling/projection. The DLL then upscales the complete
     // eye into the unchanged full-size OpenXR projection. This can help
     // GPU-limited systems; it cannot remove CPU/per-render engine cost.
-    constexpr int kNativeRenderWidth = 2912;
-    constexpr int kNativeRenderHeight = 2100;
+    // (kNativeRenderWidth/Height live in ../common/config.h so the F1 menu can
+    // show the same pixel count this line will produce.)
     const std::wstring primaryConfig = dir + L"/halomccvr.cfg";
     const std::wstring legacyConfig = dir + L"/halo3xr.cfg";
     const DWORD primaryAttributes = GetFileAttributesW(primaryConfig.c_str());

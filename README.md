@@ -36,17 +36,19 @@ Working in Halo 3 on PSVR2 and Quest 3 through SteamVR OpenXR:
 
 This is a development build, not yet a public release. ODST, every weapon, scopes, vehicles, cutscenes, performance targets, and friend-machine installation still need systematic validation. See docs/CURRENT-STATE.md.
 
-## Manual install (no scripts)
+## Install
 
-You do not have to run `install.bat` or `uninstall.bat`.
+Installing is copying two files; there is no installer script.
 
 1. In Steam, open MCC's **Manage > Browse local files** folder.
-2. Create a folder named exactly `halo3xr` inside the main **Halo The Master Chief Collection** folder.
-3. Copy only `halo3xr.dll` and `halo3xr_launcher.exe` from the unzipped package into that new `halo3xr` folder.
+2. Create a folder named exactly `Halo_MCC_VR` inside the main **Halo The Master Chief Collection** folder.
+3. Copy only `halo3xr.dll` and `halo3xr_launcher.exe` from the unzipped package into that new `Halo_MCC_VR` folder.
 4. Start Steam and your OpenXR headset runtime, then run `halo3xr_launcher.exe`.
 5. Optionally right-click the launcher and use **Send to > Desktop (create shortcut)**.
 
-The final layout must be `Halo The Master Chief Collection\halo3xr\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder. To uninstall manually, close MCC and delete only the dedicated `halo3xr` folder you created. The mod does not patch game files.
+The final layout must be `Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder. To update, close MCC and copy the two new files over the old ones — `halomccvr.cfg` is left alone. To uninstall, close MCC and delete only the dedicated `Halo_MCC_VR` folder you created. The mod does not patch game files.
+
+Settings live in `Halo_MCC_VR\halomccvr.cfg`, written with defaults on first run. Every setting carries its description, default, and range, so it can be edited by hand in Notepad with MCC closed; the F1 menu edits the same file live. Deleting the file regenerates it with defaults.
 
 ## Required MCC settings
 
@@ -75,10 +77,11 @@ launch is needed and the mod does not crash when MCC video settings change.
 - Launch through MCC's official "Play without anti-cheat" mode.
 - No game files are patched or redistributed.
 - Do not use the mod in anti-cheat-enabled matchmaking.
-- Do not run uninstall.bat from an alpha package exported before the 2026-07-20
-  safety fix. That old script could recursively delete the folder containing it
-  when package files were placed directly in the MCC root. Current builds
-  validate the exact halo3xr target and delete only an explicit file allowlist.
+- The install.bat/uninstall.bat scripts were removed on 2026-07-20; install and
+  uninstall are manual. Delete any `uninstall.bat` left over from an older
+  package rather than running it: a version from before 2026-07-20 could
+  recursively delete the folder containing it when package files had been
+  extracted directly into the MCC root.
 
 ## Credits
 

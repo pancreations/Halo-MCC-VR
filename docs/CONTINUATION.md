@@ -39,10 +39,11 @@ restart, and Keith David has never been run in a headset. Halo's internal
 2912x2100 raster is scaled uniformly, but the OpenXR swapchain and imageRect
 stay at the full runtime size.
 
-The installer asks for a picture-quality tier before copying and supports
-installing over a previous version: it rewrites only the `resolution_scale` line
-in the existing settings file, so other tuned settings survive an update. This
-is verified offline against a fake game tree only, not yet by a real tester.
+There is no installer: install.bat/uninstall.bat and their fake-tree tests were
+deleted on 2026-07-20 by user directive. Setup is copying the two binaries into
+`<MCC>\Halo_MCC_VR`; uninstall is deleting that folder. Picture quality is
+`resolution_scale` in `halomccvr.cfg`, free-form from 0.35 to 2.00 (it used to
+snap to six tiers), editable by hand or from the F1 slider.
 
 The current native-crosshair solution is `c923842`, confirmed in-headset at `8aa45d7`. It uses Halo's validated CHUD scripting-class-2 gate and preserves the VR reticle plus the rest of the HUD. Do not restore the `f0d5a88` runtime tag-table classifier; it caused a black headset view. Do not use `0x62C`, `0xF70`, or `0x1A90` as defaults: they are runtime chud_definition tag indices, not portable reticle ids.
 

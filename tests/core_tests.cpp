@@ -73,6 +73,51 @@ int main()
     Check(g_config.headset_smoothing == 0.10f,
         "Headset smoothing is capped at the low-latency maximum");
     Check(g_config.aim_stabilization == 0.0f, "Aim stabilization is safely clamped");
+
+    // resolution_scale is free-form: a hand-typed value must survive exactly,
+    // not snap to one of the six installer tiers (the pre-2026-07-20 behavior).
+    {
+        std::ofstream file(primary);
+        file << "resolution_scale = 0.90\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.resolution_scale == 0.90f,
+        "A custom resolution scale is honored exactly, not snapped to a preset");
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(g_config.resolution_scale == 0.90f,
+        "A custom resolution scale survives a save/reload round trip");
+    {
+        std::ofstream file(primary);
+        file << "resolution_scale = 0.05\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.resolution_scale == kResolutionScaleMin,
+        "A too-small resolution scale is pulled up to the minimum");
+    {
+        std::ofstream file(primary);
+        file << "resolution_scale = 5.0\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.resolution_scale == kResolutionScaleMax,
+        "A too-large resolution scale is pulled down to the maximum");
+
+    // Deleting the file is the documented "put everything back" escape hatch.
+    {
+        std::ofstream file(primary);
+        file << "gun_scale = 2.5\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.gun_scale == 2.5f, "A tuned value loads before the reset test");
+    std::filesystem::remove(primary);
+    ConfigLoad(primary.c_str());
+    Check(std::filesystem::exists(primary),
+        "Deleting the config file recreates it on the next load");
+    const Config defaults{};
+    Check(g_config.gun_scale == defaults.gun_scale &&
+          g_config.resolution_scale == defaults.resolution_scale &&
+          g_config.hud_size == defaults.hud_size,
+        "The recreated config file carries the struct defaults");
     std::filesystem::remove_all(configDir);
 
     MenuChordDetector chord;

@@ -83,11 +83,9 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
   unchanged full-size OpenXR projection after the required game restart.
 - Passed 2026-07-19: portable alpha export plus first clean install and launch on
   a separate RTX 4060 laptop.
-- The installer now asks for a picture-quality tier and supports installing over
-  a previous version, preserving other tuned settings. This is verified offline
-  against a fake game tree only; a real tester must still exercise reinstall,
-  update-over-old-version, uninstall, and non-default Steam-library discovery on
-  a separate PC.
+- Installer scripts were removed on 2026-07-20; install/update/uninstall are all
+  manual folder operations. A real tester must still exercise copying a new
+  build over an old one and confirm `halomccvr.cfg` survives it.
 - Add friendly signature/version failure messages.
 - Freeze a release candidate, publish hashes, and run the complete acceptance
   matrix before packaging.
