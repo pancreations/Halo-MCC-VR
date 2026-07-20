@@ -177,13 +177,26 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   bones. So `floating_hands` hides the ARMS only; the legs the user sees are a
   SEPARATE render (the player biped/third-person body, visible because the VR
   world-camera can look down at it), which this filter does not touch.
-- Next isolated task 3 (user-requested 2026-07-20): add a SEPARATE toggle to
-  hide the body/legs (keep `floating_hands` = arms only; do not fold them into
-  one switch). Locate the biped-body render using the Halo 3 mod tools
-  (H3EK / ManagedDonkey tag definitions) for ground truth first, the same
-  prior-art-before-RE approach that produced the CHUD class-2 crosshair fix —
-  not runtime guessing. User plan: confirm the arms-only build in the headset
-  first, THEN hunt the body render.
+- Leg/hip hiding: CLOSED by user decision 2026-07-20 ("we can keep the legs
+  its ok"). Do not build a leg-hider unless the user reopens it. Durable finding
+  from the investigation, kept so nobody re-hunts blind:
+  - The visible legs are Halo 3's `fp_body.render_model` — a COMPLETE first-
+    person body (H3EK nodes: fp_body, legs, pelvis, l/r_thigh, spine, l/r_calf,
+    spine1, l/r_foot, l/r_clavicle, neck, l/r_toe, l/r_upperarm, head,
+    l/r_forearm, l/r_hand + 30 finger bones). Its regions are only default/base,
+    so there is NO per-limb region cull; the whole body is drawn and only the
+    legs fall in view (upper body rests at the sides, near-clipped).
+  - `fp_body` does NOT flow through `FpVisiblePaletteHook`. Proof: the live
+    "M3 VRIK PALETTE" log shows only the 43-bone weapon skeleton
+    (`C3A348592F880D7F`, tags 0x3503/0x1157) and no ~53-bone body submission and
+    no count=0 (non-weapon) submission. So `floating_hands` (which filters that
+    hook) cannot reach the legs; a leg-hider would need a different boundary.
+  - Candidate levers from the earlier VRIK live scan (untested for this purpose,
+    RVAs are per-session and must be re-located by signature): the engine debug
+    var `debug_first_person_models` (value slot RVA 0x7CE8F0), `render_first_person`
+    (~0x7CBFA0), `director_disable_first_person` (~0x7D1B88), and the `legs_shared`
+    render path (string at 0x8011F8). `body_wip` already flips
+    director/render_first_person switches for the opposite (show-more-body) goal.
 
 ## 2026-07-19 session closeout
 
