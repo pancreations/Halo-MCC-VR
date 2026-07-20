@@ -9,12 +9,12 @@ struct Config
     int config_version = 1;
 
     // Portable OpenXR feedback and pose stabilization. Headset smoothing is a
-    // deliberately tiny previous-frame blend (5% default, 25% hard maximum)
-    // so it removes micro-jitter without turning head motion into a laggy camera.
+    // deliberately tiny previous-frame blend (raw by default, 10% hard maximum)
+    // so users may remove micro-jitter without turning head motion into a laggy camera.
     // Aim stabilization affects only the floating VR crosshair; weapon aim and
     // bullets continue to use the current raw controller pose.
     float haptic_intensity = 0.70f;
-    float headset_smoothing = 0.05f;
+    float headset_smoothing = 0.0f;
     float aim_stabilization = 0.35f;
 
     float screen_width_m = 4.0f;    // width of the virtual screen, in meters

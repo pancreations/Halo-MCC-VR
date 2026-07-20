@@ -973,8 +973,9 @@ float4 ps_pass(VSOut i) : SV_Target
         return true;
     }
 
-    // Store the current head pose for the game camera hook to read. Called
-    // once per frame on the render thread with the frame's predicted time.
+    // Store the head pose for the game camera hook to read. Called once near
+    // the end of Present with the NEXT frame's predicted display time, so Halo
+    // renders the upcoming image from its matching pose instead of a stale one.
     void CaptureHeadPose(XrTime time)
     {
         XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
@@ -990,7 +991,7 @@ float4 ps_pass(VSOut i) : SV_Target
         // Filter exactly once per OpenXR frame. CamCopyHook can run several
         // times inside that frame, so smoothing there would compound and vary
         // with Halo's number of camera passes.
-        const float smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.25f);
+        const float smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.10f);
         g_headPose = g_headPoseValid && smoothing > 0.0f
             ? SmoothTrackedPose(loc.pose, g_headPose, smoothing)
             : loc.pose;
@@ -1007,7 +1008,7 @@ float4 ps_pass(VSOut i) : SV_Target
         if (!rateStartMs) rateStartMs = now;
         else if (now - rateStartMs >= 10000)
         {
-            LOG("M1 timing: HMD pose samples %.1f/sec (one predicted sample per presented frame)",
+            LOG("M1 timing: HMD pose samples %.1f/sec (next-display prediction for each game frame)",
                 samples * 1000.0 / (now - rateStartMs));
             samples = 0;
             rateStartMs = now;
@@ -2036,7 +2037,6 @@ float4 ps_pass(VSOut i) : SV_Target
             {
                 D3D11_TEXTURE2D_DESC bd{};
                 backbuffer->GetDesc(&bd);
-                CaptureHeadPose(fs.predictedDisplayTime);
                 if (!g_haveCenter)
                     TryRecenter(fs.predictedDisplayTime);
                 // SteamVR accepted eye swapchains made before xrBeginSession
@@ -2235,6 +2235,13 @@ float4 ps_pass(VSOut i) : SV_Target
                 last = now;
             }
         }
+
+        // VR_OnPresent runs after Halo has rendered the current image. Sampling
+        // fs.predictedDisplayTime here would therefore feed that pose to Halo's
+        // NEXT image one display period late. Ask OpenXR for the next predicted
+        // display pose instead, as late in Present as possible; CamCopyHook then
+        // consumes it during the render that immediately follows this Present.
+        CaptureHeadPose(fs.predictedDisplayTime + fs.predictedDisplayPeriod);
 
         FLog("xrEndFrame");
         XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};

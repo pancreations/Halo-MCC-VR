@@ -187,12 +187,18 @@ namespace
         changed |= ImGui::SliderFloat("Screen distance (m)", &g_config.screen_distance_m, 0.5f, 10.0f, "%.1f");
         float headsetSmoothPercent = g_config.headset_smoothing * 100.0f;
         if (ImGui::SliderFloat("Headset micro-smoothing", &headsetSmoothPercent,
-                               0.0f, 25.0f, "%.0f%%", ImGuiSliderFlags_None))
+                               0.0f, 10.0f, "%.0f%%", ImGuiSliderFlags_None))
         {
             g_config.headset_smoothing = headsetSmoothPercent / 100.0f;
             changed = true;
         }
-        ImGui::TextDisabled("Default 5%%. Sampled once per OpenXR display frame; capped at 25%% to limit latency.");
+        ImGui::SameLine();
+        if (ImGui::Button("Raw (0%)##headset"))
+        {
+            g_config.headset_smoothing = 0.0f;
+            changed = true;
+        }
+        ImGui::TextDisabled("Raw by default. Try 5%% only for micro-jitter; capped at 10%% for comfort.");
         changed |= ImGui::Checkbox("Auto-enter VR on level load", &g_config.auto_vr);
         ImGui::TextDisabled("Turns head tracking + stereo on when a level starts and off in the menu.");
         ImGui::EndTabItem();

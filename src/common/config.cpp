@@ -40,7 +40,7 @@ static void Clamp()
 {
     g_config.config_version = 1;
     g_config.haptic_intensity = std::clamp(g_config.haptic_intensity, 0.0f, 1.0f);
-    g_config.headset_smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.25f);
+    g_config.headset_smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.10f);
     g_config.aim_stabilization = std::clamp(g_config.aim_stabilization, 0.0f, 0.95f);
     g_config.screen_width_m = std::clamp(g_config.screen_width_m, 0.5f, 20.0f);
     g_config.screen_distance_m = std::clamp(g_config.screen_distance_m, 0.3f, 20.0f);
@@ -262,7 +262,7 @@ void ConfigSave()
     fprintf(f, "config_version = %d\n\n", g_config.config_version);
     fprintf(f, "# OpenXR controller vibration strength, 0 = off and 1 = full.\n");
     fprintf(f, "haptic_intensity = %.2f\n\n", g_config.haptic_intensity);
-    fprintf(f, "# Headset micro-smoothing, 0 = raw and 0.25 = maximum. Default 0.05.\n");
+    fprintf(f, "# Headset micro-smoothing, 0 = raw and 0.10 = maximum. Default 0.\n");
     fprintf(f, "headset_smoothing = %.2f\n\n", g_config.headset_smoothing);
     fprintf(f, "# Floating VR-crosshair smoothing only; bullets stay raw (0-0.95).\n");
     fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
