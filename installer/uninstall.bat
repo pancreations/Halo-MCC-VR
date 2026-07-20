@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Halo 3 VR mod - uninstaller
+title Halo MCC VR mod - uninstaller
 
 echo ==============================================
-echo   Halo 3 VR mod - uninstaller
+echo   Halo MCC VR mod - uninstaller
 echo ==============================================
 echo.
 
@@ -39,14 +39,16 @@ if not defined MODDIR (
 rem strip a trailing backslash so quoting stays sane
 if "!MODDIR:~-1!"=="\" set "MODDIR=!MODDIR:~0,-1!"
 
-echo This removes the Halo 3 VR mod folder:
+echo This removes the Halo MCC VR mod folder:
 echo   !MODDIR!
-echo and the "Halo 3 VR" desktop shortcut. No game files are touched.
+echo and the "Halo MCC VR" desktop shortcut. No game files are touched.
 echo.
 set /p "OK=Continue? [y/n]: "
 if /i not "!OK!"=="y" exit /b 0
 
 for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP=%%d"
+if defined DESKTOP if exist "!DESKTOP!\Halo MCC VR.lnk" del "!DESKTOP!\Halo MCC VR.lnk"
+rem also clear the shortcut name used by pre-rename test builds
 if defined DESKTOP if exist "!DESKTOP!\Halo 3 VR.lnk" del "!DESKTOP!\Halo 3 VR.lnk"
 
 echo Removing files... (this window may close by itself - that is normal)

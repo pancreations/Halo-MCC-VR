@@ -1,4 +1,4 @@
-# Halo 3 VR — Alpha 0.1
+# Halo MCC VR — Alpha 0.1
 
 A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 
@@ -44,11 +44,11 @@ matter how fast your PC is.
 
 ## Install
 
-1. Download `Halo3VR-alpha-0.1.zip` below and unzip the whole folder. Do not run files
+1. Download `HaloMCCVR-alpha-0.1.zip` below and unzip the whole folder. Do not run files
    from inside the ZIP.
 2. Close MCC, then run `install.bat`.
 3. Pick a picture quality when asked. Low is the safest first try; F1 changes it in game.
-4. Launch with the "Halo 3 VR" desktop shortcut it creates.
+4. Launch with the "Halo MCC VR" desktop shortcut it creates.
 
 Requires Windows 10/11 64-bit, the Steam version of MCC with Halo 3 installed, and a
 working OpenXR runtime. No compiler, CMake, or Visual C++ redistributable needed.

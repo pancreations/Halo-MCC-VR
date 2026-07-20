@@ -56,7 +56,7 @@ To make a clean package for another PC, run:
     .\export-alpha.bat
 
 It rebuilds Release, verifies the packaged DLL and launcher byte-for-byte, and creates both
-`dist\Halo3VR-alpha\` and `dist\Halo3VR-alpha.zip`. Copy the ZIP to the test PC, unzip the
+`dist\HaloMCCVR-alpha-0.1\` and `dist\HaloMCCVR-alpha-0.1.zip`. Copy the ZIP to the test PC, unzip the
 whole folder, read `ALPHA-README.txt`, and run `install.bat`. The test PC does not need the
 source tree, CMake, Visual Studio, or a Visual C++ redistributable.
 

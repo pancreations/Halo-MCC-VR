@@ -1,14 +1,14 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Halo 3 VR alpha - installer
+title Halo MCC VR alpha - installer
 
 echo ==============================================
-echo   Halo 3 VR - ALPHA TEST BUILD
+echo   Halo MCC VR - ALPHA TEST BUILD
 echo   Installer for Halo 3 in MCC on Steam
 echo ==============================================
 echo.
 echo This copies the mod into a "halo3xr" folder inside the game's install
-echo folder and puts a "Halo 3 VR" shortcut on your desktop.
+echo folder and puts a "Halo MCC VR" shortcut on your desktop.
 echo No game files are modified.
 echo This is an early test build. See ALPHA-README.txt for tested features,
 echo requirements, known limitations, and the logs to send after a failure.
@@ -172,7 +172,7 @@ rem --- write only the resolution line, leaving every other setting alone ---
 if defined SCALE (
     set "H3XR_CFG=!CFGFILE!"
     set "H3XR_SCALE=!SCALE!"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = $env:H3XR_CFG; $line = 'resolution_scale = ' + $env:H3XR_SCALE; if (Test-Path -LiteralPath $p) { $t = @(Get-Content -LiteralPath $p); if ($t -match '^\s*resolution_scale\s*=') { $t = $t -replace '^\s*resolution_scale\s*=.*$', $line } else { $t += $line }; Set-Content -LiteralPath $p -Value $t -Encoding ASCII } else { Set-Content -LiteralPath $p -Value @('# Halo 3 VR settings. Press F1 in game to change these.', '# A full game restart is needed after changing resolution_scale.', $line) -Encoding ASCII }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = $env:H3XR_CFG; $line = 'resolution_scale = ' + $env:H3XR_SCALE; if (Test-Path -LiteralPath $p) { $t = @(Get-Content -LiteralPath $p); if ($t -match '^\s*resolution_scale\s*=') { $t = $t -replace '^\s*resolution_scale\s*=.*$', $line } else { $t += $line }; Set-Content -LiteralPath $p -Value $t -Encoding ASCII } else { Set-Content -LiteralPath $p -Value @('# Halo MCC VR settings. Press F1 in game to change these.', '# A full game restart is needed after changing resolution_scale.', $line) -Encoding ASCII }"
     if errorlevel 1 (
         echo [WARNING] Could not save the picture quality setting.
         echo           The mod will start at its default. Press F1 in game to set it.
@@ -180,7 +180,7 @@ if defined SCALE (
 )
 
 rem --- desktop shortcut (works with OneDrive-redirected desktops too) ---
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $lnk = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Halo 3 VR.lnk')); $lnk.TargetPath = '!MODDIR!\halo3xr_launcher.exe'; $lnk.WorkingDirectory = '!MODDIR!'; $lnk.IconLocation = '!GAMEDIR!\!EXEREL!,0'; $lnk.Description = 'Halo MCC with the VR mod (anti-cheat off)'; $lnk.Save()" >nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $lnk = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Halo MCC VR.lnk')); $lnk.TargetPath = '!MODDIR!\halo3xr_launcher.exe'; $lnk.WorkingDirectory = '!MODDIR!'; $lnk.IconLocation = '!GAMEDIR!\!EXEREL!,0'; $lnk.Description = 'Halo MCC with the VR mod (anti-cheat off)'; $lnk.Save()" >nul
 if errorlevel 1 (
     echo [WARNING] Could not create the desktop shortcut. You can still start the
     echo           mod by double-clicking: !MODDIR!\halo3xr_launcher.exe
@@ -208,7 +208,7 @@ echo.
 echo   How to play in VR:
 echo    1. Start Steam.
 echo    2. Connect your headset and start SteamVR.
-echo    3. Double-click the "Halo 3 VR" shortcut on your desktop.
+echo    3. Double-click the "Halo MCC VR" shortcut on your desktop.
 echo.
 echo   Notes:
 echo    - Only that shortcut loads the mod (with anti-cheat off).

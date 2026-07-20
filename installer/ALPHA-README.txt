@@ -1,5 +1,5 @@
-HALO 3 VR - ALPHA 0.1
-=====================
+HALO MCC VR - ALPHA 0.1
+=======================
 
 This is an early test build, not a finished public release. Halo 3 campaign is
 the currently tested path. ODST, online play, custom games, Forge, every weapon,
@@ -48,14 +48,14 @@ rate and feel bad regardless of how fast your PC is.
 
 INSTALL
 -------
-1. Unzip the entire Halo3VR-alpha-0.1 folder. Do not run files from inside the
+1. Unzip the entire HaloMCCVR-alpha-0.1 folder. Do not run files from inside the
    ZIP.
 2. Close MCC if it is running, then double-click install.bat.
 3. If MCC is not found automatically, paste the game's main install folder when
    asked. It is the folder containing the "MCC" folder.
 4. Pick a picture quality when asked. Low is the safest first try; you can
    change it any time with F1 in game (it applies after a restart).
-5. The installer creates a "Halo 3 VR" desktop shortcut.
+5. The installer creates a "Halo MCC VR" desktop shortcut.
 
 Installing over an older copy of the mod is fine: run install.bat again and it
 updates the mod folder in place, keeping the settings you tuned with F1. Game
@@ -83,7 +83,7 @@ PLAY
    Halo 3 Field of View 120).
 2. Start Steam.
 3. Connect the headset and start SteamVR (or your active OpenXR runtime).
-4. Double-click the "Halo 3 VR" desktop shortcut.
+4. Double-click the "Halo MCC VR" desktop shortcut.
 5. Test Halo 3 campaign first.
 
 The shortcut launches MCC without Easy Anti-Cheat and loads the VR DLL. Do not

@@ -222,12 +222,12 @@ namespace
 
         static char popupText[640];
         snprintf(popupText, sizeof(popupText),
-                 "Halo 3 VR mod could not start VR:\n\n%s\n\n"
+                 "Halo MCC VR mod could not start VR:\n\n%s\n\n"
                  "The game will keep running flat on the monitor.\n"
                  "Details are in halo3xr.log next to the mod DLL.", msg);
         CreateThread(nullptr, 0,
                      [](LPVOID p) -> DWORD {
-                         MessageBoxA(nullptr, (const char*)p, "Halo 3 VR mod", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                         MessageBoxA(nullptr, (const char*)p, "Halo MCC VR mod", MB_OK | MB_ICONWARNING | MB_TOPMOST);
                          return 0;
                      },
                      popupText, 0, nullptr);
@@ -1202,7 +1202,7 @@ float4 ps_pass(VSOut i) : SV_Target
     {
         XrActionSetCreateInfo setInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
         strcpy_s(setInfo.actionSetName, "gameplay");
-        strcpy_s(setInfo.localizedActionSetName, "Halo 3 VR Gameplay");
+        strcpy_s(setInfo.localizedActionSetName, "Halo MCC VR Gameplay");
         setInfo.priority = 0;
         if (XR_FAILED(xrCreateActionSet(g_instance, &setInfo, &g_gameplayActions)))
         {

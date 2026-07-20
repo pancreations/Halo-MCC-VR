@@ -42,7 +42,7 @@ static void LauncherLog(const char* fmt, ...)
 static void ErrorBox(const std::wstring& text)
 {
     LauncherLog("ERROR shown to user: (see message box)");
-    MessageBoxW(nullptr, text.c_str(), L"Halo 3 VR launcher", MB_OK | MB_ICONERROR | MB_TOPMOST);
+    MessageBoxW(nullptr, text.c_str(), L"Halo MCC VR launcher", MB_OK | MB_ICONERROR | MB_TOPMOST);
 }
 
 static std::wstring WinErr(DWORD code)
