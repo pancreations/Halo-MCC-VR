@@ -57,6 +57,7 @@ namespace
     XrAction g_actMenu = XR_NULL_HANDLE;
     XrPath g_leftHandPath = XR_NULL_PATH;
     XrPath g_rightHandPath = XR_NULL_PATH;
+    bool g_touchProProfileEnabled = false;
     XrEnvironmentBlendMode g_blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     bool g_sessionRunning = false;
     XrSessionState g_sessionState = XR_SESSION_STATE_UNKNOWN;
@@ -1423,14 +1424,38 @@ float4 ps_pass(VSOut i) : SV_Target
     // headset. No D3D device needed here, so it can run while the game loads.
     bool InitInstance()
     {
-        const char* ext = XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
+        uint32_t extensionCount = 0;
+        std::vector<XrExtensionProperties> availableExtensions;
+        if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(
+                nullptr, 0, &extensionCount, nullptr)) && extensionCount > 0)
+        {
+            availableExtensions.resize(extensionCount);
+            for (auto& extension : availableExtensions)
+                extension.type = XR_TYPE_EXTENSION_PROPERTIES;
+            xrEnumerateInstanceExtensionProperties(nullptr, extensionCount,
+                &extensionCount, availableExtensions.data());
+        }
+        auto hasExtension = [&](const char* name) {
+            return std::any_of(availableExtensions.begin(), availableExtensions.end(),
+                [&](const XrExtensionProperties& extension) {
+                    return strcmp(extension.extensionName, name) == 0;
+                });
+        };
+
+        std::vector<const char*> enabledExtensions{
+            XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+        g_touchProProfileEnabled =
+            hasExtension(XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME);
+        if (g_touchProProfileEnabled)
+            enabledExtensions.push_back(XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME);
+
         XrInstanceCreateInfo ici{XR_TYPE_INSTANCE_CREATE_INFO};
         strcpy_s(ici.applicationInfo.applicationName, "HaloMCCVR");
         ici.applicationInfo.applicationVersion = 1;
         strcpy_s(ici.applicationInfo.engineName, "halo3xr");
         ici.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-        ici.enabledExtensionCount = 1;
-        ici.enabledExtensionNames = &ext;
+        ici.enabledExtensionCount = (uint32_t)enabledExtensions.size();
+        ici.enabledExtensionNames = enabledExtensions.data();
         LOG("creating OpenXR instance (this can take a while as SteamVR starts)...");
         XrResult r = xrCreateInstance(&ici, &g_instance);
         if (XR_FAILED(r))
@@ -1446,6 +1471,8 @@ float4 ps_pass(VSOut i) : SV_Target
                  XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion),
                  XR_VERSION_PATCH(ip.runtimeVersion));
         LOG("OpenXR runtime: %s", g_status.runtime);
+        LOG("Quest Touch Pro interaction profile: %s",
+            g_touchProProfileEnabled ? "enabled" : "not advertised by runtime");
 
         XrSystemGetInfo sgi{XR_TYPE_SYSTEM_GET_INFO};
         sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
@@ -1639,6 +1666,9 @@ float4 ps_pass(VSOut i) : SV_Target
             {g_hapticAction, "/user/hand/right/output/haptic"},
         };
         unsigned accepted = 0;
+        if (g_touchProProfileEnabled)
+            accepted += suggest("/interaction_profiles/facebook/touch_controller_pro",
+                touch, _countof(touch));
         accepted += suggest("/interaction_profiles/oculus/touch_controller", touch, _countof(touch));
         accepted += suggest("/interaction_profiles/valve/index_controller", index, _countof(index));
         accepted += suggest("/interaction_profiles/microsoft/motion_controller", wmr, _countof(wmr));
