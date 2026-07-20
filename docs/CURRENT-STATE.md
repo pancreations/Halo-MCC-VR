@@ -162,7 +162,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   no other path changed. Deployed DLL build 2026-07-20 12:25 AM, SHA-256
   `f83e7ee03f193ab4fd64b591c7a4d5a9c0a35bbed20bb113b2d6eeae448f12ec`. User result:
   "flawless... smooth as butter."
-- Isolated task 2 IMPLEMENTED, awaiting headset confirmation (2026-07-20): the
+- Isolated task 2 DONE (headset-confirmed 2026-07-20, "works beautifully"): the
   optional `floating_hands` mode (OFF by default) is on branch
   `feature/floating-hands` (based on the confirmed jitter fix). It is a pure
   presentation filter in `FpVisiblePaletteHook` applied AFTER the untouched VRIK
