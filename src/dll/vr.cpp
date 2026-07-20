@@ -1433,9 +1433,14 @@ float4 ps_pass(VSOut i) : SV_Target
         { g_twoHandLatched.store(false); return; }
         const XrVector3f rfwd = Rotate(rpose.orientation, {0,0,-1});
         const XrVector3f lh = LeftHandPoint(lpose);
-        const XrVector3f v{lh.x-rpose.position.x,
-                           lh.y-rpose.position.y,
-                           lh.z-rpose.position.z};
+        // Grab-zone side nudge: the visible barrel can sit beside the raw aim
+        // ray (headset report: the AR's barrel was right of the zone), so the
+        // zone axis shifts along the controller's +X by the F1-tuned amount.
+        const float zr = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
+        const XrVector3f rright = Rotate(rpose.orientation, {1,0,0});
+        const XrVector3f v{lh.x-(rpose.position.x+rright.x*zr),
+                           lh.y-(rpose.position.y+rright.y*zr),
+                           lh.z-(rpose.position.z+rright.z*zr)};
         const float along = v.x*rfwd.x + v.y*rfwd.y + v.z*rfwd.z;
         const XrVector3f perp{v.x-along*rfwd.x, v.y-along*rfwd.y, v.z-along*rfwd.z};
         const float lateral = sqrtf(perp.x*perp.x+perp.y*perp.y+perp.z*perp.z);

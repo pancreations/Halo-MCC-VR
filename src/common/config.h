@@ -118,6 +118,11 @@ struct Config
     // Wrist-to-palm correction for the left controller. This same point drives
     // the rendered support hand and the two-hand aiming line so they stay aligned.
     float left_hand_forward_m = 0.12f;
+    // Sideways nudge of the two-hand grab zone along the right controller's +X
+    // (positive = toward the player's right) so the grab line sits on the
+    // visible barrel. Headset request 2026-07-19: the AR's barrel sat right of
+    // the zone and the left hand reached past it.
+    float two_hand_zone_right_m = 0.03f;
 
     // VRIK stage A1: show the player's real body (game-animated) by flipping
     // the engine's director/viewmodel switches. Experimental gate for the

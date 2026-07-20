@@ -300,6 +300,10 @@ namespace
                                           &g_config.left_hand_forward_m,
                                           -0.15f, 0.30f, "%.3f");
             ImGui::TextDisabled("Moves the visible support hand and the two-hand aim point together.");
+            changed |= ImGui::SliderFloat("Grab zone side offset (m)",
+                                          &g_config.two_hand_zone_right_m,
+                                          -0.10f, 0.10f, "%.3f");
+            ImGui::TextDisabled("Slides the grip-click zone sideways (+ = right) onto the visible barrel.");
             ImGui::Unindent();
         }
         ImGui::TextDisabled("Put your left hand on the front of the gun, click/hold the LEFT GRIP.\n"

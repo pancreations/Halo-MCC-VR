@@ -169,6 +169,13 @@ namespace
     std::atomic<int> g_fpLElbowIndex[2] = {{-1},{-1}};
     std::atomic<int> g_fpLShoulderIndex[2] = {{-1},{-1}};
     std::atomic<uint64_t> g_fpLWristDescendants[2] = {{0},{0}};
+    // Weapon root node: the largest-index direct child of the carrier wrist.
+    // In every recorded skeleton dump the body rig (hand + fingers) precedes
+    // the appended weapon nodes, so the weapon subtree root sorts last. The
+    // dual-wield seat anchors THIS node to the controller — the secondary
+    // model's carrier wrist does not coincide with its gun (22:xx headset
+    // results: hand correct, gun offset).
+    std::atomic<int> g_fpGunRootIndex[2] = {{-1},{-1}};
 
     // The composer sees authored bones immediately before Halo applies its
     // camera-lag rotation to every bone except camera_control. Cache the full
@@ -198,6 +205,7 @@ namespace
         int lElbow = -1;
         int lShoulder = -1;
         uint64_t lWristDescendants = 0;
+        int gunRoot = -1;
         bool valid = false;
     };
     // One context per held-weapon slot: slot 0 is the primary (right-hand)
@@ -1445,6 +1453,10 @@ namespace
         const int lElbowIndex=parentOf(lWristIndex);
         const int lShoulderIndex=parentOf(lElbowIndex);
         const uint64_t lDescendants=subtreeOf(lWristIndex);
+        int gunRootIndex=-1;
+        for(int i=0;i<count && i<64;++i)
+            if (parentOf(i)==wristIndex && i>gunRootIndex) gunRootIndex=i;
+        g_fpGunRootIndex[slot].store(gunRootIndex,std::memory_order_relaxed);
         g_fpWristIndex[slot].store(wristIndex,std::memory_order_relaxed);
         g_fpOrientationIndex[slot].store(orientationIndex,std::memory_order_relaxed);
         g_fpElbowIndex[slot].store(elbowIndex,std::memory_order_relaxed);
@@ -1929,6 +1941,7 @@ namespace
                 context.lShoulder=g_fpLShoulderIndex[slot].load(std::memory_order_acquire);
                 context.lWristDescendants=
                     g_fpLWristDescendants[slot].load(std::memory_order_acquire);
+                context.gunRoot=g_fpGunRootIndex[slot].load(std::memory_order_acquire);
                 context.valid=true;
                 memcpy(g_fpUnmodifiedInterpolations[slot],*outBones,
                        static_cast<size_t>(count)*sizeof(BoneMatrix));
@@ -1969,8 +1982,15 @@ namespace
                                 "camera-forward invariant holds",b[0],b[1],b[2]);
                     }
                 }
-                ApplyControllerToMarkerBones(view,*outBones,count,wrist,
-                                             cameraControl,slot==1);
+                // The dual-wield secondary's marker anchor is its weapon root
+                // node, matching the visible gun seat below.
+                {
+                    const int gunRoot=g_fpGunRootIndex[slot].load(std::memory_order_acquire);
+                    const int markerAnchor=(slot==1 && gunRoot>=0 && gunRoot<count)
+                        ? gunRoot : wrist;
+                    ApplyControllerToMarkerBones(view,*outBones,count,markerAnchor,
+                                                 cameraControl,slot==1);
+                }
             }
         }
         }
@@ -2011,10 +2031,11 @@ namespace
         // the cursor and bullet steering use. The barrel therefore sits on the
         // cursor line by construction; the trim sliders adjust hand posture
         // and roll about that fixed line, they can no longer misalign it.
-        // The right hand aligns slot 0's measured barrel to the right ray; the
-        // dual-wield left hand aligns slot 1's own measured barrel to the left
-        // ray (its authored pose differs, so mirrored trim alone mis-seats it).
-        const int barrelSlot=(left && weaponGrip)?1:(left?-1:0);
+        // Weapon hand = the right hand only: the dual-wield secondary is
+        // seated by its weapon NODE directly (whose frame already defines the
+        // barrel), so the wrist-row-0 swing heuristic must not fight it
+        // (23:04 headset result: the heuristic mis-seated the left gun).
+        const int barrelSlot=left?-1:0;
         if (barrelSlot>=0 &&
             g_barrelInWristValid[barrelSlot].load(std::memory_order_acquire))
         {
@@ -2280,8 +2301,25 @@ namespace
                 // Dual-wield secondary: its weapon chain bends toward the LEFT
                 // side (outSign +1) with no shoulder drop; the primary keeps
                 // the right-hand treatment unchanged.
+                // HEADSET RESULT (23:04 build): the hand was perfect but the
+                // gun still floated off it — the secondary's carrier wrist
+                // does not coincide with the gun the way r_hand does on the
+                // primary. Seat the WEAPON ROOT NODE on the controller
+                // instead: carry the carrier to desired * inv(authored
+                // gun-in-wrist relation), so the gun node itself lands exactly
+                // on the seat pose.
+                BoneMatrix desiredCarrier=desiredWristWorld;
+                if (dual && context.gunRoot>=0 && context.gunRoot<context.count)
+                {
+                    BoneMatrix invW{},rel{},invRel{},seated{};
+                    if (InvertBoneMatrix(unmod[context.wrist],invW) &&
+                        ComposeBoneMatrices(invW,unmod[context.gunRoot],rel) &&
+                        InvertBoneMatrix(rel,invRel) &&
+                        ComposeBoneMatrices(desiredWristWorld,invRel,seated))
+                        desiredCarrier=seated;
+                }
                 if (applyArm(context.shoulder,context.elbow,context.wrist,
-                             context.wristDescendants,desiredWristWorld,
+                             context.wristDescendants,desiredCarrier,
                              dual?1.0f:-1.0f,nullptr,
                              dual?0.0f:g_config.right_shoulder_drop))
                 {
@@ -2393,13 +2431,17 @@ namespace
                             }
                         }
                     }
-                    // Uniform size trim about the right wrist (grip stays put).
+                    // Uniform size trim about the weapon grip (grip stays put):
+                    // the primary's wrist, or the secondary's seated gun node.
                     if (meshScale!=1.0f)
                     {
+                        const int scaleBone=
+                            (dual && context.gunRoot>=0 && context.gunRoot<context.count)
+                            ? context.gunRoot : context.wrist;
                         const float anchor[3]={
-                            g_fpPaletteScratch[context.wrist].translation[0],
-                            g_fpPaletteScratch[context.wrist].translation[1],
-                            g_fpPaletteScratch[context.wrist].translation[2]};
+                            g_fpPaletteScratch[scaleBone].translation[0],
+                            g_fpPaletteScratch[scaleBone].translation[1],
+                            g_fpPaletteScratch[scaleBone].translation[2]};
                         const uint64_t mask=context.wristDescendants;
                         for (int i=0;i<context.count && i<64;++i)
                         {
@@ -2462,8 +2504,13 @@ namespace
         }
         // T * rootCenter * record is built from the center camera (identical
         // in both eyes), and only the record conversion uses the eye root.
+        // Rigid anchor: the primary's wrist, or the secondary's gun node so
+        // the visible weapon (not its carrier bone) lands on the controller.
+        const int rigidAnchor=
+            (dual && context.gunRoot>=0 && context.gunRoot<context.count)
+            ? context.gunRoot : context.wrist;
         BoneMatrix wristWorld{},inverseWristWorld{},t{},inverseRoot{},m{},tRoot{};
-        if (!ComposeBoneMatrices(centerRoot,unmodified[context.wrist],wristWorld) ||
+        if (!ComposeBoneMatrices(centerRoot,unmodified[rigidAnchor],wristWorld) ||
             !InvertBoneMatrix(wristWorld,inverseWristWorld) ||
             !ComposeBoneMatrices(desiredWristWorld,inverseWristWorld,t) ||
             !InvertBoneMatrix(root,inverseRoot) ||
@@ -2477,7 +2524,7 @@ namespace
         // the controller.
         if (meshScale!=1.0f)
         {
-            const float* wristT=g_fpPaletteScratch[context.wrist].translation;
+            const float* wristT=g_fpPaletteScratch[rigidAnchor].translation;
             const float anchor[3]={wristT[0],wristT[1],wristT[2]};
             for (int i=0;i<context.count;++i)
             {
@@ -2841,10 +2888,13 @@ namespace
         float meshScale=1.0f;
         BoneMatrix desired{},invWrist{},t{};
         // Slot 1 (dual-wield secondary): effect origins belong on the LEFT
-        // controller, matching its visible weapon.
+        // controller, matching its visible weapon — anchored on the weapon
+        // root node exactly like the visible seat.
         const bool dual=(slot==1);
+        const int gunRoot=g_fpGunRootIndex[slot].load(std::memory_order_acquire);
+        const int anchorBone=(dual && gunRoot>=0 && gunRoot<count)?gunRoot:wrist;
         if (!DesiredWristWorld(dual,desired,meshScale,dual)) return false;
-        if (!InvertBoneMatrix(output[wrist],invWrist) ||
+        if (!InvertBoneMatrix(output[anchorBone],invWrist) ||
             !ComposeBoneMatrices(desired,invWrist,t)) return false;
         for (int i=0;i<count;++i)
         {
