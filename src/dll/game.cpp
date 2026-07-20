@@ -2350,7 +2350,7 @@ namespace
                             context.lWrist>=0 && context.lWrist<context.count)
                         {
                             BoneMatrix desiredL{}; float leftScale=1.0f;
-                            if (DesiredWristWorld(true,desiredL,leftScale,false))
+                            if (DesiredWristWorld(true,desiredL,leftScale))
                             {
                                 static std::atomic<bool> loggedDualArm{false};
                                 if (applyArm(context.lShoulder,context.lElbow,
