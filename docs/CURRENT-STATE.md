@@ -132,6 +132,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 
 | Attempt | Headset/runtime result | Rule |
 |---|---|---|
+| Alpha uninstaller trusted any folder containing halo3xr.dll, then used recursive rd | A tester extracted/placed package files in the MCC root; confirming uninstall recursively deleted the entire game installation | Never infer ownership from an adjacent DLL and never recursively delete an install directory. Require exact halo3xr leaf plus MCC-parent validation, delete only an explicit allowlist, preserve unknown files, and keep the fake-tree regression test in CTest |
 | Detour halo3+0x120DF8 | Crashed on level load, even pass-through | Never hook it |
 | Force CHUD bytes near +0x144..+0x14A | Suppressed most HUD; offsets were misidentified | Do not write CHUD state bytes without proof |
 | Capture/diff HUD panel | Captured only objective text and cost GPU time | Native HUD is the accepted path |
@@ -322,6 +323,19 @@ alpha is safe to distribute on machines that also have ODST installed.
 - Product decision: no FOV slider and no built-in FSR. Resolution presets are the supported performance control; third-party upscalers remain external and unsupported.
 
 ## Alpha distribution (2026-07-19)
+
+- RELEASE-BLOCKING SAFETY INCIDENT (2026-07-20): the original alpha
+  uninstall.bat treated any directory containing halo3xr.dll as the mod folder
+  and executed recursive rd after a single confirmation. A tester who placed
+  the package in the MCC root reported that confirming uninstall removed the
+  whole game installation. The public v0.1-alpha ZIP asset was immediately
+  removed after 13 recorded downloads, and local copies were quarantined.
+  Recovery is Steam Verify integrity of game files; saves are not intentionally
+  targeted by the script. The replacement validates an exact halo3xr leaf under
+  a real MCC parent, revalidates immediately before deletion, removes only an
+  explicit mod-owned file allowlist, performs no recursive deletion, and leaves
+  unknown files/directories untouched. tests/uninstall_safety_test.ps1 covers
+  both a normal fake install and the exact misplaced-package game-root case.
 
 - Release candidate exported 2026-07-20 02:17 to `dist\HaloMCCVR-alpha-0.1.zip` from clean commit `7fe358f`. DLL SHA-256 `E4F70A6C...2697FA`, launcher SHA-256 `D3C12C4E...C166042` (full hashes in the package's BUILD-INFO.txt). This binary is a fresh rebuild and has not itself been launched in a headset; the laptop test predates it.
 - Product renamed Halo 3 VR -> Halo MCC VR on 2026-07-20 by user decision: the mod targets MCC and Halo 3 is only the first working title. The rename touched display strings only. OpenXR `actionSetName` stays `"gameplay"` (bindings unaffected); only `localizedActionSetName` changed. The desktop shortcut is now `Halo MCC VR.lnk` and uninstall.bat also deletes the old `Halo 3 VR.lnk`. Verified before shipping: installer echo block runs in real cmd with `>` printing literally and no stray files, shortcut creation succeeds with the spaced filename and resolves its target, and both binaries contain only the new name (DLL ASCII x3, launcher UTF-16).

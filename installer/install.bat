@@ -167,6 +167,8 @@ copy /y "%~dp0halo3xr.dll" "!MODDIR!\" >nul || goto :copyfail
 copy /y "%~dp0halo3xr_launcher.exe" "!MODDIR!\" >nul || goto :copyfail
 if exist "%~dp0uninstall.bat" copy /y "%~dp0uninstall.bat" "!MODDIR!\" >nul
 if exist "%~dp0ALPHA-README.txt" copy /y "%~dp0ALPHA-README.txt" "!MODDIR!\" >nul
+if exist "%~dp0BUILD-INFO.txt" copy /y "%~dp0BUILD-INFO.txt" "!MODDIR!\" >nul
+> "!MODDIR!\.halomccvr-installed" echo Halo MCC VR installer-owned directory
 
 rem --- write only the resolution line, leaving every other setting alone ---
 if defined SCALE (

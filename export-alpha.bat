@@ -99,6 +99,28 @@ for %%F in (halo3xr.dll halo3xr_launcher.exe install.bat uninstall.bat ALPHA-REA
         goto :fail
     )
 )
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\tests\uninstall_safety_test.ps1"
+if errorlevel 1 (
+    echo [ERROR] The destructive-safety uninstaller test failed.
+    goto :fail
+)
+for %%F in (install.bat uninstall.bat ALPHA-README.txt) do (
+    "%SystemRoot%\System32\fc.exe" /b "%ROOT%\installer\%%F" "%PACKAGE_DIR%\%%F" >nul
+    if errorlevel 1 (
+        echo [ERROR] Packaged %%F does not match its verified source file.
+        goto :fail
+    )
+)
+findstr /r /i /c:"rd  */s" /c:"rmdir  */s" "%PACKAGE_DIR%\uninstall.bat" >nul
+if not errorlevel 1 (
+    echo [ERROR] Unsafe recursive directory deletion found in uninstall.bat.
+    goto :fail
+)
+findstr /i /c:"GetFileName($m) -ine 'halo3xr'" "%PACKAGE_DIR%\uninstall.bat" >nul
+if errorlevel 1 (
+    echo [ERROR] uninstall.bat is missing the exact halo3xr target-name guard.
+    goto :fail
+)
 "%SystemRoot%\System32\fc.exe" /b "%BUILD_DIR%\Release\halo3xr.dll" "%PACKAGE_DIR%\halo3xr.dll" >nul
 if errorlevel 1 (
     echo [ERROR] Packaged DLL does not match the fresh build.

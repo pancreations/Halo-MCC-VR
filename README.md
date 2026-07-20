@@ -95,6 +95,10 @@ launch is needed and the mod does not crash when MCC video settings change.
 - Launch through MCC's official "Play without anti-cheat" mode.
 - No game files are patched or redistributed.
 - Do not use the mod in anti-cheat-enabled matchmaking.
+- Do not run uninstall.bat from an alpha package exported before the 2026-07-20
+  safety fix. That old script could recursively delete the folder containing it
+  when package files were placed directly in the MCC root. Current builds
+  validate the exact halo3xr target and delete only an explicit file allowlist.
 
 ## Credits
 

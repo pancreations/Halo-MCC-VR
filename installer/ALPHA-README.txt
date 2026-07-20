@@ -99,7 +99,15 @@ person who supplied this exact build.
 UNINSTALL
 ---------
 Run uninstall.bat from the installed game's "halo3xr" folder. It removes only
-the mod folder and its desktop shortcut; it does not remove or patch MCC files.
+known mod-owned files and its desktop shortcut. It validates that the target is
+literally a "halo3xr" folder beneath a real MCC install, never recursively
+deletes a directory, and leaves unknown files untouched.
+
+SAFETY WARNING: uninstall.bat from packages exported before the 2026-07-20
+safety fix must not be used. If an old package was extracted directly into the
+main MCC folder, its old uninstaller could mistake that folder for the mod and
+delete the game installation. Restore MCC with Steam's file verification, then
+use only an updated package.
 
 IF IT FAILS
 -----------
