@@ -572,28 +572,60 @@ namespace
     // through the debug-var table; resolve it by name and disable only the
     // cinematic reduction while stereo VR is active. Halo's ordinary gameplay
     // projection and the authored cinematic camera pose remain untouched.
-    uint8_t* g_reduceCinematicFov = nullptr;
-    uint8_t g_reduceCinematicFovOriginal = 1;
+    std::atomic<uint8_t*> g_reduceCinematicFov{nullptr};
+    std::atomic<uint8_t> g_reduceCinematicFovOriginal{1};
     std::atomic<bool> g_reduceCinematicFovApplied{false};
+
+    static int SafeReadByte(const uint8_t* slot, uint8_t* value)
+    {
+        __try
+        {
+            *value = *reinterpret_cast<const volatile uint8_t*>(slot);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return 1;
+    }
+
+    static int SafeWriteByte(uint8_t* slot, uint8_t value)
+    {
+        __try
+        {
+            *reinterpret_cast<volatile uint8_t*>(slot) = value;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return 1;
+    }
+
+    void InvalidateCinematicFovVar(uint8_t* staleSlot)
+    {
+        if (g_reduceCinematicFov.compare_exchange_strong(staleSlot, nullptr,
+                std::memory_order_acq_rel))
+            g_reduceCinematicFovApplied.store(false, std::memory_order_release);
+    }
 
     void ResolveCinematicFovVar(uintptr_t base, size_t size)
     {
         auto* slot = reinterpret_cast<uint8_t*>(
             FindDebugVarFloat(base, size, "reduce_widescreen_fov_during_cinematics"));
-        if (!slot || *slot > 1)
+        uint8_t initial = 0;
+        const bool valid = slot && SafeReadByte(slot, &initial) && initial <= 1;
+        g_reduceCinematicFov.store(nullptr, std::memory_order_release);
+        g_reduceCinematicFovApplied.store(false, std::memory_order_release);
+        if (!valid)
         {
             LOG("cutscene culling: cinematic FOV policy unavailable; stock behavior retained");
             return;
         }
-        g_reduceCinematicFov = slot;
-        g_reduceCinematicFovOriginal = *slot;
+        g_reduceCinematicFovOriginal.store(initial, std::memory_order_relaxed);
+        g_reduceCinematicFov.store(slot, std::memory_order_release);
         LOG("cutscene culling: cinematic FOV policy resolved (stock value %u)",
-            static_cast<unsigned>(*slot));
+            static_cast<unsigned>(initial));
     }
 
     void UpdateCinematicFovPolicy()
     {
-        if (!g_reduceCinematicFov)
+        uint8_t* slot = g_reduceCinematicFov.load(std::memory_order_acquire);
+        if (!slot)
             return;
 
         const bool vrActive = g_enabled.load(std::memory_order_relaxed) &&
@@ -602,16 +634,21 @@ namespace
         {
             if (!g_reduceCinematicFovApplied.exchange(true))
             {
-                g_reduceCinematicFovOriginal = *g_reduceCinematicFov;
                 LOG("cutscene culling: disabled Halo's widescreen cinematic FOV reduction");
             }
             // Halo normally leaves this global alone, but reassert it from the
             // Present thread in case a map transition restores debug globals.
-            *g_reduceCinematicFov = 0;
+            if (!SafeWriteByte(slot, 0))
+                InvalidateCinematicFovVar(slot);
         }
         else if (g_reduceCinematicFovApplied.exchange(false))
         {
-            *g_reduceCinematicFov = g_reduceCinematicFovOriginal;
+            if (!SafeWriteByte(slot,
+                    g_reduceCinematicFovOriginal.load(std::memory_order_relaxed)))
+            {
+                InvalidateCinematicFovVar(slot);
+                return;
+            }
             LOG("cutscene culling: restored Halo's cinematic FOV policy");
         }
     }
