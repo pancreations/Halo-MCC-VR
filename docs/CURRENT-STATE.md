@@ -649,6 +649,45 @@ launcher remains untouched at
 `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
 Public deploy/export remain OFF-only.
 
+### Cross-title reload crash: root-caused and fixed, headset test pending (2026-07-21)
+
+A live session hopping ODST -> Halo3 -> ODST -> Halo3 crashed MCC on the
+second Halo3 load. Windows Error Reporting recorded access violation
+`0xc0000005` in `halo3xr.dll` at fault offset `0x1C0B3`, faulting process
+`MCC-Win64-Shipping.exe`. Disassembling that exact crashed binary
+(`build-odst-private/Release/halo3xr.dll`, byte-identical to the installed
+DLL, confirmed by SHA-256) at the fault RVA landed on the `*var.slot` read in
+`ApplyMotionBlurSetting`. The runtime log for that exact session showed the
+second Halo3 load resolving a fresh `halo3.dll` instance at a different base
+address than the first (`00007FFC3A220000` vs `00007FFC4D910000`), and the
+"M3: motion blur forced OFF" line present after the first Halo3 load was
+missing after the second, right before the log went silent.
+
+Root cause: `g_motionBlurVarCount` only starts at `-1` ("not yet resolved")
+once, at process start. It was never reset when Halo3 stopped being the
+active title, so across a Halo3 -> ODST -> Halo3 cycle it stays at its stale
+value of `4` the entire time. The freshly re-enabled `CamCopyHook` can call
+`ApplyMotionBlurSetting` and dereference `g_motionBlurVars[]` pointers that
+still point into the first, now-unloaded `halo3.dll` instance, before
+`ResolveMotionBlurVars()` has re-resolved them against the new instance.
+
+Fix on `353cfc9` (tip of `feature/odst-bringup`): reset the counter to `-1`
+the instant Halo3 is marked inactive, mirroring the existing "not yet
+resolved" sentinel, so the gap is a safe no-op instead of a stale dereference.
+The reads/writes themselves are also now SEH-guarded (matching the existing
+`SafeReadByte`/`SafeWriteByte` pattern already used for the cinematic-FOV
+variable), as defense in depth against any other unforeseen staleness in this
+class of resolved pointer. No other behavior changed; this does not touch
+ODST's own teardown path, MinHook bookkeeping, or the private bring-up gating.
+
+OFF and ON Release builds and both CTest runs pass. Deployed via
+`deploy-odst-private.bat I-APPROVE-ODST-TEST auto` after first restoring the
+sealed baseline with `RESTORE-ODST-BASELINE` (the installed DLL from the
+crashed session was not the accepted baseline). Deployed private DLL SHA-256
+`C0A6A90D7010CC5CC31B1B14111E6ABB403D0DB4D2AFEC149133666CA2DFE5F9`, recovery
+record `pre-odst-private-backup-12`. Headset confirmation of the exact
+ODST -> Halo3 -> ODST -> Halo3 repro sequence is pending.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
