@@ -124,12 +124,12 @@ void VR_RequestScopeToggle();
 // it to portable OpenXR feedback on both hands and owns all stop conditions.
 void VR_SetGameHaptics(float amplitude);
 
-// Rotation of one eye relative to the midpoint of both eyes, as a quaternion
-// (x,y,z,w) in OpenXR view-local axes (+X right, +Y up, -Z forward). Canted
-// headsets like PSVR2 mount each display angled outward a few degrees; the
-// per-eye FOV above is measured around that canted axis, so the raster camera
-// must be turned by this rotation for the image to cover the whole lens.
-bool VR_GetEyeCantQuat(int eye, float outQuat[4]);
+// Position and rotation of one eye relative to the midpoint of both OpenXR
+// views. Position is in meters and both outputs use OpenXR view-local axes
+// (+X right, +Y up, -Z forward). Runtimes may change these offsets when the
+// headset's lens spacing changes, so stereo rendering must not assume one
+// headset's fixed IPD or eye cant.
+bool VR_GetEyeViewOffset(int eye, float outPosition[3], float outQuat[4]);
 
 struct VrStatus
 {

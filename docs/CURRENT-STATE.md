@@ -42,6 +42,16 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   `14A504EE4CE4CEB380BA94CAD1CBCE05CC2586D9D5D803651DE89AE50C4F61D2`.
   The user designated this the best-working version and wants further local
   bug-fixing from this build before any GitHub update.
+- Quest 2 stereo candidate on `fix/openxr-eye-poses`, based directly on that
+  cutscene checkpoint, addresses GitHub issue #4. Halo's render cameras now use
+  the full per-eye position and orientation offsets returned atomically by
+  `xrLocateViews`, rather than applying the same fixed 67.5 mm PSVR2 baseline
+  to every headset while submitting different runtime poses to the compositor.
+  Invalid/unavailable view data retains the prior 67.5 mm safe fallback.
+  Release build and CTest pass; deployed 2026-07-21 02:25 AM with SHA-256
+  `F6DD8CA78837D99D8D0D54F8A7E9A8D1B9A59E382BD50D9A0D1D85EFAF545194`.
+  Quest 2 headset confirmation is pending; do not promote it over `dd1abc5`
+  until the two gameplay images fuse correctly.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.

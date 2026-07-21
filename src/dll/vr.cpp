@@ -2569,8 +2569,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             projection.space = g_localSpace;
             projectionViews.assign(locatedViewCount, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
 
-            // RenderViewHook rotates each eye's raster camera by the true
-            // per-eye cant (VR_GetEyeCantQuat), so the rendered images really
+            // RenderViewHook positions and rotates each raster camera from the
+            // same per-eye view offsets (VR_GetEyeViewOffset), so the images
             // are canted the way PSVR2 reports its views — submit the real
             // per-eye orientations. Submitting a shared midpoint orientation
             // here under-covers the outward-angled lens edge and shows as a
@@ -3374,27 +3374,60 @@ bool VR_GetRightControllerPose(float outQuat[4], float outPos[3])
     return ok;
 }
 
-bool VR_GetEyeCantQuat(int eye, float outQuat[4])
+bool VR_GetEyeViewOffset(int eye, float outPosition[3], float outQuat[4])
 {
-    if (eye < 0 || eye > 1 || !outQuat || g_views.size() < 2)
+    if (eye < 0 || eye > 1 || !outPosition || !outQuat || g_views.size() < 2)
         return false;
     const XrQuaternionf& a = g_views[0].pose.orientation;
     const XrQuaternionf& b = g_views[1].pose.orientation;
-    // Midpoint orientation: normalized component average. Before the first
-    // successful xrLocateViews the orientations are all-zero and the length
-    // check below rejects them.
-    float cx = a.x + b.x, cy = a.y + b.y, cz = a.z + b.z, cw = a.w + b.w;
+    // Quaternions q and -q encode the same rotation. Align their signs before
+    // averaging so a runtime choosing opposite representations cannot collapse
+    // the midpoint to zero.
+    const float dot = a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w;
+    const float sign = dot < 0.0f ? -1.0f : 1.0f;
+    float cx = a.x + b.x*sign, cy = a.y + b.y*sign;
+    float cz = a.z + b.z*sign, cw = a.w + b.w*sign;
     const float len = sqrtf(cx * cx + cy * cy + cz * cz + cw * cw);
-    if (len < 1e-5f)
+    if (!std::isfinite(len) || len < 1e-5f)
         return false;
     cx /= len; cy /= len; cz /= len; cw /= len;
+
+    // The VIEW reference origin is the centroid of the stereo view origins.
+    // Reconstruct the same midpoint from this atomic xrLocateViews result, then
+    // express each eye's position in that midpoint's local axes. This preserves
+    // the runtime's actual, possibly adjustable IPD and any non-horizontal eye
+    // offset instead of imposing the PSVR2 baseline on every headset.
+    const XrVector3f& ap = g_views[0].pose.position;
+    const XrVector3f& bp = g_views[1].pose.position;
+    const float separationX = bp.x-ap.x;
+    const float separationY = bp.y-ap.y;
+    const float separationZ = bp.z-ap.z;
+    const float separation = sqrtf(separationX*separationX +
+                                   separationY*separationY +
+                                   separationZ*separationZ);
+    if (!std::isfinite(separation) || separation < 0.03f || separation > 0.10f)
+        return false;
+    const XrVector3f& ep = g_views[eye].pose.position;
+    const XrVector3f delta{
+        ep.x - (ap.x+bp.x)*0.5f,
+        ep.y - (ap.y+bp.y)*0.5f,
+        ep.z - (ap.z+bp.z)*0.5f};
+    const XrVector3f local = Rotate({-cx,-cy,-cz,cw},delta);
+    if (!std::isfinite(local.x) || !std::isfinite(local.y) ||
+        !std::isfinite(local.z))
+        return false;
+    outPosition[0]=local.x;
+    outPosition[1]=local.y;
+    outPosition[2]=local.z;
+
     // relative = conj(center) * eye
     const XrQuaternionf& e = g_views[eye].pose.orientation;
     outQuat[0] = cw * e.x - cx * e.w - cy * e.z + cz * e.y;
     outQuat[1] = cw * e.y + cx * e.z - cy * e.w - cz * e.x;
     outQuat[2] = cw * e.z - cx * e.y + cy * e.x - cz * e.w;
     outQuat[3] = cw * e.w + cx * e.x + cy * e.y + cz * e.z;
-    return true;
+    return std::isfinite(outQuat[0]) && std::isfinite(outQuat[1]) &&
+           std::isfinite(outQuat[2]) && std::isfinite(outQuat[3]);
 }
 
 bool VR_BeginAuthoredReticleCapture()

@@ -3571,12 +3571,6 @@ namespace
             fwd[1] * up[2] - fwd[2] * up[1],
             fwd[2] * up[0] - fwd[0] * up[2],
             fwd[0] * up[1] - fwd[1] * up[0]};
-        // Stereo depth is deliberately independent from the 6DOF translation
-        // scale. The physically converted 67.5 mm baseline read too flat in
-        // Halo; use a fixed 2x stereo strength so the scene has clear depth.
-        constexpr float kStereoWorldUnitsPerMeter = 0.33f;
-        const float halfIpdWorld = 0.5f * 0.0675f * kStereoWorldUnitsPerMeter;
-
         // STEREO GHOSTING — root cause finally OBSERVED (2026-07-14, the
         // CopyResource probe): between the eye passes, the engine snapshots
         // the full-resolution scene into a sampleable texture
@@ -3618,9 +3612,21 @@ namespace
             memcpy(camera, saved, sizeof(saved));
             float* pos = reinterpret_cast<float*>(camera);
             const float sign = eye == 0 ? -1.0f : 1.0f;
-            pos[0] += right[0] * halfIpdWorld * sign;
-            pos[1] += right[1] * halfIpdWorld * sign;
-            pos[2] += right[2] * halfIpdWorld * sign;
+            // Render from the exact eye offsets returned by xrLocateViews.
+            // Quest 2's physical lens spacing is adjustable, and OpenXR may
+            // also report non-horizontal offsets. A fixed PSVR2 IPD makes the
+            // raster disparity disagree with the poses sent to the compositor,
+            // which presents as two images that cannot be fused. Keep the old
+            // 67.5 mm baseline only as a safe fallback before views are valid.
+            float eyePosition[3]={sign*0.5f*0.0675f,0.0f,0.0f};
+            float eyeOrientation[4]{};
+            const bool haveEyeView =
+                VR_GetEyeViewOffset(eye,eyePosition,eyeOrientation);
+            const float eyeScale=g_worldScale.load();
+            for(int axis=0;axis<3;++axis)
+                pos[axis] += (right[axis]*eyePosition[0] +
+                              up[axis]*eyePosition[1] -
+                              fwd[axis]*eyePosition[2]) * eyeScale;
 
             // Cant: PSVR2 mounts each display angled outward a few degrees,
             // and the per-eye FOV OpenXR reports is measured around that
@@ -3631,19 +3637,18 @@ namespace
             // the outward lens edge uncovered = black border per eye. The
             // matching per-eye orientation is submitted in vr.cpp. (Assumes
             // the default yaw/pitch mapping; F4/F5 flips would mirror it.)
-            float cantQuat[4];
-            if (VR_GetEyeCantQuat(eye, cantQuat))
+            if (haveEyeView)
             {
-                const float sinHalf = sqrtf(cantQuat[0] * cantQuat[0] +
-                                            cantQuat[1] * cantQuat[1] +
-                                            cantQuat[2] * cantQuat[2]);
+                const float sinHalf = sqrtf(eyeOrientation[0] * eyeOrientation[0] +
+                                            eyeOrientation[1] * eyeOrientation[1] +
+                                            eyeOrientation[2] * eyeOrientation[2]);
                 if (sinHalf > 1e-5f)
                 {
-                    float angle = 2.0f * atan2f(sinHalf, cantQuat[3]);
+                    float angle = 2.0f * atan2f(sinHalf, eyeOrientation[3]);
                     if (angle > 3.14159265f) angle -= 6.2831853f; // shortest arc
-                    const float ax = cantQuat[0] / sinHalf;
-                    const float ay = cantQuat[1] / sinHalf;
-                    const float az = cantQuat[2] / sinHalf;
+                    const float ax = eyeOrientation[0] / sinHalf;
+                    const float ay = eyeOrientation[1] / sinHalf;
+                    const float az = eyeOrientation[2] / sinHalf;
                     const float axis[3] = {
                         ax * right[0] + ay * up[0] - az * fwd[0],
                         ax * right[1] + ay * up[1] - az * fwd[1],
