@@ -76,6 +76,15 @@ int main()
             "ODST menus retain ordinary look-stick input before head tracking");
         Check(!OdstVrOwnsLookStick(false, true),
             "the ODST input rule cannot affect Halo 3 or public title paths");
+        Check(PausePresentationInputAllowed(true),
+            "proven Halo 3 gameplay may control pause presentation");
+        Check(!PausePresentationInputAllowed(false),
+            "MCC shell and private ODST Start edges cannot head-lock presentation");
+        Check(OdstMustClearForeignPause(true, true, false) &&
+                  OdstMustClearForeignPause(true, false, true),
+            "private ODST entry clears either pending or active foreign pause state");
+        Check(!OdstMustClearForeignPause(false, true, true),
+            "foreign pause cleanup cannot affect non-ODST title ownership");
         Check(OdstNestedSourceIsCompatible(0, 0x1234),
             "ODST installation may precede the first nested FP source publish");
         Check(OdstNestedSourceIsCompatible(0x1234, 0x1234),

@@ -101,7 +101,9 @@ namespace
         if (pad.clickR && !chord.consumeClicks && !scopeAvailable)
             btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
-        if (pad.menu && !previousMenu && !Game_HasAuthoritativePauseState())
+        if (pad.menu && !previousMenu &&
+            PausePresentationInputAllowed(Game_AllowsSharedGameplayFeatures()) &&
+            !Game_HasAuthoritativePauseState())
             VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
         previousMenu = pad.menu;
         if (pad.menu || GetTickCount64() < g_startPulseUntilMs.load())
@@ -366,6 +368,8 @@ namespace
 
 void Input_RequestPauseToggle()
 {
+    if (!PausePresentationInputAllowed(Game_AllowsSharedGameplayFeatures()))
+        return;
     const bool paused = !VR_IsPausePresentationTarget();
     // Hold Start long enough to cross MCC's input polling boundary, then let
     // the normal released state provide the edge needed by a later toggle.

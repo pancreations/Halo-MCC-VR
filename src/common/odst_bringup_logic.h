@@ -113,6 +113,12 @@ inline bool OdstVrOwnsLookStick(bool cameraOnlyContext, bool headTracking)
     return cameraOnlyContext && headTracking;
 }
 
+inline bool OdstMustClearForeignPause(
+    bool cameraOnlyContext, bool pauseTarget, bool pausePresentation)
+{
+    return cameraOnlyContext && (pauseTarget || pausePresentation);
+}
+
 inline bool OdstNestedSourceIsCompatible(
     uintptr_t nestedSource, uintptr_t expectedSource)
 {

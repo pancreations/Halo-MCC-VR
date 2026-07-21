@@ -7434,7 +7434,17 @@ void Game_AutoVrTick()
     if (odstCameraContext)
     {
         if (!wasOdstCameraContext)
+        {
             odstFreshDebounce.Reset();
+            if (OdstMustClearForeignPause(
+                    true, VR_IsPausePresentationTarget(),
+                    VR_IsPausePresentation()))
+            {
+                VR_RequestPausePresentation(false);
+                LOG("ODST camera presentation: cleared foreign pause/head-lock "
+                    "state at title entry");
+            }
+        }
         wasOdstCameraContext = true;
         const uint64_t now = GetTickCount64();
         const uint64_t last = g_lastCamCopyMs.load(std::memory_order_acquire);

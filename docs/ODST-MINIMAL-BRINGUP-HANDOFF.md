@@ -311,8 +311,37 @@ active `shouldRender=1` frame retains the existing two-eye path and strict
 redirect validation, so a genuine active-presentation failure still falls back.
 Pure regression assertions cover both actions. HUD capture, head-relative
 movement, and activation timing remain separate later checkpoints. Private ON
-and normal OFF Release builds and CTest pass locally. This candidate has not
-been deployed.
+and normal OFF Release builds and CTest passed locally. This candidate later
+received approval; the headset result is recorded below.
+
+## Ninth private headset result, recovery, and pause-ownership correction
+
+The focus-loss checkpoint was deployed from source commit
+`6936509fc6e1f8118985c15f2f58b91ef6ca5084`, DLL
+`22E44BE6B9E03D2C946E57B55F84BC01BA64003A8631FBB8AC40E380953F7D92`,
+with sealed record `Halo_MCC_VR\pre-odst-private-backup-9`. The user reported
+that the MCC menu became head-locked and ODST 3D did not engage.
+
+The log proves the new focus-loss gate did not block ODST stereo. A controller
+Menu/Start edge in the MCC shell at `14:40:36.890` incorrectly toggled Halo 3's
+fallback pause presentation, switching the flat shell to head-locked 2D. A
+subsequent Y+B pause gesture also toggled that fallback while no Halo 3 gameplay
+owner existed. The stale pause state survived ODST detection. All five ODST
+hooks installed, stereo armed at `14:41:24.219`, both scene targets redirected,
+and the render loop ran at about 90 FPS. However, the compositor intentionally
+kept submitting one flat layer because `pausePresentation` was still true, so
+the valid internal eye images never appeared as a projection layer.
+
+MCC was closed and dedicated restore mode byte-restored baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`;
+preserve backup-9. The next isolated correction continues passing ordinary
+Menu/Start input to MCC but permits its edge, and the Y+B fallback gesture, to
+change VR pause presentation only while proven Halo 3 gameplay owns shared
+features. Private ODST also clears any pending or active foreign pause/head-lock
+state once at title entry. Pure regression assertions cover shell rejection,
+Halo 3 admission, and ODST entry cleanup. The prior focus-loss correction is
+retained unchanged. Private ON and normal OFF Release builds and CTest pass
+locally. This candidate has not been deployed.
 
 ## Proven evidence available to implementation
 
