@@ -86,14 +86,15 @@ struct Config
     // positive moves it out of your face. Never touches aim.
     float gun_forward_m = 0.0f;
 
-    // Gun-mounted VR zoom screen. R3 is isolated from Halo's native zoom so
-    // the full VR gun/body remain visible; scope_zoom controls the 4:3 lens.
-    bool scope_enabled = false;
-    float scope_zoom = 2.5f;
-    float scope_screen_width_m = 0.10f;
-    float scope_screen_right_m = 0.0f;
-    float scope_screen_up_m = 0.08f;
-    float scope_screen_forward_m = 0.30f;
+    // Experimental gun-mounted VR zoom screen. R3 is isolated from Halo's
+    // native zoom so the full VR gun/body remain visible; scope_zoom controls
+    // the fixed 4:3 lens. Defaults are the headset-confirmed user calibration.
+    bool scope_enabled = true;
+    float scope_zoom = 3.39f;
+    float scope_screen_width_m = 0.182f;
+    float scope_screen_right_m = -0.081f;
+    float scope_screen_up_m = 0.207f;
+    float scope_screen_forward_m = 0.222f;
     int scope_refresh_divisor = 2;
 
     // (show_hud / hud_ammo / hud_health / hud_motion / hud_grenades retired

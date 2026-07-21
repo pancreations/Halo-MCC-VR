@@ -151,7 +151,14 @@ int main()
     const Config defaults{};
     Check(g_config.gun_scale == defaults.gun_scale &&
           g_config.resolution_scale == defaults.resolution_scale &&
-          g_config.hud_size == defaults.hud_size,
+          g_config.hud_size == defaults.hud_size &&
+          g_config.scope_enabled &&
+          g_config.scope_zoom == 3.39f &&
+          g_config.scope_screen_width_m == 0.182f &&
+          g_config.scope_screen_right_m == -0.081f &&
+          g_config.scope_screen_up_m == 0.207f &&
+          g_config.scope_screen_forward_m == 0.222f &&
+          g_config.scope_refresh_divisor == 2,
         "The recreated config file carries the struct defaults");
     std::filesystem::remove_all(configDir);
 

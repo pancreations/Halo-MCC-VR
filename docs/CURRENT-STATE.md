@@ -157,7 +157,7 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   scope section below for the measured signature/layout evidence.
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
-- Scope rendering, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
+- Scope rendering across all weapons, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
 - Universal-scope Stage 1 is headset-confirmed on 2026-07-20 at commit `44d78a1`:
   the fixed blue-green 4:3 panel appeared correctly on every tested weapon.
   R3 toggled it independently of Halo's native zoom.
@@ -167,11 +167,19 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   Stage 3 therefore uses the right-hand weapon position as camera origin and the
   actual bullet ray as its forward axis.
 - Universal-scope Stage 3 commit `0e0c773` displayed the right-hand aim-camera
-  approach, but the headset result rejected one absolute zoom for every weapon
-  and reported excessive cost. The follow-up restores Halo's R3 input and uses
-  its live per-weapon zoom factor while the normal stereo view keeps OpenXR FOV;
-  non-zoom weapons retain a configurable fallback and divisor 4 is the low-cost
-  refresh option.
+  approach, but the headset result rejected its initial absolute zoom and
+  reported excessive cost. The later crosshair-origin build at `15508ab`,
+  restored by rollback `e1f608a`, is headset-confirmed on 2026-07-21: R3 shows
+  and hides the gun-mounted image while the main stereo view remains intact.
+  It is explicitly experimental and currently uses one configurable zoom for
+  every weapon. The tester's active calibration is now the default: enabled,
+  3.39x, 0.182 m wide, local right/up/forward offsets
+  -0.081/0.207/0.222 m, refresh divisor 2.
+- Per-weapon authored-tier attempt `6e1a4f8` failed in the headset because its
+  required runtime signature group did not resolve. The input path still
+  consumed R3, but weapon lookup always failed and no scope layer activated.
+  It was fully reverted at `e1f608a`; repair the locator separately before
+  attempting authored tiers again.
 - HUD size: the chud_globals safe-frame lever and the automatic hud_size slider are headset-confirmed. A value of 0.38 visibly and correctly scaled the native HUD layout (2026-07-19).
 - HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - Resolution scaling is headset-confirmed at the 0.67 Low setting with Toolkit scaling disabled: the complete eye remains intact and fills the unchanged OpenXR projection. The launcher scales Halo's 2912x2100 internal raster evenly; the values other than Low still need headset coverage, and nothing above 1.10 has ever been run in a headset — the high end is an untested option, not a validated tier.

@@ -278,8 +278,8 @@ namespace
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Universal gun-mounted zoom screen");
-        if (ImGui::Checkbox("Enable R3 gun-mounted screen", &g_config.scope_enabled))
+        ImGui::Text("Experimental gun-mounted zoom screen");
+        if (ImGui::Checkbox("Enable experimental R3 zoom screen", &g_config.scope_enabled))
         {
             changed = true;
             if (!g_config.scope_enabled)
@@ -287,8 +287,8 @@ namespace
         }
         ImGui::SameLine();
         ImGui::TextDisabled(VR_IsScopeActive() ? "[R3: visible]" : "[R3: hidden]");
-        ImGui::TextDisabled("R3 uses each weapon's original Halo zoom inside this screen while the\n"
-                            "main headset view stays wide. AR/rockets use the fallback below.");
+        ImGui::TextDisabled("R3 toggles a fixed-magnification view while the main headset view\n"
+                            "stays wide. Placement and zoom are experimental per-user tuning.");
         if (g_config.scope_enabled)
         {
             ImGui::Indent();

@@ -362,18 +362,18 @@ void ConfigSave()
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "# (default %.2f, range -0.3 to 0.5)\n", d.gun_forward_m);
     fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
-    fprintf(f, "# --- Gun-mounted zoom screen. R3 toggles it without hiding the VR body.\n");
-    fprintf(f, "# The main VR view stays wide while the weapon zoom appears on the screen. 1 = on.\n");
+    fprintf(f, "# --- Experimental gun-mounted zoom screen. R3 toggles it without hiding the VR body.\n");
+    fprintf(f, "# The main VR view stays wide while a fixed-magnification image appears. 1 = on.\n");
     fprintf(f, "# (default %d)\n", d.scope_enabled ? 1 : 0);
     fprintf(f, "scope_enabled = %d\n\n", g_config.scope_enabled ? 1 : 0);
-    fprintf(f, "# Fallback magnification for weapons with no authored zoom (AR, rockets, etc.).\n");
+    fprintf(f, "# Fixed experimental magnification used for every weapon.\n");
     fprintf(f, "# (default %.2f, range 1.25 to 8.0)\n", d.scope_zoom);
     fprintf(f, "scope_zoom = %.2f\n\n", g_config.scope_zoom);
     fprintf(f, "# Fixed physical screen width in meters; height is always 3/4 of width.\n");
-    fprintf(f, "# (default %.2f, range 0.04 to 0.25)\n", d.scope_screen_width_m);
+    fprintf(f, "# (default %.3f, range 0.04 to 0.25)\n", d.scope_screen_width_m);
     fprintf(f, "scope_screen_width_m = %.3f\n\n", g_config.scope_screen_width_m);
     fprintf(f, "# Direct controller-local screen offsets in meters: right, up, forward.\n");
-    fprintf(f, "# (defaults %.2f / %.2f / %.2f)\n",
+    fprintf(f, "# (defaults %.3f / %.3f / %.3f)\n",
             d.scope_screen_right_m, d.scope_screen_up_m, d.scope_screen_forward_m);
     fprintf(f, "scope_screen_right_m = %.3f\n", g_config.scope_screen_right_m);
     fprintf(f, "scope_screen_up_m = %.3f\n", g_config.scope_screen_up_m);
