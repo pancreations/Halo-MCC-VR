@@ -1,13 +1,16 @@
-# Halo 3: ODST byte-identical signature evidence
+# Halo 3: ODST signature evidence
 
-Verified 2026-07-21 on `feature/odst-bringup` at `4dddbc1`.
+The eight byte-identical signatures were verified 2026-07-21 on
+`feature/odst-bringup` at `4dddbc1`. The twelve re-derived candidates were
+verified after documentation checkpoint `0144982`; runtime source remained
+unchanged from `4dddbc1`.
 
 This is an evidence manifest, not an ODST runtime-support manifest. It covers
-only the eight production signatures that already match `halo3odst.dll`
-byte-for-byte. It does not validate the twelve failed signatures, any consumed
-structure layout, or any ODST hook. ODST must remain stock when selected:
-`runtimeSupported=false`, with game-hook dispatch still restricted to
-`GameTitle::Halo3`.
+the eight production signatures that match `halo3odst.dll` byte-for-byte and
+the twelve ODST-specific candidate signatures derived for production patterns
+that do not. It does not validate any consumed structure layout or authorize an
+ODST hook. ODST must remain stock when selected: `runtimeSupported=false`, with
+game-hook dispatch still restricted to `GameTitle::Halo3`.
 
 ## Evidence inputs
 
@@ -55,7 +58,7 @@ the already-shipped production AOB definitions being verified.
 Locations below are RVAs for these exact hashed modules. They are evidence
 locations only and must not be copied into runtime code as hardcoded offsets.
 
-## Result summary
+## Eight byte-identical results
 
 | Signature | Bytes | ODST matches | ODST match RVA | ODST containing function | Semantic result |
 |---|---:|---:|---:|---:|---|
@@ -246,15 +249,290 @@ Verdict: unique and semantically equivalent as the root-fetch callsite inside
 object-node recomposition. The shifted ODST record fields remain unvalidated
 for runtime consumption and must not be inferred from this callsite alone.
 
-## Gate decision
+## Eight-signature gate decision
 
 The eight byte-identical patterns pass this static evidence stage: each has one
 loaded-image match in the installed ODST module and lands in a function
 semantically equivalent to its Halo 3 target. No signature in this set is
 ambiguous.
 
-This result does **not** authorize installing any ODST hook. Before runtime work,
-the twelve failed production signatures still need independent derivation and
-uniqueness checks, and every consumed ODST camera/view/first-person/HUD/bone/
-marker layout still needs title-specific proof under the established bring-up
-order.
+This result does **not** authorize installing any ODST hook. The next section
+performs the independent derivation and uniqueness checks for the twelve failed
+production roles. Every consumed ODST camera/view/first-person/HUD/bone/marker
+layout still needs title-specific proof under the established bring-up order.
+
+## Twelve re-derived ODST candidates
+
+The second static pass covers the twelve production Halo 3 patterns that have
+zero matches in the installed ODST module. Names below identify the existing
+production roles; the candidate byte strings are evidence and have not been
+added to `game.cpp`.
+
+Each original production pattern still has exactly one Halo 3 match and zero
+ODST matches. Each candidate below has exactly one ODST loaded-image match and
+zero Halo 3 matches. This is intentional title isolation: a future adapter must
+select a title-specific pattern rather than weakening the proven Halo 3 AOB.
+
+Function similarity uses the same relocation-normalized comparison described
+above. A lower percentage can reflect different register allocation, stack
+layout, or inlining; acceptance also requires matching control/data flow,
+call relationships, and ODST editing-kit semantics.
+
+| Production role | Halo 3 target RVA | ODST candidate RVA | ODST containing function | Full-function comparison | Purpose |
+|---|---:|---:|---:|---:|---|
+| `kCamCopySig` | `0x2A628C` | `0x2CAAF0` | `0x2CAAF0-0x2CAC59` | 75/79 instructions; 87.01% | Compact render-camera copy/normalization |
+| `kRenderViewSig` | `0x286A14` | `0x2AFB10` | `0x2AFB10-0x2AFD59` | 131/140; 67.90% | Inner prepared-view renderer |
+| `kFpCameraRebuildSig` | `0x279BEC` | `0x2A6F5C` | `0x2A6F5C-0x2A714B` | 79/120; 51.26% | First-person camera rebuild |
+| `kFpCameraUploadSig` | `0x2770F0` | `0x2A45DC` | `0x2A45DC-0x2A4744` | 121/84; 71.22% | First-person camera constant upload |
+| `kFpDriverSig` | `0x2835D4` | `0x2AC2E4` | `0x2AC2E4-0x2AC729` | 213/228; 58.50% | First-person render driver |
+| `kFpDriverGuardSig` | `0x28599D` | `0x2AE8DE` | `0x2AE13C-0x2AEDF0` | 497/707; 42.86% | Guarded first-person driver callsite |
+| `kFpInterpolateSig` | `0x184B08` | `0x1B3CB8` | `0x1B3CB8-0x1B3E74` | 101/103; 78.43% | First-person animation interpolation |
+| `kGunCamRefSig` | `0x68BC` | `0x6B60` | `0x6B60-0x6B96` | 14/14; 92.86% | Four-slot gun/overlay camera-array constructor |
+| `kNativePauseOwnerSig` | `0xB682` | `0xBCA5` | `0xBA78-0xC603` | 684/725; 88.57% | Native pause-transition flag owner |
+| `kHudElemSig` | `0x2EDF24` | `0x329488` | `0x329488-0x32954A` | 56/53; 86.24% | CHUD widget draw/class dispatch |
+| `kSwayCallSig` | `0x2C484B` | `0x2ECF16` | `0x2EC1B0-0x2ED053` | 820/839; 67.27% | Camera-control exclusion in FP bone transform loop |
+| `kFpNativeWeaponIkDecisionSig` | `0x2C393C` | `0x2EBFBC` | `0x2EB2B4-0x2EC104` | 752/800; 65.21% | Native first-person weapon-IK mode decision |
+
+### `kCamCopySig` ODST candidate
+
+```text
+48 89 5C 24 08 57 48 83 EC 30 0F 29 74 24 20 48 8B FA 48 8B D9 48 85 D2 0F 84 ?? ?? ?? ?? F3 0F 10 15 ?? ?? ?? ?? B1 01 F3 0F 59 15 ?? ?? ?? ?? F3 0F 5E 15 ?? ?? ?? ??
+```
+
+- One ODST match at function entry `0x2CAAF0`; zero Halo 3 matches.
+- The ODST function retains the destination/source convention, null-source
+  path, camera scalar/vector copies, normalization calls, and the same final
+  writes at destination `+0x24`, `+0x28`, `+0x2C`, `+0x64`, `+0x68`, and
+  `+0x7C`.
+- It ends three bytes before the already verified ODST viewport builder at
+  `0x2CAC5C`, exactly mirroring the Halo 3 adjacency of `0x2A628C-0x2A63E1`
+  and `0x2A63E4`.
+- The original pattern failed because ODST uses a near conditional branch and
+  computes its initial scalar in `xmm2` with extra multiply/divide operations;
+  this is the recompiled function described in `CURRENT-STATE.md`.
+- H3ODSTEK's ODST `render/render_cameras.cpp` evidence and camera bounds/basis
+  checks agree with this compact camera preparation role.
+
+Verdict: unique and semantically equivalent.
+
+### `kRenderViewSig` ODST candidate
+
+```text
+48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 41 54 41 56 41 57 48 83 EC 40 8B 3D ?? ?? ?? ?? 48 8B F1 85 FF 0F 84 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? BA 00 00 00 00 0F BA E0 0A
+```
+
+- One ODST match at function entry `0x2AFB10`; zero Halo 3 matches.
+- Both functions retain the prepared-view pointer in `rsi`, test the same
+  render-loop global, make the same 30-call render-state sequence, and restore
+  the paired render-state values in the same order before returning.
+- The corresponding ODST callers and callees cluster with the verified ODST
+  prepare-view and camera-builder functions. H3ODSTEK independently retains
+  ODST render-view source identity and render/rasterizer camera access checks.
+
+Verdict: unique and semantically equivalent as the inner prepared-view
+renderer.
+
+### `kFpCameraRebuildSig` ODST candidate
+
+```text
+48 8B C4 48 89 58 10 48 89 70 18 57 48 83 EC 60 48 8D 79 08 0F 29 70 E8 F3 0F 10 35 ?? ?? ?? ?? 48 8B D9 0F 29 78 D8 40 8A F2 48 8B 81 A8 02 00 00 B9 80 00 00 00 41 BA 58 01 00 00
+```
+
+- One ODST match at function entry `0x2A6F5C`; zero Halo 3 matches.
+- Both versions read the compact camera from `view+0x2A8`, rebuild the camera
+  at `view+8`, call their title's verified viewport and matrix builders, derive
+  the block at `view+0x1E8`, and tail-jump to their title's camera uploader.
+- The ODST call chain is explicit: `0x2CAC5C` (verified viewport), `0x2CB1C4`
+  (verified matrices), then tail jump `0x2A45DC` (candidate below).
+- H3ODSTEK retains distinct first-person camera and HUD-camera-view source
+  identities, supporting the first-person overlay-camera role.
+
+Verdict: unique and semantically equivalent. This does not validate the
+referenced view offsets for runtime use.
+
+### `kFpCameraUploadSig` ODST candidate
+
+```text
+48 8B C4 48 89 58 08 55 48 8D 68 A1 48 81 EC C0 00 00 00 0F 29 70 E8 4C 8D 45 F7 0F 29 78 D8 48 8B D9 48 8B C2 48 83 C2 78 48 8B C8 E8 ?? ?? ?? ?? 48 8D 55 F7
+```
+
+- One ODST match at function entry `0x2A45DC`; zero Halo 3 matches.
+- The ODST first-person camera rebuild tail-jumps directly here after rebuilding
+  its compact and derived camera blocks, proving the consumer relationship.
+- Both functions transform the supplied camera blocks into stack constants and
+  repeatedly call the same title-local shader-constant upload helper. ODST
+  emits fewer upload groups (eight direct calls versus Halo 3's twelve), but
+  retains the same input role and terminal constant-upload behavior.
+- H3ODSTEK's render-camera, HUD-camera, and first-person-camera evidence agrees
+  with this constant-uploader placement.
+
+Verdict: unique and semantically equivalent as the ODST first-person camera
+constant uploader; the different upload set must be treated as ODST-specific.
+
+### `kFpDriverSig` ODST candidate
+
+```text
+48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 EC 20 48 8B D9 40 8A F2 8B 89 FC 27 00 00 E8 ?? ?? ?? ?? 66 83 F8 FF 0F 85 ?? ?? ?? ?? B9 03 00 00 00
+```
+
+- One ODST match at function entry `0x2AC2E4`; zero Halo 3 matches.
+- It retains the `(view, flag)` convention and the same high-level first-person
+  render sequence. It calls the ODST camera rebuild at `0x2A6F5C` from the
+  corresponding overlay paths and is called by the guard candidate below.
+- The initial view field is `+0x27FC` in ODST versus `+0x27F4` in Halo 3,
+  consistent with the independently observed shifted ODST view layout.
+- H3ODSTEK identifies `interface/first_person_weapons.cpp` and retains user,
+  weapon-slot, model-node, overlay-animation, and camera-slaved-to-gun checks.
+
+Verdict: unique and semantically equivalent as the first-person render driver.
+The shifted field remains evidence, not an approved runtime offset.
+
+### `kFpDriverGuardSig` ODST candidate
+
+```text
+39 35 ?? ?? ?? ?? 75 ?? 33 D2 48 8B CF E8 ?? ?? ?? ?? 40 38 35 ?? ?? ?? ?? 75 ?? 40 38 35 ?? ?? ?? ??
+```
+
+- One ODST match at `0x2AE8DE`, inside function `0x2AE13C-0x2AEDF0`; zero Halo
+  3 matches.
+- The site compares a RIP-relative guard against the function's zero register,
+  then calls the proven ODST driver candidate with `rdx=0` and the prepared
+  view in `rcx`. This is the same guard/call order as Halo 3 at `0x28599D`.
+- The called target resolves exactly to `0x2AC2E4`, providing call-graph proof
+  independent of prologue similarity.
+
+Verdict: unique and semantically equivalent as the first-person driver guard
+site. The RIP target is not yet approved as a runtime state offset.
+
+### `kFpInterpolateSig` ODST candidate
+
+```text
+48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 41 57 48 83 EC 30 33 DB 49 63 E8 38 1D ?? ?? ?? ?? 4D 8B E1 44 8B FA
+```
+
+- One ODST match at function entry `0x1B3CB8`; zero Halo 3 matches.
+- ODST preserves the argument registers, index conversion, two-call
+  interpolation flow, success/out-index write, and boolean return. It has 103
+  instructions versus Halo 3's 101; the prologue stack allocation changed
+  from `0x20` to `0x30`.
+- H3ODSTEK retains the ODST first-person animation source, mode checks, model
+  node limits, overlay animation checks, and animation-rig diagnostics.
+
+Verdict: unique and semantically equivalent as the first-person animation
+interpolation boundary.
+
+### `kGunCamRefSig` ODST candidate
+
+```text
+48 89 5C 24 08 57 48 83 EC 20 48 8D 1D ?? ?? ?? ?? BF 04 00 00 00 48 8B CB E8 ?? ?? ?? ?? 48 81 C3 10 28 00 00 48 83 EF 01 75 ?? 48 8B 5C 24 30
+```
+
+- One ODST match at function entry `0x6B60`; zero Halo 3 matches.
+- It resolves the array at ODST RVA `0x2D73590`, constructs exactly four
+  objects, and advances by `0x2810` per object. This is the measured ODST
+  gun/overlay camera-object stride.
+- The prefix without the stride also reaches a second ODST builder at `0x7434`,
+  but that function advances by `0x1460` and resolves a different array at
+  `0x2D92DD0`. Keeping `10 28 00 00` in the candidate removes the ambiguity.
+- Halo 3's equivalent constructs four objects at RVA `0x2D2F680` with the
+  known `0x2820` stride. H3ODSTEK independently retains HUD-camera view and
+  first-person-camera-slaved-to-gun semantics.
+
+Verdict: unique and semantically equivalent as the four-slot gun/overlay camera
+array constructor.
+
+### `kNativePauseOwnerSig` ODST candidate
+
+```text
+E8 ?? ?? ?? ?? 84 C0 74 ?? B9 03 00 00 00 E8 ?? ?? ?? ?? 84 C0 75 ?? 8B D1 B1 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01
+```
+
+- One ODST match at `0xBCA5`, inside function `0xBA78-0xC603`; zero Halo 3
+  matches.
+- Both containing functions implement the same event/state dispatcher and the
+  same three predicate/call sequence before the native flag write. Their full
+  normalized similarity is 88.57%.
+- Halo 3 loads `esi=1` at function entry and uses `sil` for the final call and
+  byte write. ODST compiles those same values as literal `1`; the dataflow is
+  equivalent, not a guessed value.
+- H3ODSTEK exposes ODST pause-related engine state, but the similarly named
+  HaloScript `game_paused` external remains insufficient runtime proof. The
+  owner-code path, not that external, is the evidence here.
+
+Verdict: unique and semantically equivalent as the native pause flag owner.
+The RIP target remains unapproved until ODST live transition evidence exists.
+
+### `kHudElemSig` ODST candidate
+
+```text
+44 88 4C 24 20 53 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 8B D9 45 0F B7 C0 89 4C 24 20 48 8B 0D ?? ?? ?? ?? 48 89 54 24 28 46 8B 4C C0 04 45 85 C9 75 ?? 33 C0 EB ??
+```
+
+- One ODST match at function entry `0x329488`; zero Halo 3 matches.
+- ODST retains the same widget/tag lookup, descriptor indexing, five-call draw
+  dispatch, and final two-way widget draw path.
+- The native class gate is structurally identical: playback predicate, compare
+  scripting class against `2`, call the class-gated visibility predicate, then
+  continue to the normal draw path. In ODST the class compare is at
+  `0x32950B`; no runtime tag-table interpretation was inferred.
+- H3ODSTEK independently identifies `interface/chud/chud_draw.cpp`, defines the
+  CHUD scripting-class enum, and retains the scripting-class bounds check.
+
+Verdict: unique and semantically equivalent as the CHUD widget draw/class
+dispatch function. No patch location or hook is authorized by this finding.
+
+### `kSwayCallSig` ODST candidate
+
+```text
+44 3B 8F 28 27 00 00 74 ?? 49 8B D0 48 8D 4D D8 E8 ?? ?? ?? ?? B8 01 00 00 00 44 03 C8 49 83 C0 34 45 3B CA 7C ??
+```
+
+- One ODST match at `0x2ECF16`, inside function `0x2EC1B0-0x2ED053`; zero Halo
+  3 matches.
+- Both sites are the exclusion test in a `0x34`-stride first-person bone loop.
+  Non-excluded nodes are passed to the same matrix-transform operation used by
+  the visible-palette path; ODST resolves that verified callee at `0x1410A0`.
+- ODST uses exclusion field `+0x2728`, local matrix `[rbp-0x28]`, and an
+  explicit increment value versus Halo 3's `+0x11A4`, `[rbp-0x38]`, and direct
+  increment. The loop purpose and transform call are preserved, but none of
+  those shifted fields is approved for runtime use.
+- H3ODSTEK retains ODST first-person model node limits, camera-control and
+  first-person weapon animation semantics.
+
+Verdict: unique and semantically equivalent as the camera-control exclusion
+callsite in the first-person bone transform loop.
+
+### `kFpNativeWeaponIkDecisionSig` ODST candidate
+
+```text
+40 84 ED 74 ?? 45 84 FF 75 ?? 84 DB 74 ?? BA 03 00 00 00 41 0F 28 D9 44 8D 42 FF EB ?? F3 0F 10 1D ?? ?? ?? ??
+```
+
+- One ODST match at `0x2EBFBC`, inside function `0x2EB2B4-0x2EC104`; zero Halo
+  3 matches.
+- The local decision tree is instruction-for-instruction equivalent: the same
+  three boolean tests select mode `3`, copy the active blend vector, derive the
+  alternate mode, and join the same continuation.
+- The byte-identical prefix failed only because ODST keeps the blend vector in
+  `xmm9` (`41 0F 28 D9`) while Halo 3 uses `xmm8`
+  (`41 0F 28 D8`).
+- H3ODSTEK independently exposes native `weapon_ik`, disable/force weapon-IK
+  controls, first-person weapon source identity, and weapon-slot/node limits.
+
+Verdict: unique and semantically equivalent as the native first-person
+weapon-IK mode decision. This does not authorize the Halo 3 branch patch in
+ODST.
+
+## Twelve-signature gate decision
+
+All twelve formerly failing production roles now have a unique, title-specific
+ODST candidate in the installed module, and each candidate lands in the
+semantic counterpart of its Halo 3 target. The gun-camera lookalike was resolved
+by the independently established `0x2810` stride; no candidate remains
+ambiguous.
+
+These candidates are deliberately documentation-only. The next evidence gate
+is structure/layout proof, beginning with the shifted camera and view objects.
+Until those layouts and every consumed field are independently validated, no
+ODST candidate may be installed as a detour, callsite patch, data resolver, or
+support-gate change.
