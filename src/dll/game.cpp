@@ -3550,10 +3550,6 @@ namespace
             alignas(16) unsigned char temporary[0x40]{};
             if (g_buildViewport && g_buildMatrices)
             {
-                g_buildViewport(camera, temporary);
-                g_buildMatrices(camera, temporary, reinterpret_cast<char*>(view) + 0x98, 0.0f);
-                const float* finalProjection = reinterpret_cast<const float*>(
-                    reinterpret_cast<const char*>(view) + 0x98 + 0x78);
                 float eyeFov[4];
                 float halfX=1.07338f,halfY=0.92502f;
                 if(VR_GetEyeFov(eye,eyeFov))
@@ -3561,6 +3557,16 @@ namespace
                     halfX=fmaxf(-eyeFov[0],eyeFov[1]);
                     halfY=fmaxf(eyeFov[2],-eyeFov[3]);
                 }
+                // Native R3 may narrow Halo's compact camera. Keep the headset
+                // view and its culling volume at the normal OpenXR FOV; only
+                // the separate scope pass consumes the weapon zoom.
+                float* cameraTangents=reinterpret_cast<float*>(camera+0x28);
+                cameraTangents[0]=tanf(halfX);
+                cameraTangents[1]=tanf(halfY);
+                g_buildViewport(camera, temporary);
+                g_buildMatrices(camera, temporary, reinterpret_cast<char*>(view) + 0x98, 0.0f);
+                const float* finalProjection = reinterpret_cast<const float*>(
+                    reinterpret_cast<const char*>(view) + 0x98 + 0x78);
                 float* vrProjection = reinterpret_cast<float*>(
                     reinterpret_cast<char*>(view) + 0x98 + 0x78);
                 vrProjection[0]=1.0f/tanf(halfX);
@@ -3661,17 +3667,27 @@ namespace
         g_eyeFpView.store(nullptr,std::memory_order_release);
 
         // One mono world-only camera from the right-hand weapon seat, aimed
-        // down the same ray used for bullets. Zoom is absolute and universal.
+        // down the same ray used for bullets. Halo supplies magnification for
+        // zoom-capable weapons; the configured fallback covers AR/rockets.
         if(g_buildViewport && g_buildMatrices && VR_ScopeShouldRenderThisFrame() &&
            BuildRightHandScopeCamera(camera,saved) && VR_BeginScopeRaster())
         {
             alignas(16) unsigned char scopeTemporary[0x40]{};
+            const float nativeZoom=Game_GetZoomFactor();
+            const float zoom=nativeZoom>1.05f
+                ? Clamp(nativeZoom,1.05f,16.0f)
+                : Clamp(g_config.scope_zoom,1.25f,8.0f);
+            const float tanX=tanf(g_renderHalfFovX.load())/zoom;
+            const float tanY=tanf(g_renderHalfFovY.load())/zoom;
+            if(tanX>1e-4f && tanY>1e-4f)
+            {
+                float* cameraTangents=reinterpret_cast<float*>(camera+0x28);
+                cameraTangents[0]=tanX;
+                cameraTangents[1]=tanY;
+            }
             g_buildViewport(camera,scopeTemporary);
             g_buildMatrices(camera,scopeTemporary,
                             reinterpret_cast<char*>(view)+0x98,0.0f);
-            const float zoom=Clamp(g_config.scope_zoom,1.25f,8.0f);
-            const float tanX=tanf(g_renderHalfFovX.load())/zoom;
-            const float tanY=tanf(g_renderHalfFovY.load())/zoom;
             if(tanX>1e-4f && tanY>1e-4f)
             {
                 float* projection=reinterpret_cast<float*>(
@@ -3690,7 +3706,8 @@ namespace
             VR_EndScopeRaster();
             static std::atomic<bool> logged{false};
             if(!logged.exchange(true))
-                LOG("scope camera active: right-hand origin, bullet ray, %.2fx absolute zoom",zoom);
+                LOG("scope camera active: right-hand origin, bullet ray, %.2fx %s zoom",
+                    zoom,nativeZoom>1.05f?"Halo-authored":"fallback");
         }
         memcpy(camera, saved, sizeof(saved));
         memcpy(reinterpret_cast<char*>(view) + 0x98, savedDerived, sizeof(savedDerived));

@@ -69,6 +69,56 @@ bool ScopeRefreshScheduler::Advance(bool active, int divisor)
     return (++m_frame % static_cast<unsigned>(divisor)) == 0;
 }
 
+void ScopeZoomResolver::RequestToggle()
+{
+    if (m_ignoreRequestFrames)
+    {
+        m_ignoreRequestFrames = 0;
+        return;
+    }
+    m_pendingFrames = 2;
+}
+
+bool ScopeZoomResolver::Update(bool enabled, bool nativeZoomed)
+{
+    if (!enabled)
+    {
+        Reset();
+        return false;
+    }
+    if (nativeZoomed)
+    {
+        m_nativeEngaged = true;
+        m_fallbackActive = false;
+        m_pendingFrames = 0;
+        m_ignoreRequestFrames = 0;
+        return true;
+    }
+    if (m_nativeEngaged)
+    {
+        const bool matchingRequestAlreadyArrived = m_pendingFrames != 0;
+        m_nativeEngaged = false;
+        m_fallbackActive = false;
+        m_pendingFrames = 0;
+        // Halo changes zoom on the R3 press; its release request reaches this
+        // resolver later. Swallow that matching release even for a long click.
+        m_ignoreRequestFrames = matchingRequestAlreadyArrived ? 0 : 120;
+        return false;
+    }
+    if (m_ignoreRequestFrames) --m_ignoreRequestFrames;
+    if (m_pendingFrames && --m_pendingFrames == 0)
+        m_fallbackActive = !m_fallbackActive;
+    return m_fallbackActive;
+}
+
+void ScopeZoomResolver::Reset()
+{
+    m_fallbackActive = false;
+    m_nativeEngaged = false;
+    m_pendingFrames = 0;
+    m_ignoreRequestFrames = 0;
+}
+
 ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],
                                              const float origin[3],
                                              float rightMeters,

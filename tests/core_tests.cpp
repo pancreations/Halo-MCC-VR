@@ -228,6 +228,30 @@ int main()
     Check(refresh.Advance(true, 0),
         "Scope refresh divisor clamps safely to one");
 
+    ScopeZoomResolver zoomResolver;
+    zoomResolver.RequestToggle();
+    Check(!zoomResolver.Update(true, false) && zoomResolver.Update(true, false),
+        "A weapon with no native zoom opens the fallback scope after detection");
+    zoomResolver.RequestToggle();
+    Check(zoomResolver.Update(true, false) && !zoomResolver.Update(true, false),
+        "A second non-zoom weapon click closes the fallback scope");
+    zoomResolver.Reset();
+    Check(zoomResolver.Update(true, true),
+        "Halo native zoom immediately owns scope visibility");
+    zoomResolver.RequestToggle();
+    Check(zoomResolver.Update(true, true),
+        "A second authored zoom stage keeps the scope visible");
+    zoomResolver.RequestToggle();
+    Check(!zoomResolver.Update(true, false) && !zoomResolver.Update(true, false),
+        "Leaving Halo native zoom closes without enabling fallback");
+    zoomResolver.Reset();
+    zoomResolver.Update(true, true);
+    Check(!zoomResolver.Update(true, false),
+        "Native zoom can close before its R3 release is observed");
+    zoomResolver.RequestToggle();
+    Check(!zoomResolver.Update(true, false) && !zoomResolver.Update(true, false),
+        "The late release from native zoom-off is not mistaken for fallback");
+
     PauseLevelRecovery pauseRecovery;
     Check(!pauseRecovery.Update(true, false, false),
         "Pause recovery stays armed during an ordinary pause");

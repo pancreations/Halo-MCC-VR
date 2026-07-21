@@ -31,6 +31,21 @@ private:
     unsigned m_frame = 0;
 };
 
+// Resolves one R3 stream into Halo-authored zoom behavior for scoped weapons
+// and a delayed fallback toggle for weapons that do not react to native zoom.
+class ScopeZoomResolver
+{
+public:
+    void RequestToggle();
+    bool Update(bool enabled, bool nativeZoomed);
+    void Reset();
+private:
+    bool m_fallbackActive = false;
+    bool m_nativeEngaged = false;
+    unsigned m_pendingFrames = 0;
+    unsigned m_ignoreRequestFrames = 0;
+};
+
 struct ScopeQuadTransform
 {
     float position[3]{};

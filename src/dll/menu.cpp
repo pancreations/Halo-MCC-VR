@@ -287,12 +287,12 @@ namespace
         }
         ImGui::SameLine();
         ImGui::TextDisabled(VR_IsScopeActive() ? "[R3: visible]" : "[R3: hidden]");
-        ImGui::TextDisabled("R3 toggles a magnified world-only view from the right-hand weapon pose.\n"
-                            "Halo's full-screen/native zoom stays suppressed for every weapon.");
+        ImGui::TextDisabled("R3 uses each weapon's original Halo zoom inside this screen while the\n"
+                            "main headset view stays wide. AR/rockets use the fallback below.");
         if (g_config.scope_enabled)
         {
             ImGui::Indent();
-            changed |= ImGui::SliderFloat("Scope zoom", &g_config.scope_zoom,
+            changed |= ImGui::SliderFloat("Fallback zoom (no native scope)", &g_config.scope_zoom,
                                           1.25f, 8.0f, "%.2fx");
             changed |= ImGui::SliderFloat("Screen width (m)##scope",
                                           &g_config.scope_screen_width_m,
@@ -310,7 +310,7 @@ namespace
                                         &g_config.scope_refresh_divisor, 1, 4);
             ImGui::TextDisabled("Offsets are direct gun-local meters with no hidden added distance.");
             ImGui::TextDisabled("Higher refresh divisors render the zoom image less often; the screen\n"
-                                "still follows the gun every frame. The extra view costs GPU time only while open.");
+                                "still follows the gun every frame. Use 4 for the lowest GPU cost.");
             ImGui::Unindent();
         }
         ImGui::Spacing();

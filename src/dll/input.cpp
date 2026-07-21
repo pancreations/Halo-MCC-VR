@@ -64,20 +64,18 @@ namespace
         if (chord.toggled)
             Menu_Toggle();
 
-        // The universal scope owns VR R3 while enabled. Toggle on release so a
-        // staggered L3+R3 menu chord can cancel the entire gesture before it
-        // changes scope state. Gameplay loss resets it without a surprise
-        // toggle if R3 was held during the transition.
-        if (g_scopeToggle.IsActive() && !VR_IsScopeActive())
-            g_scopeToggle.Reset();
+        // R3 is sent to Halo again so each weapon's authored zoom stages remain
+        // authoritative. The release event is also offered to the fallback
+        // resolver; it toggles the screen only if Halo did not enter zoom.
         const bool scopeAvailable = g_config.scope_enabled && Game_IsHeadTracking();
         const ScopeToggleUpdate scope = g_scopeToggle.Update(
             scopeAvailable, pad.clickR, chord.consumeClicks || Menu_IsOpen());
-        VR_SetScopeActive(scope.active);
-        if (scope.changed)
+        if (scope.changed && scopeAvailable)
         {
-            LOG("universal scope screen: %s", scope.active ? "ON" : "OFF");
+            VR_RequestScopeToggle();
+            LOG("universal scope: R3 release offered to native/fallback resolver");
         }
+        if (!scopeAvailable) VR_SetScopeActive(false);
         if (Menu_IsOpen())
         {
             state->Gamepad = {};
@@ -90,14 +88,12 @@ namespace
             Input_RequestPauseToggle();
 
         WORD btn = state->Gamepad.wButtons;
-        if (g_config.scope_enabled)
-            btn &= ~XINPUT_GAMEPAD_RIGHT_THUMB;
         if (pad.a) btn |= XINPUT_GAMEPAD_A;
         if (pad.b && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_B;
         if (pad.x) btn |= XINPUT_GAMEPAD_X;
         if (pad.y && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_Y;
         if (pad.clickL && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
-        if (!g_config.scope_enabled && pad.clickR && !chord.consumeClicks)
+        if (pad.clickR && !chord.consumeClicks)
             btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
         if (pad.menu && !previousMenu && !Game_HasAuthoritativePauseState())

@@ -111,6 +111,10 @@ namespace
     bool g_scopeRedirected = false;
     std::atomic<bool> g_scopeHasImage{false};
     ScopeRefreshScheduler g_scopeRefreshScheduler;
+    ScopeZoomResolver g_scopeZoomResolver;
+    std::atomic<uint64_t> g_scopeToggleSerial{0};
+    uint64_t g_scopeToggleObserved = 0;
+    std::atomic<bool> g_scopeResetRequested{false};
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
     float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
@@ -3149,9 +3153,24 @@ void VR_EndRasterEye()
 
 bool VR_ScopeShouldRenderThisFrame()
 {
-    const bool active=g_config.scope_enabled &&
-        g_scopeActive.load(std::memory_order_acquire) && !Menu_IsOpen() &&
-        Game_IsHeadTracking();
+    const bool enabled=g_config.scope_enabled && !Menu_IsOpen() &&
+                       Game_IsHeadTracking();
+    if(g_scopeResetRequested.exchange(false,std::memory_order_acq_rel))
+    {
+        g_scopeZoomResolver.Reset();
+        g_scopeToggleObserved=g_scopeToggleSerial.load(std::memory_order_acquire);
+    }
+    const uint64_t requested=g_scopeToggleSerial.load(std::memory_order_acquire);
+    if(requested!=g_scopeToggleObserved)
+    {
+        g_scopeToggleObserved=requested;
+        g_scopeZoomResolver.RequestToggle();
+    }
+    const bool active=g_scopeZoomResolver.Update(
+        enabled,Game_GetZoomFactor()>1.05f);
+    const bool previous=g_scopeActive.exchange(active,std::memory_order_acq_rel);
+    if(previous && !active)
+        g_scopeHasImage.store(false,std::memory_order_release);
     return g_scopeRefreshScheduler.Advance(active,g_config.scope_refresh_divisor);
 }
 
@@ -3302,14 +3321,20 @@ void VR_GetPadState(VrPadState& out)
 
 void VR_SetScopeActive(bool active)
 {
-    const bool previous=g_scopeActive.exchange(active,std::memory_order_acq_rel);
-    if(previous && !active)
-        g_scopeHasImage.store(false,std::memory_order_release);
+    g_scopeActive.store(active,std::memory_order_release);
+    if(active) return;
+    g_scopeResetRequested.store(true,std::memory_order_release);
+    g_scopeHasImage.store(false,std::memory_order_release);
 }
 
 bool VR_IsScopeActive()
 {
     return g_scopeActive.load(std::memory_order_acquire);
+}
+
+void VR_RequestScopeToggle()
+{
+    g_scopeToggleSerial.fetch_add(1,std::memory_order_release);
 }
 
 void VR_SetGameHaptics(float amplitude)

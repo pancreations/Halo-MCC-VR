@@ -166,6 +166,12 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   oriented on the proven screen. As expected, its perspective felt head-mounted;
   Stage 3 therefore uses the right-hand weapon position as camera origin and the
   actual bullet ray as its forward axis.
+- Universal-scope Stage 3 commit `0e0c773` displayed the right-hand aim-camera
+  approach, but the headset result rejected one absolute zoom for every weapon
+  and reported excessive cost. The follow-up restores Halo's R3 input and uses
+  its live per-weapon zoom factor while the normal stereo view keeps OpenXR FOV;
+  non-zoom weapons retain a configurable fallback and divisor 4 is the low-cost
+  refresh option.
 - HUD size: the chud_globals safe-frame lever and the automatic hud_size slider are headset-confirmed. A value of 0.38 visibly and correctly scaled the native HUD layout (2026-07-19).
 - HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - Resolution scaling is headset-confirmed at the 0.67 Low setting with Toolkit scaling disabled: the complete eye remains intact and fills the unchanged OpenXR projection. The launcher scales Halo's 2912x2100 internal raster evenly; the values other than Low still need headset coverage, and nothing above 1.10 has ever been run in a headset — the high end is an untested option, not a validated tier.
