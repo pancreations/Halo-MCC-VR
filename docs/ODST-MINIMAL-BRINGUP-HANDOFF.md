@@ -2,7 +2,8 @@
 
 Prepared: 2026-07-21
 Branch: `feature/odst-bringup`
-Starting HEAD at handoff preparation: `543b4f0`
+Historical starting HEAD at original evidence handoff: `543b4f0`
+Reviewed camera-core checkpoint: `7c25a1a`
 
 This document began as the implementation boundary after the signature and
 camera-layout evidence gates passed for ODST's single-user stock path. The
@@ -69,8 +70,11 @@ into an ODST commit without the user's explicit direction.
   headset test has occurred.
 
 The next runtime step is the narrowly scoped private headset checkpoint below.
-It requires explicit user approval before any private deploy path is added,
-bypassed, or run.
+On 2026-07-21 the user asked to prepare the next chat so they can test ODST.
+That authorizes the next chat to review and run the dedicated private procedure
+documented here. It does not authorize public packaging/support, additional ODST
+features, or an unattended game launch. Nothing was deployed or launched while
+preparing this handoff.
 
 ## Proven evidence available to implementation
 
@@ -198,11 +202,13 @@ unchanged.
 
 ## First private headset checkpoint
 
-Authorization gate: this checkpoint has not been deployed or launched. Do not
-deploy, launch MCC, or begin a headset test until the final code/fallback review
-is complete and the user explicitly approves this private build. The public
-deployment and export scripts intentionally reject the option-ON cache and must
-not be weakened or bypassed.
+Authorization status: the camera-core/fallback review is complete, and the user
+asked for the next chat to prepare the private build so they can test ODST. The
+next chat may deploy the reviewed private build with the dedicated opt-in script
+below after repeating the desk gates. Do not launch MCC on the user's behalf;
+report the deployed identities and let the user begin the headset session. The
+public deployment/export scripts remain OFF-only and must not be weakened or
+bypassed.
 
 Before deployment:
 
@@ -210,9 +216,70 @@ Before deployment:
 - rerun both Release builds and both CTest suites;
 - verify the option-OFF build still classifies ODST unsupported, advertises no
   capabilities, and has no ODST hook plan;
-- after explicit approval, use a separately reviewed private deployment
-  procedure with MCC closed; do not route an ON cache through `deploy.bat auto`;
-- byte-compare every privately deployed binary and record hashes/build stamp.
+- verify HEAD is a clean descendant of reviewed core commit `7c25a1a`;
+- use `deploy-odst-private.bat` with MCC closed; do not route an ON cache through
+  `deploy.bat auto`;
+- byte-compare the privately deployed DLL and record its hash/build stamp.
+
+### Dedicated private deployment procedure
+
+The separate script is intentionally inert without its opt-in token:
+
+```powershell
+.\deploy-odst-private.bat VERIFY-ODST-TEST auto
+.\deploy-odst-private.bat I-APPROVE-ODST-TEST auto
+```
+
+`VERIFY-ODST-TEST` exercises every identity, configuration, build, and test
+gate, then exits before creating a backup or touching the installed files.
+`I-APPROVE-ODST-TEST` repeats those same gates before the private copy.
+
+Before copying anything, it verifies the reviewed branch/commit ancestry, a
+clean worktree, MCC and the launcher being closed, exact x64 OFF and ON caches,
+fresh Release builds, and both named CTest runs. It also requires the evidenced
+retail `halo3odst.dll` SHA-256
+`5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`.
+
+The currently installed headset-confirmed DLL is
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
+A new OFF-tree build is not byte-identical, so recovery must restore those exact
+installed bytes rather than rebuild. The script copies that DLL under
+`Halo_MCC_VR\pre-odst-private-backup` and seals the source commit, baseline and
+candidate hashes, candidate size/time, and exact manifest before overwrite. Its
+exclusive recovery states advance `PREPARED -> DEPLOYING -> ACTIVE`; restore or
+rollback enters `RESTORING` before copying the baseline and finishes as
+`RESTORED` or `ROLLED_BACK`. An interrupted `DEPLOYING`/`RESTORING` copy can
+therefore be retried even if the destination contains partial bytes, while a
+normal `ACTIVE` state refuses to overwrite an unrelated later DLL. The script
+stages and byte-checks the private DLL in that directory and deploys only that
+DLL. The launcher is left untouched and must retain
+`BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
+It never starts MCC. A staging/copy/verification failure attempts to restore the
+saved baseline and prints `DO NOT LAUNCH OR TEST`.
+
+Record the script's complete success block before launch. On any failed test,
+close MCC and restore immediately. After a successful ODST checklist, run the
+protected Halo 3 regression while the private DLL is still installed, then close
+MCC and restore the exact saved baseline:
+
+```powershell
+.\deploy-odst-private.bat RESTORE-ODST-BASELINE auto
+```
+
+The restore mode validates the exclusive recovery state and sealed record,
+restores only the DLL, and byte/hash-compares it. Preserve the backup directory
+as the test record; do not delete or overwrite it merely to silence the private
+script's repeat-run guard.
+
+### Expected scope
+
+This is deliberately not finished ODST support. Expect stock physical-controller
+input, not motion-controller weapon aiming. There is no ODST VR reticle, HUD/VISR
+port, scope port, weapon/hand calibration, arm IK, or gameplay patch. The only
+candidate behavior is stereo world rendering, rotational tracking, positional
+6DOF, and minimum first-person camera coherence. The `1 / 3.048` position scale
+may be wrong; report direction and perceived magnitude rather than treating it
+as established calibration.
 
 For the option-ON private ODST test, validate only:
 
@@ -229,6 +296,11 @@ For the option-ON private ODST test, validate only:
 9. Re-run the protected Halo 3 camera/stereo/head-tracking regression before
    accepting the checkpoint.
 
+Run items 1-4 first and report the smoke result before stressing transitions.
+Only continue with items 5-9 if the initial image is stable. Include the level,
+approximate test time, whether each eye rendered a coherent world, lean
+direction/scale, weapon/HUD appearance, and the tail of `halo3xr.log`.
+
 Stop immediately and revert the isolated experiment on any signature ambiguity,
 partial hook state, black screen, crash, incorrect eye ownership, failed title
 exit/re-entry, or Halo 3 regression. Do not stack fixes onto a failed headset
@@ -237,13 +309,15 @@ build.
 ## Paste-ready next-step prompt
 
 ```text
-Continue the ODST port from the private camera/stereo/6DOF implementation
-checkpoint.
+Prepare and deploy the first private ODST camera/stereo/6DOF headset test. I
+explicitly approve this chat using the dedicated private deployment procedure,
+but do not launch MCC for me.
 
 Read docs/CURRENT-STATE.md, docs/CONTINUATION.md, docs/PLAN.md,
 docs/ODST-SIGNATURE-EVIDENCE.md, docs/ODST-CAMERA-LAYOUT.md, and
 docs/ODST-MINIMAL-BRINGUP-HANDOFF.md before changing code. Inspect the worktree
-and preserve stash@{0}, which contains the user's README work.
+and preserve stash@{0}, which contains the user's README work. The reviewed
+camera-core checkpoint is 7c25a1a; require a clean HEAD descended from it.
 
 The private candidate now has exact build/signature/layout preflight, four
 atomic camera-core hooks, fail-closed teardown/rearm, and isolated shared-feature
@@ -252,8 +326,23 @@ option OFF by default. Public deploy/export must continue to reject ON caches.
 Controls, aim, reticle, HUD/VISR, scopes, pause, brightness, motion blur,
 weapons, bones, arms, VRIK, and gameplay patches remain out of scope. Treat the
 1/3.048 positional conversion as a headset calibration hypothesis, not accepted
-evidence. Review the current diff and fallback behavior, then rerun Release and
-CTest in both OFF and ON trees. Do not deploy or launch. Report the desk-side
-checkpoint and wait for my explicit approval before creating or running the
-private headset deployment/test procedure.
+evidence. Do not change runtime code before the first test unless a new desk-side
+blocker is found.
+
+Review deploy-odst-private.bat, confirm the recorded installed/retail hashes, and
+run:
+
+    .\deploy-odst-private.bat I-APPROVE-ODST-TEST auto
+
+This is the only authorized private deployment path; do not weaken or bypass the
+normal OFF-only deploy/export guards. The private script must preserve the
+exact installed baseline, rebuild/test both OFF and ON, deploy and byte-verify
+only the private DLL, leave the launcher untouched, and print all identities. Do
+not launch MCC. Report the commit, DLL build time/SHA-256, verified retail and
+launcher hashes, and backup path, then tell me the staged items 1-4 smoke
+checklist so I can launch with anti-cheat disabled and test in the headset. On a
+failure restore immediately; after a successful ODST checklist, test Halo 3
+before restoring with:
+
+    .\deploy-odst-private.bat RESTORE-ODST-BASELINE auto
 ```

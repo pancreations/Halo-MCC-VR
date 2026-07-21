@@ -54,9 +54,20 @@ accepted ODST scale evidence.
 Title-module activation is polled every 50 ms and is not an atomic transition
 signal. When retained modules make ownership `Unknown`, Halo 3 shared gameplay
 features require a post-transition Halo 3 camera heartbeat less than 100 ms old;
-explicit ODST/private camera-only ownership blocks them. The next runtime step
-is a private deployment and narrow headset test, and it requires the user's
-explicit approval before any deploy path is added, bypassed, or run.
+explicit ODST/private camera-only ownership blocks them.
+
+The user asked on 2026-07-21 to prepare the next chat so they can perform the
+private ODST test. The reviewed core is `7c25a1a`. The dedicated
+`deploy-odst-private.bat` requires its explicit opt-in token, a clean descendant
+of that commit on `feature/odst-bringup`, exact x64 OFF/ON caches, fresh Release
+builds/tests, closed MCC/launcher, the evidenced retail ODST hash, exact
+installed-baseline backup, byte comparison, and hash reporting. It deploys and
+restores only the DLL and never launches MCC. The exact installed baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`
+must be restored from backup after the test; do not substitute a new OFF build.
+The launcher remains untouched. Public deploy/export remain OFF-only. The next
+chat may deploy through this private path, report the identities, and let the
+user launch for the staged smoke test.
 
 ## First checkpoint: universal configuration
 
