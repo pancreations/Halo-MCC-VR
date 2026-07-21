@@ -489,9 +489,44 @@ Both installed files byte-match the Release outputs. User headset result on
 2026-07-21: "seem like it." Treat this as a positive initial confirmation that
 the config-only build preserved Halo 3 behavior, not as a claim that every Halo
 3 regression case was exhaustively rerun. The universal-config checkpoint is
-accepted for continued use and the next ODST work may begin with the non-hook
-evidence/signature stage. Keep the full Halo 3 matrix as a required safeguard
-before merging or publicly enabling ODST runtime support.
+accepted for continued use. The subsequent ODST non-hook signature and camera
+layout evidence gates are recorded below. Keep the full Halo 3 matrix as a
+required safeguard before merging or publicly enabling ODST runtime support.
+
+### ODST signature and camera-layout gates passed 2026-07-21
+
+The non-hook stage is complete. `docs/ODST-SIGNATURE-EVIDENCE.md` proves that
+the eight byte-identical signatures land in equivalent ODST functions and gives
+unique title-specific patterns for all twelve formerly failing production
+roles. `docs/ODST-CAMERA-LAYOUT.md` covers every byte of the `0x90` compact
+camera, the `0xC0` derived blocks, the prepared-view front and nested FP
+structures, `view+0x27FC` render user index, and the `0x2810` four-slot camera
+stride.
+
+Read-only stock ODST captures with EAC off covered movement/look, zoom,
+death/respawn, clean level unload/reload, a cutscene, and vehicle entry/exit.
+They proved the nested source pointer at root `+0x970`, zoom/reference FOV at
+compact `+0x2C`, first-person blend weight at `+0x30`, title-safe rectangles,
+and the FP near-plane behavior. H3ODSTEK/retail formulas prove `+0x34` as the
+vertical projection/observer offset and `+0x6C..+0x7B` as the optional oblique
+near-clip plane. The single-user stock camera layout gate passes. Original
+engine member spelling and unobserved mirrored/custom/oblique stock modes remain
+documented ambiguity, but their sizes, formulas, enable conditions, and required
+preservation behavior are known.
+
+No runtime source, game memory, hook, support flag, or game file changed during
+the evidence pass. ODST remains `runtimeSupported=false`, capabilities remain
+`None`, and `game.cpp` still installs game hooks only for `GameTitle::Halo3`.
+
+The next chat must follow `docs/ODST-MINIMAL-BRINGUP-HANDOFF.md`: add a private
+build-time ODST bring-up option defaulting OFF; introduce a title-specific
+camera profile; resolve every required ODST camera signature uniquely; install
+the camera core atomically or leave stock; bring up only camera/stereo/6DOF and
+minimum FP-camera coherence; and validate level unload, title exit, and reload.
+Do not call the monolithic Halo 3 installer for ODST or port any controls,
+reticle, HUD/VISR, scope, pause, brightness, motion-blur, weapon, bone, arm,
+VRIK, or gameplay behavior in that checkpoint. Keep `runtimeSupported=false`
+until ODST headset acceptance and the full Halo 3 shared-system regression pass.
 
 ## 2026-07-19 session closeout
 

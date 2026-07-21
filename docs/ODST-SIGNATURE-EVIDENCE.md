@@ -531,8 +531,10 @@ semantic counterpart of its Halo 3 target. The gun-camera lookalike was resolved
 by the independently established `0x2810` stride; no candidate remains
 ambiguous.
 
-These candidates are deliberately documentation-only. The next evidence gate
-is structure/layout proof, beginning with the shifted camera and view objects.
-Until those layouts and every consumed field are independently validated, no
-ODST candidate may be installed as a detour, callsite patch, data resolver, or
-support-gate change.
+These candidates remained documentation-only during derivation. The subsequent
+camera/view layout gate is now complete in `ODST-CAMERA-LAYOUT.md`, including
+read-only stock captures through zoom, death/respawn, cutscene, unload/reload,
+and vehicle transitions. That follow-on gate authorizes only the private minimal
+camera/stereo/6DOF implementation described in
+`ODST-MINIMAL-BRINGUP-HANDOFF.md`; it does not authorize broad ODST hooks,
+gameplay patches, or a public support-gate change.

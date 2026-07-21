@@ -79,16 +79,27 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
   weapon, skeleton, HUD, and engine calibration lives in the title adapter; do
   not expose a second ODST config file or force the user to retune when changing
   games. Unsupported capabilities preserve their saved values.
-- The first ODST runtime step is evidence, not a hook: use the installed
-  H3ODSTEK, confirm the eight matching signatures land in the same functions,
-  then run a read-only/live scan for the shifted camera struct.
-- Repairing the 12 signatures is the cheap half. Re-deriving the camera, view,
-  and first-person struct layouts on the ODST binary and re-validating VRIK and
-  the palette path in the headset is the expensive half.
+- Completed evidence gates: all eight matching signatures land in equivalent
+  functions; the twelve failed production roles have unique ODST patterns; and
+  the `0x90` compact camera, `0xC0` derived blocks, prepared-view front/nested
+  structures, `+0x27FC` user index, and `0x2810` stride are proven. Read-only
+  stock captures covered movement, zoom, death/respawn, unload/reload,
+  cutscenes, and vehicle entry/exit.
+- Immediate next checkpoint: implement only the private, build-gated ODST
+  camera/stereo/6DOF core defined in `ODST-MINIMAL-BRINGUP-HANDOFF.md`. Resolve
+  every critical title-specific signature before hooks, install atomically or
+  leave stock, use only the ODST layout profile, and handle unload/title
+  exit/reload cleanly.
+- Do not call the monolithic Halo 3 installer for ODST. Controls, aim, reticle,
+  HUD/VISR, scopes, pause, brightness, motion blur, weapons, bones, arms, VRIK,
+  and gameplay patches remain later isolated gates.
 - Do not reuse any Halo 3 struct offset in ODST without confirming it on the ODST
   binary.
 - Shipping safety holds today: ODST is registered with `runtimeSupported=false`
   and hooks are gated on `GameTitle::Halo3`, so ODST loads stock and untouched.
+- Keep that public safety state in the first private implementation: add a
+  clearly named build-time ODST bring-up option defaulting OFF, and do not set
+  `runtimeSupported=true` or advertise ODST capabilities yet.
 - Bring-up order after the evidence gate: minimal camera/stereo/6DOF; title
   exit and stock fallback; controls/aim/reticle; ODST weapon and arm/VRIK
   calibration; HUD/VISR; scopes, vehicles, turrets, cutscenes, death/respawn,
