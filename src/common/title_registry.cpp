@@ -101,10 +101,11 @@ bool TitleRegistry_AllowsSharedGameplayFeatures(
 
 bool TitleRegistry_AllowsSharedControllerInput(
     GameTitle activeTitle, bool halo3CameraOwned, bool cameraOnlyOwned,
-    bool allowAmbiguousFrontend)
+    bool allowAmbiguousFrontend, bool allowCameraOnlyControllerInput)
 {
     if (cameraOnlyOwned)
-        return false;
+        return allowCameraOnlyControllerInput &&
+            activeTitle == GameTitle::Halo3ODST;
     if (activeTitle == GameTitle::Unknown && allowAmbiguousFrontend)
         return true;
     return TitleRegistry_AllowsSharedGameplayFeatures(

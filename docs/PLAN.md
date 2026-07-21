@@ -119,11 +119,15 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
   readiness wait, and Halo 3 performance regressed. The dedicated restore mode
   restored the exact headset baseline; the sealed recovery record remains
   preserved.
-- The next isolated checkpoint restores only private frontend controller
-  ambiguity, corrects the over-strict ODST readiness assumptions with one-shot
-  diagnostics, and removes the measured Halo 3 reticle/palette hot paths.
-  Clean option-OFF/ON Release builds, both CTest suites, and private wrapper
-  unwind entries pass. No replacement candidate has been deployed.
+- The second private candidate from `dcdf49e` restored frontend controls and
+  Halo 3 performance, but explicit ODST ownership still blocked virtual-gamepad
+  merging. The title never reached a level; its camera array correctly remained
+  in the all-zero unloaded state. The exact baseline was restored from the
+  sealed `pre-odst-private-backup-3` record.
+- The next single-hypothesis checkpoint permits ordinary buttons/sticks only for
+  private explicit ODST ownership. Motion aim and every other shared Halo 3
+  gameplay feature remain blocked; the public OFF build remains fail-closed.
+  Both OFF/ON builds and core tests pass locally. No third candidate is deployed.
 - `deploy-odst-private.bat` remains the sole private path: it is token-gated,
   requires the reviewed branch/descendant, exact x64 OFF/ON caches and retail
   ODST hash, rebuilds/tests both configurations, preserves the exact installed

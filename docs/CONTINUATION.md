@@ -52,13 +52,16 @@ stock 2D because its camera-readiness gate never installed detours, and Halo 3
 performance regressed. MCC was closed and the dedicated restore mode restored
 the exact baseline
 `0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
-The sealed backup record and `stash@{0}` remain untouched. The next isolated
-checkpoint corrects the private frontend controller policy, relaxes only the
-over-strict ODST constructor/publication assumptions with one-shot diagnostics,
-and removes the measured Halo 3 reticle/palette hot paths. Both clean OFF/ON
-Release builds, CTest suites, and private wrapper unwind entries pass. No
-replacement candidate has been deployed. The current `1 / 3.048` positional
-conversion remains only a calibration hypothesis.
+The sealed backup record and `stash@{0}` remain untouched. The second retry
+from `dcdf49e` restored MCC frontend controls and Halo 3 performance, but
+explicit ODST ownership still blocked virtual-gamepad merging. The title never
+reached a level and its camera array stayed in the all-zero unloaded state. The
+exact baseline was restored from `pre-odst-private-backup-3`. The next
+single-hypothesis checkpoint permits ordinary buttons/sticks only for explicit
+private ODST ownership; motion aim and all other Halo 3 shared gameplay paths
+remain blocked. Both OFF/ON builds and core tests pass. No third candidate is
+deployed. The current `1 / 3.048` positional conversion remains only a
+calibration hypothesis.
 
 Title-module activation is polled every 50 ms and is not an atomic transition
 signal. When retained modules make ownership `Unknown`, Halo 3 shared gameplay

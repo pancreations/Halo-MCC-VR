@@ -88,19 +88,22 @@ int main()
                   GameTitle::Unknown, false, false),
             "an ambiguous title without camera ownership fails closed");
         Check(TitleRegistry_AllowsSharedControllerInput(
-                  GameTitle::Unknown, false, false, true),
+                  GameTitle::Unknown, false, false, true, false),
             "the private frontend exception retains controller input");
         Check(!TitleRegistry_AllowsSharedControllerInput(
-                  GameTitle::Unknown, false, false, false),
+                  GameTitle::Unknown, false, false, false, false),
             "the normal build keeps ambiguous title input fail-closed");
+        Check(TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::Halo3ODST, false, true, false, true),
+            "private ODST camera ownership permits ordinary gamepad input");
         Check(!TitleRegistry_AllowsSharedControllerInput(
-                  GameTitle::Halo3ODST, false, true, true),
-            "private ODST camera ownership blocks controller integration");
+                  GameTitle::Halo3ODST, false, true, false, false),
+            "public ODST camera ownership keeps controller input stock");
         Check(!TitleRegistry_AllowsSharedControllerInput(
-                  GameTitle::HaloCE, false, false, true),
+                  GameTitle::HaloCE, false, false, true, true),
             "an explicitly detected unsupported title keeps stock input");
         Check(!TitleRegistry_AllowsSharedControllerInput(
-                  GameTitle::Unknown, false, true, true),
+                  GameTitle::Unknown, false, true, true, true),
             "owned ODST teardown beats resident-module ambiguity");
         Check(!TitleRegistry_AllowsSharedGameplayFeatures(
                   GameTitle::Halo3, true, true),

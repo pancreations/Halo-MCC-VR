@@ -108,12 +108,27 @@ The failed-run log separated the symptoms:
   original palette, or unsafe transform falls through to the existing full
   solve; the cache never spans frames.
 
-No replacement candidate has been deployed. Before another private headset
-attempt, commit the isolated fixes from a clean worktree, repeat both clean
-Release builds/CTest suites and the private wrapper unwind check, then run only
-the dedicated private procedure with explicit deployment authorization. Do not
-launch MCC on the user's behalf. Public packaging/support and the normal
-OFF-only deployment/export paths remain unchanged.
+## Second private headset result and recovery
+
+The retry from source commit `dcdf49e`, DLL
+`28BEC371529D826B8F89544F77B92EB00D46B9319E6C100CD1CED3130B3870DE`,
+restored MCC frontend controller merging and removed the Halo 3 regression.
+The user reported Halo 3 was fine, but ODST did not change and its controls did
+not respond. The log proved VR controller edges and frontend XInput merging
+(`merged=33404`), then the explicit ODST camera-only policy stopped merging
+those controls. ODST therefore never reached a campaign level. Its camera array
+remained in the stock unloaded state: an all-zero tail, compact camera, nested
+source, FOV, and clips. This is evidence of a blocked pre-level input path, not
+evidence that the proven gameplay camera-array RVA is wrong.
+
+MCC was closed and the dedicated restore mode byte-restored the exact baseline.
+The sealed record is `Halo_MCC_VR\pre-odst-private-backup-3`. The next
+single-hypothesis checkpoint permits ordinary virtual-gamepad buttons/sticks
+only while the private build explicitly owns ODST. Motion-controller aim,
+head-relative Halo 3 movement transforms, shared gameplay features, and public
+option-OFF behavior remain blocked. Before another headset attempt, commit this
+isolated policy change and repeat the private build/test/deployment gates with
+explicit authorization. Do not launch MCC on the user's behalf.
 
 ## Proven evidence available to implementation
 

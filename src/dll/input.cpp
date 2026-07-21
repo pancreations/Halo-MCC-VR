@@ -205,9 +205,9 @@ namespace
     {
         if (user != 0 || !state)
             return r;
-        // Explicit camera-only and unsupported titles own no controller
-        // integration. Resident-module ambiguity is handled separately so the
-        // MCC frontend keeps VR controller navigation between title sessions.
+        // Controller admission is separate from shared gameplay ownership.
+        // The private ODST camera-only build may expose ordinary gamepad input
+        // while motion aim and every Halo 3 gameplay transform stay blocked.
         if (!Game_AllowsSharedControllerInput())
             return r;
         g_diagReads.fetch_add(1);

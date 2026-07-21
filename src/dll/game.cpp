@@ -7242,12 +7242,15 @@ bool Game_AllowsSharedControllerInput()
             now, lastCamera, titleTransition);
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     const bool allowAmbiguousFrontend = activeTitle == GameTitle::Unknown;
+    const bool allowCameraOnlyControllerInput =
+        activeTitle == GameTitle::Halo3ODST;
 #else
     const bool allowAmbiguousFrontend = false;
+    const bool allowCameraOnlyControllerInput = false;
 #endif
     return TitleRegistry_AllowsSharedControllerInput(
         activeTitle, halo3CameraOwned, cameraOnlyOwned,
-        allowAmbiguousFrontend);
+        allowAmbiguousFrontend, allowCameraOnlyControllerInput);
 }
 bool Game_CanToggleImmersiveView()
 {

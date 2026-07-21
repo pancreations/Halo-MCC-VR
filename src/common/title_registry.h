@@ -31,7 +31,7 @@ bool TitleRegistry_AllowsSharedGameplayFeatures(
     GameTitle activeTitle, bool halo3CameraOwned, bool cameraOnlyOwned);
 bool TitleRegistry_AllowsSharedControllerInput(
     GameTitle activeTitle, bool halo3CameraOwned, bool cameraOnlyOwned,
-    bool allowAmbiguousFrontend);
+    bool allowAmbiguousFrontend, bool allowCameraOnlyControllerInput);
 bool TitleRegistry_Halo3CameraOwnsAmbiguousState(
     uint64_t now, uint64_t lastCamera, uint64_t titleTransition);
 const char* RuntimeModeName(RuntimeMode mode);

@@ -587,13 +587,21 @@ procedure now selects a new numbered record for later candidates, refuses to
 start while any earlier record has a live state, and restores from exactly one
 live record.
 
-The next isolated checkpoint restores private frontend controller ambiguity,
-corrects the two over-strict ODST readiness assumptions while retaining compact
-camera/single-user ownership proof, adds one-shot readiness diagnostics, and
-removes the measured Halo 3 reticle-log/swapchain churn and duplicate exact
-stereo-pair palette solves. Both clean option-OFF and option-ON Release builds,
-both CTest suites, and the private wrapper unwind entries pass. No replacement
-candidate has been deployed.
+The second private candidate from `dcdf49e`
+(`28BEC371529D826B8F89544F77B92EB00D46B9319E6C100CD1CED3130B3870DE`)
+restored MCC frontend controller merging and kept Halo 3 healthy at roughly
+85-90 FPS, but ODST still remained stock 2D and its controls did not respond.
+The log showed VR button edges and `merged=33404` before ODST activation.
+Once ODST became explicit, the camera-only policy stopped controller merging,
+so the title never reached a level and the prepared camera array remained in
+its stock all-zero unloaded state. The exact baseline was restored from the
+sealed `pre-odst-private-backup-3` record.
+
+The next isolated checkpoint permits ordinary virtual-gamepad buttons/sticks
+only for explicit ODST ownership in the private option-ON build. Motion aim,
+Halo 3 gameplay transformations, all other shared features, unsupported titles,
+and the normal option-OFF build remain fail-closed. Both OFF and ON builds and
+their core tests pass locally; no third candidate has been deployed.
 
 Reviewed camera-core checkpoint `7c25a1a` remains the minimum ancestor for a
 private test build. `deploy-odst-private.bat` remains the only private opt-in
