@@ -28,6 +28,11 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
   User result: the unwanted firing shake is fixed.
+- Cutscene-culling checkpoint: `c828717` on `fix/cutscene-culling`. It
+  disables Halo's cinematic-only widescreen FOV reduction while stereo VR is
+  active, using the engine debug variable resolved by name. Headset result on
+  2026-07-21: "thats good i think it works." Treat that as a positive initial
+  result; broader cutscene coverage is still pending.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.

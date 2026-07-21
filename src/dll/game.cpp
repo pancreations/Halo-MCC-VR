@@ -141,6 +141,10 @@ namespace
     ComposeSpecialBonesFn g_origComposeSpecialBones = nullptr;
 
     uint32_t* g_engineTlsIndex = nullptr;
+    uint32_t* g_cinematicTlsIndex = nullptr;
+    std::atomic<int32_t> g_cinematicRebaseScene{-1};
+    std::atomic<int32_t> g_cinematicRebaseShot{-1};
+    std::atomic<uint32_t> g_cinematicRebaseSerial{0};
     unsigned char** g_animationTagData = nullptr;
     // Halo real_matrix4x3: uniform scale, then forward/left/up basis vectors,
     // then translation. The first headset build incorrectly put scale last,
@@ -3127,6 +3131,35 @@ namespace
             v[i] = v[i] * cosA + c[i] * sinA + axis[i] * d * (1.0f - cosA);
     }
 
+    bool ReadCinematicShot(int32_t& scene, int32_t& shot)
+    {
+        if (!g_cinematicTlsIndex)
+            return false;
+        __try
+        {
+            auto** slots = reinterpret_cast<void**>(__readgsqword(0x58));
+            if (!slots)
+                return false;
+            auto* tls = reinterpret_cast<unsigned char*>(
+                slots[*g_cinematicTlsIndex]);
+            if (!tls)
+                return false;
+            auto* globals = *reinterpret_cast<unsigned char**>(tls + 0xA8);
+            if (!globals || globals[5] == 0)
+                return false;
+            auto* shotState = *reinterpret_cast<unsigned char**>(tls + 0x90);
+            if (!shotState)
+                return false;
+            scene = *reinterpret_cast<const int32_t*>(shotState + 4);
+            shot = *reinterpret_cast<const int32_t*>(shotState + 8);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     void ApplyHeadLook(void* src)
     {
         if (!src)
@@ -3164,13 +3197,53 @@ namespace
         float* up = reinterpret_cast<float*>(reinterpret_cast<char*>(src) + kSrcUp);
         float* pos = reinterpret_cast<float*>(reinterpret_cast<char*>(src) + kSrcPos);
 
-        if (g_needRecenter.exchange(false))
+        // A cutscene shot changes Halo's authored camera, but the old VR yaw
+        // reference otherwise survives the cut. That can spawn the viewer
+        // facing backward in the new shot. The engine's exact scene/shot IDs
+        // are read from its TLS state; rebase the current physical head-forward
+        // to the authored camera only on entry, an ID transition, or exit.
+        // Pitch and roll remain entirely HMD-owned, avoiding an artificial
+        // camera rotation during continuous cinematic motion.
+        static thread_local bool previousCinematic = false;
+        static thread_local int32_t previousScene = -1;
+        static thread_local int32_t previousShot = -1;
+        int32_t cinematicScene = -1;
+        int32_t cinematicShot = -1;
+        const bool cinematic =
+            ReadCinematicShot(cinematicScene, cinematicShot);
+        const bool cinematicBoundary =
+            (cinematic && (!previousCinematic ||
+                cinematicScene != previousScene ||
+                cinematicShot != previousShot)) ||
+            (!cinematic && previousCinematic);
+        previousCinematic = cinematic;
+        previousScene = cinematic ? cinematicScene : -1;
+        previousShot = cinematic ? cinematicShot : -1;
+
+        const bool manualRecenter = g_needRecenter.exchange(false);
+        if (manualRecenter || cinematicBoundary)
         {
             g_gameYawRef = atan2f(fwd[1], fwd[0]); // align current head to current heading
             g_headYawRef = hy;
-            g_headPosRef[0] = hpos[0]; g_headPosRef[1] = hpos[1]; g_headPosRef[2] = hpos[2];
-            g_needPosRecenter = false;
-            LOG("head tracking recentered (game yaw %.1f deg)", g_gameYawRef * 57.2958f);
+            if (manualRecenter)
+            {
+                g_headPosRef[0] = hpos[0]; g_headPosRef[1] = hpos[1];
+                g_headPosRef[2] = hpos[2];
+                g_needPosRecenter = false;
+                LOG("head tracking recentered (game yaw %.1f deg)",
+                    g_gameYawRef * 57.2958f);
+            }
+            if (cinematicBoundary)
+            {
+                g_cinematicRebaseScene.store(
+                    cinematic ? cinematicScene : -1,
+                    std::memory_order_relaxed);
+                g_cinematicRebaseShot.store(
+                    cinematic ? cinematicShot : -1,
+                    std::memory_order_relaxed);
+                g_cinematicRebaseSerial.fetch_add(
+                    1, std::memory_order_release);
+            }
         }
         else if (g_needPosRecenter.exchange(false))
         {
@@ -3827,6 +3900,67 @@ namespace
         "E8 ?? ?? ?? ?? 84 C0 75 0A 8B D1 40 8A CE "
         "E8 ?? ?? ?? ?? 40 88 35 ?? ?? ?? ?? E9 ?? ?? ?? ??";
 
+    // Halo's leaf cinematic_in_progress getter reads TLS+0xA8, then byte +5.
+    // The cinematic_set_shot evaluator reads the same TLS index and writes the
+    // current scene/shot pair through TLS+0x90 at +4/+8. Requiring both unique
+    // signatures to resolve the same TLS-index global proves every offset used
+    // by ReadCinematicShot; otherwise automatic shot-facing stays disabled.
+    const char* kCinematicInProgressSig =
+        "8B 0D ?? ?? ?? ?? 33 D2 65 48 8B 04 25 58 00 00 00 "
+        "41 B8 A8 00 00 00 48 8B 04 C8 49 8B 0C 00 48 85 C9 "
+        "74 03 8A 51 05 8A C2 C3";
+    const char* kCinematicSetShotSig =
+        "40 53 48 83 EC 20 8B DA E8 ?? ?? ?? ?? 48 85 C0 74 33 "
+        "44 8B 48 04 8B 00 44 8B 05 ?? ?? ?? ?? "
+        "65 48 8B 0C 25 58 00 00 00 BA 90 00 00 00 "
+        "4A 8B 0C C1 48 8B 14 0A 8B CB 89 42 04 44 89 4A 08";
+
+    void LocateCinematicState(uintptr_t base, size_t size)
+    {
+        const uintptr_t getter = sig::Find(base, size, kCinematicInProgressSig);
+        const uintptr_t setter = sig::Find(base, size, kCinematicSetShotSig);
+        const bool uniqueGetter = getter &&
+            !sig::Find(getter + 1, base + size - getter - 1,
+                       kCinematicInProgressSig);
+        const bool uniqueSetter = setter &&
+            !sig::Find(setter + 1, base + size - setter - 1,
+                       kCinematicSetShotSig);
+        if (!uniqueGetter || !uniqueSetter)
+        {
+            LOG("cutscene facing: cinematic state signatures missing/ambiguous; "
+                "automatic shot yaw disabled");
+            return;
+        }
+
+        const int32_t getterDisp =
+            *reinterpret_cast<const int32_t*>(getter + 2);
+        const int32_t setterDisp =
+            *reinterpret_cast<const int32_t*>(setter + 0x1B);
+        auto* getterIndex =
+            reinterpret_cast<uint32_t*>(getter + 6 + getterDisp);
+        auto* setterIndex =
+            reinterpret_cast<uint32_t*>(setter + 0x1F + setterDisp);
+        const uintptr_t getterAddress =
+            reinterpret_cast<uintptr_t>(getterIndex);
+        const uintptr_t setterAddress =
+            reinterpret_cast<uintptr_t>(setterIndex);
+        if (getterIndex != setterIndex ||
+            getterAddress < base ||
+            getterAddress + sizeof(uint32_t) > base + size ||
+            setterAddress < base ||
+            setterAddress + sizeof(uint32_t) > base + size ||
+            *getterIndex >= 256)
+        {
+            LOG("cutscene facing: cinematic TLS proof failed; "
+                "automatic shot yaw disabled");
+            return;
+        }
+
+        g_cinematicTlsIndex = getterIndex;
+        LOG("cutscene facing: exact scene/shot state resolved; "
+            "yaw will rebase at cinematic cuts");
+    }
+
     void LocateNativePauseFlag(uintptr_t base, size_t size)
     {
         const uintptr_t hit = sig::Find(base, size, kNativePauseOwnerSig);
@@ -3895,6 +4029,7 @@ namespace
     void InstallHook(uintptr_t base, size_t size)
     {
         LocateNativePauseFlag(base, size);
+        LocateCinematicState(base, size);
         uintptr_t hit = sig::Find(base, size, kCamCopySig);
         if (!hit)
         {
@@ -4563,6 +4698,24 @@ void Game_AutoVrTick()
 {
     UpdateCinematicFovPolicy();
     HudSizeAutoTick(); // HUD size: (re)locate the tag slots when needed
+    {
+        static uint32_t loggedSerial = 0;
+        const uint32_t serial =
+            g_cinematicRebaseSerial.load(std::memory_order_acquire);
+        if (serial != loggedSerial)
+        {
+            loggedSerial = serial;
+            const int32_t scene =
+                g_cinematicRebaseScene.load(std::memory_order_relaxed);
+            const int32_t shot =
+                g_cinematicRebaseShot.load(std::memory_order_relaxed);
+            if (scene >= 0 && shot >= 0)
+                LOG("cutscene facing: aligned to scene %d shot %d",
+                    scene, shot);
+            else
+                LOG("cutscene facing: aligned to gameplay camera on exit");
+        }
+    }
     // Render-thread diagnostics are reported here, on Present. Log only a
     // stable state transition; never log from the palette or HUD hot hooks.
     {
