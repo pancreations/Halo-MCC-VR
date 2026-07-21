@@ -219,6 +219,41 @@ int main()
           std::fabs(quad.height - 0.075f) < 1e-5f,
         "Scope is fixed-size 4:3 geometry independent of headset distance");
 
+    const float gameBasis[9] = {
+        1, 0, 0,  // forward
+        0, 1, 0,  // left
+        0, 0, 1}; // up
+    const float weaponSeat[3] = {0.2f, 0.0f, 0.0f};
+    ScopeCameraPose scopeCamera{};
+    Check(ComputeScopeCameraPose(gameBasis, weaponSeat, 2.0f, 0.10f,
+                                 0.05f, 0.10f, 0.30f, 10.0f, scopeCamera),
+        "Mounted scope camera accepts a valid controller basis");
+    Check(std::fabs(scopeCamera.position[0] - 0.60f) < 1e-5f &&
+          std::fabs(scopeCamera.position[1] + 0.10f) < 1e-5f &&
+          std::fabs(scopeCamera.position[2] - 0.20f) < 1e-5f,
+        "Scope camera origin uses the quad's exact local offsets without gun-seat bias");
+    const float target[3] = {20.0f, 0.0f, 0.0f};
+    const float toTarget[3] = {
+        target[0] - scopeCamera.position[0],
+        target[1] - scopeCamera.position[1],
+        target[2] - scopeCamera.position[2]};
+    const float targetDistance = std::sqrt(toTarget[0] * toTarget[0] +
+                                           toTarget[1] * toTarget[1] +
+                                           toTarget[2] * toTarget[2]);
+    Check(std::fabs(scopeCamera.position[0] + scopeCamera.forward[0] * targetDistance - target[0]) < 1e-4f &&
+          std::fabs(scopeCamera.position[1] + scopeCamera.forward[1] * targetDistance - target[1]) < 1e-4f &&
+          std::fabs(scopeCamera.position[2] + scopeCamera.forward[2] * targetDistance - target[2]) < 1e-4f,
+        "Scope optical center converges exactly on the VR crosshair target");
+
+    const ScopeProjectionTangents scopeLens =
+        ComputeScopeProjectionTangents(2.5f, 16.0f / 9.0f);
+    Check(std::fabs(scopeLens.horizontal / scopeLens.vertical - 16.0f / 9.0f) < 1e-5f,
+        "Scope render projection matches its source surface before cropping");
+    const float croppedHorizontal = scopeLens.horizontal * (4.0f / 3.0f) / (16.0f / 9.0f);
+    Check(std::fabs(croppedHorizontal / scopeLens.vertical - 4.0f / 3.0f) < 1e-5f &&
+          std::fabs(croppedHorizontal - 0.70020754f / 2.5f) < 1e-5f,
+        "Center-cropped scope image is an undistorted 4:3 2.5x lens");
+
     ScopeRefreshScheduler refresh;
     Check(!refresh.Advance(true, 2) && refresh.Advance(true, 2),
         "Scope refresh divisor 2 renders every second active frame");

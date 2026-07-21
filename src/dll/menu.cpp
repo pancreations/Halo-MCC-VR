@@ -292,7 +292,7 @@ namespace
         if (g_config.scope_enabled)
         {
             ImGui::Indent();
-            changed |= ImGui::SliderFloat("Fallback zoom (no native scope)", &g_config.scope_zoom,
+            changed |= ImGui::SliderFloat("Scope zoom strength", &g_config.scope_zoom,
                                           1.25f, 8.0f, "%.2fx");
             changed |= ImGui::SliderFloat("Screen width (m)##scope",
                                           &g_config.scope_screen_width_m,

@@ -62,6 +62,7 @@ bool VR_ScopeShouldRenderThisFrame();
 bool VR_BeginScopeRaster();
 void VR_CaptureScope();
 void VR_EndScopeRaster();
+bool VR_GetScopeRenderAspect(float& outAspect);
 
 // Redirects the final scene-color RTV to the active eye's target and, while
 // stereo_sun_shafts is off, neutralizes the sun-shaft occlusion pass (its

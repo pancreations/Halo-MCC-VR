@@ -13,6 +13,7 @@
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/input_logic.h"
+#include "../common/scope_logic.h"
 
 // M1 head tracking. We hook the game's per-frame camera-update function and,
 // each frame, overwrite the authoritative camera's forward/up vectors with the
@@ -3402,36 +3403,22 @@ namespace
 
     bool BuildRightHandScopeCamera(char* camera, const unsigned char* saved)
     {
-        float controllerBasis[9], origin[3], meshScale=1.0f;
-        if(!ControllerWorldPoseEx(false,controllerBasis,origin,meshScale))
+        float controllerBasis[9], weaponSeat[3], meshScale=1.0f;
+        if(!ControllerWorldPoseEx(false,controllerBasis,weaponSeat,meshScale))
             return false;
-        float forward[3]={g_aimFwdX.load(),g_aimFwdY.load(),g_aimFwdZ.load()};
-        float length=sqrtf(forward[0]*forward[0]+forward[1]*forward[1]+
-                           forward[2]*forward[2]);
-        if(!std::isfinite(length) || length<1e-3f) return false;
-        for(float& component:forward) component/=length;
-        float worldUp[3]={g_worldUp[0].load(),g_worldUp[1].load(),g_worldUp[2].load()};
-        float right[3]={forward[1]*worldUp[2]-forward[2]*worldUp[1],
-                        forward[2]*worldUp[0]-forward[0]*worldUp[2],
-                        forward[0]*worldUp[1]-forward[1]*worldUp[0]};
-        length=sqrtf(right[0]*right[0]+right[1]*right[1]+right[2]*right[2]);
-        if(!std::isfinite(length) || length<1e-3f)
-        {
-            const float* fallbackUp=controllerBasis+6;
-            right[0]=forward[1]*fallbackUp[2]-forward[2]*fallbackUp[1];
-            right[1]=forward[2]*fallbackUp[0]-forward[0]*fallbackUp[2];
-            right[2]=forward[0]*fallbackUp[1]-forward[1]*fallbackUp[0];
-            length=sqrtf(right[0]*right[0]+right[1]*right[1]+right[2]*right[2]);
-            if(!std::isfinite(length) || length<1e-3f) return false;
-        }
-        for(float& component:right) component/=length;
-        const float up[3]={right[1]*forward[2]-right[2]*forward[1],
-                           right[2]*forward[0]-right[0]*forward[2],
-                           right[0]*forward[1]-right[1]*forward[0]};
+        ScopeCameraPose pose{};
+        if(!ComputeScopeCameraPose(
+               controllerBasis,weaponSeat,g_worldScale.load(),
+               Clamp(g_config.gun_forward_m,-0.3f,0.5f),
+               Clamp(g_config.scope_screen_right_m,-0.30f,0.30f),
+               Clamp(g_config.scope_screen_up_m,-0.20f,0.30f),
+               Clamp(g_config.scope_screen_forward_m,0.05f,0.80f),
+               Clamp(g_config.crosshair_distance_m,2.0f,50.0f),pose))
+            return false;
         memcpy(camera,saved,0x90);
-        memcpy(camera+0x00,origin,sizeof(origin));
-        memcpy(camera+0x0C,forward,sizeof(forward));
-        memcpy(camera+0x18,up,sizeof(up));
+        memcpy(camera+0x00,pose.position,sizeof(pose.position));
+        memcpy(camera+0x0C,pose.forward,sizeof(pose.forward));
+        memcpy(camera+0x18,pose.up,sizeof(pose.up));
         return true;
     }
 
@@ -3666,19 +3653,19 @@ namespace
         g_stereoEye = -1;
         g_eyeFpView.store(nullptr,std::memory_order_release);
 
-        // One mono world-only camera from the right-hand weapon seat, aimed
-        // down the same ray used for bullets. Halo supplies magnification for
-        // zoom-capable weapons; the configured fallback covers AR/rockets.
+        // One mono world-only camera at the physical scope screen. Its optical
+        // axis converges on the same controller-ray target as the VR crosshair.
         if(g_buildViewport && g_buildMatrices && VR_ScopeShouldRenderThisFrame() &&
            BuildRightHandScopeCamera(camera,saved) && VR_BeginScopeRaster())
         {
             alignas(16) unsigned char scopeTemporary[0x40]{};
-            const float nativeZoom=Game_GetZoomFactor();
-            const float zoom=nativeZoom>1.05f
-                ? Clamp(nativeZoom,1.05f,16.0f)
-                : Clamp(g_config.scope_zoom,1.25f,8.0f);
-            const float tanX=tanf(g_renderHalfFovX.load())/zoom;
-            const float tanY=tanf(g_renderHalfFovY.load())/zoom;
+            const float zoom=Clamp(g_config.scope_zoom,1.25f,8.0f);
+            float sourceAspect=4.0f/3.0f;
+            VR_GetScopeRenderAspect(sourceAspect);
+            const ScopeProjectionTangents scopeProjection=
+                ComputeScopeProjectionTangents(zoom,sourceAspect);
+            const float tanX=scopeProjection.horizontal;
+            const float tanY=scopeProjection.vertical;
             if(tanX>1e-4f && tanY>1e-4f)
             {
                 float* cameraTangents=reinterpret_cast<float*>(camera+0x28);
@@ -3706,8 +3693,8 @@ namespace
             VR_EndScopeRaster();
             static std::atomic<bool> logged{false};
             if(!logged.exchange(true))
-                LOG("scope camera active: right-hand origin, bullet ray, %.2fx %s zoom",
-                    zoom,nativeZoom>1.05f?"Halo-authored":"fallback");
+                LOG("scope camera active: mounted origin converged to VR crosshair, %.2fx 4:3 lens",
+                    zoom);
         }
         memcpy(camera, saved, sizeof(saved));
         memcpy(reinterpret_cast<char*>(view) + 0x98, savedDerived, sizeof(savedDerived));

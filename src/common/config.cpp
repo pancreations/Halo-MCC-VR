@@ -362,7 +362,7 @@ void ConfigSave()
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "# (default %.2f, range -0.3 to 0.5)\n", d.gun_forward_m);
     fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
-    fprintf(f, "# --- Gun-mounted zoom screen. R3 still drives Halo's authored zoom.\n");
+    fprintf(f, "# --- Gun-mounted zoom screen. R3 toggles it without hiding the VR body.\n");
     fprintf(f, "# The main VR view stays wide while the weapon zoom appears on the screen. 1 = on.\n");
     fprintf(f, "# (default %d)\n", d.scope_enabled ? 1 : 0);
     fprintf(f, "scope_enabled = %d\n\n", g_config.scope_enabled ? 1 : 0);

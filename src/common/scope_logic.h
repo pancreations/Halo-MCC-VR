@@ -61,3 +61,34 @@ ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],
                                              float upMeters,
                                              float forwardMeters,
                                              float widthMeters);
+
+struct ScopeCameraPose
+{
+    float position[3]{};
+    float forward[3]{};
+    float up[3]{};
+};
+
+// Builds a camera at the physical scope-screen position and converges its
+// center on the same controller-ray target used by the VR crosshair. The game
+// basis is column-major: forward, left, up.
+bool ComputeScopeCameraPose(const float controllerBasis[9],
+                            const float weaponSeat[3],
+                            float worldScale,
+                            float gunForwardMeters,
+                            float rightMeters,
+                            float upMeters,
+                            float forwardMeters,
+                            float crosshairDistanceMeters,
+                            ScopeCameraPose& result);
+
+struct ScopeProjectionTangents
+{
+    float horizontal = 0.0f;
+    float vertical = 0.0f;
+};
+
+// A conventional 70-degree horizontal lens at 1x. The final image is 4:3;
+// horizontal is widened only enough to compensate for the source center crop.
+ScopeProjectionTangents ComputeScopeProjectionTangents(float zoom,
+                                                        float sourceAspect);

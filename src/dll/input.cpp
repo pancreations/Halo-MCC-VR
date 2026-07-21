@@ -64,16 +64,17 @@ namespace
         if (chord.toggled)
             Menu_Toggle();
 
-        // R3 is sent to Halo again so each weapon's authored zoom stages remain
-        // authoritative. The release event is also offered to the fallback
-        // resolver; it toggles the screen only if Halo did not enter zoom.
+        // The universal scope owns R3 while it is available. Passing that click
+        // into Halo enters native zoom state, which hides the normal VR gun and
+        // body even if we restore the eye FOV. Disabled/non-gameplay input still
+        // passes through unchanged.
         const bool scopeAvailable = g_config.scope_enabled && Game_IsHeadTracking();
         const ScopeToggleUpdate scope = g_scopeToggle.Update(
             scopeAvailable, pad.clickR, chord.consumeClicks || Menu_IsOpen());
         if (scope.changed && scopeAvailable)
         {
             VR_RequestScopeToggle();
-            LOG("universal scope: R3 release offered to native/fallback resolver");
+            LOG("universal scope: R3 release toggled body-safe scope state");
         }
         if (!scopeAvailable) VR_SetScopeActive(false);
         if (Menu_IsOpen())
@@ -88,12 +89,14 @@ namespace
             Input_RequestPauseToggle();
 
         WORD btn = state->Gamepad.wButtons;
+        if (scopeAvailable)
+            btn &= ~XINPUT_GAMEPAD_RIGHT_THUMB;
         if (pad.a) btn |= XINPUT_GAMEPAD_A;
         if (pad.b && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_B;
         if (pad.x) btn |= XINPUT_GAMEPAD_X;
         if (pad.y && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_Y;
         if (pad.clickL && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
-        if (pad.clickR && !chord.consumeClicks)
+        if (pad.clickR && !chord.consumeClicks && !scopeAvailable)
             btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
         if (pad.menu && !previousMenu && !Game_HasAuthoritativePauseState())

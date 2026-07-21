@@ -1,4 +1,5 @@
 #include "scope_logic.h"
+#include <cmath>
 
 namespace
 {
@@ -137,4 +138,68 @@ ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],
     result.width = widthMeters;
     result.height = widthMeters * 0.75f;
     return result;
+}
+
+bool ComputeScopeCameraPose(const float controllerBasis[9],
+                            const float weaponSeat[3],
+                            float worldScale,
+                            float gunForwardMeters,
+                            float rightMeters,
+                            float upMeters,
+                            float forwardMeters,
+                            float crosshairDistanceMeters,
+                            ScopeCameraPose& result)
+{
+    if (!controllerBasis || !weaponSeat || !std::isfinite(worldScale) ||
+        worldScale <= 0.0f)
+        return false;
+
+    const float* forward = controllerBasis;
+    const float* left = controllerBasis + 3;
+    const float* controllerUp = controllerBasis + 6;
+    float rawOrigin[3]{};
+    float target[3]{};
+    for (int i = 0; i < 3; ++i)
+    {
+        rawOrigin[i] = weaponSeat[i] - forward[i] * gunForwardMeters * worldScale;
+        result.position[i] = rawOrigin[i] +
+            (forward[i] * forwardMeters - left[i] * rightMeters +
+             controllerUp[i] * upMeters) * worldScale;
+        target[i] = rawOrigin[i] + forward[i] * crosshairDistanceMeters * worldScale;
+        result.forward[i] = target[i] - result.position[i];
+    }
+
+    float length = std::sqrt(result.forward[0] * result.forward[0] +
+                             result.forward[1] * result.forward[1] +
+                             result.forward[2] * result.forward[2]);
+    if (!std::isfinite(length) || length < 1e-4f)
+        return false;
+    for (float& component : result.forward) component /= length;
+
+    // Preserve the rifle's roll while keeping up exactly perpendicular to the
+    // converged optical axis.
+    const float along = controllerUp[0] * result.forward[0] +
+                        controllerUp[1] * result.forward[1] +
+                        controllerUp[2] * result.forward[2];
+    for (int i = 0; i < 3; ++i)
+        result.up[i] = controllerUp[i] - result.forward[i] * along;
+    length = std::sqrt(result.up[0] * result.up[0] +
+                       result.up[1] * result.up[1] +
+                       result.up[2] * result.up[2]);
+    if (!std::isfinite(length) || length < 1e-4f)
+        return false;
+    for (float& component : result.up) component /= length;
+    return true;
+}
+
+ScopeProjectionTangents ComputeScopeProjectionTangents(float zoom,
+                                                        float sourceAspect)
+{
+    if (!std::isfinite(zoom) || zoom < 1.0f) zoom = 1.0f;
+    if (!std::isfinite(sourceAspect) || sourceAspect < 0.5f || sourceAspect > 4.0f)
+        sourceAspect = 4.0f / 3.0f;
+    constexpr float kBaseHorizontalTangent = 0.70020754f; // tan(70 degrees / 2)
+    const float finalHorizontal = kBaseHorizontalTangent / zoom;
+    const float finalVertical = finalHorizontal / (4.0f / 3.0f);
+    return {finalVertical * sourceAspect, finalVertical};
 }

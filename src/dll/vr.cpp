@@ -3166,8 +3166,10 @@ bool VR_ScopeShouldRenderThisFrame()
         g_scopeToggleObserved=requested;
         g_scopeZoomResolver.RequestToggle();
     }
-    const bool active=g_scopeZoomResolver.Update(
-        enabled,Game_GetZoomFactor()>1.05f);
+    // Native Halo zoom is deliberately suppressed by the input layer: it hides
+    // the VR body/viewmodel. This resolver now supplies only the delayed R3
+    // toggle that keeps input and render-thread ownership race-free.
+    const bool active=g_scopeZoomResolver.Update(enabled,false);
     const bool previous=g_scopeActive.exchange(active,std::memory_order_acq_rel);
     if(previous && !active)
         g_scopeHasImage.store(false,std::memory_order_release);
@@ -3192,6 +3194,15 @@ void VR_CaptureScope()
 void VR_EndScopeRaster()
 {
     g_rasterScope.store(false,std::memory_order_release);
+}
+
+bool VR_GetScopeRenderAspect(float& outAspect)
+{
+    if (!g_scopeCacheDesc.Width || !g_scopeCacheDesc.Height)
+        return false;
+    outAspect = static_cast<float>(g_scopeCacheDesc.Width) /
+                static_cast<float>(g_scopeCacheDesc.Height);
+    return std::isfinite(outAspect) && outAspect > 0.0f;
 }
 
 
