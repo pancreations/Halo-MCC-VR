@@ -485,8 +485,13 @@ config-only candidate at `148f971` with no ODST hooks or support gate changes.
 Deployed with `deploy.bat auto` on 2026-07-21 (DLL build 06:23 AM), DLL SHA-256
 `0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`, launcher
 SHA-256 `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
-Both installed files byte-match the Release outputs. Halo 3 headset regression
-is still required before beginning ODST runtime work.
+Both installed files byte-match the Release outputs. User headset result on
+2026-07-21: "seem like it." Treat this as a positive initial confirmation that
+the config-only build preserved Halo 3 behavior, not as a claim that every Halo
+3 regression case was exhaustively rerun. The universal-config checkpoint is
+accepted for continued use and the next ODST work may begin with the non-hook
+evidence/signature stage. Keep the full Halo 3 matrix as a required safeguard
+before merging or publicly enabling ODST runtime support.
 
 ## 2026-07-19 session closeout
 
