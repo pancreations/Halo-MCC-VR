@@ -174,6 +174,15 @@ int main()
         Check(gate.CanAttemptInstall(),
             "a genuine title exit clears the ODST rearm gate");
 
+        gate.BlockUntilTitleExit();
+        gate.Observe(true, false);
+        gate.Observe(true, true);
+        Check(!gate.CanAttemptInstall(),
+            "unsupported/menu camera transitions cannot rearm in-session");
+        gate.Observe(false, false);
+        Check(gate.CanAttemptInstall(),
+            "title exit clears the unsupported-camera session latch");
+
         OdstFreshCameraDebounce debounce;
         Check(!debounce.Update(100, true),
             "ODST camera does not arm on its first fresh frame");

@@ -59,7 +59,9 @@ into an ODST commit without the user's explicit direction.
   until a continuously fresh camera passes the stability debounce. Fallback
   disables the outer renderer before dependencies, drains and verifies detour
   ingress, and retains the exact module/hook state for retry if safe teardown
-  cannot yet be proved. Rearm requires a proven reload edge or title re-entry.
+  cannot yet be proved. A proven level unload may rearm only after an
+  inactive-to-active camera edge. An unsupported/menu camera mode is latched
+  out for the rest of that ODST title session and requires genuine title exit.
 - Camera-array readiness is worker-published only while the exact module lease
   is retained, and the render detour revalidates every slot immediately before
   camera mutation. Presentation-detach generations are acknowledged on Present
@@ -247,9 +249,39 @@ evidence:
   and the same snap/smooth turn routine. A pure regression test locks that
   formula and the camera-only stick-ownership gate.
 
-This comfort-parity candidate passes Release builds and CTest in both the
-normal option-OFF and private option-ON trees. It is not headset-confirmed and
-must receive a fresh `I-APPROVE-ODST-TEST` before private deployment.
+This comfort-parity candidate passed Release builds and CTest in both the
+normal option-OFF and private option-ON trees. It later received approval; the
+private headset result is recorded below.
+
+## Seventh private headset result, recovery, and ownership correction
+
+The comfort-parity checkpoint was deployed from source commit
+`a44f5ed3801fe5f38cf7868de5a2a480328a9e55`, DLL
+`2367A7466A53C18A175EA39A7AFF73F81FB12A82212BE16285B7013681E70E9E`,
+with sealed record `Halo_MCC_VR\pre-odst-private-backup-7`. The user reported
+that head tracking began in a menu, which is not an allowed ownership state,
+and that usable 3D never engaged.
+
+The run log proves this was not a signature or hook-install failure. ODST
+preflight passed and all five detours installed. Stereo, tracking, and 6DOF
+armed at `14:08:33.125`; distinct-eye redirection ran at about 90 FPS. The
+presentation then entered repeated teardown/reinstall cycles after the F1/menu
+and camera-mode transitions. `UnsupportedCameraMode` incorrectly shared the
+ordinary level-reload gate, so a brief inactive-to-active camera-memory edge
+could permit same-session reinstall and auto-arm while the title/menu still
+owned the screen. The engine-side stereo interval therefore never became a
+stable, usable headset result.
+
+MCC was closed and the dedicated restore mode byte-restored baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`;
+preserve backup-7. The next isolated correction distinguishes the two fallback
+classes. A proven level unload still permits reinstall after a genuine
+inactive-to-active camera edge. An unsupported/menu camera mode now sets a
+same-session hard latch: camera-memory changes cannot clear it, and only a
+genuine ODST title exit can permit another install. A pure regression test
+covers both the rejected in-session transition and title-exit reset. Private
+ON and normal OFF Release builds and CTest pass locally. This candidate has not
+been deployed.
 
 ## Proven evidence available to implementation
 

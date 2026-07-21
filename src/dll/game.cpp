@@ -7153,8 +7153,17 @@ namespace
                 if (RemoveOdstCameraCore())
                 {
                     odstHooked = false;
-                    if (reason == OdstFallbackReason::LevelUnloaded ||
-                        reason == OdstFallbackReason::UnsupportedCameraMode)
+                    if (reason == OdstFallbackReason::UnsupportedCameraMode)
+                    {
+                        // Menus and other unproven camera modes can briefly
+                        // resemble an unload/reload without ODST ever leaving.
+                        // Never reinstall behind them in the same title session.
+                        odstRearmGate.BlockUntilTitleExit();
+                        odstAttempted = true;
+                        LOG("ODST camera rearm blocked until title exit after "
+                            "unsupported/menu camera mode");
+                    }
+                    else if (reason == OdstFallbackReason::LevelUnloaded)
                     {
                         odstRearmGate.BlockUntilReload(
                             cameraReadyBeforeRemoval);

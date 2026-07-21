@@ -168,6 +168,14 @@ public:
     {
         m_blocked = true;
         m_sawInactive = !cameraActiveNow;
+        m_requireTitleExit = false;
+    }
+
+    void BlockUntilTitleExit()
+    {
+        m_blocked = true;
+        m_sawInactive = false;
+        m_requireTitleExit = true;
     }
 
     void Observe(bool titleActive, bool cameraActive)
@@ -176,9 +184,12 @@ public:
         {
             m_blocked = false;
             m_sawInactive = false;
+            m_requireTitleExit = false;
             return;
         }
         if (!m_blocked)
+            return;
+        if (m_requireTitleExit)
             return;
         if (!cameraActive)
             m_sawInactive = true;
@@ -195,4 +206,5 @@ public:
 private:
     bool m_blocked = false;
     bool m_sawInactive = false;
+    bool m_requireTitleExit = false;
 };
