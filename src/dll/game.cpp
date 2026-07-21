@@ -261,6 +261,11 @@ namespace
         FpCameraRebuildFn originalFpCameraRebuild = nullptr;
         FpCameraUploadFn fpCameraUpload = nullptr;
         FpDriverFn originalFpDriver = nullptr;
+        // Build A skeleton probe originals (log-only). Stored as void* because
+        // FpInterpolateFn/FpVisiblePaletteFn are declared after this struct;
+        // the probe hooks cast them back at their call sites.
+        void* originalFpInterpolate = nullptr;
+        void* originalFpVisiblePalette = nullptr;
         uintptr_t gunCameraArray = 0;
         std::atomic<void*> eyeView{nullptr};
         alignas(16) unsigned char eyeCompactCamera[0x90]{};
@@ -268,7 +273,7 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[5]{};
+        void* hookTargets[7]{}; // 5 camera-core hooks + up to 2 log-only probes
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
@@ -4932,6 +4937,192 @@ namespace
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    // ---- Build A: ODST first-person skeleton probe (log-only) --------------
+    // Two pass-through hooks capture the ODST FP skeleton so Build B can drive
+    // the weapon/hands to the controller using PROVEN ODST bone indices (never a
+    // reused Halo 3 index). Both hook points are ODST-verified: the palette
+    // function is byte-identical to Halo 3's, and the interpolation function has
+    // the same five-argument shape. Per the palette-hook safety invariant these
+    // hot hooks do NO logging/allocation/locks: they publish the skeleton
+    // atomically and the 50 ms worker emits it once per newly seen weapon tag.
+    // The ODST palette clamps to 150 nodes; the buffer holds up to 160.
+    constexpr int kOdstProbeMaxNodes = 160;
+    struct OdstSkeletonCapture
+    {
+        std::atomic<uint32_t> seq{0};   // even = stable, odd = mid-write
+        std::atomic<uint16_t> tag{0};
+        std::atomic<int> count{0};
+        std::atomic<int32_t> map[kOdstProbeMaxNodes]{};
+    };
+    OdstSkeletonCapture g_odstSkeletonCapture;
+    std::atomic<int> g_odstProbeInterpCount{0};
+    std::atomic<uint32_t> g_odstProbeLoggedSeq{0};
+
+    // SEH-guarded so a count/boneMap length mismatch can never fault the hook.
+    // No C++ unwind objects live here, so __try is legal in this function.
+    static bool SafeCopyOdstBoneMap(const int32_t* boneMap, int count)
+    {
+        __try
+        {
+            for (int i = 0; i < count; ++i)
+                g_odstSkeletonCapture.map[i].store(
+                    boneMap[i], std::memory_order_relaxed);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // Called from the 50 ms worker (NOT a hot hook), so logging is safe here.
+    void LogOdstSkeletonCaptureIfNew()
+    {
+        OdstSkeletonCapture& cap = g_odstSkeletonCapture;
+        const uint32_t seq = cap.seq.load(std::memory_order_acquire);
+        if ((seq & 1u) || seq == 0)
+            return; // mid-write or nothing captured yet
+        if (seq == g_odstProbeLoggedSeq.load(std::memory_order_relaxed))
+            return; // already logged this capture
+        const uint16_t tag = cap.tag.load(std::memory_order_relaxed);
+        int count = cap.count.load(std::memory_order_relaxed);
+        if (count < 0) count = 0;
+        if (count > kOdstProbeMaxNodes) count = kOdstProbeMaxNodes;
+        int32_t map[kOdstProbeMaxNodes];
+        for (int i = 0; i < count; ++i)
+            map[i] = cap.map[i].load(std::memory_order_relaxed);
+        if (cap.seq.load(std::memory_order_acquire) != seq)
+            return; // a newer capture started; re-read next tick
+        LOG("ODST FP SKELETON: tag 0x%04X count=%d "
+            "(map[dest] = source render-node index; palette node clamp 150)",
+            tag, count);
+        for (int from = 0; from < count; from += 16)
+        {
+            char line[512]; int pos = 0;
+            const int to = (from + 16 < count) ? from + 16 : count;
+            for (int i = from; i < to && pos < (int)sizeof(line) - 24; ++i)
+                pos += snprintf(line + pos, sizeof(line) - pos,
+                                "%d=%d ", i, map[i]);
+            LOG("ODST FP SKELETON MAP[%d..%d]: %s", from, to - 1, line);
+        }
+        g_odstProbeLoggedSeq.store(seq, std::memory_order_relaxed);
+    }
+
+    __declspec(noinline) bool __fastcall OdstFpInterpolateProbeHook(
+        int view, int id, int slot, BoneMatrix** outBones, int* outCount)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        bool result = false;
+        FpInterpolateFn original =
+            reinterpret_cast<FpInterpolateFn>(g_odstCamera.originalFpInterpolate);
+        if (original)
+            result = original(view, id, slot, outBones, outCount);
+        if (outCount)
+        {
+            const int c = *outCount;
+            if (c > 0 && c <= kOdstProbeMaxNodes)
+                g_odstProbeInterpCount.store(c, std::memory_order_relaxed);
+        }
+        g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        return result;
+    }
+
+    __declspec(noinline) void __fastcall OdstFpVisiblePaletteProbeHook(
+        uint16_t tag, const BoneMatrix* root, BoneMatrix* destination,
+        uintptr_t unused, const BoneMatrix* source, const int32_t* boneMap)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        FpVisiblePaletteFn original = reinterpret_cast<FpVisiblePaletteFn>(
+            g_odstCamera.originalFpVisiblePalette);
+        if (original)
+            original(tag, root, destination, unused, source, boneMap);
+        // Publish the skeleton once per newly seen weapon tag. Atomic store only
+        // -- no logging, allocation, or locks in this hot palette hook.
+        static thread_local uint16_t seen[16]{};
+        static thread_local int seenCount = 0;
+        bool known = false;
+        for (int i = 0; i < seenCount; ++i)
+            if (seen[i] == tag) { known = true; break; }
+        const int count = g_odstProbeInterpCount.load(std::memory_order_relaxed);
+        if (!known && boneMap && count > 0 && count <= kOdstProbeMaxNodes &&
+            seenCount < 16)
+        {
+            seen[seenCount++] = tag;
+            OdstSkeletonCapture& cap = g_odstSkeletonCapture;
+            cap.seq.fetch_add(1, std::memory_order_acq_rel);  // -> odd (writing)
+            cap.tag.store(tag, std::memory_order_relaxed);
+            cap.count.store(count, std::memory_order_relaxed);
+            SafeCopyOdstBoneMap(boneMap, count);
+            cap.seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
+        }
+        g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    // Best-effort, non-fatal appendix to the camera-core transaction: a failure
+    // here NEVER rolls back the proven five-hook camera core. Both hooks are
+    // tracked in hookTargets and torn down uniformly, and their bodies
+    // participate in the activeCallbacks drain like every other ODST detour.
+    bool InstallOdstSkeletonProbe(uintptr_t base, size_t size)
+    {
+        // ODST-verified patterns: palette byte-identical to Halo 3 (ODST
+        // 0x2EDD10); interpolation re-derived for ODST (0x1B3CB8, same shape).
+        const char* interpSig =
+            "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 "
+            "41 57 48 83 EC 30 33 DB 49 63 E8 38 1D ?? ?? ?? ?? 4D 8B E1 44 8B FA";
+        const char* paletteSig =
+            "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 "
+            "EC 20 48 8B 05 ?? ?? ?? ?? 49 8B F0 0F B7 C9 4C 8B F2";
+        const uintptr_t interpHit = sig::Find(base, size, interpSig);
+        if (!interpHit ||
+            sig::Find(interpHit + 1, base + size - interpHit - 1, interpSig))
+        {
+            LOG("ODST skeleton probe: interpolate signature not unique; "
+                "FP skeleton capture disabled");
+            return false;
+        }
+        const uintptr_t paletteHit = sig::Find(base, size, paletteSig);
+        if (!paletteHit ||
+            sig::Find(paletteHit + 1, base + size - paletteHit - 1, paletteSig))
+        {
+            LOG("ODST skeleton probe: palette signature not unique; "
+                "FP skeleton capture disabled");
+            return false;
+        }
+        const size_t capacity = sizeof(g_odstCamera.hookTargets) /
+                                sizeof(g_odstCamera.hookTargets[0]);
+        if (g_odstCamera.hookTargetCount + 2 > capacity)
+            return false;
+        const bool interpOk =
+            MH_CreateHook(reinterpret_cast<void*>(interpHit),
+                          reinterpret_cast<void*>(&OdstFpInterpolateProbeHook),
+                          &g_odstCamera.originalFpInterpolate) == MH_OK;
+        const bool paletteOk =
+            MH_CreateHook(reinterpret_cast<void*>(paletteHit),
+                          reinterpret_cast<void*>(&OdstFpVisiblePaletteProbeHook),
+                          &g_odstCamera.originalFpVisiblePalette) == MH_OK;
+        if (!interpOk || !paletteOk ||
+            MH_EnableHook(reinterpret_cast<void*>(interpHit)) != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(paletteHit)) != MH_OK)
+        {
+            if (interpOk) MH_RemoveHook(reinterpret_cast<void*>(interpHit));
+            if (paletteOk) MH_RemoveHook(reinterpret_cast<void*>(paletteHit));
+            g_odstCamera.originalFpInterpolate = nullptr;
+            g_odstCamera.originalFpVisiblePalette = nullptr;
+            LOG("ODST skeleton probe: hook create/enable failed; "
+                "FP skeleton capture disabled");
+            return false;
+        }
+        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
+            reinterpret_cast<void*>(interpHit);
+        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
+            reinterpret_cast<void*>(paletteHit);
+        LOG("ODST skeleton probe installed (interpolate +0x%llX, palette +0x%llX, "
+            "log-only). Spawn with a weapon to capture the FP skeleton.",
+            static_cast<unsigned long long>(interpHit - base),
+            static_cast<unsigned long long>(paletteHit - base));
+        return true;
+    }
+
     __declspec(noinline) void __fastcall OdstRenderViewBody(void* view)
     {
         RenderViewFn original = g_odstCamera.originalRenderView;
@@ -6167,6 +6358,8 @@ namespace
         g_odstCamera.originalFpCameraRebuild = nullptr;
         g_odstCamera.fpCameraUpload = nullptr;
         g_odstCamera.originalFpDriver = nullptr;
+        g_odstCamera.originalFpInterpolate = nullptr;
+        g_odstCamera.originalFpVisiblePalette = nullptr;
         g_odstCamera.gunCameraArray = 0;
         g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
         memset(g_odstCamera.eyeCompactCamera, 0,
@@ -7091,6 +7284,9 @@ namespace
         g_positional.store(true, std::memory_order_release);
         g_needRecenter.store(true, std::memory_order_release);
         VR_SetScopeActive(false);
+        // Best-effort log-only FP skeleton probe (Build A). Non-fatal: the
+        // camera core is already installed and armed independently of this.
+        InstallOdstSkeletonProbe(base, size);
         LOG("ODST camera install: five-hook transaction retained and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
             "controls, aim, reticle, HUD, scope, weapons, arms, and gameplay patches remain off");
@@ -7430,6 +7626,7 @@ namespace
                 }
             }
             g_hooked.store(gameHooked || odstHooked, std::memory_order_release);
+            LogOdstSkeletonCaptureIfNew(); // emit any newly captured FP skeleton
             Sleep(50);
 #else
             Sleep(50);
