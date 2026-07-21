@@ -76,6 +76,16 @@ int main()
             "ODST menus retain ordinary look-stick input before head tracking");
         Check(!OdstVrOwnsLookStick(false, true),
             "the ODST input rule cannot affect Halo 3 or public title paths");
+        Check(OdstMotionAimEligible(true, true, true, false),
+            "owned+armed+tracked private ODST permits the narrow motion-aim gate");
+        Check(!OdstMotionAimEligible(false, true, true, false),
+            "ODST motion aim requires the camera-only context (never a public title)");
+        Check(!OdstMotionAimEligible(true, false, true, false),
+            "ODST motion aim stays closed until the camera hooks are armed");
+        Check(!OdstMotionAimEligible(true, true, false, false),
+            "ODST motion aim follows head tracking off");
+        Check(!OdstMotionAimEligible(true, true, true, true),
+            "teardown always vetoes ODST motion aim");
         Check(PausePresentationInputAllowed(true),
             "proven Halo 3 gameplay may control pause presentation");
         Check(!PausePresentationInputAllowed(false),

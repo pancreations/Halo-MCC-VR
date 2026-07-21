@@ -4766,7 +4766,27 @@ namespace
             g_enabled.load(std::memory_order_relaxed);
         float savedPosition[3]{}, savedForward[3]{}, savedUp[3]{};
         if (monitoring)
+        {
             ApplyOdstMotionBlurSetting();
+            // Publish the ODST weapon aim direction from the source camera's
+            // pre-head-look forward, mirroring Halo 3's CamCopyHook. The engine
+            // recomputes this forward from aim state every frame, so before
+            // OdstApplyHeadLook rewrites it below it equals the true aim ray
+            // that the closed-loop aim stick and the floating reticle consume.
+            // Reads only the already-proven source layout; no new offset.
+            const char* srcBytes = static_cast<const char*>(source);
+            float aimForward[3];
+            memcpy(aimForward, srcBytes + layout.sourceForward,
+                   sizeof(aimForward));
+            if (isfinite(aimForward[0]) && isfinite(aimForward[1]) &&
+                isfinite(aimForward[2]))
+            {
+                g_aimFwdX.store(aimForward[0]);
+                g_aimFwdY.store(aimForward[1]);
+                g_aimFwdZ.store(aimForward[2]);
+                g_aimSeen = true;
+            }
+        }
         if (transform)
         {
             ApplyVrTurn();
@@ -7521,6 +7541,23 @@ bool Game_AllowsSharedControllerInput()
         activeTitle, halo3CameraOwned, cameraOnlyOwned,
         allowAmbiguousFrontend, allowCameraOnlyControllerInput);
 }
+bool Game_AllowsOdstMotionAim()
+{
+    // Narrow first ODST gameplay capability: closed-loop weapon aim + the
+    // floating reticle only. Distinct from Game_AllowsSharedGameplayFeatures(),
+    // which stays false for ODST so movement mapping, scope, HUD, bones, and
+    // every other shared transform remain stock. Fail-closed in the public
+    // OFF build (no camera-only context ever exists there).
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    return OdstMotionAimEligible(
+        OdstCameraOnlyContext(),
+        g_odstCamera.armed.load(std::memory_order_acquire),
+        g_enabled.load(std::memory_order_acquire),
+        g_odstCamera.teardownRequested.load(std::memory_order_acquire));
+#else
+    return false;
+#endif
+}
 bool Game_CanToggleImmersiveView()
 {
     return Game_AllowsSharedGameplayFeatures() || Game_IsCameraOnlyBringup();
@@ -8014,7 +8051,7 @@ void Game_ToggleVrAim()
 
 bool Game_ComputeAimStick(float& outRx, float& outRy)
 {
-    if (!Game_AllowsSharedGameplayFeatures())
+    if (!Game_AllowsSharedGameplayFeatures() && !Game_AllowsOdstMotionAim())
         return false;
     // Closed-loop aim: emit a right-stick deflection proportional to the
     // angular error between the game's aim and the controller ray. The game

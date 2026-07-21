@@ -2693,7 +2693,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         // deliberately trade visual reticle response for calm.
                         float aimQ[4], aimP[3];
                         const bool haveAim = VR_GetAimPose(aimQ, aimP);
-                        if (Game_AllowsSharedGameplayFeatures() &&
+                        if ((Game_AllowsSharedGameplayFeatures() ||
+                             Game_AllowsOdstMotionAim()) &&
                             g_config.crosshair &&
                             haveAim && EnsureReticleChain())
                         {

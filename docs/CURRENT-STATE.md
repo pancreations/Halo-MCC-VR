@@ -695,6 +695,35 @@ and shell-pause-isolation fixes (`49fa8a3`, `9937ab3`). `deploy-odst-private.bat
 (`C0A6A90D...`) so future private candidates snapshot and roll back against
 this checkpoint instead of the pre-fix one.
 
+### ODST comfort parity accepted; advancing to motion aim + reticle (2026-07-21)
+
+On the current installed private checkpoint `C0A6A90D...` the user reported ODST
+now feels good and at Halo 3 comfort parity, and directed advancing the port.
+This is the user's feel-acceptance of the depth-match (`347b232`) plus the four
+comfort fixes bundled in `a44f5ed` (activation-lag presentation-detach priming,
+ODST-native `motion_blur_scale`/`motion_blur_max` suppression, Halo 3
+recentered-yaw/absolute-pitch/roll + snap/smooth-turn ownership, and the ODST
+post-observer camera-effect hook at `0x1ACAF0`) that had been coded but never
+given a clean dedicated headset confirmation because the prior sessions were
+consumed by the pause and cross-title-reload stability fixes. Treat this as a
+positive comfort-feel acceptance, not an exhaustive comfort regression matrix.
+
+Next gate (per PLAN.md Gate 4 bring-up order): ODST motion-controller weapon aim
+plus the floating VR reticle. Offline finding, not yet a code change at this
+line: the ODST aim-forward source is already read by the private camera detour.
+`OdstCamCopyBody` already saves `source + layout.sourceForward` (the pre-head-look
+"true aim direction") before `OdstApplyHeadLook` overwrites it; Halo 3 publishes
+that same field to `g_aimFwd` at the `CamCopyHook` site. The closed-loop
+`Game_ComputeAimStick` and the reticle quad are title-agnostic; they are gated
+off for ODST only because `Game_AllowsSharedGameplayFeatures()` returns false for
+the camera-only context. The planned change publishes `g_aimFwd`/`g_aimSeen` for
+ODST and adds a narrow `Game_AllowsOdstMotionAim()` capability that opens only the
+two aim gates (aim-stick + reticle), leaving movement mapping, scope, HUD, bones,
+and every other shared transform stock. Movement stays stock for ODST. The
+unknowns that require the headset: whether ODST's source-forward is truly
+aim-derived (bullets track the controller ray), whether its stock aim integrator
+consumes the injected stick like Halo 3's, and the closed-loop gain feel.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

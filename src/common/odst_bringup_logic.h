@@ -113,6 +113,20 @@ inline bool OdstVrOwnsLookStick(bool cameraOnlyContext, bool headTracking)
     return cameraOnlyContext && headTracking;
 }
 
+// Motion-controller weapon aim is the first ODST gameplay capability layered on
+// top of the camera-only core. It is intentionally narrower than full shared
+// gameplay: it only steers the game's internal aim heading (bullets, target
+// logic, and the floating reticle) through the injected right stick while the
+// HMD keeps owning the rendered view. Requires the camera-only context owned,
+// hooks armed, head tracking on, and no teardown in progress. Movement mapping
+// and every other shared transform stay stock for ODST regardless of this.
+inline bool OdstMotionAimEligible(
+    bool cameraOnlyContext, bool armed, bool headTracking,
+    bool teardownRequested)
+{
+    return cameraOnlyContext && armed && headTracking && !teardownRequested;
+}
+
 inline bool OdstMustClearForeignPause(
     bool cameraOnlyContext, bool pauseTarget, bool pausePresentation)
 {
