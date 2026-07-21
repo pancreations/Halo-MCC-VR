@@ -4876,6 +4876,15 @@ namespace
             return;
         }
 
+        if (EvaluateOdstStereoFrame(VR_ShouldRenderPreparedFrame()) ==
+            OdstStereoFrameAction::RenderStockWithoutCapture)
+        {
+            // OpenXR deliberately suppresses presentation while the headset is
+            // unfocused. Preserve the installed hooks, render the desktop's
+            // ordinary view once, and collect no eye-redirect failure evidence.
+            original(view);
+            return;
+        }
         const auto& layout = kOdstCameraProfile.layout;
         const uintptr_t viewAddress = reinterpret_cast<uintptr_t>(view);
         const uintptr_t arrayAddress = g_odstCamera.gunCameraArray;

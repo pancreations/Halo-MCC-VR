@@ -79,6 +79,19 @@ enum class OdstHeartbeatAction
     NoFirstHeartbeat,
 };
 
+enum class OdstStereoFrameAction
+{
+    RenderStockWithoutCapture,
+    RenderStereoAndValidate,
+};
+
+inline OdstStereoFrameAction EvaluateOdstStereoFrame(bool runtimeShouldRender)
+{
+    return runtimeShouldRender
+        ? OdstStereoFrameAction::RenderStereoAndValidate
+        : OdstStereoFrameAction::RenderStockWithoutCapture;
+}
+
 inline bool OdstCameraOnlyScopeRequired(
     bool privateBuildEnabled, bool adapterReportsOdst,
     bool runtimeStateOwned)

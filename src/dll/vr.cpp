@@ -272,6 +272,7 @@ namespace
     };
     PreparedFrame g_preparedFrame{};
     uint64_t g_nextPreparedSerial = 0;
+    std::atomic<bool> g_preparedShouldRender{false};
 
     template <size_t N>
     struct TimingRing
@@ -1204,6 +1205,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 
     void ResetPreparedFrame()
     {
+        g_preparedShouldRender.store(false, std::memory_order_release);
         g_preparedFrame.begun = false;
         g_preparedFrame.viewsValid = false;
         g_preparedFrame.viewCount = 0;
@@ -2482,6 +2484,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_preparedFrame.state = frameState;
         g_preparedFrame.begun = true;
         g_preparedFrame.serial = ++g_nextPreparedSerial;
+        g_preparedShouldRender.store(
+            frameState.shouldRender == XR_TRUE, std::memory_order_release);
 
         if (g_lastPredictedDisplayTime)
         {
@@ -3118,6 +3122,11 @@ void VR_ToggleStereo()
 bool VR_IsStereoEnabled()
 {
     return g_stereoEnabled.load();
+}
+
+bool VR_ShouldRenderPreparedFrame()
+{
+    return g_preparedShouldRender.load(std::memory_order_acquire);
 }
 
 void VR_DetachGamePresentation()

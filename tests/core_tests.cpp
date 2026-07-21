@@ -86,6 +86,12 @@ int main()
             "constructed but inactive ODST split-screen slots are safe");
         Check(!OdstInactiveCameraSlotsAreSafe(false, true, false),
             "another active ODST camera blocks the single-user bring-up");
+        Check(EvaluateOdstStereoFrame(false) ==
+                  OdstStereoFrameAction::RenderStockWithoutCapture,
+            "OpenXR no-render frames preserve ODST hooks without eye validation");
+        Check(EvaluateOdstStereoFrame(true) ==
+                  OdstStereoFrameAction::RenderStereoAndValidate,
+            "active OpenXR frames still require validated stereo eye redirects");
 
         OdstHalo3FovMatch matchedFov{};
         Check(ComputeOdstHalo3FovMatch(

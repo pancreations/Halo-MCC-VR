@@ -49,6 +49,10 @@ void VR_ToggleScreenFollow();
 // submits the two retained images as an OpenXR projection layer.
 void VR_ToggleStereo();
 bool VR_IsStereoEnabled();
+// True only for the begun OpenXR frame the runtime asked us to render. A
+// synchronized/unfocused session commonly publishes false while the headset is
+// idle; game hooks must not treat the resulting absent eye raster as failure.
+bool VR_ShouldRenderPreparedFrame();
 // Called on the render thread when Halo stops driving its level camera. Makes
 // every 3D path inactive immediately and drops references to Halo's scene
 // target before MCC switches to its shell or another resident game engine.

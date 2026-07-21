@@ -280,7 +280,38 @@ inactive-to-active camera edge. An unsupported/menu camera mode now sets a
 same-session hard latch: camera-memory changes cannot clear it, and only a
 genuine ODST title exit can permit another install. A pure regression test
 covers both the rejected in-session transition and title-exit reset. Private
-ON and normal OFF Release builds and CTest pass locally. This candidate has not
+ON and normal OFF Release builds and CTest passed locally. This candidate later
+received approval; the headset result is recorded below.
+
+## Eighth private headset result, recovery, and focus-loss correction
+
+The menu-ownership checkpoint was deployed from source commit
+`b490502a09618e428610f31fd030880674a9f0af`, DLL
+`EEC62ACE094259F68EF3144AF53E11DADBB609DF15934DA091B95631A10BF775`,
+with sealed record `Halo_MCC_VR\pre-odst-private-backup-8`. The user confirmed
+that 3D worked, looked substantially better, and ran smoothly. The log measured
+stable distinct-eye presentation at about 90 FPS. Activation was still slow.
+The HUD remained visible only on the desktop and movement was not head-relative;
+both are expected unported features, not failures of this camera-only checkpoint.
+
+While the user removed headset focus to type, OpenXR transitioned to
+`synchronized` with `shouldRender=0`. ODST's render hook continued requesting
+two eye passes, but the inactive presentation stopped binding the learned
+scene-color target. After the no-render interval, the strict redirect check
+reported `EyeRedirectUnavailable` and tore down the hooks. This was a false
+failure classification during runtime-declared presentation suspension, not
+loss of an active stereo redirect.
+
+MCC was closed and dedicated restore mode byte-restored baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`;
+preserve backup-8. The next isolated correction publishes the prepared OpenXR
+frame's `shouldRender` state. A runtime-declared no-render frame performs one
+ordinary desktop render and contributes no eye-capture failure evidence. An
+active `shouldRender=1` frame retains the existing two-eye path and strict
+redirect validation, so a genuine active-presentation failure still falls back.
+Pure regression assertions cover both actions. HUD capture, head-relative
+movement, and activation timing remain separate later checkpoints. Private ON
+and normal OFF Release builds and CTest pass locally. This candidate has not
 been deployed.
 
 ## Proven evidence available to implementation
