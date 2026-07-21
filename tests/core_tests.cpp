@@ -166,6 +166,12 @@ int main()
         Check(EvaluateOdstHeartbeat(7000, 1000, 6200, true, true) ==
                   OdstHeartbeatAction::None,
             "a short heartbeat gap with a ready camera is tolerated");
+        Check(EvaluateOdstHeartbeat(6701, 1000, 6000, true, false) ==
+                  OdstHeartbeatAction::None,
+            "a transient heartbeat gap does not detach presentation even when camera readiness flickers");
+        Check(EvaluateOdstHeartbeat(6751, 1000, 6000, true, false) ==
+                  OdstHeartbeatAction::LevelUnloaded,
+            "an unready camera must exceed the soft timeout before presentation detaches");
         Check(EvaluateOdstHeartbeat(12001, 1000, 7000, true, true) ==
                   OdstHeartbeatAction::LevelUnloaded,
             "a hard heartbeat timeout falls back even with stale ready bytes");

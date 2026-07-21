@@ -7307,7 +7307,13 @@ void Game_AutoVrTick()
             std::memory_order_acquire);
         const bool cameraFresh = cameraReady && last != 0 && now >= last &&
             now - last < kOdstCameraFreshMs;
-        const bool cameraStale = last == 0 || now < last || now - last > 2000;
+        const uint64_t installedAt = g_odstCamera.installedAtMs.load(
+            std::memory_order_acquire);
+        const bool sawCamera = g_odstCamera.sawValidCamera.load(
+            std::memory_order_acquire);
+        const OdstHeartbeatAction heartbeat = EvaluateOdstHeartbeat(
+            now, installedAt, last, sawCamera, cameraReady);
+        const bool cameraLost = heartbeat != OdstHeartbeatAction::None;
         const bool inLevelStable =
             odstFreshDebounce.Update(now, cameraFresh);
 
@@ -7333,10 +7339,12 @@ void Game_AutoVrTick()
             return;
         }
 
-        if (!cameraFresh &&
+        if (cameraLost &&
             (g_enabled.load(std::memory_order_relaxed) ||
              VR_IsStereoEnabled() || g_autoVrOwned.load(std::memory_order_relaxed)))
         {
+            LOG("ODST camera presentation: verified heartbeat loss; "
+                "detaching stereo while hook teardown completes");
             g_odstCamera.armed.store(false, std::memory_order_release);
             g_enabled.store(false, std::memory_order_release);
             g_autoVrOwned.store(false, std::memory_order_release);
@@ -7384,7 +7392,7 @@ void Game_AutoVrTick()
                     "head tracking, stereo, and 6DOF ON");
             }
         }
-        else if (cameraStale)
+        else if (cameraLost)
         {
             g_autoVrUserVeto.store(false, std::memory_order_release);
         }

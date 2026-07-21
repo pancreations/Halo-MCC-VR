@@ -43,10 +43,12 @@ into an ODST commit without the user's explicit direction.
   inner prepared-view render, FP camera rebuild, and FP driver. It supplies
   stereo, rotational tracking, positional 6DOF, and minimum FP-camera
   coherence only.
-- ODST controls/controller aim, reticle suppression, HUD/VISR changes, scopes,
-  pause, brightness, motion blur, weapons, bones, arms, VRIK, and all gameplay
-  patches remain off. Shared input/presentation paths fail closed to stock or
-  physical-controller behavior outside the proven camera context.
+- The private build permits ordinary virtual-gamepad buttons and sticks only
+  while it explicitly owns ODST, so MCC menus and ODST remain navigable.
+  Motion-controller aim, head-relative movement transforms, reticle suppression,
+  HUD/VISR changes, scopes, pause, brightness, motion blur, weapons, bones, arms,
+  VRIK, and all gameplay patches remain off. The public option-OFF build and
+  shared gameplay paths remain fail-closed outside their proven context.
 - Install is an atomic all-or-stock transaction. The hooks remain disarmed
   until a continuously fresh camera passes the stability debounce. Fallback
   disables the outer renderer before dependencies, drains and verifies detour
@@ -126,9 +128,37 @@ The sealed record is `Halo_MCC_VR\pre-odst-private-backup-3`. The next
 single-hypothesis checkpoint permits ordinary virtual-gamepad buttons/sticks
 only while the private build explicitly owns ODST. Motion-controller aim,
 head-relative Halo 3 movement transforms, shared gameplay features, and public
-option-OFF behavior remain blocked. Before another headset attempt, commit this
-isolated policy change and repeat the private build/test/deployment gates with
-explicit authorization. Do not launch MCC on the user's behalf.
+option-OFF behavior remain blocked. That isolated policy change was committed
+and became the third private headset test recorded below.
+
+## Third private headset result and recovery
+
+The controller-only retry from source commit
+`6e37807cbc2f3d531c3c5da3c9159d470736c632`, DLL
+`7E711A3AEF33080471E82BC6B447173CE81FF91372DEC0D7EC9A8F30C1AEDC79`,
+made MCC and ODST controls work and preserved the corrected Halo 3 performance.
+After a long initial wait, the ODST camera core installed and produced distinct
+stereo eyes, rotational tracking, and positional 6DOF. The headset test exposed
+a repeated 2D/3D presentation cycle during gameplay, plus visible stock motion
+blur and perceived input lag.
+
+The log proves the four ODST hooks stayed installed, the exact camera array
+remained valid, and true distinct-eye frames continued to validate. The cycling
+came from `Game_AutoVrTick`: any camera-copy heartbeat older than the 500 ms arm
+freshness threshold immediately detached presentation. The camera commonly
+resumed within the separate unload watchdog's grace period, so stereo rearmed
+after another one-second debounce. This created the repeated OFF/ON sequence;
+it was not hook loss or a title unload.
+
+MCC was closed and the dedicated restore mode byte-restored the exact baseline.
+The sealed record is `Halo_MCC_VR\pre-odst-private-backup-4`; preserve it. The
+next isolated checkpoint keeps the 500 ms continuous-heartbeat requirement for
+initial arming, but an already active presentation detaches only when the same
+soft/hard heartbeat watchdog has actually proved an unload. It adds regression
+coverage for a transient readiness flicker below the soft timeout. Motion blur
+suppression remains a separate later headset checkpoint; first verify that this
+single state-machine correction removes the gameplay hopping and associated
+presentation latency.
 
 ## Proven evidence available to implementation
 
