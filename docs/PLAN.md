@@ -6,9 +6,11 @@ with CURRENT-STATE.md, CURRENT-STATE.md wins and this file is the one to fix.
 
 ## Standing baseline rules
 
-- Current best-working checkpoint: `recovery/best-working-20260720`, also the
-  `master` tip. It carries dual wield, the smooth-turn jitter fix, and the
-  optional floating-hands mode. Start new work from a named branch off it.
+- Frozen Halo 3 alpha baseline: `v0.1.3-alpha` at `6f8236b`; its runtime source
+  is the headset-confirmed crosshair-fallback build at `bb4bb6f`. Preserve
+  `recovery/best-working-20260721-crosshair` at `c58db2e`. Start ODST work from
+  a clean named branch off the frozen alpha line and do not mix it into the Halo
+  3 release branch.
 - Preserve 330a568 and recovery/best-working-20260719-1300 as protected rollback
   points. Do not rewrite or delete recovery branches.
 - The broad cleanup at 42a1276 caused a fatal level-transition regression and was
@@ -55,15 +57,31 @@ Carried-over open items with no recorded headset result yet:
   boundary, not an offline signature hunt. Composed-bone edits are a known
   failure: they spun the hand and sent shots sideways.
 
-## Gate 4: ODST
+Gates 2 and 3 remain Halo 3 regression/release coverage, but the user considers
+the current Halo 3 experience strong enough that they no longer block starting
+ODST. Shared-system changes must still pass the Halo 3 regression list.
+
+## Active Gate 4: ODST
 
 Not a quick port. The measured survey in CURRENT-STATE.md found 8 of 20
 production signatures match ODST byte-for-byte while 12 fail, including the
 load-bearing stereo path, because structure layouts shifted (the gun/overlay
 camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
 
-- The first ODST step is not a code change: confirm the eight matching signatures
-  land in the same functions, then run a live scan for the shifted camera struct.
+- User decision 2026-07-21: begin ODST now while preserving Halo 3 as the
+  protected baseline. ODST remains an isolated, gated port rather than an
+  extension of the Halo 3 hook assumptions.
+- First code checkpoint: organize the one universal `halomccvr.cfg` and F1 menu
+  for all titles. Keep every existing key/value backward compatible, keep
+  `resolution_scale` launcher-compatible, and regression-test the exact Halo 3
+  behavior before adding an ODST hook.
+- Config values are universal player preferences. Verified per-title camera,
+  weapon, skeleton, HUD, and engine calibration lives in the title adapter; do
+  not expose a second ODST config file or force the user to retune when changing
+  games. Unsupported capabilities preserve their saved values.
+- The first ODST runtime step is evidence, not a hook: use the installed
+  H3ODSTEK, confirm the eight matching signatures land in the same functions,
+  then run a read-only/live scan for the shifted camera struct.
 - Repairing the 12 signatures is the cheap half. Re-deriving the camera, view,
   and first-person struct layouts on the ODST binary and re-validating VRIK and
   the palette path in the headset is the expensive half.
@@ -71,6 +89,13 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
   binary.
 - Shipping safety holds today: ODST is registered with `runtimeSupported=false`
   and hooks are gated on `GameTitle::Halo3`, so ODST loads stock and untouched.
+- Bring-up order after the evidence gate: minimal camera/stereo/6DOF; title
+  exit and stock fallback; controls/aim/reticle; ODST weapon and arm/VRIK
+  calibration; HUD/VISR; scopes, vehicles, turrets, cutscenes, death/respawn,
+  mission transitions, long sessions, and performance.
+- Set ODST `runtimeSupported=true` only after Release/CTest, verified deployment,
+  the complete Halo 3 shared-system regression, and ODST headset acceptance all
+  pass. A missing or ambiguous ODST signature must leave the stock game running.
 
 ## Gate 5: release quality
 

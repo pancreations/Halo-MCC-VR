@@ -1,6 +1,6 @@
 # Current state
 
-Authoritative as of 2026-07-20. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
+Authoritative as of 2026-07-21. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
 
 ## Recovery points
 
@@ -41,6 +41,11 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   eye-order gate prevents a successful redirect from leaving the native
   crosshair in only one eye. User result: "it's working". Deployed DLL
   SHA-256 `BD5F8FB653163A5788BB6762B09EA929A81658A1267FB10280899F2751441412`.
+- Frozen Halo 3 alpha baseline: tag `v0.1.3-alpha` at `6f8236b`. Its runtime
+  source is unchanged from the headset-confirmed `bb4bb6f` crosshair-fallback
+  build; the intervening commits are release documentation/export changes.
+  Preserve `recovery/best-working-20260721-crosshair` at `c58db2e` and do not
+  mix ODST experiments into the Halo 3 release line.
 - Headset-confirmed camera-recoil runtime checkpoint: `56dad79` on
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
@@ -426,6 +431,46 @@ Shipping safety today: ODST is registered in `src/common/title_registry.cpp`
 with `runtimeSupported=false`, and hook installation in `game.cpp` is gated on
 `GameTitle::Halo3`. ODST therefore loads stock and untouched, so the Halo 3
 alpha is safe to distribute on machines that also have ODST installed.
+
+### ODST direction approved 2026-07-21
+
+The user considers Halo 3 to be in a great state and approved beginning the
+ODST port. Halo 3 remains a protected regression baseline; this approval does
+not permit broad cleanup or conversion of the proven Halo 3 hook path while
+ODST is being brought up. Start ODST work on a dedicated named branch from the
+frozen `v0.1.3-alpha` line and keep ODST `runtimeSupported=false` until its own
+headset acceptance gates pass.
+
+The first implementation checkpoint is the configuration architecture, tested
+against Halo 3 before any ODST runtime hook is introduced:
+
+- There is one universal user file, `halomccvr.cfg`, and one consistent F1 menu
+  across all supported MCC games. Never require users to swap configuration
+  files when changing titles.
+- Existing key names and values remain backward compatible. Reorganize the
+  generated file into clear OpenXR/comfort, controls, reticle/aiming,
+  weapons/hands, HUD/presentation, performance, and diagnostics groups without
+  resetting a user's Halo 3 tuning. The launcher must continue to read
+  `resolution_scale` from the same file.
+- User-facing values express portable intent: physical meters/degrees,
+  normalized presentation values, and personal comfort choices. Per-title
+  camera scale, weapon mount, skeleton, shoulder/hand, HUD, reticle, brightness,
+  and motion-blur calibration belongs inside the title adapter, not in a second
+  user profile. A universal user trim is applied on top of the verified base
+  calibration for the active title.
+- The menu keeps the same names and layout. A feature unavailable in one title
+  is shown disabled or omitted by capability while its saved universal value is
+  preserved for titles that support it.
+
+After that Halo 3-only configuration regression passes, ODST proceeds in this
+order: verify the eight matching signatures against their actual functions;
+derive the twelve failed signatures; use H3ODSTEK and read-only/live probes to
+prove every consumed ODST layout and offset; bring up camera/stereo/6DOF with
+stock fallback; then add input/aim, reticle, arms/VRIK, HUD/VISR, and broader
+gameplay one isolated headset checkpoint at a time. H3ODSTEK is installed at
+`N:\SteamLibrary\steamapps\common\H3ODSTEK` and is mandatory title-specific
+evidence. No Halo 3 offset, bone, marker, tag meaning, or tuned engine constant
+may be reused without independent ODST proof.
 
 ## 2026-07-19 session closeout
 
