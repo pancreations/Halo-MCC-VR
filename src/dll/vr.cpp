@@ -3087,6 +3087,35 @@ bool VR_IsStereoEnabled()
     return g_stereoEnabled.load();
 }
 
+void VR_DetachGamePresentation()
+{
+    // Game_AutoVrTick calls this from Present, after Halo has stopped issuing
+    // camera renders and before this frame is submitted to OpenXR. Do not tear
+    // down the session or shared MCC D3D hooks: the flat shell still needs
+    // them. Only disarm Halo's per-eye work and release its retained render
+    // target so a different MCC engine can own the shared device cleanly.
+    if (g_stereoEnabled.load())
+        VR_ToggleStereo();
+    else
+        Game_SetStereoEye(-1);
+    g_renderEye = 0;
+    g_eyeHasImage[0] = g_eyeHasImage[1] = false;
+    g_stereoValidationDone = false;
+    g_rasterEye = -1;
+    g_rasterRedirected[0] = g_rasterRedirected[1] = false;
+    g_rasterScope = false;
+    g_scopeRedirected = false;
+    g_scopeActive = false;
+    g_scopeHasImage = false;
+    g_scopeResetRequested = true;
+    ReleaseSourceViews();
+    if (g_sceneColorRtv)
+    {
+        g_sceneColorRtv->Release();
+        g_sceneColorRtv = nullptr;
+    }
+}
+
 void VR_CaptureRenderedEye(int eye)
 {
     if (eye < 0 || eye > 1)

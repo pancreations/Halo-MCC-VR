@@ -52,6 +52,19 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   `F6DD8CA78837D99D8D0D54F8A7E9A8D1B9A59E382BD50D9A0D1D85EFAF545194`.
   Quest 2 headset confirmation is pending; do not promote it over `dd1abc5`
   until the two gameplay images fuse correctly.
+- Mission-exit detach candidate on `fix/level-exit-detach`, based on the
+  Quest 2 eye-pose build. The failing session stopped Halo camera callbacks at
+  02:30:22, but the old exit path kept per-eye scene redirection armed for a
+  two-second stale timeout; MCC reported five resident game modules at 02:30:25
+  and the log ended. The camera heartbeat is now the ownership boundary: after
+  500 ms without a Halo camera, Present disables head tracking/stereo, clears
+  eye and scope redirection, and releases the retained Halo scene RTV before
+  the MCC shell or another title takes the shared D3D device. The shared flat
+  OpenXR shell and controller hooks remain alive. Release build and CTest pass;
+  deployed 2026-07-21 02:38:09 AM with SHA-256
+  `6B274113871E6DCC879A97655F6E03B8B3B304FFFEDAB1F160F677E64DBE636F`.
+  Headset validation must cover Halo 3 -> MCC shell -> another mission/title ->
+  Halo 3 without a fatal error before this candidate is promoted.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.

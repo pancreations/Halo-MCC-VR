@@ -4866,6 +4866,20 @@ void Game_AutoVrTick()
     else if (activeTitle && !activeTitle->runtimeSupported)
         TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
 
+    // MCC keeps several game DLLs resident, so module presence cannot identify
+    // the active renderer. The camera hook is the proven ownership signal.
+    // Once its heartbeat is absent for 500 ms, disarm per-eye rendering and
+    // release Halo's retained scene target before another engine takes over.
+    // Pause is exempt because its stable 2D presentation is already detached.
+    if (!pausePresentation && !cameraFresh &&
+        (g_enabled.load() || VR_IsStereoEnabled() || g_autoVrOwned.load()))
+    {
+        g_enabled = false;
+        g_autoVrOwned = false;
+        g_autoVrUserVeto = false;
+        VR_DetachGamePresentation();
+    }
+
     if (!g_config.auto_vr || pausePresentation) return;
 
     if (inLevelStable)

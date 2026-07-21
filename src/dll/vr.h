@@ -49,6 +49,10 @@ void VR_ToggleScreenFollow();
 // submits the two retained images as an OpenXR projection layer.
 void VR_ToggleStereo();
 bool VR_IsStereoEnabled();
+// Called on the render thread when Halo stops driving its level camera. Makes
+// every 3D path inactive immediately and drops references to Halo's scene
+// target before MCC switches to its shell or another resident game engine.
+void VR_DetachGamePresentation();
 
 // Called by the M2 game render hook immediately after each eye's scene pass,
 // before the next eye overwrites the game backbuffer.
