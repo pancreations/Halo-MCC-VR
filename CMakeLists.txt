@@ -54,6 +54,7 @@ add_library(halo3xr SHARED
     src/common/log.cpp
     src/common/config.cpp
     src/common/input_logic.cpp
+    src/common/scope_logic.cpp
     src/common/title_registry.cpp
     src/dll/dllmain.cpp
     src/dll/d3d11_hook.cpp
@@ -85,6 +86,7 @@ if(BUILD_TESTING)
     add_executable(halomccvr_core_tests
         tests/core_tests.cpp
         src/common/input_logic.cpp
+        src/common/scope_logic.cpp
         src/common/title_registry.cpp
         src/common/config.cpp
         src/common/log.cpp)

@@ -67,6 +67,12 @@ static void Clamp()
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
     g_config.gun_roll_deg = std::clamp(g_config.gun_roll_deg, -180.0f, 180.0f);
     g_config.gun_forward_m = std::clamp(g_config.gun_forward_m, -0.3f, 0.5f);
+    g_config.scope_zoom = std::clamp(g_config.scope_zoom, 1.25f, 8.0f);
+    g_config.scope_screen_width_m = std::clamp(g_config.scope_screen_width_m, 0.04f, 0.25f);
+    g_config.scope_screen_right_m = std::clamp(g_config.scope_screen_right_m, -0.30f, 0.30f);
+    g_config.scope_screen_up_m = std::clamp(g_config.scope_screen_up_m, -0.20f, 0.30f);
+    g_config.scope_screen_forward_m = std::clamp(g_config.scope_screen_forward_m, 0.05f, 0.80f);
+    g_config.scope_refresh_divisor = std::clamp(g_config.scope_refresh_divisor, 1, 4);
 }
 
 void ConfigLoad(const wchar_t* path)
@@ -163,6 +169,25 @@ void ConfigLoad(const wchar_t* path)
             g_config.gun_roll_deg = (float)atof(val);
         else if (!strcmp(key, "gun_forward_m"))
             g_config.gun_forward_m = (float)atof(val);
+        else if (!strcmp(key, "scope_enabled"))
+            g_config.scope_enabled = atoi(val) != 0;
+        else if (!strcmp(key, "scope_zoom"))
+            g_config.scope_zoom = (float)atof(val);
+        else if (!strcmp(key, "scope_screen_width_m"))
+            g_config.scope_screen_width_m = (float)atof(val);
+        else if (!strcmp(key, "scope_screen_right_m"))
+            g_config.scope_screen_right_m = (float)atof(val);
+        else if (!strcmp(key, "scope_screen_up_m"))
+            g_config.scope_screen_up_m = (float)atof(val);
+        else if (!strcmp(key, "scope_screen_forward_m"))
+            g_config.scope_screen_forward_m = (float)atof(val);
+        else if (!strcmp(key, "scope_refresh_divisor"))
+            g_config.scope_refresh_divisor = atoi(val);
+        else if (!strcmp(key, "scope_magnification") ||
+                 !strcmp(key, "scope_size_deg") ||
+                 !strcmp(key, "scope_up_m") ||
+                 !strcmp(key, "scope_forward_m"))
+            continue; // retire the failed diagnostic-scope coordinates quietly
         else if (!strcmp(key, "show_hud") || !strcmp(key, "hud_ammo") ||
                  !strcmp(key, "hud_health") || !strcmp(key, "hud_motion") ||
                  !strcmp(key, "hud_grenades"))
@@ -337,6 +362,25 @@ void ConfigSave()
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "# (default %.2f, range -0.3 to 0.5)\n", d.gun_forward_m);
     fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
+    fprintf(f, "# --- Universal gun-mounted zoom screen. R3 toggles it for every weapon.\n");
+    fprintf(f, "# While enabled, R3 is not sent to Halo's native full-screen zoom. 1 = on.\n");
+    fprintf(f, "# (default %d)\n", d.scope_enabled ? 1 : 0);
+    fprintf(f, "scope_enabled = %d\n\n", g_config.scope_enabled ? 1 : 0);
+    fprintf(f, "# Absolute picture magnification (used after the placement proof passes).\n");
+    fprintf(f, "# (default %.2f, range 1.25 to 8.0)\n", d.scope_zoom);
+    fprintf(f, "scope_zoom = %.2f\n\n", g_config.scope_zoom);
+    fprintf(f, "# Fixed physical screen width in meters; height is always 3/4 of width.\n");
+    fprintf(f, "# (default %.2f, range 0.04 to 0.25)\n", d.scope_screen_width_m);
+    fprintf(f, "scope_screen_width_m = %.3f\n\n", g_config.scope_screen_width_m);
+    fprintf(f, "# Direct controller-local screen offsets in meters: right, up, forward.\n");
+    fprintf(f, "# (defaults %.2f / %.2f / %.2f)\n",
+            d.scope_screen_right_m, d.scope_screen_up_m, d.scope_screen_forward_m);
+    fprintf(f, "scope_screen_right_m = %.3f\n", g_config.scope_screen_right_m);
+    fprintf(f, "scope_screen_up_m = %.3f\n", g_config.scope_screen_up_m);
+    fprintf(f, "scope_screen_forward_m = %.3f\n\n", g_config.scope_screen_forward_m);
+    fprintf(f, "# Refresh the final zoom picture every Nth frame. 1 = full rate.\n");
+    fprintf(f, "# (default %d, range 1 to 4)\n", d.scope_refresh_divisor);
+    fprintf(f, "scope_refresh_divisor = %d\n\n", g_config.scope_refresh_divisor);
     fprintf(f, "# Hide every native CHUD crosshair class. The floating motion-control\n");
     fprintf(f, "# reticle remains visible. Not in the F1 menu; this file only.\n");
     fprintf(f, "# (default %d)\n", d.kill_reticle ? 1 : 0);

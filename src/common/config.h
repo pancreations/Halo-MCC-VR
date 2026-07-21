@@ -86,6 +86,17 @@ struct Config
     // positive moves it out of your face. Never touches aim.
     float gun_forward_m = 0.0f;
 
+    // Universal gun-mounted VR zoom screen. R3 toggles it independently of
+    // Halo's weapon zoom, so the same controller-relative placement works with
+    // every weapon. Dimensions and offsets are direct physical meters.
+    bool scope_enabled = false;
+    float scope_zoom = 2.5f;
+    float scope_screen_width_m = 0.10f;
+    float scope_screen_right_m = 0.0f;
+    float scope_screen_up_m = 0.08f;
+    float scope_screen_forward_m = 0.30f;
+    int scope_refresh_divisor = 2;
+
     // (show_hud / hud_ammo / hud_health / hud_motion / hud_grenades retired
     // 2026-07-19 evening: their chud+0x144..0x14A byte writes used a
     // headset-disproven offset map and suppressed the whole HUD except the

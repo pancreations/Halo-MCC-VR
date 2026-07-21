@@ -22,6 +22,7 @@
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/input_logic.h"
+#include "../common/scope_logic.h"
 
 // M0 "virtual cinema": every frame the game presents, we copy its backbuffer
 // into an OpenXR swapchain and submit it as a world-locked quad layer (a flat
@@ -92,6 +93,17 @@ namespace
     std::vector<ID3D11Texture2D*> g_reticleImages;
     std::vector<ID3D11RenderTargetView*> g_reticleRtvs;
     constexpr uint32_t kReticleSize = 512;
+
+    // Stage 1 universal-scope placement proof. This is deliberately an opaque
+    // colored 4:3 texture with no extra game-camera render. The headset must
+    // prove its fixed physical geometry and controls before picture-in-picture
+    // is allowed back into the render loop.
+    XrSwapchain g_scopeProofChain = XR_NULL_HANDLE;
+    std::vector<ID3D11Texture2D*> g_scopeProofImages;
+    std::vector<ID3D11RenderTargetView*> g_scopeProofRtvs;
+    constexpr uint32_t kScopeProofWidth = 1024;
+    constexpr uint32_t kScopeProofHeight = 768;
+    std::atomic<bool> g_scopeActive{false};
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
     float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
@@ -722,6 +734,90 @@ float4 ps_pass(VSOut i) : SV_Target
         if (!rtvs[idx])
             g_device->CreateRenderTargetView(images[idx], nullptr, &rtvs[idx]);
         return rtvs[idx];
+    }
+
+    bool PrepareScopePlacementProof()
+    {
+        static bool creationFailed = false;
+        if (creationFailed)
+            return false;
+        if (g_scopeProofChain == XR_NULL_HANDLE &&
+            !CreateChain(kScopeProofWidth, kScopeProofHeight, g_scopeProofChain,
+                         g_scopeProofImages, g_scopeProofRtvs, "scope placement proof"))
+        {
+            creationFailed = true;
+            return false;
+        }
+
+        uint32_t index = 0;
+        XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+        wait.timeout = 1000000000;
+        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+
+        XrResult result = xrAcquireSwapchainImage(g_scopeProofChain, &acquire, &index);
+        if (XR_FAILED(result))
+        {
+            static bool logged = false;
+            if (!logged) { logged = true; LOG("scope proof acquire failed: %s", XrStr(result)); }
+            return false;
+        }
+        result = xrWaitSwapchainImage(g_scopeProofChain, &wait);
+        if (XR_FAILED(result))
+        {
+            static bool logged = false;
+            if (!logged) { logged = true; LOG("scope proof wait failed: %s", XrStr(result)); }
+            xrReleaseSwapchainImage(g_scopeProofChain, &release);
+            return false;
+        }
+
+        ID3D11RenderTargetView* rtv = nullptr;
+        if (index < g_scopeProofImages.size() && index < g_scopeProofRtvs.size())
+        {
+            rtv = g_scopeProofRtvs[index];
+            if (!rtv)
+            {
+                D3D11_RENDER_TARGET_VIEW_DESC desc{};
+                desc.Format = (DXGI_FORMAT)g_xrFormat;
+                desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                desc.Texture2D.MipSlice = 0;
+                const HRESULT hr = g_device->CreateRenderTargetView(
+                    g_scopeProofImages[index], &desc, &g_scopeProofRtvs[index]);
+                if (FAILED(hr))
+                {
+                    static bool logged = false;
+                    if (!logged)
+                    {
+                        logged = true;
+                        LOG("scope proof RTV creation failed: HRESULT 0x%08X format %d",
+                            (unsigned)hr, (int)g_xrFormat);
+                    }
+                }
+                rtv = g_scopeProofRtvs[index];
+            }
+        }
+
+        if (rtv)
+        {
+            // Bright blue-green is unmistakable but comfortable enough to use
+            // while adjusting the live placement sliders.
+            const float color[4] = {0.02f, 0.35f, 0.45f, 1.0f};
+            g_context->ClearRenderTargetView(rtv, color);
+        }
+        else
+        {
+            static bool logged = false;
+            if (!logged) { logged = true; LOG("scope proof has no render-target view"); }
+        }
+
+        const XrResult releaseResult = xrReleaseSwapchainImage(g_scopeProofChain, &release);
+        if (XR_FAILED(releaseResult))
+        {
+            static bool logged = false;
+            if (!logged) { logged = true; LOG("scope proof release failed: %s", XrStr(releaseResult)); }
+            return false;
+        }
+        return rtv != nullptr;
     }
 
     bool EnsureScreenChain(uint32_t w, uint32_t h)
@@ -2295,7 +2391,7 @@ float4 ps_pass(VSOut i) : SV_Target
             }
         }
 
-        XrCompositionLayerQuad screenQuad, menuQuad, reticleQuad, fadeQuad;
+        XrCompositionLayerQuad screenQuad, menuQuad, reticleQuad, scopeQuad, fadeQuad;
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         // Reused across frames (Frame runs only on the render thread) so the
         // per-frame layer assembly allocates nothing in steady state.
@@ -2461,6 +2557,40 @@ float4 ps_pass(VSOut i) : SV_Target
                             // Never blend from a stale pose after tracking or
                             // the crosshair is restored.
                             g_reticleAimPoseValid = false;
+                        }
+
+                        if (g_config.scope_enabled && g_scopeActive.load() &&
+                            !Menu_IsOpen() && haveAim && PrepareScopePlacementProof())
+                        {
+                            const ScopeQuadTransform transform = ComputeScopeQuadTransform(
+                                aimQ, aimP,
+                                g_config.scope_screen_right_m,
+                                g_config.scope_screen_up_m,
+                                g_config.scope_screen_forward_m,
+                                g_config.scope_screen_width_m);
+                            scopeQuad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+                            scopeQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                            scopeQuad.space = g_localSpace;
+                            scopeQuad.subImage.swapchain = g_scopeProofChain;
+                            scopeQuad.subImage.imageRect = {
+                                {0, 0}, {(int32_t)kScopeProofWidth, (int32_t)kScopeProofHeight}};
+                            scopeQuad.subImage.imageArrayIndex = 0;
+                            scopeQuad.pose.orientation = {aimQ[0], aimQ[1], aimQ[2], aimQ[3]};
+                            scopeQuad.pose.position = {
+                                transform.position[0], transform.position[1], transform.position[2]};
+                            scopeQuad.size = {transform.width, transform.height};
+                            layers.push_back(
+                                reinterpret_cast<XrCompositionLayerBaseHeader*>(&scopeQuad));
+                            static bool logged = false;
+                            if (!logged)
+                            {
+                                logged = true;
+                                LOG("scope placement proof submitted: %.3fm x %.3fm at local offsets %.3f/%.3f/%.3f",
+                                    transform.width, transform.height,
+                                    g_config.scope_screen_right_m,
+                                    g_config.scope_screen_up_m,
+                                    g_config.scope_screen_forward_m);
+                            }
                         }
                     }
                 }
@@ -2686,6 +2816,8 @@ void VR_BeforePresent(IDXGISwapChain* sc)
 
     // Auto-enter/exit VR when a level loads/unloads (no F2/F11 needed).
     Game_AutoVrTick();
+    if (!g_config.scope_enabled || !Game_IsHeadTracking())
+        g_scopeActive.store(false);
 
     SubmitPreparedFrame(sc);
     QueryPerformanceCounter(&g_dxgiPresentStartQpc);
@@ -2971,6 +3103,16 @@ void VR_GetPadState(VrPadState& out)
     EnterCriticalSection(&g_headCs);
     out = g_padState;
     LeaveCriticalSection(&g_headCs);
+}
+
+void VR_SetScopeActive(bool active)
+{
+    g_scopeActive.store(active, std::memory_order_release);
+}
+
+bool VR_IsScopeActive()
+{
+    return g_scopeActive.load(std::memory_order_acquire);
 }
 
 void VR_SetGameHaptics(float amplitude)

@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "input_logic.h"
+#include "scope_logic.h"
 #include "title_registry.h"
 
 namespace
@@ -102,6 +103,40 @@ int main()
     Check(g_config.resolution_scale == kResolutionScaleMax,
         "A too-large resolution scale is pulled down to the maximum");
 
+    {
+        std::ofstream file(primary);
+        file << "scope_enabled = 1\n";
+        file << "scope_zoom = 99\n";
+        file << "scope_screen_width_m = 1\n";
+        file << "scope_screen_right_m = -1\n";
+        file << "scope_screen_up_m = 1\n";
+        file << "scope_screen_forward_m = 0\n";
+        file << "scope_refresh_divisor = 99\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.scope_enabled && g_config.scope_zoom == 8.0f &&
+          g_config.scope_screen_width_m == 0.25f &&
+          g_config.scope_screen_right_m == -0.30f &&
+          g_config.scope_screen_up_m == 0.30f &&
+          g_config.scope_screen_forward_m == 0.05f &&
+          g_config.scope_refresh_divisor == 4,
+        "Universal scope settings are safely clamped");
+    g_config.scope_zoom = 3.25f;
+    g_config.scope_screen_width_m = 0.12f;
+    g_config.scope_screen_right_m = 0.03f;
+    g_config.scope_screen_up_m = 0.09f;
+    g_config.scope_screen_forward_m = 0.35f;
+    g_config.scope_refresh_divisor = 3;
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(g_config.scope_zoom == 3.25f &&
+          g_config.scope_screen_width_m == 0.12f &&
+          g_config.scope_screen_right_m == 0.03f &&
+          g_config.scope_screen_up_m == 0.09f &&
+          g_config.scope_screen_forward_m == 0.35f &&
+          g_config.scope_refresh_divisor == 3,
+        "Universal scope settings survive a save/reload round trip");
+
     // Deleting the file is the documented "put everything back" escape hatch.
     {
         std::ofstream file(primary);
@@ -137,6 +172,52 @@ int main()
     chord.Update(2300, false, false);
     Check(chord.Update(2400, true, true).toggled,
         "A simultaneous chord works after release");
+
+    ScopeToggleDetector scopeToggle;
+    Check(!scopeToggle.Update(true, true, false).changed,
+        "R3 press arms the scope without toggling early");
+    ScopeToggleUpdate scopeResult = scopeToggle.Update(true, false, false);
+    Check(scopeResult.changed && scopeResult.active,
+        "R3 release opens the universal scope");
+    scopeToggle.Update(true, true, false);
+    scopeResult = scopeToggle.Update(true, false, false);
+    Check(scopeResult.changed && !scopeResult.active,
+        "A second R3 click closes the universal scope");
+
+    scopeToggle.Reset();
+    scopeToggle.Update(true, true, false);      // R3 begins first
+    scopeToggle.Update(true, true, true);       // L3 joins; menu consumes chord
+    scopeResult = scopeToggle.Update(true, false, true);
+    Check(!scopeResult.changed && !scopeResult.active,
+        "A staggered L3+R3 menu chord cancels the pending scope toggle");
+    scopeToggle.Reset();
+    scopeToggle.Update(true, true, true);       // simultaneous menu chord
+    scopeResult = scopeToggle.Update(true, false, true);
+    Check(!scopeResult.changed && !scopeResult.active,
+        "A simultaneous L3+R3 menu chord never toggles the scope");
+
+    scopeToggle.Update(true, true, false);
+    scopeToggle.Update(true, false, false);
+    scopeResult = scopeToggle.Update(false, false, false);
+    Check(scopeResult.changed && !scopeResult.active,
+        "Losing gameplay or disabling the feature resets an active scope");
+    scopeToggle.Update(false, true, false);
+    scopeToggle.Update(true, true, false);
+    scopeResult = scopeToggle.Update(true, false, false);
+    Check(!scopeResult.changed && !scopeResult.active,
+        "R3 held across gameplay entry cannot cause a surprise toggle");
+
+    const float identity[4] = {0, 0, 0, 1};
+    const float scopeOrigin[3] = {1, 2, 3};
+    const ScopeQuadTransform quad = ComputeScopeQuadTransform(
+        identity, scopeOrigin, 0.04f, 0.08f, 0.30f, 0.10f);
+    Check(std::fabs(quad.position[0] - 1.04f) < 1e-5f &&
+          std::fabs(quad.position[1] - 2.08f) < 1e-5f &&
+          std::fabs(quad.position[2] - 2.70f) < 1e-5f,
+        "Scope offsets follow the gun's local right/up/forward axes");
+    Check(std::fabs(quad.width - 0.10f) < 1e-5f &&
+          std::fabs(quad.height - 0.075f) < 1e-5f,
+        "Scope is fixed-size 4:3 geometry independent of headset distance");
 
     PauseLevelRecovery pauseRecovery;
     Check(!pauseRecovery.Update(true, false, false),

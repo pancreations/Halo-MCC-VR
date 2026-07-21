@@ -278,6 +278,37 @@ namespace
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Text("Universal zoom screen (PLACEMENT TEST)");
+        if (ImGui::Checkbox("Enable R3 gun-mounted screen", &g_config.scope_enabled))
+        {
+            changed = true;
+            if (!g_config.scope_enabled)
+                VR_SetScopeActive(false);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(VR_IsScopeActive() ? "[R3: visible]" : "[R3: hidden]");
+        ImGui::TextDisabled("This checkpoint shows a flat blue-green 4:3 panel only. R3 toggles it\n"
+                            "for every gun and does not trigger Halo's full-view zoom.");
+        if (g_config.scope_enabled)
+        {
+            ImGui::Indent();
+            changed |= ImGui::SliderFloat("Screen width (m)##scope",
+                                          &g_config.scope_screen_width_m,
+                                          0.04f, 0.25f, "%.3f");
+            changed |= ImGui::SliderFloat("Screen right offset (m)",
+                                          &g_config.scope_screen_right_m,
+                                          -0.30f, 0.30f, "%.3f");
+            changed |= ImGui::SliderFloat("Screen up offset (m)",
+                                          &g_config.scope_screen_up_m,
+                                          -0.20f, 0.30f, "%.3f");
+            changed |= ImGui::SliderFloat("Screen forward offset (m)",
+                                          &g_config.scope_screen_forward_m,
+                                          0.05f, 0.80f, "%.3f");
+            ImGui::TextDisabled("Offsets are direct gun-local meters with no hidden added distance.");
+            ImGui::Unindent();
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
         ImGui::Text("Authored weapon crosshair (stereo)");
         changed |= ImGui::Checkbox("Show a crosshair where the weapon shoots", &g_config.crosshair);
         if (g_config.crosshair)

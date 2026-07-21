@@ -10,6 +10,7 @@
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/input_logic.h"
+#include "../common/scope_logic.h"
 
 // M3 VR input. MCC reads gamepads through XInputGetState; hooking it lets the
 // mod present the Sense controllers as a gamepad the game already understands
@@ -36,6 +37,7 @@ namespace
     std::atomic<bool> g_overrideLogged{false};
     MenuChordDetector g_menuChord;
     MenuChordDetector g_pauseChord;
+    ScopeToggleDetector g_scopeToggle;
     std::atomic<uint64_t> g_startPulseUntilMs{0};
 
     // Map |v| in 0..1 to a raw stick value that clears MCC's inner deadzone,
@@ -61,6 +63,21 @@ namespace
             g_menuChord.Update(GetTickCount64(), pad.clickL, pad.clickR);
         if (chord.toggled)
             Menu_Toggle();
+
+        // The universal scope owns VR R3 while enabled. Toggle on release so a
+        // staggered L3+R3 menu chord can cancel the entire gesture before it
+        // changes scope state. Gameplay loss resets it without a surprise
+        // toggle if R3 was held during the transition.
+        if (g_scopeToggle.IsActive() && !VR_IsScopeActive())
+            g_scopeToggle.Reset();
+        const bool scopeAvailable = g_config.scope_enabled && Game_IsHeadTracking();
+        const ScopeToggleUpdate scope = g_scopeToggle.Update(
+            scopeAvailable, pad.clickR, chord.consumeClicks || Menu_IsOpen());
+        VR_SetScopeActive(scope.active);
+        if (scope.changed)
+        {
+            LOG("scope placement proof: %s", scope.active ? "ON" : "OFF");
+        }
         if (Menu_IsOpen())
         {
             state->Gamepad = {};
@@ -73,12 +90,15 @@ namespace
             Input_RequestPauseToggle();
 
         WORD btn = state->Gamepad.wButtons;
+        if (g_config.scope_enabled)
+            btn &= ~XINPUT_GAMEPAD_RIGHT_THUMB;
         if (pad.a) btn |= XINPUT_GAMEPAD_A;
         if (pad.b && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_B;
         if (pad.x) btn |= XINPUT_GAMEPAD_X;
         if (pad.y && !pauseChord.consumeClicks) btn |= XINPUT_GAMEPAD_Y;
         if (pad.clickL && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_LEFT_THUMB;
-        if (pad.clickR && !chord.consumeClicks) btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
+        if (!g_config.scope_enabled && pad.clickR && !chord.consumeClicks)
+            btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
         if (pad.menu && !previousMenu && !Game_HasAuthoritativePauseState())
             VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
