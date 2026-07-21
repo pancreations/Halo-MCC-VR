@@ -86,16 +86,18 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
   structures, `+0x27FC` user index, and `0x2810` stride are proven. Read-only
   stock captures covered movement, zoom, death/respawn, unload/reload,
   cutscenes, and vehicle entry/exit.
-- Desk-side implementation candidate complete: the default-OFF
+- Desk-side comfort-parity candidate complete: the default-OFF
   `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP` option enables an isolated private path
   only when explicitly configured ON. It requires the exact ODST retail build,
-  ten unique title-specific signatures, the derived four-slot array, and all
-  proven layout/single-user invariants before atomically installing the four
-  camera-copy, inner-render, FP-rebuild, and FP-driver hooks. Runtime failure,
-  unload, or title exit falls back and rearms fail closed.
-- Do not call the monolithic Halo 3 installer for ODST. Controls, aim, reticle,
-  HUD/VISR, scopes, pause, brightness, motion blur, weapons, bones, arms, VRIK,
-  and gameplay patches remain later isolated gates.
+  eleven unique title-specific signatures, two native blur variables, the
+  derived four-slot array, and all proven layout/single-user invariants before
+  atomically installing five hooks: camera copy, inner render, FP rebuild, FP
+  driver, and post-observer camera effect. Runtime failure, unload, or title
+  exit falls back and rearms fail closed.
+- Do not call the monolithic Halo 3 installer for ODST. Motion-controller
+  weapon aim, reticle, HUD/VISR, scopes, pause, brightness, weapons, bones, arms,
+  VRIK, and gameplay patches remain later isolated gates. Native blur/recoil
+  suppression and Halo 3 look-stick ownership are private-only evidence ports.
 - Do not reuse any Halo 3 struct offset in ODST without confirming it on the ODST
   binary.
 - Shipping safety holds today: ODST remains `runtimeSupported=false` with
@@ -103,10 +105,11 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
   normal deploy and alpha-export scripts require an exact OFF cache and reject
   a private ON build. Do not set `runtimeSupported=true` or advertise ODST
   capabilities yet.
-- The private ON scope remains minimal camera/stereo/6DOF plus first-person
-  camera coherence and title-exit/stock fallback. Controls/aim/reticle,
-  HUD/VISR, scopes, pause, brightness, motion blur, weapons, bones, arms, VRIK,
-  and gameplay patches remain disabled for ODST.
+- The private ON scope remains camera/stereo/6DOF plus first-person camera
+  coherence, Halo 3 headset-angle/turn ownership, and native blur/recoil
+  suppression with title-exit/stock fallback. Motion-controller aim, reticle,
+  HUD/VISR, scopes, pause, brightness, weapons, bones, arms, VRIK, and gameplay
+  patches remain disabled for ODST.
 - Title activation is a 50 ms module poll, not an atomic transition event. In
   an ambiguous `Unknown` state, shared Halo 3 behavior requires a Halo 3 camera
   heartbeat newer than the title transition and less than 100 ms old; explicit

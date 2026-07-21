@@ -225,6 +225,12 @@ namespace
         TitleLeft,
     };
 
+    struct OdstMotionBlurVar
+    {
+        float* slot = nullptr;
+        float original = 0.0f;
+    };
+
     struct OdstCameraRuntimeState
     {
         std::atomic<bool> installed{false};
@@ -245,6 +251,7 @@ namespace
         size_t moduleSize = 0;
         HMODULE moduleReference = nullptr;
         CamCopyFn originalCamCopy = nullptr;
+        ObserverCameraEffectFn originalObserverCameraEffect = nullptr;
         RenderViewFn originalRenderView = nullptr;
         PrepareViewFn prepareView = nullptr;
         BuildViewportFn buildViewport = nullptr;
@@ -256,11 +263,12 @@ namespace
         std::atomic<void*> eyeView{nullptr};
         alignas(16) unsigned char eyeCompactCamera[0x90]{};
         alignas(16) unsigned char eyeDerivedBlock[0xC0]{};
-        void* hookTargets[4]{};
+        OdstMotionBlurVar motionBlurVars[2]{};
+        bool motionBlurResolved = false;
+        bool motionBlurZeroed = false;
+        void* hookTargets[5]{};
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
-        float headPitchReference = 0.0f;
-        float headRollReference = 0.0f;
     };
 
     OdstCameraRuntimeState g_odstCamera;
@@ -4538,6 +4546,44 @@ namespace
             inactive[2] ? 1 : 0);
     }
 
+    void ApplyOdstMotionBlurSetting()
+    {
+        if (!g_odstCamera.motionBlurResolved)
+            return;
+        if (!g_config.motion_blur)
+        {
+            for (OdstMotionBlurVar& var : g_odstCamera.motionBlurVars)
+            {
+                if (*var.slot != 0.0f)
+                    var.original = *var.slot;
+                *var.slot = 0.0f;
+            }
+            if (!g_odstCamera.motionBlurZeroed)
+            {
+                g_odstCamera.motionBlurZeroed = true;
+                LOG("ODST comfort: motion blur forced OFF through title-native scale/max vars");
+            }
+        }
+        else if (g_odstCamera.motionBlurZeroed)
+        {
+            for (OdstMotionBlurVar& var : g_odstCamera.motionBlurVars)
+                *var.slot = var.original;
+            g_odstCamera.motionBlurZeroed = false;
+            LOG("ODST comfort: motion blur restored to engine values");
+        }
+    }
+
+    void RestoreOdstMotionBlurVars()
+    {
+        if (!g_odstCamera.motionBlurResolved ||
+            !g_odstCamera.motionBlurZeroed)
+            return;
+        for (OdstMotionBlurVar& var : g_odstCamera.motionBlurVars)
+            *var.slot = var.original;
+        g_odstCamera.motionBlurZeroed = false;
+        LOG("ODST comfort: stock motion-blur values restored during teardown");
+    }
+
     void OdstApplyHeadLook(void* source)
     {
         if (!source)
@@ -4584,31 +4630,11 @@ namespace
         if (stockForwardLength < 1e-4f)
             return;
         const float stockYaw = atan2f(forward[1], forward[0]);
-        const float stockPitch = asinf(Clamp(
-            forward[2] / stockForwardLength, -1.0f, 1.0f));
-        const float stockCosPitch = fmaxf(cosf(stockPitch), 1e-4f);
-        const float stockNeutralUp[3] = {
-            -sinf(stockPitch) * cosf(stockYaw),
-            -sinf(stockPitch) * sinf(stockYaw),
-            stockCosPitch,
-        };
-        const float stockRight[3] = {sinf(stockYaw), -cosf(stockYaw), 0.0f};
-        const float stockUpLength = sqrtf(
-            up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
-        const float stockRoll = stockUpLength > 1e-4f
-            ? atan2f((up[0] * stockRight[0] + up[1] * stockRight[1]) /
-                         stockUpLength,
-                     (up[0] * stockNeutralUp[0] + up[1] * stockNeutralUp[1] +
-                      up[2] * stockNeutralUp[2]) /
-                         stockUpLength)
-            : 0.0f;
 
         if (g_needRecenter.exchange(false, std::memory_order_acq_rel))
         {
             g_gameYawRef = stockYaw;
             g_headYawRef = headYaw;
-            g_odstCamera.headPitchReference = headPitch;
-            g_odstCamera.headRollReference = headRoll;
             memcpy(g_headPosRef, headPosition, sizeof(g_headPosRef));
             g_needPosRecenter.store(false, std::memory_order_release);
         }
@@ -4617,15 +4643,19 @@ namespace
             memcpy(g_headPosRef, headPosition, sizeof(g_headPosRef));
         }
 
-        const float gameYaw = stockYaw +
-            g_yawSign.load(std::memory_order_relaxed) * WrapPi(headYaw - g_headYawRef);
-        const float gamePitch = Clamp(
-            stockPitch + g_pitchSign.load(std::memory_order_relaxed) *
-                (headPitch - g_odstCamera.headPitchReference) +
-                g_pitchTrim.load(std::memory_order_relaxed),
-            -1.5f, 1.5f);
-        const float gameRoll = stockRoll +
-            WrapPi(headRoll - g_odstCamera.headRollReference);
+        // Halo 3 parity: recentered yaw plus HMD-relative yaw; absolute HMD
+        // pitch and roll. ODST's changing stock pitch/roll must not move the
+        // tracked view through right-stick input, recoil, or authored shake.
+        OdstHalo3LookAngles look{};
+        if (!ComputeOdstHalo3LookAngles(
+                g_gameYawRef, g_headYawRef, headYaw, headPitch, headRoll,
+                g_yawSign.load(std::memory_order_relaxed),
+                g_pitchSign.load(std::memory_order_relaxed),
+                g_pitchTrim.load(std::memory_order_relaxed), look))
+            return;
+        const float gameYaw = look.yaw;
+        const float gamePitch = look.pitch;
+        const float gameRoll = look.roll;
         const float cosPitch = cosf(gamePitch), sinPitch = sinf(gamePitch);
         const float cosYaw = cosf(gameYaw), sinYaw = sinf(gameYaw);
         forward[0] = cosPitch * cosYaw;
@@ -4686,8 +4716,11 @@ namespace
             !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
             g_enabled.load(std::memory_order_relaxed);
         float savedPosition[3]{}, savedForward[3]{}, savedUp[3]{};
+        if (monitoring)
+            ApplyOdstMotionBlurSetting();
         if (transform)
         {
+            ApplyVrTurn();
             const char* bytes = static_cast<const char*>(source);
             memcpy(savedPosition, bytes + layout.sourcePosition,
                    sizeof(savedPosition));
@@ -4722,6 +4755,21 @@ namespace
             g_odstCamera.sawValidCamera.store(true, std::memory_order_release);
         }
         return result;
+    }
+
+    __declspec(noinline) void __fastcall OdstObserverCameraEffectHook(
+        int userIndex)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        ObserverCameraEffectFn original =
+            g_odstCamera.originalObserverCameraEffect;
+        const bool suppress =
+            g_odstCamera.armed.load(std::memory_order_acquire) &&
+            !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
+            g_enabled.load(std::memory_order_relaxed);
+        if (!suppress && original)
+            original(userIndex);
+        g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     __declspec(noinline) void* __fastcall OdstCamCopyHook(
@@ -5994,6 +6042,7 @@ namespace
     struct OdstResolvedCameraRuntime
     {
         uintptr_t camCopy = 0;
+        uintptr_t observerCameraEffect = 0;
         uintptr_t renderView = 0;
         uintptr_t prepareView = 0;
         uintptr_t buildViewport = 0;
@@ -6003,6 +6052,8 @@ namespace
         uintptr_t fpDriver = 0;
         uintptr_t fpDriverGuard = 0;
         uintptr_t gunCameraConstructor = 0;
+        float* motionBlurScale = nullptr;
+        float* motionBlurMax = nullptr;
         uintptr_t gunCameraArray = 0;
     };
 
@@ -6027,6 +6078,7 @@ namespace
         g_odstCamera.moduleSize = 0;
         g_odstCamera.moduleReference = nullptr;
         g_odstCamera.originalCamCopy = nullptr;
+        g_odstCamera.originalObserverCameraEffect = nullptr;
         g_odstCamera.originalRenderView = nullptr;
         g_odstCamera.prepareView = nullptr;
         g_odstCamera.buildViewport = nullptr;
@@ -6040,6 +6092,10 @@ namespace
                sizeof(g_odstCamera.eyeCompactCamera));
         memset(g_odstCamera.eyeDerivedBlock, 0,
                sizeof(g_odstCamera.eyeDerivedBlock));
+        for (OdstMotionBlurVar& var : g_odstCamera.motionBlurVars)
+            var = {};
+        g_odstCamera.motionBlurResolved = false;
+        g_odstCamera.motionBlurZeroed = false;
         for (void*& target : g_odstCamera.hookTargets)
             target = nullptr;
         g_odstCamera.hookTargetCount = 0;
@@ -6047,8 +6103,6 @@ namespace
         g_odstCamera.installedAtMs.store(0, std::memory_order_release);
         g_odstCamera.cameraArrayReady.store(
             false, std::memory_order_release);
-        g_odstCamera.headPitchReference = 0.0f;
-        g_odstCamera.headRollReference = 0.0f;
     }
 
     bool ValidateOdstCameraLayout()
@@ -6218,6 +6272,10 @@ namespace
                 base, size, textBegin, textEnd, "camera copy",
                 kOdstCameraProfile.camCopyPattern, resolved.camCopy);
             signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd,
+                "post-observer camera effect",
+                kObserverCameraEffectSig, resolved.observerCameraEffect);
+            signaturesOk &= FindUniqueOdstRole(
                 base, size, textBegin, textEnd, "inner view renderer",
                 kOdstCameraProfile.renderViewPattern, resolved.renderView);
             signaturesOk &= FindUniqueOdstRole(
@@ -6249,7 +6307,22 @@ namespace
                 "four-slot camera constructor",
                 kOdstCameraProfile.gunCameraConstructorPattern,
                 resolved.gunCameraConstructor);
-            if (!signaturesOk)
+            resolved.motionBlurScale = FindDebugVarFloat(
+                base, size, "motion_blur_scale");
+            resolved.motionBlurMax = FindDebugVarFloat(
+                base, size, "motion_blur_max");
+            const bool motionBlurOk = resolved.motionBlurScale &&
+                resolved.motionBlurMax &&
+                resolved.motionBlurScale != resolved.motionBlurMax &&
+                reinterpret_cast<uintptr_t>(resolved.motionBlurScale) >= base &&
+                reinterpret_cast<uintptr_t>(resolved.motionBlurScale) +
+                    sizeof(float) <= moduleEnd &&
+                reinterpret_cast<uintptr_t>(resolved.motionBlurMax) >= base &&
+                reinterpret_cast<uintptr_t>(resolved.motionBlurMax) +
+                    sizeof(float) <= moduleEnd;
+            if (!motionBlurOk)
+                LOG("ODST camera preflight: title-native motion-blur scale/max vars unavailable");
+            if (!signaturesOk || !motionBlurOk)
                 return OdstInstallResult::Failed;
 
             const uintptr_t guardCall = resolved.fpDriverGuard + 13;
@@ -6340,6 +6413,15 @@ namespace
             static_cast<unsigned long long>(resolved.fpDriverGuard - base),
             static_cast<unsigned long long>(resolved.gunCameraConstructor - base),
             static_cast<unsigned long long>(resolved.gunCameraArray - base));
+        LOG("ODST comfort evidence: observerEffect=%llX blurScale=%llX "
+            "blurMax=%llX (stock %.4f/%.4f)",
+            static_cast<unsigned long long>(
+                resolved.observerCameraEffect - base),
+            static_cast<unsigned long long>(
+                reinterpret_cast<uintptr_t>(resolved.motionBlurScale) - base),
+            static_cast<unsigned long long>(
+                reinterpret_cast<uintptr_t>(resolved.motionBlurMax) - base),
+            *resolved.motionBlurScale, *resolved.motionBlurMax);
         return OdstInstallResult::Installed;
     }
 
@@ -6542,6 +6624,9 @@ namespace
             return reinterpret_cast<void*>(g_odstCamera.originalFpCameraRebuild);
         case 3:
             return reinterpret_cast<void*>(g_odstCamera.originalFpDriver);
+        case 4:
+            return reinterpret_cast<void*>(
+                g_odstCamera.originalObserverCameraEffect);
         default:
             return nullptr;
         }
@@ -6551,7 +6636,7 @@ namespace
                                   bool renderOnly, bool& busy)
     {
         static bool rangesResolved = false;
-        static OdstCodeRange ranges[4]{};
+        static OdstCodeRange ranges[5]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -6559,13 +6644,14 @@ namespace
                 reinterpret_cast<const void*>(&OdstRenderViewHook),
                 reinterpret_cast<const void*>(&OdstFpCameraRebuildHook),
                 reinterpret_cast<const void*>(&OdstFpDriverHook),
+                reinterpret_cast<const void*>(&OdstObserverCameraEffectHook),
             };
             bool resolved = true;
             for (size_t i = 0; i < _countof(functions); ++i)
                 resolved &= ResolveOdstCodeRange(functions[i], ranges[i]);
             if (!resolved)
             {
-                LOG("ODST camera cleanup: could not resolve the four detour unwind ranges");
+                LOG("ODST camera cleanup: could not resolve the five detour unwind ranges");
                 return false;
             }
             rangesResolved = true;
@@ -6735,6 +6821,7 @@ namespace
             g_odstCamera.installed.store(true, std::memory_order_release);
             return false;
         }
+        RestoreOdstMotionBlurVars();
         g_odstCamera.installed.store(false, std::memory_order_release);
         ReleaseOdstModuleReferenceAndClearPointers();
         g_odstCamera.teardownRequested.store(false, std::memory_order_release);
@@ -6784,6 +6871,12 @@ namespace
         g_odstCamera.fpCameraUpload =
             reinterpret_cast<FpCameraUploadFn>(resolved.fpCameraUpload);
         g_odstCamera.gunCameraArray = resolved.gunCameraArray;
+        g_odstCamera.motionBlurVars[0] = {
+            resolved.motionBlurScale, *resolved.motionBlurScale};
+        g_odstCamera.motionBlurVars[1] = {
+            resolved.motionBlurMax, *resolved.motionBlurMax};
+        g_odstCamera.motionBlurResolved = true;
+        g_odstCamera.motionBlurZeroed = false;
 
         struct HookSpec
         {
@@ -6805,6 +6898,11 @@ namespace
             {"FP driver", reinterpret_cast<void*>(resolved.fpDriver),
              reinterpret_cast<void*>(&OdstFpDriverHook),
              reinterpret_cast<void**>(&g_odstCamera.originalFpDriver)},
+            {"camera recoil/shake",
+             reinterpret_cast<void*>(resolved.observerCameraEffect),
+             reinterpret_cast<void*>(&OdstObserverCameraEffectHook),
+             reinterpret_cast<void**>(
+                 &g_odstCamera.originalObserverCameraEffect)},
         };
 
         for (const HookSpec& hook : hooks)
@@ -6854,7 +6952,6 @@ namespace
             static_cast<int>(OdstFallbackReason::None), std::memory_order_release);
         g_odstCamera.teardownRequested.store(false, std::memory_order_release);
         g_odstCamera.cameraArrayReady.store(true, std::memory_order_release);
-        OdstRequestPresentationDetach();
         g_odstCamera.installed.store(true, std::memory_order_release);
         g_odstCamera.armed.store(false, std::memory_order_release);
         g_odstCamera.installedAtMs.store(
@@ -6869,7 +6966,7 @@ namespace
         g_positional.store(true, std::memory_order_release);
         g_needRecenter.store(true, std::memory_order_release);
         VR_SetScopeActive(false);
-        LOG("ODST camera install: four-hook transaction retained and disarmed; "
+        LOG("ODST camera install: five-hook transaction retained and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
             "controls, aim, reticle, HUD, scope, weapons, arms, and gameplay patches remain off");
         return OdstInstallResult::Installed;
@@ -6886,6 +6983,7 @@ namespace
                 "module, targets, and trampolines for retry");
             return false;
         }
+        RestoreOdstMotionBlurVars();
 
         const auto reason = static_cast<OdstFallbackReason>(
             g_odstCamera.fallbackReason.load(std::memory_order_acquire));
@@ -6977,6 +7075,7 @@ namespace
         uintptr_t odstCameraArrayRva = 0;
         uint64_t odstNextAttemptMs = 0;
         OdstCameraRearmGate odstRearmGate;
+        bool odstPresentationPrepared = false;
 #endif
         for (;;)
         {
@@ -7004,6 +7103,17 @@ namespace
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
             const bool odstActive =
                 hookPlan == TitleHookPlan::OdstExperimentalCameraCore;
+            if (odstActive && !odstPresentationPrepared)
+            {
+                // Prime the render-thread detach while ODST is still loading.
+                // The proven Halo 3 one-second camera debounce can then begin
+                // immediately when the camera hooks publish their heartbeat.
+                OdstRequestPresentationDetach();
+                odstPresentationPrepared = true;
+                LOG("ODST camera presentation: detach primed during title load");
+            }
+            else if (!odstActive)
+                odstPresentationPrepared = false;
             if (odstHooked &&
                 !g_odstCamera.teardownRequested.load(std::memory_order_acquire))
             {

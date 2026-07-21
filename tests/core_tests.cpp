@@ -58,6 +58,24 @@ int main()
             "manual ODST arm still requires the fresh-camera debounce");
         Check(!OdstManualArmEligible(true, true, true, true),
             "teardown always vetoes manual ODST arm");
+        OdstHalo3LookAngles look{};
+        Check(ComputeOdstHalo3LookAngles(
+                  1.0f, 0.25f, 0.5f, 0.2f, 0.4f, -1.0f, 1.0f, 0.1f, look),
+            "ODST Halo 3 look ownership accepts finite tracked angles");
+        Check(std::fabs(look.yaw - 0.75f) < 1e-5f &&
+                  std::fabs(look.pitch - 0.3f) < 1e-5f &&
+                  std::fabs(look.roll - 0.4f) < 1e-5f,
+            "ODST look matches Halo 3 recentered-yaw and absolute pitch/roll");
+        Check(ComputeOdstHalo3LookAngles(
+                  0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 1.0f, 1.0f, 0.0f, look) &&
+                  std::fabs(look.pitch - 1.5f) < 1e-5f,
+            "ODST Halo 3 look retains the proven pitch safety clamp");
+        Check(OdstVrOwnsLookStick(true, true),
+            "tracked private ODST consumes the stock look-stick axes");
+        Check(!OdstVrOwnsLookStick(true, false),
+            "ODST menus retain ordinary look-stick input before head tracking");
+        Check(!OdstVrOwnsLookStick(false, true),
+            "the ODST input rule cannot affect Halo 3 or public title paths");
         Check(OdstNestedSourceIsCompatible(0, 0x1234),
             "ODST installation may precede the first nested FP source publish");
         Check(OdstNestedSourceIsCompatible(0x1234, 0x1234),

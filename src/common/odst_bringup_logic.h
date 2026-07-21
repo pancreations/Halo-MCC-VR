@@ -40,6 +40,38 @@ inline bool ComputeOdstHalo3FovMatch(
     return true;
 }
 
+struct OdstHalo3LookAngles
+{
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    float roll = 0.0f;
+};
+
+// The headset-confirmed Halo 3 camera owns pitch and roll absolutely. Only yaw
+// is relative to the recentered game heading; no stock pitch/roll is an input.
+inline bool ComputeOdstHalo3LookAngles(
+    float gameYawReference, float headYawReference, float headYaw,
+    float headPitch, float headRoll, float yawSign, float pitchSign,
+    float pitchTrim, OdstHalo3LookAngles& out)
+{
+    const float values[] = {
+        gameYawReference, headYawReference, headYaw, headPitch, headRoll,
+        yawSign, pitchSign, pitchTrim};
+    for (float value : values)
+        if (!std::isfinite(value))
+            return false;
+    float yawDelta = headYaw - headYawReference;
+    while (yawDelta > 3.14159265f)
+        yawDelta -= 6.2831853f;
+    while (yawDelta < -3.14159265f)
+        yawDelta += 6.2831853f;
+    out.yaw = gameYawReference + yawSign * yawDelta;
+    const float pitch = pitchSign * headPitch + pitchTrim;
+    out.pitch = pitch < -1.5f ? -1.5f : (pitch > 1.5f ? 1.5f : pitch);
+    out.roll = headRoll;
+    return true;
+}
+
 enum class OdstHeartbeatAction
 {
     None,
@@ -61,6 +93,11 @@ inline bool OdstManualArmEligible(
 {
     return cameraStable && headTracking && stereoEnabled &&
         !teardownRequested;
+}
+
+inline bool OdstVrOwnsLookStick(bool cameraOnlyContext, bool headTracking)
+{
+    return cameraOnlyContext && headTracking;
 }
 
 inline bool OdstNestedSourceIsCompatible(

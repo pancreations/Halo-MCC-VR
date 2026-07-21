@@ -46,6 +46,20 @@ Authoritative as of 2026-07-21. If another note conflicts with this file, this f
   build; the intervening commits are release documentation/export changes.
   Preserve `recovery/best-working-20260721-crosshair` at `c58db2e` and do not
   mix ODST experiments into the Halo 3 release line.
+- Private ODST FOV/depth checkpoint `347b232` was headset-tested from DLL
+  `5B12235AD0B12A2804918B88057DA129D24CCAE7521DC89DE22D37F5FF0EA97B`.
+  The deeper stereo worked continuously, but activation lag, left-eye motion
+  blur, raw right-stick pitch, and head recoil remained. MCC was closed and
+  exact baseline `0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`
+  was restored; preserve sealed `pre-odst-private-backup-6`.
+- The next private ODST comfort-parity candidate is source-complete but not
+  headset-confirmed. It primes presentation detach during ODST's zero-camera
+  loading interval without shortening Halo 3's proven one-second debounce;
+  uses Halo 3's recentered-yaw/absolute-HMD-pitch-and-roll formula and
+  snap/smooth turn ownership; adds the unique ODST post-observer camera-effect
+  hook at evidence RVA `0x1ACAF0`; and resolves ODST-native
+  `motion_blur_scale`/`motion_blur_max` by name. OFF and ON Release builds and
+  both CTest runs pass. A fresh explicit approval is required before deployment.
 - Headset-confirmed camera-recoil runtime checkpoint: `56dad79` on
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
@@ -534,21 +548,25 @@ This is an implementation candidate, not public ODST support:
   from entering the public deploy/package flow.
 - A private option-ON build dispatches only the isolated ODST camera installer;
   it never calls the monolithic Halo 3 installer. Preflight requires the exact
-  retail PE timestamp `0x68A0F232` and image size `0x4797000`, ten unique
-  title-specific signatures inside the expected image/code ranges, the derived
-  four-slot camera array, and the proven `0x90`/`0xC0`/`0x2810` layout and
-  single-user camera invariants before creating any hook.
-- The complete installed set is four detours: compact-camera copy, inner
-  prepared-view renderer, FP camera rebuild, and FP driver. Resolved viewport,
-  matrix, prepare-view, upload, guard, and constructor roles are dependencies or
-  validation anchors, not additional behavioral hooks.
-- The enabled behavior is limited to stereo rendering, rotational head
-  tracking, positional 6DOF, minimum first-person camera coherence, and ordinary
-  virtual-gamepad buttons/sticks only while the private build explicitly owns
-  ODST. Motion-controller aim, head-relative movement, reticle suppression,
-  HUD/VISR changes, scopes, pause, brightness, motion blur, weapon/bone/arm/VRIK
-  work, and all gameplay patches remain disabled. Shared gameplay behavior and
-  the normal option-OFF build remain fail-closed outside their proven context.
+  retail PE timestamp `0x68A0F232` and image size `0x4797000`, eleven unique
+  title-specific signatures inside the expected image/code ranges, two native
+  motion-blur debug variables, the derived four-slot camera array, and the
+  proven `0x90`/`0xC0`/`0x2810` layout and single-user camera invariants before
+  creating any hook.
+- The complete installed set is five detours: compact-camera copy, inner
+  prepared-view renderer, FP camera rebuild, FP driver, and the unique
+  post-observer camera-effect boundary. Resolved viewport, matrix, prepare-view,
+  upload, guard, and constructor roles are dependencies or validation anchors,
+  not additional behavioral hooks.
+- The enabled behavior is limited to stereo rendering, Halo 3-owned headset
+  orientation, positional 6DOF, minimum first-person camera coherence, native
+  blur suppression, native recoil/shake suppression, and ordinary virtual-pad
+  controls. During tracked gameplay the OpenXR right stick uses Halo 3's
+  snap/smooth turn path and raw stock look axes are consumed. Motion-controller
+  weapon aim, head-relative movement, reticle suppression, HUD/VISR changes,
+  scopes, pause, brightness, weapon/bone/arm/VRIK work, and all gameplay patches
+  remain disabled. Shared gameplay behavior and the normal option-OFF build
+  remain fail-closed outside their proven context.
 - Installation is all-or-stock. Hooks are created and enabled as one
   transaction and initially remain disarmed until a continuously fresh camera
   passes the debounce. Any failed identity/signature/layout/runtime invariant

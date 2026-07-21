@@ -36,19 +36,25 @@ into an ODST commit without the user's explicit direction.
   demand an exact OFF cache entry and reject private ON caches.
 - Explicitly configuring the private option ON enables only the isolated ODST
   camera-core installer. It requires the exact retail timestamp/image size,
-  ten unique title-specific signatures, in-module/code-range checks, the
-  derived four-slot array, and proven ODST layout/single-user invariants before
-  hook creation. It does not invoke Halo 3's monolithic installer.
-- The complete ODST detour set is exactly four hooks: compact-camera copy,
-  inner prepared-view render, FP camera rebuild, and FP driver. It supplies
-  stereo, rotational tracking, positional 6DOF, and minimum FP-camera
-  coherence only.
+  eleven unique title-specific signatures, two title-native motion-blur
+  variables, in-module/code-range checks, the derived four-slot array, and
+  proven ODST layout/single-user invariants before hook creation. It does not
+  invoke Halo 3's monolithic installer.
+- The current private ODST detour set is exactly five hooks: compact-camera
+  copy, inner prepared-view render, FP camera rebuild, FP driver, and the
+  uniquely matched post-observer camera-effect stage. It supplies stereo,
+  Halo 3-owned headset orientation, positional 6DOF, minimum FP-camera
+  coherence, and camera recoil/shake suppression.
 - The private build permits ordinary virtual-gamepad buttons and sticks only
   while it explicitly owns ODST, so MCC menus and ODST remain navigable.
-  Motion-controller aim, head-relative movement transforms, reticle suppression,
-  HUD/VISR changes, scopes, pause, brightness, motion blur, weapons, bones, arms,
-  VRIK, and all gameplay patches remain off. The public option-OFF build and
-  shared gameplay paths remain fail-closed outside their proven context.
+  During tracked gameplay, the right stick is consumed like Halo 3: horizontal
+  input drives the existing snap/smooth turn path and raw vertical look is not
+  passed into ODST's stock camera. ODST's native motion-blur scale/max vars are
+  forced to zero while the shared Motion blur setting is off and restored on
+  teardown. Motion-controller weapon aim, head-relative movement transforms,
+  reticle suppression, HUD/VISR changes, scopes, pause, brightness, weapons,
+  bones, arms, VRIK, and all gameplay patches remain off. The public option-OFF
+  build and shared gameplay paths remain fail-closed outside their proven context.
 - Install is an atomic all-or-stock transaction. The hooks remain disarmed
   until a continuously fresh camera passes the stability debounce. Fallback
   disables the outer renderer before dependencies, drains and verifies detour
@@ -201,6 +207,50 @@ logs both per-eye compact inputs and final projection scales. This is a private
 headset experiment based on live same-machine evidence, not a public-support
 change. Motion-blur suppression remains separate.
 
+## Sixth private headset result and Halo 3 comfort-parity candidate
+
+The FOV-pair checkpoint was deployed from source commit
+`347b23285be7fc5399fbf00e38a10e7272b679a2`, DLL
+`5B12235AD0B12A2804918B88057DA129D24CCAE7521DC89DE22D37F5FF0EA97B`,
+with sealed record `Halo_MCC_VR\pre-odst-private-backup-6`. The user confirmed
+the deeper 3D worked and gameplay stayed hooked, but reported four remaining
+differences from Halo 3: activation took too long, the left-eye motion blur was
+bad, right-stick vertical input moved the camera, and native head recoil
+remained. MCC was closed and the dedicated restore mode byte-restored baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`;
+preserve backup-6.
+
+The run log makes activation deterministic rather than speculative. ODST was
+detected at `13:37:13.025`; the camera array remained the genuine unloaded
+zero state until `13:37:23.088`; the hook transaction completed at
+`13:37:23.166` (78 ms later); stereo armed at `13:37:25.191`. Halo 3 and ODST
+both intentionally require 1000 ms of continuously fresh camera callbacks.
+The extra ODST interval came from requesting a presentation detach only after
+hook installation and then resetting that same debounce. The next candidate
+primes the detach at ODST title entry while the stock camera is still loading;
+it does not shorten Halo 3's proven debounce or bypass the zero-camera gate.
+
+The other changes are direct Halo 3 parity ports backed by retail-image
+evidence:
+
+- The exact 60-byte Halo 3 `observer_apply_camera_effect` signature is unique
+  in both retail modules: Halo 3 RVA `0x17DF44`, ODST RVA `0x1ACAF0`. ODST adds
+  this as the fifth member of the atomic transaction with its own trampoline,
+  callback counter, unwind range, and fail-closed teardown.
+- ODST's debug table contains unique type-6 float entries
+  `motion_blur_scale` and `motion_blur_max` at value RVAs `0x8F0ED4` and
+  `0x8F0ED8`, stock `0.35/0.08`. The existing by-name resolver is used; no RVA
+  is hardcoded. Both values are restored after verified hook quiescence.
+- ODST previously recomputed the tracked view from changing stock yaw/pitch/roll.
+  The candidate now uses the headset-confirmed Halo 3 formula: recentered game
+  yaw plus relative HMD yaw, absolute HMD pitch and roll, the same pitch clamp,
+  and the same snap/smooth turn routine. A pure regression test locks that
+  formula and the camera-only stick-ownership gate.
+
+This comfort-parity candidate passes Release builds and CTest in both the
+normal option-OFF and private option-ON trees. It is not headset-confirmed and
+must receive a fresh `I-APPROVE-ODST-TEST` before private deployment.
+
 ## Proven evidence available to implementation
 
 Retail ODST module used for the gate:
@@ -219,6 +269,7 @@ Camera-core ODST anchors:
 | Role | ODST RVA |
 |---|---:|
 | compact-camera copy | `0x2CAAF0` |
+| post-observer camera effect | `0x1ACAF0` |
 | inner prepared-view renderer | `0x2AFB10` |
 | prepare view | `0x1B4694` |
 | viewport builder | `0x2CAC5C` |

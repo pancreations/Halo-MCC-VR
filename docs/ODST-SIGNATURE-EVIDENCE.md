@@ -523,6 +523,45 @@ Verdict: unique and semantically equivalent as the native first-person
 weapon-IK mode decision. This does not authorize the Halo 3 branch patch in
 ODST.
 
+## Halo 3 comfort-parity addendum
+
+### Post-observer camera effect
+
+The production Halo 3 `kObserverCameraEffectSig` is 60 bytes long with only
+three RIP-relative data displacements wildcarded. Offline scanning of the exact
+retail images found one match in each module:
+
+| Module | Match count | RVA |
+|---|---:|---:|
+| `halo3.dll` | 1 | `0x17DF44` |
+| `halo3odst.dll` | 1 | `0x1ACAF0` |
+
+This is the already headset-confirmed Halo 3 `observer_apply_camera_effect`
+boundary. The matching ODST entry has the same prologue and camera-effect data
+setup, so the private ODST path may add it as a required, unique, in-`.text`
+fifth hook. Missing/ambiguous resolution or hook creation fails the entire
+ODST transaction; ODST owns a separate original-function trampoline and never
+reuses Halo 3's global recoil-hook state.
+
+### ODST native motion-blur controls
+
+ODST does not contain Halo 3's split `motion_blur_scale_x/y` and
+`motion_blur_max_x/y` names. It contains its own unique type-6 float debug-table
+entries:
+
+| Name | Name RVA | Table RVA | Value RVA | Retail value |
+|---|---:|---:|---:|---:|
+| `motion_blur_scale` | `0x811DA8` | `0x8E7400` | `0x8F0ED4` | `0.35` |
+| `motion_blur_max` | `0x811C80` | `0x8E7418` | `0x8F0ED8` | `0.08` |
+
+Each name and table reference occurs once in the exact retail module. Runtime
+code resolves the slots by name through the existing debug-table resolver and
+bounds both pointers inside the identity-checked ODST image; the evidence RVAs
+are never hardcoded. Both values are zeroed each monitored camera frame while
+motion blur is disabled and restored only after all ODST detours reach verified
+quiescence. The superficially related `motion_blur_enabled` entry is type 0 and
+does not point to a float value slot, so it is deliberately rejected.
+
 ## Twelve-signature gate decision
 
 All twelve formerly failing production roles now have a unique, title-specific

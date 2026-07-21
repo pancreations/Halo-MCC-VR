@@ -10,6 +10,7 @@
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/input_logic.h"
+#include "../common/odst_bringup_logic.h"
 #include "../common/scope_logic.h"
 
 // M3 VR input. MCC reads gamepads through XInputGetState; hooking it lets the
@@ -169,6 +170,16 @@ namespace
             state->Gamepad.sThumbRY = ToRawStick(ry);
             if (!g_overrideLogged.exchange(true))
                 LOG("M3: VR aim override active (right stick steered by the controller)");
+        }
+        else if (OdstVrOwnsLookStick(
+                     Game_IsCameraOnlyBringup(), Game_IsHeadTracking()))
+        {
+            // Match Halo 3 camera ownership during the private ODST bring-up:
+            // ApplyVrTurn consumes turnX directly from the OpenXR pad, while
+            // the tracked HMD exclusively owns pitch. Do not also feed either
+            // axis into ODST's stock camera/aim integrator.
+            state->Gamepad.sThumbRX = 0;
+            state->Gamepad.sThumbRY = 0;
         }
         else
         {
