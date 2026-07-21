@@ -33,6 +33,15 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   active, using the engine debug variable resolved by name. Headset result on
   2026-07-21: "thats good i think it works." Treat that as a positive initial
   result; broader cutscene coverage is still pending.
+- User-designated best-working cutscene checkpoint: `dd1abc5` on
+  `fix/cutscene-shot-facing`, preserved at
+  `recovery/best-working-20260721-cutscenes`. It keeps the accepted culling
+  correction and uses signature-verified cinematic scene/shot state to align
+  yaw with each authored camera cut and the return to gameplay. Deployed DLL
+  build 2026-07-21 02:05 AM, SHA-256
+  `14A504EE4CE4CEB380BA94CAD1CBCE05CC2586D9D5D803651DE89AE50C4F61D2`.
+  The user designated this the best-working version and wants further local
+  bug-fixing from this build before any GitHub update.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.
