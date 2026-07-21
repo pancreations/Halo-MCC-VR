@@ -122,6 +122,7 @@ namespace
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
     float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
+    float g_reticlePaintedOpacity = -1.0f; // last painted opacity; sentinel forces first paint
     bool g_reticleEnemyPainted = false; // which color is currently on the image
     // Set by the game layer when the crosshair is over an enemy (the engine's
     // target-lock state). While set, the reticle repaints red like the OG HUD.
@@ -1536,15 +1537,25 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         // non-gameplay states. Keep the old procedural fallback fully
         // transparent so it cannot appear close to the viewer; authored
         // crosshairs use UploadAuthoredReticle below and are unaffected.
-        constexpr float kProceduralOpacity = 0.0f;
+        // The procedural reticle is normally transparent: titles with the
+        // authored CHUD capture (Halo 3) get their visible crosshair from
+        // UploadAuthoredReticle, and a visible procedural fallback could flash
+        // during death/loading gaps. The private ODST camera core installs no
+        // authored capture yet, so there the procedural reticle IS the
+        // crosshair and must be opaque to be seen at all.
+        const float kProceduralOpacity =
+            Game_IsCameraOnlyBringup() ? 1.0f : 0.0f;
         const bool enemy = g_reticleEnemy.load(std::memory_order_relaxed);
         const float wantR = enemy ? 1.0f : g_config.reticle_r;
         const float wantG = enemy ? 0.18f : g_config.reticle_g;
         const float wantB = enemy ? 0.14f : g_config.reticle_b;
-        // Repaint only when the desired color changed (compositor keeps showing
-        // the last released image, so a static color costs nothing per frame).
+        // Repaint only when the desired color OR opacity changed (compositor
+        // keeps showing the last released image, so a static reticle costs
+        // nothing per frame). Opacity is included so a Halo 3 -> ODST transition
+        // repaints the swapchain from transparent to visible.
         const bool colorChanged = g_reticleContainsAuthored ||
             g_reticleEnemyPainted != enemy ||
+            g_reticlePaintedOpacity != kProceduralOpacity ||
             (!enemy && (g_reticlePaintedColor[0] != g_config.reticle_r ||
                         g_reticlePaintedColor[1] != g_config.reticle_g ||
                         g_reticlePaintedColor[2] != g_config.reticle_b));
@@ -1559,6 +1570,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_reticlePaintedColor[0]=wantR;
         g_reticlePaintedColor[1]=wantG;
         g_reticlePaintedColor[2]=wantB;
+        g_reticlePaintedOpacity=kProceduralOpacity;
         g_reticleEnemyPainted=enemy;
         g_reticleContainsAuthored=false;
         if (clearingAuthored)

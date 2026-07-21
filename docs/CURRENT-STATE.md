@@ -724,6 +724,52 @@ unknowns that require the headset: whether ODST's source-forward is truly
 aim-derived (bullets track the controller ray), whether its stock aim integrator
 consumes the injected stick like Halo 3's, and the closed-loop gain feel.
 
+### ODST aim/reticle build headset result, and Build 2 scope (2026-07-21)
+
+The aim/reticle candidate `74bca82` was deployed as private DLL
+`64224A36DBDF1641C3ED9B0C50ACE82F270950BFFBA9029E5DB139A94869108F`
+(record `pre-odst-private-backup-13`, baseline `c0a6a90d`) and headset-tested.
+The `halo3xr.log` build stamp `Jul 21 2026 16:51:45` matched the deployed DLL.
+
+Result: closed-loop weapon aim **works** — bullet traces follow the controller,
+confirming ODST's `layout.sourceForward` is the true aim vector and its stock
+turn integrator consumes the injected stick, exactly as in Halo 3. The user
+reported five remaining gaps:
+
+1. Aim has catch-up lag / not 1:1 (only the bullet trace gave feedback).
+2. The visible first-person gun and hands are stuck to the face (no controller-
+   driven weapon pose yet).
+3. The floating VR crosshair never appeared.
+4. The native HUD did not appear; the user wants the native HUD rendered, the
+   native center crosshair hidden, and its authored asset + green/red target
+   states routed onto the VR crosshair.
+5. Movement is not head-relative: pressing forward walks a fixed world
+   direction, not where the user looks. This is the Halo 3 head-relative-move
+   fix the user explicitly referenced.
+
+Two root causes were confirmed from source, not guessed:
+
+- Movement: `Game_MapMoveStick` early-returns for ODST because its only gate is
+  `Game_AllowsSharedGameplayFeatures()` (false for camera-only). The left stick
+  is otherwise passed through, so ODST walks along the fixed body heading.
+- Crosshair: the procedural reticle is painted with opacity `0.0` (deliberately
+  transparent) because Halo 3's visible crosshair comes from the authored CHUD
+  capture; a stale procedural fallback could flash during death. ODST installs
+  no authored capture, so its reticle falls back to the transparent procedural
+  path and shows nothing. Gap 1 is largely a symptom of gap 3 — the reticle quad
+  is drawn from the raw controller aim pose at 0% smoothing, so a visible reticle
+  tracks 1:1 with no closed-loop lag.
+
+Build 2 (this session, on `feature/odst-bringup`) is the user-selected first
+follow-up: head-relative movement plus a visible VR crosshair, both fenced to
+the ODST camera-only context and no-ops for Halo 3 and the public OFF build.
+`Game_MapMoveStick` also allows `Game_AllowsOdstMotionAim()`; the procedural
+reticle opacity is `1.0` when `Game_IsCameraOnlyBringup()` (repainting on the
+transition) and stays `0.0` for Halo 3. Gaps 2 (gun/hands off the face; VRIK/
+palette) and 4 (HUD + native-crosshair hide + color-routed reticle; CHUD/HUD)
+remain larger, separate ODST gates for later builds, each needing independent
+ODST evidence.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

@@ -8127,7 +8127,7 @@ bool Game_ComputeAimStick(float& outRx, float& outRy)
 
 void Game_MapMoveStick(float& mx, float& my)
 {
-    if (!Game_AllowsSharedGameplayFeatures())
+    if (!Game_AllowsSharedGameplayFeatures() && !Game_AllowsOdstMotionAim())
         return;
     // The game moves relative to its aim heading, which VR aim points at the
     // hand. Rotate the move vector by (head - aim) yaw so pushing forward
