@@ -387,9 +387,14 @@ namespace
     using FpDriverFn = void(__fastcall*)(void* view, unsigned char flag);
     FpDriverFn g_origFpDriver = nullptr;
     int32_t* g_fpDriverGuard = nullptr; // zero-init global gating call site 1
+    thread_local bool g_scopeRenderActive = false;
 
     void __fastcall FpDriverHook(void* view, unsigned char flag)
     {
+        // The scope's third camera is world-only. Suppress this dedicated
+        // first-person driver for that pass so neither gun nor CHUD is duplicated.
+        if (g_scopeRenderActive)
+            return;
         VR_TraceEvent("fp-driver", (int)flag, g_stereoEye.load());
         // (The hud_zoom layout-factor poke that lived here is retired
         // 2026-07-19: [view+0x2B0]+0x174 never resized the visible HUD. HUD
@@ -3395,6 +3400,41 @@ namespace
             g_origObserverCameraEffect(userIndex);
     }
 
+    bool BuildRightHandScopeCamera(char* camera, const unsigned char* saved)
+    {
+        float controllerBasis[9], origin[3], meshScale=1.0f;
+        if(!ControllerWorldPoseEx(false,controllerBasis,origin,meshScale))
+            return false;
+        float forward[3]={g_aimFwdX.load(),g_aimFwdY.load(),g_aimFwdZ.load()};
+        float length=sqrtf(forward[0]*forward[0]+forward[1]*forward[1]+
+                           forward[2]*forward[2]);
+        if(!std::isfinite(length) || length<1e-3f) return false;
+        for(float& component:forward) component/=length;
+        float worldUp[3]={g_worldUp[0].load(),g_worldUp[1].load(),g_worldUp[2].load()};
+        float right[3]={forward[1]*worldUp[2]-forward[2]*worldUp[1],
+                        forward[2]*worldUp[0]-forward[0]*worldUp[2],
+                        forward[0]*worldUp[1]-forward[1]*worldUp[0]};
+        length=sqrtf(right[0]*right[0]+right[1]*right[1]+right[2]*right[2]);
+        if(!std::isfinite(length) || length<1e-3f)
+        {
+            const float* fallbackUp=controllerBasis+6;
+            right[0]=forward[1]*fallbackUp[2]-forward[2]*fallbackUp[1];
+            right[1]=forward[2]*fallbackUp[0]-forward[0]*fallbackUp[2];
+            right[2]=forward[0]*fallbackUp[1]-forward[1]*fallbackUp[0];
+            length=sqrtf(right[0]*right[0]+right[1]*right[1]+right[2]*right[2]);
+            if(!std::isfinite(length) || length<1e-3f) return false;
+        }
+        for(float& component:right) component/=length;
+        const float up[3]={right[1]*forward[2]-right[2]*forward[1],
+                           right[2]*forward[0]-right[0]*forward[2],
+                           right[0]*forward[1]-right[1]*forward[0]};
+        memcpy(camera,saved,0x90);
+        memcpy(camera+0x00,origin,sizeof(origin));
+        memcpy(camera+0x0C,forward,sizeof(forward));
+        memcpy(camera+0x18,up,sizeof(up));
+        return true;
+    }
+
     void __fastcall RenderViewHook(void* view)
     {
         if (!VR_IsStereoEnabled() || !g_enabled.load() || !view)
@@ -3618,6 +3658,40 @@ namespace
             VR_EndRasterEye();
         }
         g_stereoEye = -1;
+        g_eyeFpView.store(nullptr,std::memory_order_release);
+
+        // One mono world-only camera from the right-hand weapon seat, aimed
+        // down the same ray used for bullets. Zoom is absolute and universal.
+        if(g_buildViewport && g_buildMatrices && VR_ScopeShouldRenderThisFrame() &&
+           BuildRightHandScopeCamera(camera,saved) && VR_BeginScopeRaster())
+        {
+            alignas(16) unsigned char scopeTemporary[0x40]{};
+            g_buildViewport(camera,scopeTemporary);
+            g_buildMatrices(camera,scopeTemporary,
+                            reinterpret_cast<char*>(view)+0x98,0.0f);
+            const float zoom=Clamp(g_config.scope_zoom,1.25f,8.0f);
+            const float tanX=tanf(g_renderHalfFovX.load())/zoom;
+            const float tanY=tanf(g_renderHalfFovY.load())/zoom;
+            if(tanX>1e-4f && tanY>1e-4f)
+            {
+                float* projection=reinterpret_cast<float*>(
+                    reinterpret_cast<char*>(view)+0x98+0x78);
+                projection[0]=1.0f/tanX;
+                projection[5]=1.0f/tanY;
+            }
+            memcpy(reinterpret_cast<char*>(view)+0x158,camera,0x90);
+            memcpy(reinterpret_cast<char*>(view)+0x1E8,
+                   reinterpret_cast<char*>(view)+0x98,0x90);
+            g_scopeRenderActive=true;
+            if(g_prepareView) g_prepareView(view,0);
+            g_origRenderView(view);
+            g_scopeRenderActive=false;
+            VR_CaptureScope();
+            VR_EndScopeRaster();
+            static std::atomic<bool> logged{false};
+            if(!logged.exchange(true))
+                LOG("scope camera active: right-hand origin, bullet ray, %.2fx absolute zoom",zoom);
+        }
         memcpy(camera, saved, sizeof(saved));
         memcpy(reinterpret_cast<char*>(view) + 0x98, savedDerived, sizeof(savedDerived));
         memcpy(reinterpret_cast<char*>(view) + 0x158, savedCameraCopy, sizeof(savedCameraCopy));

@@ -219,6 +219,15 @@ int main()
           std::fabs(quad.height - 0.075f) < 1e-5f,
         "Scope is fixed-size 4:3 geometry independent of headset distance");
 
+    ScopeRefreshScheduler refresh;
+    Check(!refresh.Advance(true, 2) && refresh.Advance(true, 2),
+        "Scope refresh divisor 2 renders every second active frame");
+    Check(!refresh.Advance(false, 2) && !refresh.Advance(true, 2) &&
+          refresh.Advance(true, 2),
+        "Closing the scope resets its image refresh schedule");
+    Check(refresh.Advance(true, 0),
+        "Scope refresh divisor clamps safely to one");
+
     PauseLevelRecovery pauseRecovery;
     Check(!pauseRecovery.Update(true, false, false),
         "Pause recovery stays armed during an ordinary pause");

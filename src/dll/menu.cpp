@@ -278,7 +278,7 @@ namespace
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Universal zoom screen (IMAGE TEST)");
+        ImGui::Text("Universal gun-mounted zoom screen");
         if (ImGui::Checkbox("Enable R3 gun-mounted screen", &g_config.scope_enabled))
         {
             changed = true;
@@ -287,11 +287,13 @@ namespace
         }
         ImGui::SameLine();
         ImGui::TextDisabled(VR_IsScopeActive() ? "[R3: visible]" : "[R3: hidden]");
-        ImGui::TextDisabled("This checkpoint puts a normal rendered eye image on the proven flat 4:3\n"
-                            "screen. It is not magnified or aimed down the gun yet.");
+        ImGui::TextDisabled("R3 toggles a magnified world-only view from the right-hand weapon pose.\n"
+                            "Halo's full-screen/native zoom stays suppressed for every weapon.");
         if (g_config.scope_enabled)
         {
             ImGui::Indent();
+            changed |= ImGui::SliderFloat("Scope zoom", &g_config.scope_zoom,
+                                          1.25f, 8.0f, "%.2fx");
             changed |= ImGui::SliderFloat("Screen width (m)##scope",
                                           &g_config.scope_screen_width_m,
                                           0.04f, 0.25f, "%.3f");
@@ -304,7 +306,11 @@ namespace
             changed |= ImGui::SliderFloat("Screen forward offset (m)",
                                           &g_config.scope_screen_forward_m,
                                           0.05f, 0.80f, "%.3f");
+            changed |= ImGui::SliderInt("Image refresh divisor",
+                                        &g_config.scope_refresh_divisor, 1, 4);
             ImGui::TextDisabled("Offsets are direct gun-local meters with no hidden added distance.");
+            ImGui::TextDisabled("Higher refresh divisors render the zoom image less often; the screen\n"
+                                "still follows the gun every frame. The extra view costs GPU time only while open.");
             ImGui::Unindent();
         }
         ImGui::Spacing();

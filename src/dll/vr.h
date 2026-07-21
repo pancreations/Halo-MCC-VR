@@ -56,6 +56,13 @@ void VR_CaptureRenderedEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
 
+// Universal scope: a refresh-limited third world render redirected into a
+// private cache. The physical OpenXR quad continues tracking every frame.
+bool VR_ScopeShouldRenderThisFrame();
+bool VR_BeginScopeRaster();
+void VR_CaptureScope();
+void VR_EndScopeRaster();
+
 // Redirects the final scene-color RTV to the active eye's target and, while
 // stereo_sun_shafts is off, neutralizes the sun-shaft occlusion pass (its
 // radial blur uses a single per-frame sun position, streaking the other eye).

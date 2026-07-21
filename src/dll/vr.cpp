@@ -94,16 +94,23 @@ namespace
     std::vector<ID3D11RenderTargetView*> g_reticleRtvs;
     constexpr uint32_t kReticleSize = 512;
 
-    // Stage 2 universal-scope image-delivery proof. The fixed 4:3 quad now
-    // receives one already-valid eye image through the proven blit path. It
-    // still performs no extra game-camera render, isolating image delivery from
-    // the magnified aim-camera work that follows only after a headset pass.
+    // Universal gun scope. A private scene cache receives the refresh-limited
+    // third render; an isolated upload pipeline center-crops it to the fixed
+    // 1024x768 screen and paints the aiming mark without touching either eye.
     XrSwapchain g_scopeScreenChain = XR_NULL_HANDLE;
     std::vector<ID3D11Texture2D*> g_scopeScreenImages;
     std::vector<ID3D11RenderTargetView*> g_scopeScreenRtvs;
     constexpr uint32_t kScopeScreenWidth = 1024;
     constexpr uint32_t kScopeScreenHeight = 768;
     std::atomic<bool> g_scopeActive{false};
+    ID3D11Texture2D* g_scopeCache = nullptr;
+    ID3D11RenderTargetView* g_scopeCacheRtv = nullptr;
+    ID3D11ShaderResourceView* g_scopeCacheSrv = nullptr;
+    D3D11_TEXTURE2D_DESC g_scopeCacheDesc{};
+    std::atomic<bool> g_rasterScope{false};
+    bool g_scopeRedirected = false;
+    std::atomic<bool> g_scopeHasImage{false};
+    ScopeRefreshScheduler g_scopeRefreshScheduler;
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
     float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
@@ -229,6 +236,15 @@ namespace
     D3D11_TEXTURE2D_DESC g_intermediateDesc{};
     ID3D11ShaderResourceView* g_srcSrv = nullptr; // direct SRV of the backbuffer, when allowed
     ID3D11Texture2D* g_srcSrvKey = nullptr;
+
+    // Deliberately separate from the eye/menu blitter: scope upload failures
+    // cannot poison the proven stereo presentation pipeline.
+    ID3D11VertexShader* g_scopeUploadVs = nullptr;
+    ID3D11PixelShader* g_scopeUploadPs = nullptr;
+    ID3D11PixelShader* g_scopeUploadPsLinearize = nullptr;
+    ID3D11SamplerState* g_scopeUploadSampler = nullptr;
+    ID3D11RasterizerState* g_scopeUploadRasterizer = nullptr;
+    ID3D11DepthStencilState* g_scopeUploadDepthOff = nullptr;
 
     // Status shown in the menu (only touched on the render thread)
     VrStatus g_status{};
@@ -736,14 +752,161 @@ float4 ps_pass(VSOut i) : SV_Target
         return rtvs[idx];
     }
 
+    void ReleaseScopeCache()
+    {
+        if (g_scopeCacheSrv) { g_scopeCacheSrv->Release(); g_scopeCacheSrv = nullptr; }
+        if (g_scopeCacheRtv) { g_scopeCacheRtv->Release(); g_scopeCacheRtv = nullptr; }
+        if (g_scopeCache) { g_scopeCache->Release(); g_scopeCache = nullptr; }
+        g_scopeCacheDesc = {};
+        g_scopeHasImage.store(false);
+    }
+
+    bool EnsureScopeCache()
+    {
+        if (!g_device || !g_eyeCacheDesc.Width || !g_eyeCacheDesc.Height)
+            return false;
+        if (g_scopeCache && g_scopeCacheRtv && g_scopeCacheSrv &&
+            g_scopeCacheDesc.Width == g_eyeCacheDesc.Width &&
+            g_scopeCacheDesc.Height == g_eyeCacheDesc.Height &&
+            g_scopeCacheDesc.Format == g_eyeCacheDesc.Format)
+            return true;
+        ReleaseScopeCache();
+        D3D11_TEXTURE2D_DESC desc = g_eyeCacheDesc;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = 0;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        HRESULT hr = g_device->CreateTexture2D(&desc, nullptr, &g_scopeCache);
+        if (SUCCEEDED(hr))
+            hr = g_device->CreateRenderTargetView(g_scopeCache, nullptr, &g_scopeCacheRtv);
+        if (SUCCEEDED(hr))
+            hr = g_device->CreateShaderResourceView(g_scopeCache, nullptr, &g_scopeCacheSrv);
+        if (FAILED(hr))
+        {
+            static bool logged = false;
+            if (!logged)
+            {
+                logged = true;
+                LOG("scope cache creation failed: HRESULT 0x%08X (%ux%u format %d)",
+                    (unsigned)hr, desc.Width, desc.Height, (int)desc.Format);
+            }
+            ReleaseScopeCache();
+            return false;
+        }
+        g_scopeCacheDesc = desc;
+        LOG("scope private render cache created: %ux%u format %d",
+            desc.Width, desc.Height, (int)desc.Format);
+        return true;
+    }
+
+    bool EnsureScopeUploadPipeline()
+    {
+        if (g_scopeUploadVs && g_scopeUploadPs && g_scopeUploadPsLinearize &&
+            g_scopeUploadSampler && g_scopeUploadRasterizer && g_scopeUploadDepthOff)
+            return true;
+        static bool failed = false;
+        if (failed || !g_device) return false;
+        static const char* source = R"(
+Texture2D srcTex : register(t0);
+SamplerState smp : register(s0);
+struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+VSOut vs_main(uint id : SV_VertexID) {
+    VSOut o; float2 uv=float2((id<<1)&2,id&2);
+    o.pos=float4(uv*float2(2,-2)+float2(-1,1),0,1); o.uv=uv; return o;
+}
+float lin(float c) { return c<=0.04045 ? c/12.92 : pow((c+0.055)/1.055,2.4); }
+float4 paint(float2 uv, bool decode) {
+    uint sw,sh; srcTex.GetDimensions(sw,sh);
+    float sa=(float)sw/max(1.0,(float)sh), da=4.0/3.0;
+    float2 scale=sa>da ? float2(da/sa,1) : float2(1,sa/da);
+    float3 rgb=srcTex.Sample(smp,0.5+(uv-0.5)*scale).rgb;
+    if(decode) rgb=float3(lin(rgb.r),lin(rgb.g),lin(rgb.b));
+    float2 px=abs((uv-0.5)*float2(1024,768));
+    float outer=max((1-step(3,px.x))*(1-step(16,px.y)),
+                    (1-step(3,px.y))*(1-step(16,px.x)));
+    float inner=max((1-step(1.2,px.x))*(1-step(12,px.y)),
+                    (1-step(1.2,px.y))*(1-step(12,px.x)));
+    rgb=lerp(rgb,float3(0,0,0),outer);
+    rgb=lerp(rgb,float3(0.35,1,0.35),inner);
+    return float4(rgb,1);
+}
+float4 ps_scope(VSOut i):SV_Target { return paint(i.uv,false); }
+float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
+)";
+        HRESULT hr = S_OK;
+        auto compile = [&](const char* entry, const char* target)->ID3DBlob* {
+            ID3DBlob *blob=nullptr,*errors=nullptr;
+            hr=D3DCompile(source,strlen(source),nullptr,nullptr,nullptr,entry,target,0,0,&blob,&errors);
+            if(FAILED(hr)) LOG("scope shader %s failed: HRESULT 0x%08X: %s",entry,
+                (unsigned)hr,errors?(const char*)errors->GetBufferPointer():"no compiler text");
+            if(errors) errors->Release(); return blob;
+        };
+        ID3DBlob* blob=compile("vs_main","vs_5_0");
+        if(blob) { hr=g_device->CreateVertexShader(blob->GetBufferPointer(),blob->GetBufferSize(),
+                                                   nullptr,&g_scopeUploadVs); blob->Release(); }
+        if(SUCCEEDED(hr)) blob=compile("ps_scope","ps_5_0");
+        if(SUCCEEDED(hr) && blob) { hr=g_device->CreatePixelShader(blob->GetBufferPointer(),blob->GetBufferSize(),
+                                                            nullptr,&g_scopeUploadPs); blob->Release(); }
+        if(SUCCEEDED(hr)) blob=compile("ps_scope_linearize","ps_5_0");
+        if(SUCCEEDED(hr) && blob) { hr=g_device->CreatePixelShader(blob->GetBufferPointer(),blob->GetBufferSize(),
+                                                            nullptr,&g_scopeUploadPsLinearize); blob->Release(); }
+        D3D11_SAMPLER_DESC sampler{}; sampler.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;
+        if(SUCCEEDED(hr)) hr=g_device->CreateSamplerState(&sampler,&g_scopeUploadSampler);
+        D3D11_RASTERIZER_DESC raster{}; raster.FillMode=D3D11_FILL_SOLID;
+        raster.CullMode=D3D11_CULL_NONE; raster.DepthClipEnable=TRUE;
+        if(SUCCEEDED(hr)) hr=g_device->CreateRasterizerState(&raster,&g_scopeUploadRasterizer);
+        D3D11_DEPTH_STENCIL_DESC depth{}; depth.DepthEnable=FALSE;
+        if(SUCCEEDED(hr)) hr=g_device->CreateDepthStencilState(&depth,&g_scopeUploadDepthOff);
+        if(FAILED(hr))
+        {
+            failed=true;
+            LOG("scope isolated upload pipeline failed: HRESULT 0x%08X",(unsigned)hr);
+            auto release=[](auto*& p){if(p)p->Release();p=nullptr;};
+            release(g_scopeUploadVs); release(g_scopeUploadPs); release(g_scopeUploadPsLinearize);
+            release(g_scopeUploadSampler); release(g_scopeUploadRasterizer); release(g_scopeUploadDepthOff);
+            return false;
+        }
+        return true;
+    }
+
+    bool UploadScopeToRtv(ID3D11RenderTargetView* rtv)
+    {
+        if(!rtv || !EnsureScopeUploadPipeline()) return false;
+        const bool linearize=!IsSrgb(g_scopeCacheDesc.Format) &&
+                             IsSrgb((DXGI_FORMAT)g_xrFormat);
+        ID3D11PixelShader* ps=linearize?g_scopeUploadPsLinearize:g_scopeUploadPs;
+        D3DStateBackup backup; backup.Capture(g_context);
+        g_context->OMSetRenderTargets(1,&rtv,nullptr);
+        D3D11_VIEWPORT viewport{0,0,(float)kScopeScreenWidth,
+                                (float)kScopeScreenHeight,0,1};
+        g_context->RSSetViewports(1,&viewport);
+        g_context->RSSetState(g_scopeUploadRasterizer);
+        g_context->OMSetBlendState(nullptr,nullptr,0xFFFFFFFF);
+        g_context->OMSetDepthStencilState(g_scopeUploadDepthOff,0);
+        g_context->IASetInputLayout(nullptr);
+        g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        g_context->VSSetShader(g_scopeUploadVs,nullptr,0);
+        g_context->GSSetShader(nullptr,nullptr,0);
+        g_context->PSSetShader(ps,nullptr,0);
+        g_context->PSSetShaderResources(0,1,&g_scopeCacheSrv);
+        g_context->PSSetSamplers(0,1,&g_scopeUploadSampler);
+        g_context->Draw(3,0);
+        backup.Restore(g_context);
+        return true;
+    }
+
     bool PrepareScopeImageDelivery()
     {
         static bool creationFailed = false;
-        if (creationFailed)
+        if (creationFailed || !g_scopeHasImage.load() || !g_scopeCache ||
+            !g_scopeCacheSrv || !EnsureScopeUploadPipeline())
             return false;
         if (g_scopeScreenChain == XR_NULL_HANDLE &&
             !CreateChain(kScopeScreenWidth, kScopeScreenHeight, g_scopeScreenChain,
-                         g_scopeScreenImages, g_scopeScreenRtvs, "scope image delivery"))
+                         g_scopeScreenImages, g_scopeScreenRtvs, "scope 4:3 screen"))
         {
             creationFailed = true;
             return false;
@@ -797,20 +960,11 @@ float4 ps_pass(VSOut i) : SV_Target
             }
         }
 
-        bool copied = false;
-        if (rtv && g_eyeHasImage[0] && g_eyeCache[0])
-            copied = Blit(g_eyeCache[0], g_eyeCacheDesc,
-                          g_scopeScreenImages[index], kScopeScreenWidth,
-                          kScopeScreenHeight, rtv);
-        if (!rtv || !copied)
+        const bool uploaded = UploadScopeToRtv(rtv);
+        if (!uploaded)
         {
             static bool logged = false;
-            if (!logged)
-            {
-                logged = true;
-                LOG("scope image copy failed: rtv=%d eyeImage=%d",
-                    rtv != nullptr, g_eyeHasImage[0] && g_eyeCache[0] != nullptr);
-            }
+            if (!logged) { logged=true; LOG("scope image upload failed: no valid output RTV"); }
         }
 
         const XrResult releaseResult = xrReleaseSwapchainImage(g_scopeScreenChain, &release);
@@ -820,7 +974,7 @@ float4 ps_pass(VSOut i) : SV_Target
             if (!logged) { logged = true; LOG("scope image release failed: %s", XrStr(releaseResult)); }
             return false;
         }
-        return rtv != nullptr && copied;
+        return uploaded;
     }
 
     bool EnsureScreenChain(uint32_t w, uint32_t h)
@@ -2588,7 +2742,7 @@ float4 ps_pass(VSOut i) : SV_Target
                             if (!logged)
                             {
                                 logged = true;
-                                LOG("scope image-delivery proof submitted: %.3fm x %.3fm at local offsets %.3f/%.3f/%.3f",
+                                LOG("scope 4:3 zoom screen submitted: %.3fm x %.3fm at local offsets %.3f/%.3f/%.3f",
                                     transform.width, transform.height,
                                     g_config.scope_screen_right_m,
                                     g_config.scope_screen_up_m,
@@ -2820,7 +2974,7 @@ void VR_BeforePresent(IDXGISwapChain* sc)
     // Auto-enter/exit VR when a level loads/unloads (no F2/F11 needed).
     Game_AutoVrTick();
     if (!g_config.scope_enabled || !Game_IsHeadTracking())
-        g_scopeActive.store(false);
+        VR_SetScopeActive(false);
 
     SubmitPreparedFrame(sc);
     QueryPerformanceCounter(&g_dxgiPresentStartQpc);
@@ -2993,13 +3147,44 @@ void VR_EndRasterEye()
 }
 
 
+bool VR_ScopeShouldRenderThisFrame()
+{
+    const bool active=g_config.scope_enabled &&
+        g_scopeActive.load(std::memory_order_acquire) && !Menu_IsOpen() &&
+        Game_IsHeadTracking();
+    return g_scopeRefreshScheduler.Advance(active,g_config.scope_refresh_divisor);
+}
+
+bool VR_BeginScopeRaster()
+{
+    if(!g_gameSwapchain || !g_sceneColorRtv || !EnsureScopeCache())
+        return false;
+    g_scopeRedirected=false;
+    g_rasterScope.store(true,std::memory_order_release);
+    return true;
+}
+
+void VR_CaptureScope()
+{
+    if(g_scopeRedirected && g_scopeCache)
+        g_scopeHasImage.store(true,std::memory_order_release);
+}
+
+void VR_EndScopeRaster()
+{
+    g_rasterScope.store(false,std::memory_order_release);
+}
+
+
 bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                               ID3D11RenderTargetView* const* input,
                               ID3D11RenderTargetView** output)
 {
     const int eye = g_rasterEye.load();
-    if (eye < 0 || eye > 1 || !input || !output || !g_gameSwapchain)
+    const bool scope=g_rasterScope.load(std::memory_order_acquire);
+    if ((!scope && (eye < 0 || eye > 1)) || !input || !output || !g_gameSwapchain)
         return false;
+    ID3D11RenderTargetView* target=scope?g_scopeCacheRtv:g_eyeCacheRtvs[eye];
     bool changed = false;      // any slot rewritten (scene color or sun shaft)
     bool sceneChanged = false; // scene-color redirect only: marks the eye image valid
     for (UINT i = 0; i < count; ++i)
@@ -3010,9 +3195,9 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         // Normal steady-state path: two pointer comparisons and no COM calls.
         if (g_sceneColorRtv)
         {
-            if (input[i] == g_sceneColorRtv && g_eyeCacheRtvs[eye])
+            if (input[i] == g_sceneColorRtv && target)
             {
-                output[i] = g_eyeCacheRtvs[eye];
+                output[i] = target;
                 changed = true;
                 sceneChanged = true;
             }
@@ -3067,11 +3252,18 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
     }
     if (sceneChanged)
     {
-        g_rasterRedirected[eye] = true;
-        VR_TraceEvent("rtv-redirect", eye, 0);
-        static std::atomic<unsigned> logged{0};
-        if (logged.fetch_add(1) < 4)
-            LOG("M2 RASTER: redirected internal scene-color RTV to eye %d target", eye);
+        if(scope)
+        {
+            g_scopeRedirected=true;
+        }
+        else
+        {
+            g_rasterRedirected[eye] = true;
+            VR_TraceEvent("rtv-redirect", eye, 0);
+            static std::atomic<unsigned> logged{0};
+            if (logged.fetch_add(1) < 4)
+                LOG("M2 RASTER: redirected internal scene-color RTV to eye %d target", eye);
+        }
     }
     return changed;
 }
@@ -3110,7 +3302,9 @@ void VR_GetPadState(VrPadState& out)
 
 void VR_SetScopeActive(bool active)
 {
-    g_scopeActive.store(active, std::memory_order_release);
+    const bool previous=g_scopeActive.exchange(active,std::memory_order_acq_rel);
+    if(previous && !active)
+        g_scopeHasImage.store(false,std::memory_order_release);
 }
 
 bool VR_IsScopeActive()

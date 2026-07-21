@@ -23,6 +23,14 @@ private:
     bool m_cancelled = false;
 };
 
+class ScopeRefreshScheduler
+{
+public:
+    bool Advance(bool active, int divisor);
+private:
+    unsigned m_frame = 0;
+};
+
 struct ScopeQuadTransform
 {
     float position[3]{};

@@ -57,6 +57,18 @@ void ScopeToggleDetector::Reset()
     m_cancelled = false;
 }
 
+bool ScopeRefreshScheduler::Advance(bool active, int divisor)
+{
+    if (!active)
+    {
+        m_frame = 0;
+        return false;
+    }
+    if (divisor < 1) divisor = 1;
+    if (divisor > 4) divisor = 4;
+    return (++m_frame % static_cast<unsigned>(divisor)) == 0;
+}
+
 ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],
                                              const float origin[3],
                                              float rightMeters,
