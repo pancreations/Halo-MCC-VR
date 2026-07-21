@@ -63,8 +63,20 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   OpenXR shell and controller hooks remain alive. Release build and CTest pass;
   deployed 2026-07-21 02:38:09 AM with SHA-256
   `6B274113871E6DCC879A97655F6E03B8B3B304FFFEDAB1F160F677E64DBE636F`.
-  Headset validation must cover Halo 3 -> MCC shell -> another mission/title ->
-  Halo 3 without a fatal error before this candidate is promoted.
+  Headset result: exit detached cleanly at 02:44:13, but the next Halo level
+  stayed flat with head tracking off. F1 attempts enabled stereo only for one
+  frame before the missing camera heartbeat detached it again.
+- Halo hook-reattachment candidate on `fix/halo-hook-reattach` addresses that
+  failed return path. The log proved Halo was selected again at 02:44:45 but
+  its camera-copy detour never ran: the one-shot worker still marked hooks
+  installed after MCC remapped Halo at the same address. The worker now records
+  only Halo MinHook targets, marks them stale on title exit, and removes and
+  recreates those detours when Halo is selected again. Shared D3D, OpenXR, and
+  XInput hooks are not cycled. Release build and CTest pass; deployed
+  2026-07-21 02:51:37 AM with SHA-256
+  `056E35E6487720E122F4F90DAC49921C3DE0205C33562F90EF72ADF379273174`.
+  Headset validation must show the repeated Halo hook-install logs, new camera
+  copies, automatic stereo/head-tracking rearm, and no fatal error.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.

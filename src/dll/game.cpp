@@ -392,6 +392,37 @@ namespace
     using FpDriverFn = void(__fastcall*)(void* view, unsigned char flag);
     FpDriverFn g_origFpDriver = nullptr;
     int32_t* g_fpDriverGuard = nullptr; // zero-init global gating call site 1
+    constexpr size_t kMaxInstalledGameHooks = 16;
+    void* g_installedGameHooks[kMaxInstalledGameHooks]{};
+    size_t g_installedGameHookCount = 0;
+
+    void RememberInstalledGameHook(void* target)
+    {
+        if (!target)
+            return;
+        for (size_t i = 0; i < g_installedGameHookCount; ++i)
+            if (g_installedGameHooks[i] == target)
+                return;
+        if (g_installedGameHookCount < kMaxInstalledGameHooks)
+            g_installedGameHooks[g_installedGameHookCount++] = target;
+    }
+
+    void RemoveInstalledGameHooks()
+    {
+        // Called only after the Halo camera has stopped and before a reloaded
+        // Halo renderer starts. Remove in reverse installation order so no
+        // outer render detour can enter a dependency while it is being reset.
+        for (size_t i = g_installedGameHookCount; i > 0; --i)
+        {
+            void* target = g_installedGameHooks[i - 1];
+            MH_DisableHook(target);
+            MH_RemoveHook(target);
+            g_installedGameHooks[i - 1] = nullptr;
+        }
+        g_installedGameHookCount = 0;
+        g_renderHooked = false;
+        g_fpInterpolatorHooked = false;
+    }
     thread_local bool g_scopeRenderActive = false;
 
     void __fastcall FpDriverHook(void* view, unsigned char flag)
@@ -4059,6 +4090,7 @@ namespace
         }
         LOG("M1: camera hooked. F2 head tracking, F3 recenter, F6 leaning, F8/F9 pitch trim, F10 screen-follow (yaw/pitch/up flips: F1 menu)");
 
+        RememberInstalledGameHook(target);
         // Comfort invariant: the OpenXR pose, not Halo's authored screen-shake
         // transform, owns the view while head tracking is active. This hook is
         // independent from stereo and fails open to Halo's stock behavior.
@@ -4077,6 +4109,8 @@ namespace
                 if (createStatus == MH_OK)
                     effectHooked = MH_EnableHook(
                         reinterpret_cast<void*>(effectHit)) == MH_OK;
+                if (effectHooked)
+                    RememberInstalledGameHook(reinterpret_cast<void*>(effectHit));
                 if (!effectHooked && createStatus == MH_OK)
                 {
                     MH_RemoveHook(reinterpret_cast<void*>(effectHit));
@@ -4127,6 +4161,8 @@ namespace
         else
             LOG("M3: first-person hand/weapon matrix signatures missing or ambiguous");
 
+        RememberInstalledGameHook(reinterpret_cast<void*>(composeHit));
+        RememberInstalledGameHook(reinterpret_cast<void*>(specialHit));
         uintptr_t interpolateHit=sig::Find(base,size,kFpInterpolateSig);
         uintptr_t visiblePaletteHit=sig::Find(base,size,kFpVisiblePaletteSig);
         const bool uniqueInterpolate=interpolateHit &&
@@ -4159,6 +4195,8 @@ namespace
                 g_origFpVisiblePalette=nullptr;
             }
         }
+        RememberInstalledGameHook(reinterpret_cast<void*>(interpolateHit));
+        RememberInstalledGameHook(reinterpret_cast<void*>(visiblePaletteHit));
         if (visiblePathOk)
         {
             g_fpInterpolatorHooked.store(true,std::memory_order_release);
@@ -4243,6 +4281,7 @@ namespace
                 }
             }
         }
+        RememberInstalledGameHook(reinterpret_cast<void*>(fpCamHit));
         if (fpCameraOk)
         {
             g_fpCameraUpload=reinterpret_cast<FpCameraUploadFn>(fpUploadHit);
@@ -4264,6 +4303,7 @@ namespace
                 "40 55 48 8B EC 48 83 EC 50 0F 29 74 24 40 0F 28 F1 "
                 "0F 29 7C 24 30 0F 28 CA 0F 28 F8";
             uintptr_t hudXform = sig::Find(base, size, kHudXformSig);
+            RememberInstalledGameHook(reinterpret_cast<void*>(hudXform));
             if (hudXform && !sig::Find(hudXform+1, base+size-hudXform-1, kHudXformSig))
             {
                 if (MH_CreateHook(reinterpret_cast<void*>(hudXform),
@@ -4322,6 +4362,10 @@ namespace
                         targetsInModule = false;
                     if (targetsInModule)
                     {
+                        RememberInstalledGameHook(
+                            reinterpret_cast<void*>(visibleTarget));
+                        RememberInstalledGameHook(
+                            reinterpret_cast<void*>(hudElem));
                         g_gameIsPlayback =
                             reinterpret_cast<GameIsPlaybackFn>(playbackTarget);
                         const MH_STATUS createStatus = MH_CreateHook(
@@ -4580,6 +4624,7 @@ namespace
         else
             LOG("P0: FP driver signature missing/ambiguous");
 
+        RememberInstalledGameHook(reinterpret_cast<void*>(driverHit));
         uintptr_t gunRef = sig::Find(base, size, kGunCamRefSig);
         if (gunRef && !sig::Find(gunRef + 1, base + size - gunRef - 1, kGunCamRefSig))
         {
@@ -4618,6 +4663,7 @@ namespace
             LOG("M2: FAILED to hook render-frame entry");
             return;
         }
+        RememberInstalledGameHook(reinterpret_cast<void*>(renderHit));
         g_renderHooked = true;
         LOG("M2: inner per-view double-render hook installed at halo3.dll+0x%llX",
             (unsigned long long)(renderHit - base));
@@ -4632,22 +4678,44 @@ namespace
         // one session and read the pad through xinput1_4), so this thread
         // keeps polling forever instead of stopping at the first success.
         bool gameHooked = false;
+        bool hookRefreshPending = false;
+        uintptr_t hookedBase = 0;
         for (;;)
         {
             Input_InstallXInputHook();
             Input_ClaimXInputIat(); // re-assert if Steam replaces MCC's import slot
             const TitleDescriptor* activeTitle = TitleAdapter_PollLoaded();
-            if (!gameHooked && activeTitle && activeTitle->title == GameTitle::Halo3)
+            const bool haloActive =
+                activeTitle && activeTitle->title == GameTitle::Halo3;
+            if (gameHooked && !haloActive)
+            {
+                // MCC can unload and later map halo3.dll at the same address.
+                // MinHook's bookkeeping survives while the new module bytes no
+                // longer contain detours, so remember this title boundary.
+                gameHooked = false;
+                hookRefreshPending = true;
+                g_hooked = false;
+            }
+            if (!gameHooked && haloActive)
             {
                 uintptr_t base = 0;
                 size_t size = 0;
                 if (sig::ModuleRange(activeTitle->moduleName, base, size))
                 {
+                    if (hookRefreshPending)
+                    {
+                        if (hookedBase == base)
+                            RemoveInstalledGameHooks();
+                        else
+                            g_installedGameHookCount = 0;
+                    }
                     LOG("%ls loaded at %p, size 0x%zX",
                         activeTitle->moduleName, (void*)base, size);
                     InstallHook(base, size);
                     g_hooked = true;
                     gameHooked = true;
+                    hookRefreshPending = false;
+                    hookedBase = base;
                 }
             }
             Sleep(2000);
