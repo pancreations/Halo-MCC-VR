@@ -770,6 +770,50 @@ palette) and 4 (HUD + native-crosshair hide + color-routed reticle; CHUD/HUD)
 remain larger, separate ODST gates for later builds, each needing independent
 ODST evidence.
 
+### Build 2 headset-confirmed; bullet-trailing analysis (2026-07-21)
+
+Build 2 (`3d688e6`, deployed private DLL
+`E997103E4991272C6B31B78B6496605FAE317244D1D8E2D139CA14F048A4B4D5`, record
+`pre-odst-private-backup-14`, baseline `c0a6a90d`) was headset-tested. The user
+confirmed **both fixes work**: ODST movement is now head-relative (forward walks
+where you look), and the VR crosshair is visible and tracks the controller 1:1.
+
+One aim issue remains: the **bullets trail the crosshair** — pointing left and
+firing sends the shots sweeping from the right and slowly converging on the
+crosshair rather than snapping to it as in Halo 3. The crosshair itself is 1:1
+because its quad is drawn from the raw controller aim pose; only the *bullet
+direction* lags.
+
+Analysis (from the code, not a guess): the bullet direction is steered by the
+proportional closed loop in `Game_ComputeAimStick`. For any large angular error
+the emitted stick already saturates to full deflection (gain `k = 12` reaches
+full stick at ~4.8 deg of error), so the convergence rate is bounded by the
+**game's own turn rate at full stick**, which the code comment
+([src/dll/game.cpp:8082](src/dll/game.cpp#L8082)) documents as set by the
+in-game look sensitivity. Halo 3 feels snappy because that ceiling is high;
+ODST trails, indicating a lower effective ODST turn rate (in-game look
+sensitivity and/or look acceleration). The closed loop is the only aim lever —
+the engine recomputes the aim forward from its own state each frame, so directly
+writing the forward does not move bullets, and the fire boundary is not reachable
+from the static binary (see the bullet-origin limitation above).
+
+Next step is therefore a no-build diagnostic before any code change: set ODST's
+in-game Look Sensitivity to maximum and Look Acceleration off, and re-test aim on
+the currently installed `E997103E`. If that snaps it, the fix is a settings match
+(and possibly having the mod read/raise ODST's sensitivity, exposed through the
+universal config). If ODST sensitivity is already maxed and it still trails, the
+fix becomes a real ODST turn-rate/sensitivity RE task, not a stick-gain tweak.
+
+User-resequenced ODST roadmap (each a config-file-integrated build):
+1. Bullet snap-to-crosshair (this analysis; diagnostic first).
+2. Motion-controlled weapon: gun and hands off the face, driven by the
+   controller (the VRIK/palette gate; needs ODST FP skeleton/bone/marker
+   evidence).
+3. HUD: native HUD render + hide the native center crosshair + route its authored
+   asset and green/red target states onto the VR crosshair, plus IK arms and
+   floating-hand options. All user-facing options must live in the one universal
+   `halomccvr.cfg` / F1 menu.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
