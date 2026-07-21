@@ -685,8 +685,15 @@ OFF and ON Release builds and both CTest runs pass. Deployed via
 sealed baseline with `RESTORE-ODST-BASELINE` (the installed DLL from the
 crashed session was not the accepted baseline). Deployed private DLL SHA-256
 `C0A6A90D7010CC5CC31B1B14111E6ABB403D0DB4D2AFEC149133666CA2DFE5F9`, recovery
-record `pre-odst-private-backup-12`. Headset confirmation of the exact
-ODST -> Halo3 -> ODST -> Halo3 repro sequence is pending.
+record `pre-odst-private-backup-12`.
+
+Headset result: the user repeated the exact ODST -> Halo3 -> ODST -> Halo3
+repro sequence and confirmed "it works now" — no crash. This is the current
+best-working private ODST checkpoint, on top of the confirmed pause-boundary
+and shell-pause-isolation fixes (`49fa8a3`, `9937ab3`). `deploy-odst-private.bat`'s
+`EXPECTED_BASELINE_DLL_SHA` was advanced to this confirmed DLL's hash
+(`C0A6A90D...`) so future private candidates snapshot and roll back against
+this checkpoint instead of the pre-fix one.
 
 ## 2026-07-19 session closeout
 
