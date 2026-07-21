@@ -10,7 +10,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BUILD_DIR=%ROOT%\build"
 rem Release identity. This is a packaging label only: no compiled code reads it,
 rem so bumping it never changes the DLL that testers run.
-set "PKG_VER=0.1.2"
+set "PKG_VER=0.1.3"
 
 set "PACKAGE_LEAF=HaloMCCVR-alpha-%PKG_VER%"
 set "PACKAGE_DIR=%ROOT%\dist\%PACKAGE_LEAF%"

@@ -447,6 +447,12 @@ alpha is safe to distribute on machines that also have ODST installed.
 
 ## Alpha distribution (2026-07-19)
 
+- Alpha 0.1.3 hotfix candidate freezes the headset-confirmed crosshair fallback
+  build. DLL SHA-256
+  `BD5F8FB653163A5788BB6762B09EA929A81658A1267FB10280899F2751441412`;
+  launcher SHA-256
+  `6F44B75CA1669DE224C192F13F71C27671E3ADBD993934E677210BB10AD28D70`.
+  Packaging changes do not alter either tested binary.
 - Alpha 0.1.2 release candidate freezes the exact headset-tested 2026-07-21
   05:09 DLL rather than rebuilding after the test. DLL SHA-256
   `860C5A88F70DE943AE29E9A1C95B61C5DBAAA4A513973C8EA6B08B17475B907F`;
