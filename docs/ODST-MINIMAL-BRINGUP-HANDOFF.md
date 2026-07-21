@@ -341,7 +341,55 @@ features. Private ODST also clears any pending or active foreign pause/head-lock
 state once at title entry. Pure regression assertions cover shell rejection,
 Halo 3 admission, and ODST entry cleanup. The prior focus-loss correction is
 retained unchanged. Private ON and normal OFF Release builds and CTest pass
-locally. This candidate has not been deployed.
+locally. This candidate was later deployed; the headset result is recorded below.
+
+## Tenth private headset result, crash proof, and native-pause candidate
+
+The pause-ownership checkpoint was deployed from source commit
+`49fa8a38b8412a2d1eda31d44c4ee608d5087a83`, DLL
+`3280E42F9DBB845EF333771DDF1B81AEA6B88A9FF74AD026D3AF9BE31DD6BA93`,
+with sealed record `Halo_MCC_VR\pre-odst-private-backup-10`. The launcher
+remained `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`
+and retail ODST remained
+`5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`.
+The user confirmed that ODST 3D worked, then received a fatal error on Save &
+Quit. The user explicitly corrected the record: the ODST pause button was not
+fixed. Three logged Menu/Start edges proved only that OpenXR observed the
+button; they did not prove that ODST consumed a Start pulse or opened pause.
+
+Windows Error Reporting and the 7.52 GB full-memory minidump identify the fatal
+exception exactly. Thread 50728 faulted with read AV `0xC0000005` at
+`halo3odst.dll+0xC338`, reading address `0x10`. The instruction is
+`cmp byte ptr [rcx+0x10],1` with `rcx=0`; it is inside ODST's native
+pause/state dispatcher `0xBA78-0xC603`. Unwinding the retail stack shows
+`0xC0A64` tail-calling that dispatcher from the engine wait loop at `0xB1764`.
+The shutdown caller `0xF425C` was stopping engine thread slot 1 while the
+global shutdown routine at `0xB3E50` iterated 25 engine threads. The mod DLL
+does not appear as a return address in the captured crashing stack.
+
+This proves a teardown timing failure rather than a direct call through a bad
+camera trampoline: late ODST hook cleanup suspended the process while ODST was
+already stopping its own threads. Slot 1 had not finished at the wait loop's
+first predicate check, so retail maintenance reached the pause dispatcher after
+that thread's ODST TLS record had been cleared. The normal stock fast path
+avoids the unsafe dispatcher call when the target thread is already stopped.
+
+MCC was closed and dedicated restore mode byte-restored and verified baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`;
+preserve backup-10. The next isolated candidate makes native pause the safe
+pre-shutdown boundary. The private-only OpenXR Menu edge is held as Start for
+350 ms at the sampling source and again at XInput merge, so ODST cannot miss a
+one-frame action. Static preflight uniquely resolves owner `0xBCA5`, validates
+its `C6 05 disp32 01` write, and resolves native pause byte `0xA9261B` without
+hardcoding either runtime address. Pause entry switches to 2D, disarms stereo,
+and removes all five private hooks before Save & Quit can begin engine-thread
+shutdown. A normal resume cannot reinstall from stale pause-camera bytes: the
+native byte must clear and the ordinary camera must remain valid for the full
+stability interval. Title exit also clears the gate and resolved pointer.
+
+The normal Release cache remains explicitly `OFF`, the private Release cache
+remains explicitly `ON`, both builds succeed, and both CTest suites pass. No
+public deploy/export guard changed. This candidate has not been deployed.
 
 ## Proven evidence available to implementation
 
@@ -372,6 +420,8 @@ Camera-core ODST anchors:
 | FP driver guard callsite | `0x2AE8DE` |
 | four-slot camera-array constructor | `0x00006B60` |
 | camera array | `0x2D73590` |
+| native pause owner | `0x0000BCA5` |
+| native pause byte | `0x0A9261B` |
 
 RVAs are evidence/debug references, not runtime addresses. Runtime resolution
 must use the documented title-specific unique AOBs and must reject zero or

@@ -101,12 +101,27 @@ namespace
         if (pad.clickR && !chord.consumeClicks && !scopeAvailable)
             btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
-        if (pad.menu && !previousMenu &&
-            PausePresentationInputAllowed(Game_AllowsSharedGameplayFeatures()) &&
-            !Game_HasAuthoritativePauseState())
-            VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
+        const uint64_t inputNow = GetTickCount64();
+        const bool menuEdge = pad.menu && !previousMenu;
+        if (menuEdge)
+        {
+            if (Game_IsCameraOnlyBringup())
+            {
+                // OpenXR exposes the reserved Menu action as a short edge. ODST
+                // polls XInput on a different cadence and missed that edge in
+                // the headset test, so retain a normal Start press long enough
+                // to cross its polling boundary. This branch is private-ODST
+                // only; Halo 3 and normal OFF builds keep their existing path.
+                g_startPulseUntilMs.store(inputNow + 350);
+                LOG("ODST input: Menu/Start latched for native polling");
+            }
+            if (PausePresentationInputAllowed(
+                    Game_AllowsSharedGameplayFeatures()) &&
+                !Game_HasAuthoritativePauseState())
+                VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
+        }
         previousMenu = pad.menu;
-        if (pad.menu || GetTickCount64() < g_startPulseUntilMs.load())
+        if (pad.menu || inputNow < g_startPulseUntilMs.load())
             btn |= XINPUT_GAMEPAD_START;
         if (pad.gripL > 0.6f) btn |= XINPUT_GAMEPAD_LEFT_SHOULDER;
         if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;

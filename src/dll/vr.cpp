@@ -2212,7 +2212,19 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         getB(g_actClickR, pad.clickR);
         getB(g_actMenu, pad.menu);
         static VrPadState previousPad{};
-        if (pad.menu && !previousPad.menu) LOG("controller edge: Menu/Start");
+        static bool previousRawMenu = false;
+        static uint64_t odstMenuPulseUntil = 0;
+        const uint64_t inputNow = GetTickCount64();
+        const bool rawMenuEdge = pad.menu && !previousRawMenu;
+        if (rawMenuEdge)
+        {
+            LOG("controller edge: Menu/Start");
+            if (Game_IsCameraOnlyBringup())
+                odstMenuPulseUntil = inputNow + 350;
+        }
+        previousRawMenu = pad.menu;
+        if (Game_IsCameraOnlyBringup() && inputNow < odstMenuPulseUntil)
+            pad.menu = true;
         if (pad.a && !previousPad.a) LOG("controller edge: A");
         if (pad.b && !previousPad.b) LOG("controller edge: B");
         if (pad.x && !previousPad.x) LOG("controller edge: X");

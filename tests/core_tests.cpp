@@ -198,6 +198,32 @@ int main()
         Check(gate.CanAttemptInstall(),
             "title exit clears the unsupported-camera session latch");
 
+        OdstPauseRearmGate pauseGate;
+        pauseGate.Block();
+        pauseGate.Observe(100, true, true, true);
+        Check(!pauseGate.CanAttemptInstall(),
+            "native ODST pause blocks camera-hook reinstallation");
+        pauseGate.Observe(200, true, false, true);
+        pauseGate.Observe(1200, true, false, true);
+        Check(!pauseGate.CanAttemptInstall(),
+            "pause exit requires more than the full stable-camera interval");
+        pauseGate.Observe(1201, true, false, true);
+        Check(pauseGate.CanAttemptInstall(),
+            "stable gameplay after pause exit permits camera-hook reinstall");
+        pauseGate.Block();
+        pauseGate.Observe(5000, true, false, true);
+        pauseGate.Observe(5500, true, false, false);
+        pauseGate.Observe(7000, true, false, true);
+        Check(!pauseGate.CanAttemptInstall(),
+            "camera loss resets the pause-exit stability interval");
+        pauseGate.Observe(8001, true, false, true);
+        Check(pauseGate.CanAttemptInstall(),
+            "a new continuous camera interval clears the pause gate");
+        pauseGate.Block();
+        pauseGate.Observe(9000, false, false, false);
+        Check(pauseGate.CanAttemptInstall(),
+            "title exit clears the native-pause reinstall gate");
+
         OdstFreshCameraDebounce debounce;
         Check(!debounce.Update(100, true),
             "ODST camera does not arm on its first fresh frame");

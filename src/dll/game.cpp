@@ -212,6 +212,7 @@ namespace
         const char* fpDriverPattern;
         const char* fpDriverGuardPattern;
         const char* gunCameraConstructorPattern;
+        const char* nativePauseOwnerPattern;
     };
 
     enum class OdstFallbackReason : int
@@ -223,6 +224,7 @@ namespace
         NoCameraHeartbeat,
         InstallFailure,
         TitleLeft,
+        NativePause,
     };
 
     struct OdstMotionBlurVar
@@ -272,6 +274,7 @@ namespace
     };
 
     OdstCameraRuntimeState g_odstCamera;
+    std::atomic<uintptr_t> g_odstNativePauseFlag{0};
     std::atomic<float> g_odstRenderHalfFovX[2] = {{1.07338f}, {1.07338f}};
     std::atomic<float> g_odstRenderHalfFovY[2] = {{0.92502f}, {0.92502f}};
     extern const CameraRuntimeProfile kOdstCameraProfile;
@@ -4325,6 +4328,26 @@ namespace
             privateBuildEnabled, adapterReportsOdst, runtimeStateOwned);
     }
 
+    bool ReadOdstEnginePaused(bool& paused)
+    {
+        const uintptr_t address = g_odstNativePauseFlag.load(
+            std::memory_order_acquire);
+        if (!address)
+            return false;
+        __try
+        {
+            const uint8_t value = *reinterpret_cast<const uint8_t*>(address);
+            if (value > 1)
+                return false;
+            paused = value != 0;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     void OdstRequestFallback(OdstFallbackReason reason)
     {
         int expected = static_cast<int>(OdstFallbackReason::None);
@@ -5256,6 +5279,7 @@ namespace
         "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 EC 20 48 8B D9 40 8A F2 8B 89 FC 27 00 00 E8 ?? ?? ?? ?? 66 83 F8 FF 0F 85 ?? ?? ?? ?? B9 03 00 00 00",
         "39 35 ?? ?? ?? ?? 75 ?? 33 D2 48 8B CF E8 ?? ?? ?? ?? 40 38 35 ?? ?? ?? ?? 75 ?? 40 38 35 ?? ?? ?? ??",
         "48 89 5C 24 08 57 48 83 EC 20 48 8D 1D ?? ?? ?? ?? BF 04 00 00 00 48 8B CB E8 ?? ?? ?? ?? 48 81 C3 10 28 00 00 48 83 EF 01 75 ?? 48 8B 5C 24 30",
+        "E8 ?? ?? ?? ?? 84 C0 74 ?? B9 03 00 00 00 E8 ?? ?? ?? ?? 84 C0 75 ?? 8B D1 B1 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
     };
 
     static_assert(sizeof(g_odstCamera.eyeCompactCamera) == 0x90);
@@ -6061,6 +6085,8 @@ namespace
         uintptr_t fpDriver = 0;
         uintptr_t fpDriverGuard = 0;
         uintptr_t gunCameraConstructor = 0;
+        uintptr_t nativePauseOwner = 0;
+        uint8_t* nativePauseFlag = nullptr;
         float* motionBlurScale = nullptr;
         float* motionBlurMax = nullptr;
         uintptr_t gunCameraArray = 0;
@@ -6316,6 +6342,11 @@ namespace
                 "four-slot camera constructor",
                 kOdstCameraProfile.gunCameraConstructorPattern,
                 resolved.gunCameraConstructor);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd,
+                "native pause owner",
+                kOdstCameraProfile.nativePauseOwnerPattern,
+                resolved.nativePauseOwner);
             resolved.motionBlurScale = FindDebugVarFloat(
                 base, size, "motion_blur_scale");
             resolved.motionBlurMax = FindDebugVarFloat(
@@ -6331,7 +6362,38 @@ namespace
                     sizeof(float) <= moduleEnd;
             if (!motionBlurOk)
                 LOG("ODST camera preflight: title-native motion-blur scale/max vars unavailable");
-            if (!signaturesOk || !motionBlurOk)
+
+            bool nativePauseOk = false;
+            if (resolved.nativePauseOwner)
+            {
+                // The unique ODST owner signature starts at +0xBCA5. Its final
+                // instruction is C6 05 disp32 01 at +0x20 and writes the native
+                // pause byte used throughout halo3odst.dll.
+                const uintptr_t write = resolved.nativePauseOwner + 0x20;
+                if (write + 7 <= moduleEnd &&
+                    *reinterpret_cast<const uint8_t*>(write) == 0xC6 &&
+                    *reinterpret_cast<const uint8_t*>(write + 1) == 0x05 &&
+                    *reinterpret_cast<const uint8_t*>(write + 6) == 0x01)
+                {
+                    const int32_t displacement =
+                        *reinterpret_cast<const int32_t*>(write + 2);
+                    const uintptr_t flag = write + 7 + displacement;
+                    if (flag >= base && flag < moduleEnd)
+                    {
+                        const uint8_t initial =
+                            *reinterpret_cast<const uint8_t*>(flag);
+                        if (initial <= 1)
+                        {
+                            resolved.nativePauseFlag =
+                                reinterpret_cast<uint8_t*>(flag);
+                            nativePauseOk = true;
+                        }
+                    }
+                }
+            }
+            if (!nativePauseOk)
+                LOG("ODST camera preflight: native pause owner/flag proof failed");
+            if (!signaturesOk || !motionBlurOk || !nativePauseOk)
                 return OdstInstallResult::Failed;
 
             const uintptr_t guardCall = resolved.fpDriverGuard + 13;
@@ -6422,6 +6484,11 @@ namespace
             static_cast<unsigned long long>(resolved.fpDriverGuard - base),
             static_cast<unsigned long long>(resolved.gunCameraConstructor - base),
             static_cast<unsigned long long>(resolved.gunCameraArray - base));
+        LOG("ODST pause evidence: owner=%llX flag=%llX (initial=%u)",
+            static_cast<unsigned long long>(resolved.nativePauseOwner - base),
+            static_cast<unsigned long long>(
+                reinterpret_cast<uintptr_t>(resolved.nativePauseFlag) - base),
+            static_cast<unsigned>(*resolved.nativePauseFlag));
         LOG("ODST comfort evidence: observerEffect=%llX blurScale=%llX "
             "blurMax=%llX (stock %.4f/%.4f)",
             static_cast<unsigned long long>(
@@ -6880,6 +6947,9 @@ namespace
         g_odstCamera.fpCameraUpload =
             reinterpret_cast<FpCameraUploadFn>(resolved.fpCameraUpload);
         g_odstCamera.gunCameraArray = resolved.gunCameraArray;
+        g_odstNativePauseFlag.store(
+            reinterpret_cast<uintptr_t>(resolved.nativePauseFlag),
+            std::memory_order_release);
         g_odstCamera.motionBlurVars[0] = {
             resolved.motionBlurScale, *resolved.motionBlurScale};
         g_odstCamera.motionBlurVars[1] = {
@@ -7009,6 +7079,8 @@ namespace
             reasonName = "install rollback";
         else if (reason == OdstFallbackReason::TitleLeft)
             reasonName = "title exit";
+        else if (reason == OdstFallbackReason::NativePause)
+            reasonName = "native pause boundary";
 
         g_odstCamera.installed.store(false, std::memory_order_release);
         g_lastCamCopyMs.store(0, std::memory_order_release);
@@ -7084,6 +7156,7 @@ namespace
         uintptr_t odstCameraArrayRva = 0;
         uint64_t odstNextAttemptMs = 0;
         OdstCameraRearmGate odstRearmGate;
+        OdstPauseRearmGate odstPauseRearmGate;
         bool odstPresentationPrepared = false;
 #endif
         for (;;)
@@ -7123,6 +7196,17 @@ namespace
             }
             else if (!odstActive)
                 odstPresentationPrepared = false;
+            bool odstPaused = false;
+            const bool odstPauseKnown = odstActive &&
+                ReadOdstEnginePaused(odstPaused);
+            if (odstHooked && odstPauseKnown && odstPaused &&
+                !g_odstCamera.teardownRequested.load(
+                    std::memory_order_acquire))
+            {
+                LOG("ODST pause boundary: native pause entered; removing "
+                    "private camera hooks before any Save & Quit teardown");
+                OdstRequestFallback(OdstFallbackReason::NativePause);
+            }
             if (odstHooked &&
                 !g_odstCamera.teardownRequested.load(std::memory_order_acquire))
             {
@@ -7172,6 +7256,13 @@ namespace
                         LOG("ODST camera rearm blocked until title exit after "
                             "unsupported/menu camera mode");
                     }
+                    else if (reason == OdstFallbackReason::NativePause)
+                    {
+                        odstPauseRearmGate.Block();
+                        odstAttempted = true;
+                        LOG("ODST camera rearm blocked until native pause exits "
+                            "and the live camera is stable");
+                    }
                     else if (reason == OdstFallbackReason::LevelUnloaded)
                     {
                         odstRearmGate.BlockUntilReload(
@@ -7187,6 +7278,9 @@ namespace
             if (!odstActive && !odstHooked)
             {
                 odstRearmGate.Observe(false, false);
+                odstPauseRearmGate.Observe(
+                    pollNow, false, false, false);
+                g_odstNativePauseFlag.store(0, std::memory_order_release);
                 odstAttempted = false;
                 odstCameraArrayRva = 0;
                 odstNextAttemptMs = 0;
@@ -7196,16 +7290,21 @@ namespace
                     false, std::memory_order_release);
                 ClearOdstStaticPreflightCache();
             }
-            else if (odstActive && !odstHooked && odstRearmGate.IsBlocked())
+            else if (odstActive && !odstHooked &&
+                     (odstRearmGate.IsBlocked() ||
+                      odstPauseRearmGate.IsBlocked()))
             {
                 const bool ready = ProbeOdstCameraReadiness(
                     activeTitle->moduleName, odstCameraArrayRva);
                 odstRearmGate.Observe(true, ready);
-                if (odstRearmGate.CanAttemptInstall())
+                odstPauseRearmGate.Observe(
+                    pollNow, true, odstPauseKnown && odstPaused, ready);
+                if (odstRearmGate.CanAttemptInstall() &&
+                    odstPauseRearmGate.CanAttemptInstall())
                 {
                     odstAttempted = false;
                     odstNextAttemptMs = 0;
-                    LOG("ODST camera reload edge observed; static preflight may retry");
+                    LOG("ODST verified rearm boundary observed; static preflight may retry");
                 }
             }
 #endif
@@ -7239,6 +7338,8 @@ namespace
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
             if (!odstHooked && !odstAttempted && odstActive && !gameHooked &&
+                odstRearmGate.CanAttemptInstall() &&
+                odstPauseRearmGate.CanAttemptInstall() &&
                 pollNow >= odstNextAttemptMs)
             {
                 uintptr_t base = 0;
@@ -7391,7 +7492,18 @@ bool Game_CanToggleImmersiveView()
 {
     return Game_AllowsSharedGameplayFeatures() || Game_IsCameraOnlyBringup();
 }
-bool Game_HasAuthoritativePauseState() { return g_enginePauseValidated.load(); }
+bool Game_HasAuthoritativePauseState()
+{
+    if (g_enginePauseValidated.load(std::memory_order_acquire))
+        return true;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    const TitleDescriptor* title = TitleAdapter_GetActive();
+    return title && title->title == GameTitle::Halo3ODST &&
+        g_odstNativePauseFlag.load(std::memory_order_acquire) != 0;
+#else
+    return false;
+#endif
+}
 
 // HUD layout (F1 menu): manual rescan + status. The scan normally starts itself
 // whenever size, aspect, or curvature is non-stock and no slots are located.
@@ -7429,6 +7541,7 @@ void Game_AutoVrTick()
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     static OdstFreshCameraDebounce odstFreshDebounce;
     static bool wasOdstCameraContext = false;
+    static bool wasOdstNativePause = false;
     static uint64_t lastPresentationDetachCompleted = 0;
     const bool odstCameraContext = Game_IsCameraOnlyBringup();
     if (odstCameraContext)
@@ -7468,6 +7581,21 @@ void Game_AutoVrTick()
         VR_SetScopeActive(false);
         g_aimSeen.store(false, std::memory_order_release);
 
+        bool nativePaused = false;
+        const bool nativePauseKnown = ReadOdstEnginePaused(nativePaused);
+        if (nativePauseKnown && nativePaused && !wasOdstNativePause)
+        {
+            wasOdstNativePause = true;
+            VR_RequestPausePresentation(true);
+            LOG("ODST pause presentation: native pause entered, switching to 2D");
+        }
+        else if ((!nativePauseKnown || !nativePaused) && wasOdstNativePause)
+        {
+            wasOdstNativePause = false;
+            VR_RequestPausePresentation(false);
+            LOG("ODST pause presentation: native pause exited, restoring stereo target");
+        }
+
         const bool detachedNow = Game_ProcessPresentationDetachRequest();
         const uint64_t detachCompleted =
             g_odstCamera.presentationDetachCompleted.load(
@@ -7480,6 +7608,21 @@ void Game_AutoVrTick()
             // A completed detach is a hard edge for this Present. Do not let a
             // debounce state retained across a rapid teardown/reinstall re-arm
             // stereo until a full new interval of fresh camera heartbeats.
+            odstFreshDebounce.Reset();
+            return;
+        }
+
+        if (nativePauseKnown && nativePaused)
+        {
+            // The worker removes all five hooks at this boundary. Disarm on the
+            // render thread immediately so no stereo transaction can begin
+            // while pause or Save & Quit advances title teardown.
+            g_odstCamera.armed.store(false, std::memory_order_release);
+            g_enabled.store(false, std::memory_order_release);
+            g_autoVrOwned.store(false, std::memory_order_release);
+            g_autoVrUserVeto.store(false, std::memory_order_release);
+            if (VR_IsStereoEnabled())
+                VR_DetachGamePresentation();
             odstFreshDebounce.Reset();
             return;
         }
@@ -7546,6 +7689,11 @@ void Game_AutoVrTick()
     if (wasOdstCameraContext)
     {
         wasOdstCameraContext = false;
+        if (wasOdstNativePause)
+        {
+            wasOdstNativePause = false;
+            VR_RequestPausePresentation(false);
+        }
         odstFreshDebounce.Reset();
     }
 #endif

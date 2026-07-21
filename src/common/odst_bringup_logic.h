@@ -227,3 +227,58 @@ private:
     bool m_sawInactive = false;
     bool m_requireTitleExit = false;
 };
+
+// Native pause is a safe pre-shutdown boundary for the private camera hooks.
+// After removing them, do not reinstall on a stale pause-menu camera: require
+// the native pause byte to clear and the ordinary camera to remain live for the
+// same full stability interval used by initial auto-arm.
+class OdstPauseRearmGate
+{
+public:
+    void Block()
+    {
+        m_blocked = true;
+        m_readySince = 0;
+        m_readyObserved = false;
+    }
+
+    void Observe(uint64_t now, bool titleActive, bool nativePaused,
+                 bool cameraActive)
+    {
+        if (!titleActive)
+        {
+            m_blocked = false;
+            m_readySince = 0;
+            m_readyObserved = false;
+            return;
+        }
+        if (!m_blocked)
+            return;
+        if (nativePaused || !cameraActive)
+        {
+            m_readySince = 0;
+            m_readyObserved = false;
+            return;
+        }
+        if (!m_readyObserved)
+        {
+            m_readySince = now;
+            m_readyObserved = true;
+            return;
+        }
+        if (now >= m_readySince && now - m_readySince > kOdstCameraStableMs)
+        {
+            m_blocked = false;
+            m_readySince = 0;
+            m_readyObserved = false;
+        }
+    }
+
+    bool CanAttemptInstall() const { return !m_blocked; }
+    bool IsBlocked() const { return m_blocked; }
+
+private:
+    bool m_blocked = false;
+    uint64_t m_readySince = 0;
+    bool m_readyObserved = false;
+};
