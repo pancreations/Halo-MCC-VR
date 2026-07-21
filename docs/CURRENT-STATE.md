@@ -543,11 +543,12 @@ This is an implementation candidate, not public ODST support:
   matrix, prepare-view, upload, guard, and constructor roles are dependencies or
   validation anchors, not additional behavioral hooks.
 - The enabled behavior is limited to stereo rendering, rotational head
-  tracking, positional 6DOF, and the minimum first-person camera coherence.
-  ODST controls/controller aim, reticle suppression, HUD/VISR changes, scopes,
-  pause, brightness, motion blur, weapon/bone/arm/VRIK work, and all gameplay
-  patches remain disabled; shared input and presentation behavior fail closed
-  to physical/stock behavior outside the proven camera context.
+  tracking, positional 6DOF, minimum first-person camera coherence, and ordinary
+  virtual-gamepad buttons/sticks only while the private build explicitly owns
+  ODST. Motion-controller aim, head-relative movement, reticle suppression,
+  HUD/VISR changes, scopes, pause, brightness, motion blur, weapon/bone/arm/VRIK
+  work, and all gameplay patches remain disabled. Shared gameplay behavior and
+  the normal option-OFF build remain fail-closed outside their proven context.
 - Installation is all-or-stock. Hooks are created and enabled as one
   transaction and initially remain disarmed until a continuously fresh camera
   passes the debounce. Any failed identity/signature/layout/runtime invariant
@@ -597,11 +598,28 @@ so the title never reached a level and the prepared camera array remained in
 its stock all-zero unloaded state. The exact baseline was restored from the
 sealed `pre-odst-private-backup-3` record.
 
-The next isolated checkpoint permits ordinary virtual-gamepad buttons/sticks
-only for explicit ODST ownership in the private option-ON build. Motion aim,
-Halo 3 gameplay transformations, all other shared features, unsupported titles,
-and the normal option-OFF build remain fail-closed. Both OFF and ON builds and
-their core tests pass locally; no third candidate has been deployed.
+The third candidate from `6e37807`
+(`7E711A3AEF33080471E82BC6B447173CE81FF91372DEC0D7EC9A8F30C1AEDC79`)
+made controls work and reached stereo/head-tracked/6DOF ODST, but presentation
+repeatedly detached on camera-heartbeat gaps shorter than the already-proven
+unload watchdog. Halo 3 remained healthy. The exact baseline was restored from
+sealed record `pre-odst-private-backup-4`.
+
+The fourth candidate from `cab874c`
+(`AD1619740DB200C419965B4F7D105DC0AB0AD935FDE06E8484DE3E2693CA97D4`)
+kept ODST stereo continuously active at about 90 FPS, confirming the heartbeat
+fix. The user rejected its shallow/disorienting depth compared with Halo 3, and
+the exact baseline was restored from sealed record
+`pre-odst-private-backup-5`.
+
+Same-machine live capture then measured stock ODST vertical/reference FOVs
+`56.111/50.117` degrees and projection `1.353137/1.876350`; known-good Halo 3
+used compact inputs `1.8418/1.3290` and final projection `0.54296/0.75246`.
+The rejected ODST path already matched the final projection but mixed its
+widened world input with the stock `0.8747` first-person reference. The next
+single-hypothesis checkpoint feeds both ODST compact inputs from Halo 3's exact
+headset pair and logs the final per-eye projection. Public behavior remains
+unchanged.
 
 Reviewed camera-core checkpoint `7c25a1a` remains the minimum ancestor for a
 private test build. `deploy-odst-private.bat` remains the only private opt-in

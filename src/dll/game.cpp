@@ -4878,6 +4878,7 @@ namespace
             float orientation[4]{};
             float halfX = 0.0f;
             float halfY = 0.0f;
+            OdstHalo3FovMatch fovMatch{};
         } eyeInputs[2];
         bool eyeInputsValid = true;
         for (int eye = 0; eye < 2; ++eye)
@@ -4902,7 +4903,10 @@ namespace
                 orientationLength < 1.5f && eyeInputs[eye].halfX > 0.01f &&
                 eyeInputs[eye].halfX < 1.55f &&
                 eyeInputs[eye].halfY > 0.01f &&
-                eyeInputs[eye].halfY < 1.55f && eyeInputsValid;
+                eyeInputs[eye].halfY < 1.55f &&
+                ComputeOdstHalo3FovMatch(
+                    eyeInputs[eye].halfX, eyeInputs[eye].halfY,
+                    eyeInputs[eye].fovMatch) && eyeInputsValid;
         }
         if (!eyeInputsValid)
         {
@@ -5019,19 +5023,11 @@ namespace
 
             const float halfX = eyeInputs[eye].halfX;
             const float halfY = eyeInputs[eye].halfY;
-            const int16_t* bounds = reinterpret_cast<const int16_t*>(
-                camera + layout.activeBounds);
-            const float width = static_cast<float>(bounds[3] - bounds[1]);
-            const float height = static_cast<float>(bounds[2] - bounds[0]);
-            const float rasterAspect = width > 0.0f && height > 0.0f
-                ? width / height
-                : 1.0f;
-            const float verticalCoverage = 2.0f * fmaxf(
-                halfY, atanf(tanf(halfX) / rasterAspect));
+            const OdstHalo3FovMatch& fovMatch = eyeInputs[eye].fovMatch;
             *reinterpret_cast<float*>(camera + layout.verticalFov) =
-                Clamp(verticalCoverage, 0.05f, 3.10f);
-            // compact +0x2C is ODST's stock zoom/reference FOV. It remains
-            // byte-for-byte as captured above and is never treated as a tangent.
+                fovMatch.compactVerticalInput;
+            *reinterpret_cast<float*>(camera + layout.referenceFov) =
+                fovMatch.compactReferenceInput;
 
             alignas(16) unsigned char temporary[0x40]{};
             g_odstCamera.buildViewport(camera, temporary);
@@ -5039,8 +5035,19 @@ namespace
                 camera, temporary, bytes + layout.rootCurrentDerived, 0.0f);
             float* projection = reinterpret_cast<float*>(
                 bytes + layout.rootCurrentDerived + layout.projectionMatrix);
-            projection[0] = 1.0f / tanf(halfX);
-            projection[5] = 1.0f / tanf(halfY);
+            projection[0] = fovMatch.projectionX;
+            projection[5] = fovMatch.projectionY;
+            static std::atomic<unsigned> loggedFovEyes{0};
+            const unsigned eyeBit = 1u << eye;
+            if (!(loggedFovEyes.fetch_or(
+                      eyeBit, std::memory_order_relaxed) & eyeBit))
+            {
+                LOG("ODST FOV match eye %d: compact pair %.4f/%.4f -> "
+                    "final projection %.5f/%.5f (Halo 3 numeric path)",
+                    eye, fovMatch.compactVerticalInput,
+                    fovMatch.compactReferenceInput,
+                    projection[0], projection[5]);
+            }
             g_odstRenderHalfFovX[eye].store(halfX, std::memory_order_relaxed);
             g_odstRenderHalfFovY[eye].store(halfY, std::memory_order_relaxed);
 

@@ -1,11 +1,44 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 constexpr uint64_t kOdstCameraFreshMs = 500;
 constexpr uint64_t kOdstCameraSoftTimeoutMs = 750;
 constexpr uint64_t kOdstCameraHardTimeoutMs = 5000;
 constexpr uint64_t kOdstCameraStableMs = 1000;
+
+struct OdstHalo3FovMatch
+{
+    float compactVerticalInput = 0.0f;
+    float compactReferenceInput = 0.0f;
+    float projectionX = 0.0f;
+    float projectionY = 0.0f;
+};
+
+// Halo 3's headset-confirmed path feeds tan(half-FOV) for both compact camera
+// scalars, then writes their reciprocals into the final projection. ODST's
+// builder is instruction-identical, but its two source fields have different
+// stock semantics. This private experiment matches Halo 3's numeric inputs as
+// a pair instead of mixing a widened world FOV with ODST's stock FP reference.
+inline bool ComputeOdstHalo3FovMatch(
+    float halfX, float halfY, OdstHalo3FovMatch& out)
+{
+    if (!std::isfinite(halfX) || !std::isfinite(halfY) ||
+        halfX <= 0.01f || halfX >= 1.55f ||
+        halfY <= 0.01f || halfY >= 1.55f)
+        return false;
+    const float tanX = std::tan(halfX);
+    const float tanY = std::tan(halfY);
+    if (!std::isfinite(tanX) || !std::isfinite(tanY) ||
+        tanX <= 0.01f || tanY <= 0.01f)
+        return false;
+    out.compactVerticalInput = tanX;
+    out.compactReferenceInput = tanY;
+    out.projectionX = 1.0f / tanX;
+    out.projectionY = 1.0f / tanY;
+    return true;
+}
 
 enum class OdstHeartbeatAction
 {

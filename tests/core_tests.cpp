@@ -69,6 +69,19 @@ int main()
         Check(!OdstInactiveCameraSlotsAreSafe(false, true, false),
             "another active ODST camera blocks the single-user bring-up");
 
+        OdstHalo3FovMatch matchedFov{};
+        Check(ComputeOdstHalo3FovMatch(
+                  std::atan(1.8418f), std::atan(1.3290f), matchedFov),
+            "ODST accepts the live Halo 3 headset FOV pair");
+        Check(std::fabs(matchedFov.compactVerticalInput - 1.8418f) < 0.0001f &&
+                  std::fabs(matchedFov.compactReferenceInput - 1.3290f) < 0.0001f,
+            "ODST feeds both compact FOV inputs from Halo 3's matched pair");
+        Check(std::fabs(matchedFov.projectionX - 0.54295f) < 0.0001f &&
+                  std::fabs(matchedFov.projectionY - 0.75244f) < 0.0001f,
+            "ODST reproduces the live Halo 3 projection scales");
+        Check(!ComputeOdstHalo3FovMatch(0.0f, 0.9f, matchedFov),
+            "ODST rejects an invalid headset FOV pair");
+
         Check(TitleRegistry_AllowsSharedGameplayFeatures(
                   GameTitle::None, false, false),
             "the MCC shell retains shared controller behavior");

@@ -172,6 +172,7 @@ def capture_views(handle, module_base):
             "tail_27f0_280c": list(tail),
             "root_field_2a8": "0x%X" % struct.unpack_from("<Q", view, 0x2A8)[0],
             "fp_source_camera_970": "0x%X" % struct.unpack_from("<Q", view, 0x970)[0],
+            "root_projection_110": floats(view, 0x110, 16),
             "cameras": {},
         }
         for name, offset in camera_offsets.items():

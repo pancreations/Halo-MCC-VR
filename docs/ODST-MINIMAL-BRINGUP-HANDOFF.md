@@ -160,6 +160,47 @@ suppression remains a separate later headset checkpoint; first verify that this
 single state-machine correction removes the gameplay hopping and associated
 presentation latency.
 
+## Fourth private headset result, live comparison, and recovery
+
+The heartbeat-stabilization retry from source commit
+`cab874cc4a69fc77f194b7be10b663c3357d78e2`, DLL
+`AD1619740DB200C419965B4F7D105DC0AB0AD935FDE06E8484DE3E2693CA97D4`,
+kept ODST stereo continuously active at about 90 FPS; the repeated 2D/3D
+presentation hopping was gone. The user reported that activation still felt
+slow and, more importantly, that the resulting depth was shallow and
+visually disorienting compared with the headset-confirmed Halo 3 path.
+
+The log separates activation from scanning: ODST was detected at `13:02:24`
+while its complete camera array was still the stock unloaded zero state. Once
+the ordinary gameplay camera appeared at `13:03:23.903`, exact preflight and
+the four-hook transaction completed within about 70 ms. Stereo armed after the
+required presentation detach and fresh-camera debounce. The long visible wait
+therefore includes the title's unloaded-camera interval; signature resolution
+was not the minute-long operation.
+
+MCC was closed and the dedicated restore mode byte-restored baseline
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
+The sealed record is `Halo_MCC_VR\pre-odst-private-backup-5`; preserve it.
+
+A read-only stock ODST capture in the same `2912x2100` render mode measured an
+orthonormal camera basis, active bounds `[0,0,2100,2912]`, vertical FOV
+`56.111` degrees, reference FOV `50.117` degrees, and projection scales
+`P0=1.35313725`, `P5=1.87635040`. A subsequent live known-good Halo 3 run on
+the same headset measured IPD `61.6 mm`, compact-camera inputs
+`1.8418/1.3290`, final projection scales `P0=0.54296`, `P5=0.75246`, and a
+first stereo validation with 47.3 percent changed samples / 8.371 mean RGB
+delta.
+
+The rejected ODST path already wrote the same final headset projection scales,
+so final compositor FOV was not the missing difference. It widened ODST's
+world-FOV input but left compact `+0x2C`, the proven first-person FOV reference,
+at its stock `0.8747` value. Halo 3 instead feeds both compact inputs from the
+same headset pair before rebuilding and uploading the world/FP cameras. The
+next single-hypothesis checkpoint makes ODST use that exact numeric pair and
+logs both per-eye compact inputs and final projection scales. This is a private
+headset experiment based on live same-machine evidence, not a public-support
+change. Motion-blur suppression remains separate.
+
 ## Proven evidence available to implementation
 
 Retail ODST module used for the gate:
