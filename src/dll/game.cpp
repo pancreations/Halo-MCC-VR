@@ -530,6 +530,57 @@ namespace
             LOG("M3: motion-blur vars: only %d of 4 resolved; toggle disabled", count);
     }
 
+    // Halo applies an extra 25% widescreen FOV reduction only while
+    // cinematic_in_progress() is true. That flat-screen composition choice
+    // also narrows the visibility projection, so geometry is rejected inside
+    // the OpenXR eye frustum during cutscenes. This engine boolean is exposed
+    // through the debug-var table; resolve it by name and disable only the
+    // cinematic reduction while stereo VR is active. Halo's ordinary gameplay
+    // projection and the authored cinematic camera pose remain untouched.
+    uint8_t* g_reduceCinematicFov = nullptr;
+    uint8_t g_reduceCinematicFovOriginal = 1;
+    std::atomic<bool> g_reduceCinematicFovApplied{false};
+
+    void ResolveCinematicFovVar(uintptr_t base, size_t size)
+    {
+        auto* slot = reinterpret_cast<uint8_t*>(
+            FindDebugVarFloat(base, size, "reduce_widescreen_fov_during_cinematics"));
+        if (!slot || *slot > 1)
+        {
+            LOG("cutscene culling: cinematic FOV policy unavailable; stock behavior retained");
+            return;
+        }
+        g_reduceCinematicFov = slot;
+        g_reduceCinematicFovOriginal = *slot;
+        LOG("cutscene culling: cinematic FOV policy resolved (stock value %u)",
+            static_cast<unsigned>(*slot));
+    }
+
+    void UpdateCinematicFovPolicy()
+    {
+        if (!g_reduceCinematicFov)
+            return;
+
+        const bool vrActive = g_enabled.load(std::memory_order_relaxed) &&
+            VR_IsStereoEnabled();
+        if (vrActive)
+        {
+            if (!g_reduceCinematicFovApplied.exchange(true))
+            {
+                g_reduceCinematicFovOriginal = *g_reduceCinematicFov;
+                LOG("cutscene culling: disabled Halo's widescreen cinematic FOV reduction");
+            }
+            // Halo normally leaves this global alone, but reassert it from the
+            // Present thread in case a map transition restores debug globals.
+            *g_reduceCinematicFov = 0;
+        }
+        else if (g_reduceCinematicFovApplied.exchange(false))
+        {
+            *g_reduceCinematicFov = g_reduceCinematicFovOriginal;
+            LOG("cutscene culling: restored Halo's cinematic FOV policy");
+        }
+    }
+
     // VRIK stage: the engine's own switches for body-in-first-person, found in
     // the same debug-var table (resolved BY NAME, no RVAs):
     //   director_disable_first_person — the camera director stops treating the
@@ -4348,6 +4399,7 @@ namespace
             LOG("M3: pitch/turn call-site signature missing/ambiguous; gun stays head-rotated");
 
         ResolveMotionBlurVars(base, size);
+        ResolveCinematicFovVar(base, size);
         ResolveBodyVars(base, size);
         DumpHudDebugVars(base, size);
 
@@ -4509,6 +4561,7 @@ void Game_ToggleHeadTracking()
 // while in a level vetoes auto-arm until the next level load; F2/F11 still work.
 void Game_AutoVrTick()
 {
+    UpdateCinematicFovPolicy();
     HudSizeAutoTick(); // HUD size: (re)locate the tag slots when needed
     // Render-thread diagnostics are reported here, on Present. Log only a
     // stable state transition; never log from the palette or HUD hot hooks.
