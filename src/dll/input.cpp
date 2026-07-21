@@ -74,7 +74,7 @@ namespace
         if (scope.changed && scopeAvailable)
         {
             VR_RequestScopeToggle();
-            LOG("universal scope: R3 release toggled body-safe scope state");
+            LOG("universal scope: R3 release requested next held-weapon zoom stage");
         }
         if (!scopeAvailable) VR_SetScopeActive(false);
         if (Menu_IsOpen())

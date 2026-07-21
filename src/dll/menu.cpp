@@ -287,12 +287,12 @@ namespace
         }
         ImGui::SameLine();
         ImGui::TextDisabled(VR_IsScopeActive() ? "[R3: visible]" : "[R3: hidden]");
-        ImGui::TextDisabled("R3 uses each weapon's original Halo zoom inside this screen while the\n"
-                            "main headset view stays wide. AR/rockets use the fallback below.");
+        ImGui::TextDisabled("R3 cycles the held weapon's authored zoom tiers inside this screen while\n"
+                            "the main view stays wide. Only zero-zoom weapons use the fallback.");
         if (g_config.scope_enabled)
         {
             ImGui::Indent();
-            changed |= ImGui::SliderFloat("Scope zoom strength", &g_config.scope_zoom,
+            changed |= ImGui::SliderFloat("Zero-zoom fallback strength", &g_config.scope_zoom,
                                           1.25f, 8.0f, "%.2fx");
             changed |= ImGui::SliderFloat("Screen width (m)##scope",
                                           &g_config.scope_screen_width_m,

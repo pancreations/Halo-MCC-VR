@@ -366,7 +366,7 @@ void ConfigSave()
     fprintf(f, "# The main VR view stays wide while the weapon zoom appears on the screen. 1 = on.\n");
     fprintf(f, "# (default %d)\n", d.scope_enabled ? 1 : 0);
     fprintf(f, "scope_enabled = %d\n\n", g_config.scope_enabled ? 1 : 0);
-    fprintf(f, "# Fallback magnification for weapons with no authored zoom (AR, rockets, etc.).\n");
+    fprintf(f, "# Fallback magnification only for confirmed zero-zoom weapons (for example, AR).\n");
     fprintf(f, "# (default %.2f, range 1.25 to 8.0)\n", d.scope_zoom);
     fprintf(f, "scope_zoom = %.2f\n\n", g_config.scope_zoom);
     fprintf(f, "# Fixed physical screen width in meters; height is always 3/4 of width.\n");
