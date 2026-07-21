@@ -278,7 +278,7 @@ namespace
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Universal zoom screen (PLACEMENT TEST)");
+        ImGui::Text("Universal zoom screen (IMAGE TEST)");
         if (ImGui::Checkbox("Enable R3 gun-mounted screen", &g_config.scope_enabled))
         {
             changed = true;
@@ -287,8 +287,8 @@ namespace
         }
         ImGui::SameLine();
         ImGui::TextDisabled(VR_IsScopeActive() ? "[R3: visible]" : "[R3: hidden]");
-        ImGui::TextDisabled("This checkpoint shows a flat blue-green 4:3 panel only. R3 toggles it\n"
-                            "for every gun and does not trigger Halo's full-view zoom.");
+        ImGui::TextDisabled("This checkpoint puts a normal rendered eye image on the proven flat 4:3\n"
+                            "screen. It is not magnified or aimed down the gun yet.");
         if (g_config.scope_enabled)
         {
             ImGui::Indent();

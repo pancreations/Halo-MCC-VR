@@ -76,7 +76,7 @@ namespace
         VR_SetScopeActive(scope.active);
         if (scope.changed)
         {
-            LOG("scope placement proof: %s", scope.active ? "ON" : "OFF");
+            LOG("universal scope screen: %s", scope.active ? "ON" : "OFF");
         }
         if (Menu_IsOpen())
         {

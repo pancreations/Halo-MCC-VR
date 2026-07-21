@@ -94,15 +94,15 @@ namespace
     std::vector<ID3D11RenderTargetView*> g_reticleRtvs;
     constexpr uint32_t kReticleSize = 512;
 
-    // Stage 1 universal-scope placement proof. This is deliberately an opaque
-    // colored 4:3 texture with no extra game-camera render. The headset must
-    // prove its fixed physical geometry and controls before picture-in-picture
-    // is allowed back into the render loop.
-    XrSwapchain g_scopeProofChain = XR_NULL_HANDLE;
-    std::vector<ID3D11Texture2D*> g_scopeProofImages;
-    std::vector<ID3D11RenderTargetView*> g_scopeProofRtvs;
-    constexpr uint32_t kScopeProofWidth = 1024;
-    constexpr uint32_t kScopeProofHeight = 768;
+    // Stage 2 universal-scope image-delivery proof. The fixed 4:3 quad now
+    // receives one already-valid eye image through the proven blit path. It
+    // still performs no extra game-camera render, isolating image delivery from
+    // the magnified aim-camera work that follows only after a headset pass.
+    XrSwapchain g_scopeScreenChain = XR_NULL_HANDLE;
+    std::vector<ID3D11Texture2D*> g_scopeScreenImages;
+    std::vector<ID3D11RenderTargetView*> g_scopeScreenRtvs;
+    constexpr uint32_t kScopeScreenWidth = 1024;
+    constexpr uint32_t kScopeScreenHeight = 768;
     std::atomic<bool> g_scopeActive{false};
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
@@ -736,14 +736,14 @@ float4 ps_pass(VSOut i) : SV_Target
         return rtvs[idx];
     }
 
-    bool PrepareScopePlacementProof()
+    bool PrepareScopeImageDelivery()
     {
         static bool creationFailed = false;
         if (creationFailed)
             return false;
-        if (g_scopeProofChain == XR_NULL_HANDLE &&
-            !CreateChain(kScopeProofWidth, kScopeProofHeight, g_scopeProofChain,
-                         g_scopeProofImages, g_scopeProofRtvs, "scope placement proof"))
+        if (g_scopeScreenChain == XR_NULL_HANDLE &&
+            !CreateChain(kScopeScreenWidth, kScopeScreenHeight, g_scopeScreenChain,
+                         g_scopeScreenImages, g_scopeScreenRtvs, "scope image delivery"))
         {
             creationFailed = true;
             return false;
@@ -755,26 +755,26 @@ float4 ps_pass(VSOut i) : SV_Target
         wait.timeout = 1000000000;
         XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
 
-        XrResult result = xrAcquireSwapchainImage(g_scopeProofChain, &acquire, &index);
+        XrResult result = xrAcquireSwapchainImage(g_scopeScreenChain, &acquire, &index);
         if (XR_FAILED(result))
         {
             static bool logged = false;
-            if (!logged) { logged = true; LOG("scope proof acquire failed: %s", XrStr(result)); }
+            if (!logged) { logged = true; LOG("scope image acquire failed: %s", XrStr(result)); }
             return false;
         }
-        result = xrWaitSwapchainImage(g_scopeProofChain, &wait);
+        result = xrWaitSwapchainImage(g_scopeScreenChain, &wait);
         if (XR_FAILED(result))
         {
             static bool logged = false;
-            if (!logged) { logged = true; LOG("scope proof wait failed: %s", XrStr(result)); }
-            xrReleaseSwapchainImage(g_scopeProofChain, &release);
+            if (!logged) { logged = true; LOG("scope image wait failed: %s", XrStr(result)); }
+            xrReleaseSwapchainImage(g_scopeScreenChain, &release);
             return false;
         }
 
         ID3D11RenderTargetView* rtv = nullptr;
-        if (index < g_scopeProofImages.size() && index < g_scopeProofRtvs.size())
+        if (index < g_scopeScreenImages.size() && index < g_scopeScreenRtvs.size())
         {
-            rtv = g_scopeProofRtvs[index];
+            rtv = g_scopeScreenRtvs[index];
             if (!rtv)
             {
                 D3D11_RENDER_TARGET_VIEW_DESC desc{};
@@ -782,42 +782,45 @@ float4 ps_pass(VSOut i) : SV_Target
                 desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
                 desc.Texture2D.MipSlice = 0;
                 const HRESULT hr = g_device->CreateRenderTargetView(
-                    g_scopeProofImages[index], &desc, &g_scopeProofRtvs[index]);
+                    g_scopeScreenImages[index], &desc, &g_scopeScreenRtvs[index]);
                 if (FAILED(hr))
                 {
                     static bool logged = false;
                     if (!logged)
                     {
                         logged = true;
-                        LOG("scope proof RTV creation failed: HRESULT 0x%08X format %d",
+                        LOG("scope image RTV creation failed: HRESULT 0x%08X format %d",
                             (unsigned)hr, (int)g_xrFormat);
                     }
                 }
-                rtv = g_scopeProofRtvs[index];
+                rtv = g_scopeScreenRtvs[index];
             }
         }
 
-        if (rtv)
-        {
-            // Bright blue-green is unmistakable but comfortable enough to use
-            // while adjusting the live placement sliders.
-            const float color[4] = {0.02f, 0.35f, 0.45f, 1.0f};
-            g_context->ClearRenderTargetView(rtv, color);
-        }
-        else
+        bool copied = false;
+        if (rtv && g_eyeHasImage[0] && g_eyeCache[0])
+            copied = Blit(g_eyeCache[0], g_eyeCacheDesc,
+                          g_scopeScreenImages[index], kScopeScreenWidth,
+                          kScopeScreenHeight, rtv);
+        if (!rtv || !copied)
         {
             static bool logged = false;
-            if (!logged) { logged = true; LOG("scope proof has no render-target view"); }
+            if (!logged)
+            {
+                logged = true;
+                LOG("scope image copy failed: rtv=%d eyeImage=%d",
+                    rtv != nullptr, g_eyeHasImage[0] && g_eyeCache[0] != nullptr);
+            }
         }
 
-        const XrResult releaseResult = xrReleaseSwapchainImage(g_scopeProofChain, &release);
+        const XrResult releaseResult = xrReleaseSwapchainImage(g_scopeScreenChain, &release);
         if (XR_FAILED(releaseResult))
         {
             static bool logged = false;
-            if (!logged) { logged = true; LOG("scope proof release failed: %s", XrStr(releaseResult)); }
+            if (!logged) { logged = true; LOG("scope image release failed: %s", XrStr(releaseResult)); }
             return false;
         }
-        return rtv != nullptr;
+        return rtv != nullptr && copied;
     }
 
     bool EnsureScreenChain(uint32_t w, uint32_t h)
@@ -2560,7 +2563,7 @@ float4 ps_pass(VSOut i) : SV_Target
                         }
 
                         if (g_config.scope_enabled && g_scopeActive.load() &&
-                            !Menu_IsOpen() && haveAim && PrepareScopePlacementProof())
+                            !Menu_IsOpen() && haveAim && PrepareScopeImageDelivery())
                         {
                             const ScopeQuadTransform transform = ComputeScopeQuadTransform(
                                 aimQ, aimP,
@@ -2571,9 +2574,9 @@ float4 ps_pass(VSOut i) : SV_Target
                             scopeQuad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
                             scopeQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
                             scopeQuad.space = g_localSpace;
-                            scopeQuad.subImage.swapchain = g_scopeProofChain;
+                            scopeQuad.subImage.swapchain = g_scopeScreenChain;
                             scopeQuad.subImage.imageRect = {
-                                {0, 0}, {(int32_t)kScopeProofWidth, (int32_t)kScopeProofHeight}};
+                                {0, 0}, {(int32_t)kScopeScreenWidth, (int32_t)kScopeScreenHeight}};
                             scopeQuad.subImage.imageArrayIndex = 0;
                             scopeQuad.pose.orientation = {aimQ[0], aimQ[1], aimQ[2], aimQ[3]};
                             scopeQuad.pose.position = {
@@ -2585,7 +2588,7 @@ float4 ps_pass(VSOut i) : SV_Target
                             if (!logged)
                             {
                                 logged = true;
-                                LOG("scope placement proof submitted: %.3fm x %.3fm at local offsets %.3f/%.3f/%.3f",
+                                LOG("scope image-delivery proof submitted: %.3fm x %.3fm at local offsets %.3f/%.3f/%.3f",
                                     transform.width, transform.height,
                                     g_config.scope_screen_right_m,
                                     g_config.scope_screen_up_m,
