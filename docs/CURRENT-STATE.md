@@ -77,6 +77,20 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   `056E35E6487720E122F4F90DAC49921C3DE0205C33562F90EF72ADF379273174`.
   Headset validation must show the repeated Halo hook-install logs, new camera
   copies, automatic stereo/head-tracking rearm, and no fatal error.
+- Mission-end crash candidate `139e266` on
+  `fix/mission-end-stale-policy` follows the successful hook reattachment.
+  Windows Error Reporting identified access violation `0xc0000005` at
+  `halo3xr.dll+0x1D61A`; disassembly maps that exact instruction to the
+  per-frame cinematic-FOV policy byte write. The resolved debug-variable slot
+  lives inside `halo3.dll` and became invalid while the mission was unloading.
+  Reads and writes to that external slot are now SEH-guarded, atomically
+  invalidated after an unload fault, and reset before resolution against a new
+  Halo module instance. Release build and CTest pass; deployed 2026-07-21
+  03:08:43 AM with SHA-256
+  `F4A8AFABA6448001EF9414A8BE83C563E240939350AD1862DD09832A716CA5FC`.
+  Headset confirmation is pending: finish/exit a mission, return to the MCC
+  shell, enter another Halo mission, and repeat the transition without a fatal
+  error while stereo and tracking automatically return.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.
