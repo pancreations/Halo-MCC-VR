@@ -142,31 +142,26 @@ ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],
 
 bool ComputeScopeCameraPose(const float controllerBasis[9],
                             const float weaponSeat[3],
+                            const float bulletForward[3],
                             float worldScale,
                             float gunForwardMeters,
-                            float rightMeters,
-                            float upMeters,
-                            float forwardMeters,
                             float crosshairDistanceMeters,
                             ScopeCameraPose& result)
 {
-    if (!controllerBasis || !weaponSeat || !std::isfinite(worldScale) ||
-        worldScale <= 0.0f)
+    if (!controllerBasis || !weaponSeat || !bulletForward ||
+        !std::isfinite(worldScale) || worldScale <= 0.0f)
         return false;
 
-    const float* forward = controllerBasis;
-    const float* left = controllerBasis + 3;
+    const float* controllerForward = controllerBasis;
     const float* controllerUp = controllerBasis + 6;
     float rawOrigin[3]{};
-    float target[3]{};
     for (int i = 0; i < 3; ++i)
     {
-        rawOrigin[i] = weaponSeat[i] - forward[i] * gunForwardMeters * worldScale;
+        rawOrigin[i] = weaponSeat[i] -
+            controllerForward[i] * gunForwardMeters * worldScale;
         result.position[i] = rawOrigin[i] +
-            (forward[i] * forwardMeters - left[i] * rightMeters +
-             controllerUp[i] * upMeters) * worldScale;
-        target[i] = rawOrigin[i] + forward[i] * crosshairDistanceMeters * worldScale;
-        result.forward[i] = target[i] - result.position[i];
+            controllerForward[i] * crosshairDistanceMeters * worldScale;
+        result.forward[i] = bulletForward[i];
     }
 
     float length = std::sqrt(result.forward[0] * result.forward[0] +
@@ -176,8 +171,8 @@ bool ComputeScopeCameraPose(const float controllerBasis[9],
         return false;
     for (float& component : result.forward) component /= length;
 
-    // Preserve the rifle's roll while keeping up exactly perpendicular to the
-    // converged optical axis.
+    // Preserve the rifle's roll while keeping up perpendicular to the actual
+    // bullet direction used by the remote camera.
     const float along = controllerUp[0] * result.forward[0] +
                         controllerUp[1] * result.forward[1] +
                         controllerUp[2] * result.forward[2];

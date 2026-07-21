@@ -3406,13 +3406,12 @@ namespace
         float controllerBasis[9], weaponSeat[3], meshScale=1.0f;
         if(!ControllerWorldPoseEx(false,controllerBasis,weaponSeat,meshScale))
             return false;
+        const float bulletForward[3]={
+            g_aimFwdX.load(),g_aimFwdY.load(),g_aimFwdZ.load()};
         ScopeCameraPose pose{};
         if(!ComputeScopeCameraPose(
-               controllerBasis,weaponSeat,g_worldScale.load(),
+               controllerBasis,weaponSeat,bulletForward,g_worldScale.load(),
                Clamp(g_config.gun_forward_m,-0.3f,0.5f),
-               Clamp(g_config.scope_screen_right_m,-0.30f,0.30f),
-               Clamp(g_config.scope_screen_up_m,-0.20f,0.30f),
-               Clamp(g_config.scope_screen_forward_m,0.05f,0.80f),
                Clamp(g_config.crosshair_distance_m,2.0f,50.0f),pose))
             return false;
         memcpy(camera,saved,0x90);
@@ -3653,8 +3652,8 @@ namespace
         g_stereoEye = -1;
         g_eyeFpView.store(nullptr,std::memory_order_release);
 
-        // One mono world-only camera at the physical scope screen. Its optical
-        // axis converges on the same controller-ray target as the VR crosshair.
+        // One mono world-only remote camera at the VR crosshair point. The
+        // physical 4:3 display remains mounted on the gun independently.
         if(g_buildViewport && g_buildMatrices && VR_ScopeShouldRenderThisFrame() &&
            BuildRightHandScopeCamera(camera,saved) && VR_BeginScopeRaster())
         {
@@ -3693,7 +3692,7 @@ namespace
             VR_EndScopeRaster();
             static std::atomic<bool> logged{false};
             if(!logged.exchange(true))
-                LOG("scope camera active: mounted origin converged to VR crosshair, %.2fx 4:3 lens",
+                LOG("scope camera active: remote origin at VR crosshair, %.2fx 4:3 lens",
                     zoom);
         }
         memcpy(camera, saved, sizeof(saved));

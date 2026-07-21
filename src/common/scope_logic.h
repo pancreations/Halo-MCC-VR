@@ -69,16 +69,14 @@ struct ScopeCameraPose
     float up[3]{};
 };
 
-// Builds a camera at the physical scope-screen position and converges its
-// center on the same controller-ray target used by the VR crosshair. The game
-// basis is column-major: forward, left, up.
+// Builds a remote camera at the bullet-aligned VR crosshair point. Its view
+// direction is Halo's actual projectile direction while its roll follows the
+// controller. The physical scope quad is positioned independently.
 bool ComputeScopeCameraPose(const float controllerBasis[9],
                             const float weaponSeat[3],
+                            const float bulletForward[3],
                             float worldScale,
                             float gunForwardMeters,
-                            float rightMeters,
-                            float upMeters,
-                            float forwardMeters,
                             float crosshairDistanceMeters,
                             ScopeCameraPose& result);
 

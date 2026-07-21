@@ -224,26 +224,20 @@ int main()
         0, 1, 0,  // left
         0, 0, 1}; // up
     const float weaponSeat[3] = {0.2f, 0.0f, 0.0f};
+    const float bulletForward[3] = {1.0f, 0.02f, -0.01f};
     ScopeCameraPose scopeCamera{};
-    Check(ComputeScopeCameraPose(gameBasis, weaponSeat, 2.0f, 0.10f,
-                                 0.05f, 0.10f, 0.30f, 10.0f, scopeCamera),
-        "Mounted scope camera accepts a valid controller basis");
-    Check(std::fabs(scopeCamera.position[0] - 0.60f) < 1e-5f &&
-          std::fabs(scopeCamera.position[1] + 0.10f) < 1e-5f &&
-          std::fabs(scopeCamera.position[2] - 0.20f) < 1e-5f,
-        "Scope camera origin uses the quad's exact local offsets without gun-seat bias");
-    const float target[3] = {20.0f, 0.0f, 0.0f};
-    const float toTarget[3] = {
-        target[0] - scopeCamera.position[0],
-        target[1] - scopeCamera.position[1],
-        target[2] - scopeCamera.position[2]};
-    const float targetDistance = std::sqrt(toTarget[0] * toTarget[0] +
-                                           toTarget[1] * toTarget[1] +
-                                           toTarget[2] * toTarget[2]);
-    Check(std::fabs(scopeCamera.position[0] + scopeCamera.forward[0] * targetDistance - target[0]) < 1e-4f &&
-          std::fabs(scopeCamera.position[1] + scopeCamera.forward[1] * targetDistance - target[1]) < 1e-4f &&
-          std::fabs(scopeCamera.position[2] + scopeCamera.forward[2] * targetDistance - target[2]) < 1e-4f,
-        "Scope optical center converges exactly on the VR crosshair target");
+    Check(ComputeScopeCameraPose(gameBasis, weaponSeat, bulletForward,
+                                 2.0f, 0.10f, 10.0f, scopeCamera),
+        "Remote scope camera accepts valid crosshair and bullet inputs");
+    Check(std::fabs(scopeCamera.position[0] - 20.0f) < 1e-5f &&
+          std::fabs(scopeCamera.position[1]) < 1e-5f &&
+          std::fabs(scopeCamera.position[2]) < 1e-5f,
+        "Scope camera origin is exactly the VR crosshair point");
+    const float bulletLength = std::sqrt(1.0f + 0.02f * 0.02f + 0.01f * 0.01f);
+    Check(std::fabs(scopeCamera.forward[0] - bulletForward[0] / bulletLength) < 1e-5f &&
+          std::fabs(scopeCamera.forward[1] - bulletForward[1] / bulletLength) < 1e-5f &&
+          std::fabs(scopeCamera.forward[2] - bulletForward[2] / bulletLength) < 1e-5f,
+        "Remote scope center continues along Halo's actual bullet direction");
 
     const ScopeProjectionTangents scopeLens =
         ComputeScopeProjectionTangents(2.5f, 16.0f / 9.0f);
