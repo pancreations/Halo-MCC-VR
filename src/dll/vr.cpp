@@ -2588,9 +2588,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             // whenever Halo's internal projection produces different scales.
             float haloHalfX = atanf(1.091595f);
             float haloHalfY = atanf(1.114286f);
-            Game_GetRenderHalfFov(haloHalfX, haloHalfY);
             for (uint32_t i = 0; i < locatedViewCount; ++i)
             {
+                Game_GetRenderHalfFov(static_cast<int>(i), haloHalfX, haloHalfY);
                 projectionViews[i].pose = g_views[i].pose;
                 projectionViews[i].fov = {-haloHalfX, haloHalfX, haloHalfY, -haloHalfY};
                 projectionViews[i].subImage.swapchain = g_stereoChain;
@@ -2662,7 +2662,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         // deliberately trade visual reticle response for calm.
                         float aimQ[4], aimP[3];
                         const bool haveAim = VR_GetAimPose(aimQ, aimP);
-                        if (g_config.crosshair && haveAim && EnsureReticleChain())
+                        if (Game_AllowsSharedGameplayFeatures() &&
+                            g_config.crosshair &&
+                            haveAim && EnsureReticleChain())
                         {
                             if (g_authoredReticleReady &&
                                 g_authoredReticleSerial == g_preparedFrame.serial &&
@@ -2727,7 +2729,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                             g_reticleAimPoseValid = false;
                         }
 
-                        if (g_config.scope_enabled && g_scopeActive.load() &&
+                        if (Game_AllowsSharedGameplayFeatures() &&
+                            g_config.scope_enabled &&
+                            g_scopeActive.load() &&
                             !Menu_IsOpen() && haveAim && PrepareScopeImageDelivery())
                         {
                             const ScopeQuadTransform transform = ComputeScopeQuadTransform(
@@ -2894,6 +2898,13 @@ void VR_InitInstance()
 void VR_BeforePresent(IDXGISwapChain* sc)
 {
     g_gameSwapchain = sc;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    // Presentation cleanup must not depend on a healthy/running OpenXR session.
+    // The D3D Present hook still reaches this path when instance/session setup
+    // failed, so it can acknowledge ODST teardown and restore shared title
+    // policy without leaving camera-only ownership latched indefinitely.
+    Game_ProcessPresentationDetachRequest();
+#endif
     if (!g_gameBackbufferDescValid && sc)
     {
         ID3D11Texture2D* backbuffer = nullptr;
@@ -3123,14 +3134,14 @@ void VR_DetachGamePresentation()
     }
 }
 
-void VR_CaptureRenderedEye(int eye)
+bool VR_CaptureRenderedEye(int eye)
 {
     if (eye < 0 || eye > 1)
-        return;
+        return false;
     if (g_rasterRedirected[eye] && g_eyeCache[eye])
     {
         g_eyeHasImage[eye] = true;
-        return;
+        return true;
     }
     static bool loggedMissing = false;
     if (!loggedMissing)
@@ -3138,6 +3149,7 @@ void VR_CaptureRenderedEye(int eye)
         LOG("M2 RASTER: no internal scene-color RTV redirect occurred; refusing fake eye copy");
         loggedMissing = true;
     }
+    return false;
 }
 
 void VR_TraceEvent(const char* tag, int a, int b)

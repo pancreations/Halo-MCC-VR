@@ -8,12 +8,23 @@
 namespace
 {
     std::atomic<GameTitle> g_activeTitle{ GameTitle::None };
+    std::atomic<uint64_t> g_activeTitleEpochMs{ 0 };
     std::atomic<RuntimeMode> g_runtimeMode{ RuntimeMode::Shell };
 }
 
 const TitleDescriptor* TitleAdapter_GetActive()
 {
     return TitleRegistry_Find(g_activeTitle.load(std::memory_order_acquire));
+}
+
+GameTitle TitleAdapter_GetActiveTitle()
+{
+    return g_activeTitle.load(std::memory_order_acquire);
+}
+
+uint64_t TitleAdapter_GetActiveTitleEpochMs()
+{
+    return g_activeTitleEpochMs.load(std::memory_order_acquire);
 }
 
 RuntimeMode TitleAdapter_GetRuntimeMode()
@@ -47,9 +58,14 @@ const TitleDescriptor* TitleAdapter_PollLoaded()
     const bool ambiguous = detectedCount > 1;
     const GameTitle next = ambiguous ? GameTitle::Unknown :
         (detected ? detected->title : GameTitle::None);
-    const GameTitle previous = g_activeTitle.exchange(next, std::memory_order_acq_rel);
+    const GameTitle previous = g_activeTitle.load(std::memory_order_acquire);
     if (previous == next)
         return ambiguous ? nullptr : detected;
+    // Publish the transition epoch before the new title. An acquire load that
+    // observes Unknown can therefore never inherit a Halo 3 camera heartbeat
+    // from before the resident-module ambiguity began.
+    g_activeTitleEpochMs.store(GetTickCount64(), std::memory_order_release);
+    g_activeTitle.store(next, std::memory_order_release);
 
     if (ambiguous)
     {
@@ -65,8 +81,19 @@ const TitleDescriptor* TitleAdapter_PollLoaded()
     }
     else if (!detected->runtimeSupported)
     {
-        LOG("Title adapter: detected %s (%ls); adapter not implemented, leaving stock game untouched",
-            detected->displayName, detected->moduleName);
+        if (TitleRegistry_HookPlan(detected->title) ==
+            TitleHookPlan::OdstExperimentalCameraCore)
+        {
+            LOG("Title adapter: detected %s (%ls); public adapter remains "
+                "unsupported, private camera-only bring-up is build-enabled",
+                detected->displayName, detected->moduleName);
+        }
+        else
+        {
+            LOG("Title adapter: detected %s (%ls); adapter not implemented, "
+                "leaving stock game untouched",
+                detected->displayName, detected->moduleName);
+        }
         TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
     }
     else

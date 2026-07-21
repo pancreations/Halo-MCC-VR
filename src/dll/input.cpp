@@ -68,7 +68,8 @@ namespace
         // into Halo enters native zoom state, which hides the normal VR gun and
         // body even if we restore the eye FOV. Disabled/non-gameplay input still
         // passes through unchanged.
-        const bool scopeAvailable = g_config.scope_enabled && Game_IsHeadTracking();
+        const bool scopeAvailable = g_config.scope_enabled &&
+            Game_IsHeadTracking() && !Game_IsCameraOnlyBringup();
         const ScopeToggleUpdate scope = g_scopeToggle.Update(
             scopeAvailable, pad.clickR, chord.consumeClicks || Menu_IsOpen());
         if (scope.changed && scopeAvailable)
@@ -204,6 +205,11 @@ namespace
     {
         if (user != 0 || !state)
             return r;
+        // Camera-only and unsupported titles own no controller integration.
+        // Preserve a physical pad result exactly and do not fabricate or merge
+        // VR input until the active title policy explicitly permits it.
+        if (!Game_AllowsSharedGameplayFeatures())
+            return r;
         g_diagReads.fetch_add(1);
         DiagTick();
         if (r != ERROR_SUCCESS)
@@ -246,6 +252,8 @@ namespace
 
     DWORD ProcessGetCaps(DWORD r, DWORD user, XINPUT_CAPABILITIES* caps)
     {
+        if (!Game_AllowsSharedGameplayFeatures())
+            return r;
         if (user != 0 || !caps || r == ERROR_SUCCESS)
             return r;
         // Fabricate a standard wired gamepad UNCONDITIONALLY: MCC enumerates
@@ -281,6 +289,8 @@ namespace
 
     DWORD ProcessSetState(DWORD result, DWORD user, XINPUT_VIBRATION* vibration)
     {
+        if (!Game_AllowsSharedGameplayFeatures())
+            return result;
         if (user != 0 || !vibration)
             return result;
         VR_SetGameHaptics(BlendXInputMotors(

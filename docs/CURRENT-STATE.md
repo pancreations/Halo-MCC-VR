@@ -427,10 +427,11 @@ Consequences for planning:
   the same functions, then a live scan for the shifted camera struct. It is not
   a code change.
 
-Shipping safety today: ODST is registered in `src/common/title_registry.cpp`
-with `runtimeSupported=false`, and hook installation in `game.cpp` is gated on
-`GameTitle::Halo3`. ODST therefore loads stock and untouched, so the Halo 3
-alpha is safe to distribute on machines that also have ODST installed.
+Shipping safety at the offline-survey checkpoint: ODST was registered in
+`src/common/title_registry.cpp` with `runtimeSupported=false`, and hook
+installation in `game.cpp` was gated on `GameTitle::Halo3`. The current normal
+option-OFF build preserves the same stock ODST result; the later private ON-only
+implementation is recorded below.
 
 ### ODST direction approved 2026-07-21
 
@@ -514,19 +515,71 @@ engine member spelling and unobserved mirrored/custom/oblique stock modes remain
 documented ambiguity, but their sizes, formulas, enable conditions, and required
 preservation behavior are known.
 
-No runtime source, game memory, hook, support flag, or game file changed during
-the evidence pass. ODST remains `runtimeSupported=false`, capabilities remain
-`None`, and `game.cpp` still installs game hooks only for `GameTitle::Halo3`.
+At the evidence-pass checkpoint, no runtime source, game memory, hook, support
+flag, or game file changed. That remains the historical boundary of the
+accepted evidence. ODST remains registered with `runtimeSupported=false` and
+capabilities `None`; the later private implementation described below does not
+change those public declarations.
 
-The next chat must follow `docs/ODST-MINIMAL-BRINGUP-HANDOFF.md`: add a private
-build-time ODST bring-up option defaulting OFF; introduce a title-specific
-camera profile; resolve every required ODST camera signature uniquely; install
-the camera core atomically or leave stock; bring up only camera/stereo/6DOF and
-minimum FP-camera coherence; and validate level unload, title exit, and reload.
-Do not call the monolithic Halo 3 installer for ODST or port any controls,
-reticle, HUD/VISR, scope, pause, brightness, motion-blur, weapon, bone, arm,
-VRIK, or gameplay behavior in that checkpoint. Keep `runtimeSupported=false`
-until ODST headset acceptance and the full Halo 3 shared-system regression pass.
+### Private ODST camera-core implementation checkpoint (desk-side only)
+
+The current `feature/odst-bringup` worktree now contains the deliberately
+private implementation specified by `docs/ODST-MINIMAL-BRINGUP-HANDOFF.md`.
+This is an implementation candidate, not public ODST support:
+
+- CMake option `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP` defaults to `OFF`. An
+  option-OFF build gives ODST no hook plan and leaves it stock. The normal
+  `deploy.bat` and `export-alpha.bat` paths require an exact `OFF` cache entry
+  and refuse an ON or otherwise unverified cache, preventing a private binary
+  from entering the public deploy/package flow.
+- A private option-ON build dispatches only the isolated ODST camera installer;
+  it never calls the monolithic Halo 3 installer. Preflight requires the exact
+  retail PE timestamp `0x68A0F232` and image size `0x4797000`, ten unique
+  title-specific signatures inside the expected image/code ranges, the derived
+  four-slot camera array, and the proven `0x90`/`0xC0`/`0x2810` layout and
+  single-user camera invariants before creating any hook.
+- The complete installed set is four detours: compact-camera copy, inner
+  prepared-view renderer, FP camera rebuild, and FP driver. Resolved viewport,
+  matrix, prepare-view, upload, guard, and constructor roles are dependencies or
+  validation anchors, not additional behavioral hooks.
+- The enabled behavior is limited to stereo rendering, rotational head
+  tracking, positional 6DOF, and the minimum first-person camera coherence.
+  ODST controls/controller aim, reticle suppression, HUD/VISR changes, scopes,
+  pause, brightness, motion blur, weapon/bone/arm/VRIK work, and all gameplay
+  patches remain disabled; shared input and presentation behavior fail closed
+  to physical/stock behavior outside the proven camera context.
+- Installation is all-or-stock. Hooks are created and enabled as one
+  transaction and initially remain disarmed until a continuously fresh camera
+  passes the debounce. Any failed identity/signature/layout/runtime invariant
+  requests stock fallback. Teardown disables outer render entry before its FP
+  dependencies, drains and verifies detour ingress, retains the exact title
+  module and hook state if safe removal cannot yet be proved, and retries rather
+  than freeing a possibly live trampoline. Rearm is blocked until a proven
+  inactive-to-active camera reload edge or genuine title re-entry.
+- Camera-array readiness is published atomically by the worker only while it
+  owns the title-module lease. The render detour still revalidates the complete
+  four-slot array immediately before touching camera bytes. Presentation detach
+  uses request/completion generations acknowledged on the Present thread before
+  XR early exits; completing one resets the fresh-camera debounce and cannot
+  re-arm stereo in the same Present.
+- Title activation is polled every 50 ms; module polling is not an atomic title
+  transition signal because MCC can retain more than one title module. An
+  `Unknown` ownership state may retain Halo 3 shared gameplay behavior only
+  after a Halo 3 camera heartbeat newer than the observed transition and less
+  than 100 ms old. Explicit ODST or private camera-only ownership always blocks
+  those shared Halo 3 features.
+- The current positional conversion uses `1 / 3.048` game units per OpenXR
+  meter. This is a private headset-calibration hypothesis, not accepted ODST
+  scale evidence. Direction and scale must be observed in the headset before it
+  can be retained or documented as title calibration.
+
+Both the normal option-OFF and private option-ON configurations pass their final
+desk-side Release builds and CTest. The private Release object was also checked
+for the unwind metadata and hook-wrapper shape required by verified teardown.
+Nothing from this implementation has been deployed or launched, and no ODST
+headset result exists. The next runtime step
+requires the user's explicit approval for a private deployment and narrowly
+scoped headset test; until then, do not add or bypass a private deploy path.
 
 ## 2026-07-19 session closeout
 
@@ -607,3 +660,8 @@ until ODST headset acceptance and the full Halo 3 shared-system regression pass.
     .\deploy.bat auto
 
 Then verify both DLL and launcher build times/hashes, launch without anti-cheat, and test only the behavior named for that build. Record the result before the next change.
+
+For ODST, that command sequence remains the public option-OFF path and cannot
+deploy the private camera core. `deploy.bat auto` intentionally rejects an ON
+cache. Do not create, bypass, or run a private deployment path until the user
+explicitly approves the reviewed ODST headset checkpoint.

@@ -10,6 +10,7 @@
 
 #include "config.h"
 #include "input_logic.h"
+#include "odst_bringup_logic.h"
 #include "scope_logic.h"
 #include "title_registry.h"
 
@@ -44,6 +45,104 @@ namespace
 
 int main()
 {
+    {
+        Check(!OdstCameraOnlyScopeRequired(false, true, false),
+            "a public build never claims the private ODST camera core");
+        Check(OdstCameraOnlyScopeRequired(true, true, false),
+            "the adapter transition remains camera-only after module polling");
+        Check(OdstCameraOnlyScopeRequired(false, false, true),
+            "owned teardown state remains isolated until presentation detaches");
+        Check(OdstManualArmEligible(true, true, true, false),
+            "stable camera plus explicit head/stereo toggles permits manual arm");
+        Check(!OdstManualArmEligible(false, true, true, false),
+            "manual ODST arm still requires the fresh-camera debounce");
+        Check(!OdstManualArmEligible(true, true, true, true),
+            "teardown always vetoes manual ODST arm");
+
+        Check(TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::None, false, false),
+            "the MCC shell retains shared controller behavior");
+        Check(TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::Halo3, false, false),
+            "an explicitly detected Halo 3 session retains shared features");
+        Check(TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::Unknown, true, false),
+            "a fresh Halo 3 camera heartbeat resolves resident-module ambiguity");
+        Check(!TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::Halo3ODST, false, false),
+            "public ODST XInput and presentation remain pass-through");
+        Check(!TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::Halo3ODST, true, false),
+            "an explicit unsupported title beats a stale Halo 3 heartbeat");
+        Check(!TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::Unknown, false, false),
+            "an ambiguous title without camera ownership fails closed");
+        Check(!TitleRegistry_AllowsSharedGameplayFeatures(
+                  GameTitle::Halo3, true, true),
+            "private camera ownership overrides a stale Halo 3 signal");
+        Check(!TitleRegistry_Halo3CameraOwnsAmbiguousState(
+                  1050, 999, 1000),
+            "an ambiguous title cannot inherit a pre-transition heartbeat");
+        Check(!TitleRegistry_Halo3CameraOwnsAmbiguousState(
+                  1050, 1000, 1000),
+            "a heartbeat at the transition boundary is not new ownership");
+        Check(TitleRegistry_Halo3CameraOwnsAmbiguousState(
+                  1099, 1001, 1000),
+            "a post-transition Halo 3 heartbeat owns a short ambiguous window");
+        Check(!TitleRegistry_Halo3CameraOwnsAmbiguousState(
+                  1101, 1001, 1000),
+            "ambiguous Halo 3 ownership expires at the dedicated 100 ms limit");
+        Check(!TitleRegistry_Halo3CameraOwnsAmbiguousState(
+                  999, 1001, 1000),
+            "a non-monotonic camera timestamp fails closed");
+
+        OdstCameraRearmGate gate;
+        Check(gate.CanAttemptInstall(), "ODST camera install begins unblocked");
+        gate.BlockUntilReload(true);
+        Check(!gate.CanAttemptInstall(),
+            "stale active camera memory cannot immediately rearm ODST hooks");
+        gate.Observe(true, true);
+        Check(!gate.CanAttemptInstall(),
+            "an active-to-active observation is not a reload edge");
+        gate.Observe(true, false);
+        Check(!gate.CanAttemptInstall(),
+            "an inactive camera waits for the next active level");
+        gate.Observe(true, true);
+        Check(gate.CanAttemptInstall(),
+            "inactive-to-active camera transition rearms ODST hooks");
+        gate.BlockUntilReload(true);
+        gate.Observe(false, false);
+        Check(gate.CanAttemptInstall(),
+            "a genuine title exit clears the ODST rearm gate");
+
+        OdstFreshCameraDebounce debounce;
+        Check(!debounce.Update(100, true),
+            "ODST camera does not arm on its first fresh frame");
+        Check(!debounce.Update(1100, true),
+            "ODST camera requires more than the full stability interval");
+        Check(debounce.Update(1101, true),
+            "ODST camera arms only after a continuous stability interval");
+        debounce.Reset();
+        Check(!debounce.Update(5000, true),
+            "ODST session re-entry resets the stability debounce");
+
+        Check(EvaluateOdstHeartbeat(1700, 1000, 0, false, false) ==
+                  OdstHeartbeatAction::None,
+            "ODST tolerates a short delay before its first heartbeat");
+        Check(EvaluateOdstHeartbeat(1800, 1000, 0, false, false) ==
+                  OdstHeartbeatAction::LevelUnloaded,
+            "an inactive camera after install is treated as an unload");
+        Check(EvaluateOdstHeartbeat(6100, 1000, 0, false, true) ==
+                  OdstHeartbeatAction::NoFirstHeartbeat,
+            "active-looking memory cannot retain a hook without a heartbeat");
+        Check(EvaluateOdstHeartbeat(7000, 1000, 6200, true, true) ==
+                  OdstHeartbeatAction::None,
+            "a short heartbeat gap with a ready camera is tolerated");
+        Check(EvaluateOdstHeartbeat(12001, 1000, 7000, true, true) ==
+                  OdstHeartbeatAction::LevelUnloaded,
+            "a hard heartbeat timeout falls back even with stale ready bytes");
+    }
+
     const TitleDescriptor* halo3 = TitleRegistry_FromModuleName(L"halo3.dll");
     Check(halo3 != nullptr, "Halo 3 module is recognized");
     Check(halo3 && halo3->runtimeSupported, "Halo 3 is the supported baseline adapter");
@@ -54,9 +153,28 @@ int main()
         "ODST paths are matched case-insensitively");
     Check(odst && !odst->runtimeSupported,
         "ODST stays disabled until its adapter passes the title gate");
+    Check(odst && odst->capabilities == TitleCapability_None,
+        "ODST advertises no public capabilities during private bring-up");
+    Check(TitleRegistry_HookPlan(GameTitle::Halo3) == TitleHookPlan::Halo3Full,
+        "Halo 3 keeps the full headset-confirmed hook plan");
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    Check(TitleRegistry_HookPlan(GameTitle::Halo3ODST) ==
+              TitleHookPlan::OdstExperimentalCameraCore,
+        "The explicit private build enables only the ODST camera core");
+#else
+    Check(TitleRegistry_HookPlan(GameTitle::Halo3ODST) == TitleHookPlan::None,
+        "A normal build leaves ODST completely stock");
+#endif
 
     const TitleDescriptor* reach = TitleRegistry_FromModuleName(L"haloreach.dll");
     Check(reach && reach->title == GameTitle::HaloReach, "Reach module is recognized");
+    const GameTitle unsupportedTitles[] = {
+        GameTitle::HaloReach, GameTitle::Halo4, GameTitle::HaloCE,
+        GameTitle::Halo2, GameTitle::Unknown, GameTitle::None,
+    };
+    for (GameTitle title : unsupportedTitles)
+        Check(TitleRegistry_HookPlan(title) == TitleHookPlan::None,
+            "Unsupported titles never receive game hooks");
     Check(TitleRegistry_FromModuleName(L"MCC-Win64-Shipping.exe") == nullptr,
         "The MCC host is not mistaken for a game title");
     Check(std::string_view(RuntimeModeName(RuntimeMode::Vehicle)) == "vehicle",

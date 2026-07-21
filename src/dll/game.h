@@ -7,6 +7,10 @@
 void Game_Init();
 bool Game_IsHooked();
 bool Game_IsHeadTracking(); // true while F2 head tracking is on
+bool Game_IsCameraOnlyBringup(); // private ODST camera core; no gameplay features
+bool Game_AllowsSharedGameplayFeatures();
+bool Game_CanToggleImmersiveView();
+bool Game_ProcessPresentationDetachRequest();
 
 // HUD layout: hud_size/hud_aspect drive Halo's safe-frame floats, while
 // hud_curvature offsets the adjacent authored destination_offset_z in the
@@ -63,4 +67,4 @@ float Game_GetZoomFactor();
 // flash, reticle and bullets stay on one ray as the user trims the mount.
 // Symmetric half-frustum tangents from Halo's active world camera.
 void Game_GetProjectionTangents(float& tanX, float& tanY);
-void Game_GetRenderHalfFov(float& halfX, float& halfY);
+void Game_GetRenderHalfFov(int eye, float& halfX, float& halfY);

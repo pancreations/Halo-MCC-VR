@@ -56,7 +56,7 @@ void VR_DetachGamePresentation();
 
 // Called by the M2 game render hook immediately after each eye's scene pass,
 // before the next eye overwrites the game backbuffer.
-void VR_CaptureRenderedEye(int eye);
+bool VR_CaptureRenderedEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
 

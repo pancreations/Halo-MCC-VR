@@ -88,7 +88,9 @@ namespace
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
             case VK_F10: VR_ToggleScreenFollow(); return 0;
-            case VK_F11: VR_ToggleStereo(); return 0;
+            case VK_F11:
+                if (Game_CanToggleImmersiveView()) VR_ToggleStereo();
+                return 0;
             case VK_PRIOR: Game_LeanScale(+1); return 0; // Page Up
             case VK_NEXT:  Game_LeanScale(-1); return 0; // Page Down
             case VK_HOME: Game_GunScale(+1); return 0; // bigger hand-held weapon
@@ -160,6 +162,7 @@ namespace
         }
         ImGui::TextDisabled("PSVR2 fallback: press Y+B together to Pause/Resume.");
         ImGui::Separator();
+        ImGui::BeginDisabled(!Game_CanToggleImmersiveView());
         if (ImGui::Button(Game_IsHeadTracking()
                 ? "Turn head tracking OFF (F2)"
                 : "Turn head tracking ON (F2)"))
@@ -173,6 +176,7 @@ namespace
         {
             VR_ToggleStereo();
         }
+        ImGui::EndDisabled();
         ImGui::Text("Head tracking: %s   |   Stereo rendering: %s   |   View: %s",
                     Game_IsHeadTracking() ? "ON" : "OFF",
                     VR_IsStereoEnabled() ? "ON" : "OFF",

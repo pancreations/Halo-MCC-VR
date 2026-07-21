@@ -18,23 +18,45 @@ A user-authored `README.md` edit predates ODST work. Preserve it (including if
 it has been placed in a named stash) and do not include it accidentally in ODST
 commits.
 
-ODST remains registered with `runtimeSupported=false`, and game-hook dispatch
-remains gated on `GameTitle::Halo3`. This is the required safe shipping state
-until the ODST adapter passes its own headset acceptance gates.
+ODST remains registered with `runtimeSupported=false` and capabilities `None`.
+In the normal build, `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP` defaults to `OFF` and
+ODST receives no hook plan. This remains the required safe public state until
+the ODST adapter passes its own headset acceptance gates.
 
-The ODST signature and camera/view layout evidence gates are now complete. Read
+The ODST signature and camera/view layout evidence gates are complete. Read
 `docs/ODST-SIGNATURE-EVIDENCE.md`, `docs/ODST-CAMERA-LAYOUT.md`, and the exact
 next-step contract in `docs/ODST-MINIMAL-BRINGUP-HANDOFF.md`. Read-only stock
 captures covered movement, zoom, death/respawn, level unload/reload, cutscenes,
 and vehicle entry/exit. The single-user stock camera layout gate passed; no
-runtime hook or support flag was changed.
+runtime hook or support flag was changed during that historical evidence pass.
 
-The immediate next checkpoint is a private, build-gated ODST
-camera/stereo/6DOF core with atomic all-or-stock fallback and clean
-unload/title-exit/reload handling. Keep the experimental option off by default,
-keep `runtimeSupported=false`, preserve Halo 3 exactly, and do not port any
-controls, reticle, HUD/VISR, pause, scope, weapon, bone, arm, or VRIK behavior in
-that checkpoint.
+The private camera/stereo/6DOF core is now implemented as a desk-side candidate.
+An explicit option-ON build performs exact retail-build, ten-signature, camera-
+array, and ODST-layout preflight before installing only four hooks: camera copy,
+inner view render, FP camera rebuild, and FP driver. Installation, teardown,
+stock fallback, and reload rearm are atomic and fail closed. Controls/aim,
+reticle, HUD/VISR, scope, pause, brightness, motion blur, weapons, bones, arms,
+VRIK, and gameplay patches remain off for ODST. The normal deploy and export
+scripts reject any cache that is not explicitly option-OFF.
+
+The worker publishes camera-array readiness only while retaining the ODST module;
+the render detour rechecks all four slots immediately before mutation.
+Presentation detach request/completion generations are serviced on Present even
+when XR startup/session state would otherwise return early, and a completed
+detach forces a fresh debounce interval before stereo can re-arm.
+
+Both option-OFF and private option-ON final Release builds and CTest pass
+locally. Nothing has been deployed or launched, and there is no headset result.
+The current `1 / 3.048` positional
+conversion is only a calibration hypothesis pending headset validation, not
+accepted ODST scale evidence.
+
+Title-module activation is polled every 50 ms and is not an atomic transition
+signal. When retained modules make ownership `Unknown`, Halo 3 shared gameplay
+features require a post-transition Halo 3 camera heartbeat less than 100 ms old;
+explicit ODST/private camera-only ownership blocks them. The next runtime step
+is a private deployment and narrow headset test, and it requires the user's
+explicit approval before any deploy path is added, bypassed, or run.
 
 ## First checkpoint: universal configuration
 
@@ -75,14 +97,19 @@ merge/release safeguard:
    narrowly scoped live probes to prove the shifted camera, view, and
    first-person layouts. The camera-object stride is `0x2810` in ODST versus
    `0x2820` in Halo 3. HUD, weapon, bone, and marker layouts remain later gates.
-4. **Next:** bring up only camera/stereo/6DOF and clean title exit first. Any missing or
-   ambiguous signature must leave ODST stock and running.
-5. Add controls/aim/reticle, then ODST weapon/arm/VRIK calibration, then
-   HUD/VISR and broader gameplay. Make one evidence-backed behavioral change
-   per headset build.
-6. Cover scopes, vehicles, turrets, cutscenes, death/respawn, mission
+4. **Desk implementation complete; headset acceptance pending:** the private
+   option-ON build brings up only camera/stereo/6DOF and clean title exit/rearm.
+   Any failed build, signature, layout, or runtime invariant leaves ODST stock
+   or retains teardown ownership until removal can be proved safe.
+5. **Next, only after explicit user approval:** establish the reviewed private
+   deployment path and run the narrow camera/6DOF headset checklist. The public
+   `deploy.bat`/`export-alpha.bat` paths must remain option-OFF only.
+6. After that checkpoint is accepted, add controls/aim/reticle, then ODST
+   weapon/arm/VRIK calibration, then HUD/VISR and broader gameplay. Make one
+   evidence-backed behavioral change per headset build.
+7. Cover scopes, vehicles, turrets, cutscenes, death/respawn, mission
    transitions, long sessions, and performance before enabling public support.
-7. Set ODST `runtimeSupported=true` only after ODST acceptance and a complete
+8. Set ODST `runtimeSupported=true` only after ODST acceptance and a complete
    Halo 3 shared-system regression both pass.
 
 ## Workflow invariants
@@ -91,7 +118,10 @@ merge/release safeguard:
 - Never ship guessed addresses or reuse an unverified Halo 3 offset in ODST.
 - Verify every AOB is unique; zero or multiple matches must fail safely.
 - Keep file I/O, allocation, locks, COM, and logging bursts out of hot hooks.
-- Build Release, deploy only through `deploy.bat auto`, match hashes/build stamp,
-  and record the exact headset result before advancing.
+- Build Release and run CTest in both option-OFF and explicitly option-ON trees.
+  The public `deploy.bat auto` path is option-OFF only and must continue to
+  reject private caches. Do not create or run a private deployment path without
+  explicit user approval; once approved, match hashes/build stamp and record
+  the exact headset result before advancing.
 - Revert failed experiments instead of retaining dormant switches or fallbacks.
 - Never patch game files or interact with Easy Anti-Cheat.

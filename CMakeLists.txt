@@ -10,6 +10,9 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 include(FetchContent)
 include(CTest)
 
+option(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    "Enable the private experimental ODST camera/stereo bring-up" OFF)
+
 # --- OpenXR loader (static) ---
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -67,7 +70,8 @@ add_library(halo3xr SHARED
     src/dll/title_adapter.cpp)
 target_compile_definitions(halo3xr PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
-    XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32)
+    XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32
+    HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP}>)
 target_link_libraries(halo3xr PRIVATE
     openxr_loader minhook imgui_lib
     d3d11 dxgi d3dcompiler)
@@ -92,7 +96,8 @@ if(BUILD_TESTING)
         src/common/log.cpp)
     target_include_directories(halomccvr_core_tests PRIVATE src/common)
     target_compile_definitions(halomccvr_core_tests PRIVATE
-        UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+        UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+        HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP}>)
     add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
 endif()
 
