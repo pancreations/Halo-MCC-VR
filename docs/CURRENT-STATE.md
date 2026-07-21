@@ -34,6 +34,13 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   The user completed the exit/re-entry test with automatic 3D and tracking
   recovery and reported `working great`, designating this exact build as the
   best-working version for the next bug.
+- Headset-confirmed crosshair fallback checkpoint: `bb4bb6f` on
+  `fix/crosshair-fallback`. The native Halo crosshair now remains visible when
+  the authored VR-reticle capture or OpenXR reticle swapchain is unavailable,
+  and `kill_reticle = 0` works as an explicit emergency fallback. The corrected
+  eye-order gate prevents a successful redirect from leaving the native
+  crosshair in only one eye. User result: "it's working". Deployed DLL
+  SHA-256 `BD5F8FB653163A5788BB6762B09EA929A81658A1267FB10280899F2751441412`.
 - Headset-confirmed camera-recoil runtime checkpoint: `56dad79` on
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
