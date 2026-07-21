@@ -481,8 +481,12 @@ All key names, defaults, clamps, parsing, and the launcher's
 title-neutral without changing its controls. Tests verify legacy import, section
 order, exactly one assignment for every supported key, value round trips, and
 launcher-readable resolution output. Release and CTest pass. This is a
-config-only candidate with no ODST hooks or support gate changes; Halo 3 headset
-regression is still required before beginning ODST runtime work.
+config-only candidate at `148f971` with no ODST hooks or support gate changes.
+Deployed with `deploy.bat auto` on 2026-07-21 (DLL build 06:23 AM), DLL SHA-256
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`, launcher
+SHA-256 `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
+Both installed files byte-match the Release outputs. Halo 3 headset regression
+is still required before beginning ODST runtime work.
 
 ## 2026-07-19 session closeout
 
