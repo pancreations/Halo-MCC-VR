@@ -784,6 +784,26 @@ namespace
         return 1;
     }
 
+    static int SafeReadFloat(const float* slot, float* value)
+    {
+        __try
+        {
+            *value = *reinterpret_cast<const volatile float*>(slot);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return 1;
+    }
+
+    static int SafeWriteFloat(float* slot, float value)
+    {
+        __try
+        {
+            *reinterpret_cast<volatile float*>(slot) = value;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        return 1;
+    }
+
     void InvalidateCinematicFovVar(uint8_t* staleSlot)
     {
         if (g_reduceCinematicFov.compare_exchange_strong(staleSlot, nullptr,
@@ -1402,6 +1422,10 @@ namespace
 
     // Called every frame from CamCopyHook. Zero wins over the engine's tag
     // reload while the toggle is off; originals are restored on re-enable.
+    // Reads/writes are SEH-guarded: on a Halo3 title reload these pointers are
+    // re-resolved into a fresh module instance, but a stray call from a stale
+    // detour (or a race with that re-resolve) must never take MCC down for a
+    // comfort setting.
     void ApplyMotionBlurSetting()
     {
         if (g_motionBlurVarCount.load(std::memory_order_acquire) != 4) return;
@@ -1409,8 +1433,10 @@ namespace
         {
             for (auto& var : g_motionBlurVars)
             {
-                if (*var.slot != 0.0f) var.original = *var.slot;
-                *var.slot = 0.0f;
+                float current = 0.0f;
+                if (!SafeReadFloat(var.slot, &current)) return;
+                if (current != 0.0f) var.original = current;
+                if (!SafeWriteFloat(var.slot, 0.0f)) return;
             }
             if (!g_motionBlurZeroed.exchange(true))
                 LOG("M3: motion blur forced OFF (blur scale/max zeroed; artifact probe active)");
@@ -1418,7 +1444,7 @@ namespace
         else if (g_motionBlurZeroed.exchange(false))
         {
             for (auto& var : g_motionBlurVars)
-                *var.slot = var.original;
+                if (!SafeWriteFloat(var.slot, var.original)) break;
             LOG("M3: motion blur restored to engine values");
         }
     }
@@ -7180,6 +7206,13 @@ namespace
                 gameHooked = false;
                 hookRefreshPending = true;
                 g_hooked = false;
+                // CamCopyHook can start executing again (a lingering detour,
+                // or a fresh InstallHook() re-enabling it) before a resolve
+                // pass republishes these pointers for the next halo3.dll
+                // instance. -1 matches "not yet resolved" so
+                // ApplyMotionBlurSetting stays a no-op across the gap instead
+                // of dereferencing pointers into this now-inactive instance.
+                g_motionBlurVarCount.store(-1, std::memory_order_release);
             }
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
