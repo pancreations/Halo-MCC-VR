@@ -58,6 +58,16 @@ int main()
             "manual ODST arm still requires the fresh-camera debounce");
         Check(!OdstManualArmEligible(true, true, true, true),
             "teardown always vetoes manual ODST arm");
+        Check(OdstNestedSourceIsCompatible(0, 0x1234),
+            "ODST installation may precede the first nested FP source publish");
+        Check(OdstNestedSourceIsCompatible(0x1234, 0x1234),
+            "ODST accepts the proven nested FP source pointer");
+        Check(!OdstNestedSourceIsCompatible(0x5678, 0x1234),
+            "ODST rejects a nested FP source owned by another camera");
+        Check(OdstInactiveCameraSlotsAreSafe(false, false, false),
+            "constructed but inactive ODST split-screen slots are safe");
+        Check(!OdstInactiveCameraSlotsAreSafe(false, true, false),
+            "another active ODST camera blocks the single-user bring-up");
 
         Check(TitleRegistry_AllowsSharedGameplayFeatures(
                   GameTitle::None, false, false),
@@ -77,6 +87,21 @@ int main()
         Check(!TitleRegistry_AllowsSharedGameplayFeatures(
                   GameTitle::Unknown, false, false),
             "an ambiguous title without camera ownership fails closed");
+        Check(TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::Unknown, false, false, true),
+            "the private frontend exception retains controller input");
+        Check(!TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::Unknown, false, false, false),
+            "the normal build keeps ambiguous title input fail-closed");
+        Check(!TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::Halo3ODST, false, true, true),
+            "private ODST camera ownership blocks controller integration");
+        Check(!TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::HaloCE, false, false, true),
+            "an explicitly detected unsupported title keeps stock input");
+        Check(!TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::Unknown, false, true, true),
+            "owned ODST teardown beats resident-module ambiguity");
         Check(!TitleRegistry_AllowsSharedGameplayFeatures(
                   GameTitle::Halo3, true, true),
             "private camera ownership overrides a stale Halo 3 signal");

@@ -9,6 +9,7 @@ bool Game_IsHooked();
 bool Game_IsHeadTracking(); // true while F2 head tracking is on
 bool Game_IsCameraOnlyBringup(); // private ODST camera core; no gameplay features
 bool Game_AllowsSharedGameplayFeatures();
+bool Game_AllowsSharedControllerInput();
 bool Game_CanToggleImmersiveView();
 bool Game_ProcessPresentationDetachRequest();
 

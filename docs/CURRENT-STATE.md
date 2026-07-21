@@ -573,25 +573,37 @@ This is an implementation candidate, not public ODST support:
   scale evidence. Direction and scale must be observed in the headset before it
   can be retained or documented as title calibration.
 
-Both the normal option-OFF and private option-ON configurations pass their final
-desk-side Release builds and CTest. The private Release object was also checked
-for the unwind metadata and hook-wrapper shape required by verified teardown.
-Nothing from this implementation has been deployed or launched, and no ODST
-headset result exists. Reviewed camera-core checkpoint `7c25a1a` is the minimum
-ancestor for a private test build. On 2026-07-21 the user asked to prepare the
-next chat so they can test ODST. `deploy-odst-private.bat` is the resulting
-separate opt-in path: it requires a clean reviewed branch/descendant, exact x64
-OFF and ON caches, fresh Release builds/tests, closed MCC/launcher, the evidenced
-retail ODST hash, exact installed-baseline backup, byte verification, and hash
+The first private candidate was deployed from `bccf4c7` with DLL SHA-256
+`533CE571B6AD0E955F1722DFF1341EE77A02184C1705D2616630C577BF34B103`.
+The headset smoke failed: MCC menu VR controls stopped merging, ODST remained a
+stock 2D image because its camera-readiness gate never installed detours, and
+Halo 3 performance regressed. MCC was closed and
+`deploy-odst-private.bat RESTORE-ODST-BASELINE auto` restored the exact
+headset-confirmed DLL
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
+The sealed recovery record remains at
+`Halo_MCC_VR\pre-odst-private-backup`; preserve it and `stash@{0}`. The private
+procedure now selects a new numbered record for later candidates, refuses to
+start while any earlier record has a live state, and restores from exactly one
+live record.
+
+The next isolated checkpoint restores private frontend controller ambiguity,
+corrects the two over-strict ODST readiness assumptions while retaining compact
+camera/single-user ownership proof, adds one-shot readiness diagnostics, and
+removes the measured Halo 3 reticle-log/swapchain churn and duplicate exact
+stereo-pair palette solves. Both clean option-OFF and option-ON Release builds,
+both CTest suites, and the private wrapper unwind entries pass. No replacement
+candidate has been deployed.
+
+Reviewed camera-core checkpoint `7c25a1a` remains the minimum ancestor for a
+private test build. `deploy-odst-private.bat` remains the only private opt-in
+path: it requires a clean reviewed branch/descendant, exact x64 OFF and ON
+caches, fresh Release builds/tests, closed MCC/launcher, the evidenced retail
+ODST hash, exact installed-baseline backup, byte verification, and hash
 reporting. It deploys/restores only the DLL and never launches the game. The
-installed headset-confirmed DLL
-`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`
-must be restored from its saved bytes, not replaced by today's different OFF
-rebuild. The launcher remains untouched at
+launcher remains untouched at
 `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
-Public deploy/export remain OFF-only. The next chat may run this private
-procedure, report the identities, and then let the user begin the staged
-headset smoke test.
+Public deploy/export remain OFF-only.
 
 ## 2026-07-19 session closeout
 

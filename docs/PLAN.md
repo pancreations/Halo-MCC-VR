@@ -114,17 +114,22 @@ camera stride is 0x2820 in Halo 3 and 0x2810 in ODST).
 - The implementation currently multiplies OpenXR position by `1 / 3.048`.
   Treat that only as the hypothesis for the first calibration test, not accepted
   ODST scale evidence.
-- Option-OFF and private option-ON final Release builds and CTest pass locally;
-  the private Release hook wrappers also passed their unwind-metadata check.
-  Reviewed camera-core checkpoint is `7c25a1a`. There has been no deployment,
-  launch, or ODST headset test.
-- The user asked to prepare the next chat for the first private ODST test.
-  `deploy-odst-private.bat` is the sole authorized private path: it is token-
-  gated, requires the reviewed branch/descendant, exact x64 OFF/ON caches and
-  retail ODST hash, rebuilds/tests both configurations, preserves the exact
-  installed headset baseline, deploys/restores only the byte-verified DLL,
-  leaves the launcher untouched, reports hashes, and never launches MCC. Public
-  scripts remain OFF-only.
+- The first private candidate from `bccf4c7` failed the initial headset smoke:
+  menu VR controls stopped merging, ODST remained stock 2D at its camera-
+  readiness wait, and Halo 3 performance regressed. The dedicated restore mode
+  restored the exact headset baseline; the sealed recovery record remains
+  preserved.
+- The next isolated checkpoint restores only private frontend controller
+  ambiguity, corrects the over-strict ODST readiness assumptions with one-shot
+  diagnostics, and removes the measured Halo 3 reticle/palette hot paths.
+  Clean option-OFF/ON Release builds, both CTest suites, and private wrapper
+  unwind entries pass. No replacement candidate has been deployed.
+- `deploy-odst-private.bat` remains the sole private path: it is token-gated,
+  requires the reviewed branch/descendant, exact x64 OFF/ON caches and retail
+  ODST hash, rebuilds/tests both configurations, preserves the exact installed
+  headset baseline, deploys/restores only the byte-verified DLL, leaves the
+  launcher untouched, reports hashes, and never launches MCC. Public scripts
+  remain OFF-only.
 - Bring-up order after headset acceptance of this candidate:
   controls/aim/reticle; ODST weapon and arm/VRIK calibration; HUD/VISR; scopes,
   vehicles, turrets, cutscenes, death/respawn, mission transitions, long

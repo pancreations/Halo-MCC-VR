@@ -205,10 +205,10 @@ namespace
     {
         if (user != 0 || !state)
             return r;
-        // Camera-only and unsupported titles own no controller integration.
-        // Preserve a physical pad result exactly and do not fabricate or merge
-        // VR input until the active title policy explicitly permits it.
-        if (!Game_AllowsSharedGameplayFeatures())
+        // Explicit camera-only and unsupported titles own no controller
+        // integration. Resident-module ambiguity is handled separately so the
+        // MCC frontend keeps VR controller navigation between title sessions.
+        if (!Game_AllowsSharedControllerInput())
             return r;
         g_diagReads.fetch_add(1);
         DiagTick();
@@ -252,7 +252,7 @@ namespace
 
     DWORD ProcessGetCaps(DWORD r, DWORD user, XINPUT_CAPABILITIES* caps)
     {
-        if (!Game_AllowsSharedGameplayFeatures())
+        if (!Game_AllowsSharedControllerInput())
             return r;
         if (user != 0 || !caps || r == ERROR_SUCCESS)
             return r;
@@ -289,7 +289,7 @@ namespace
 
     DWORD ProcessSetState(DWORD result, DWORD user, XINPUT_VIBRATION* vibration)
     {
-        if (!Game_AllowsSharedGameplayFeatures())
+        if (!Game_AllowsSharedControllerInput())
             return result;
         if (user != 0 || !vibration)
             return result;

@@ -99,6 +99,18 @@ bool TitleRegistry_AllowsSharedGameplayFeatures(
     return activeTitle == GameTitle::Unknown && halo3CameraOwned;
 }
 
+bool TitleRegistry_AllowsSharedControllerInput(
+    GameTitle activeTitle, bool halo3CameraOwned, bool cameraOnlyOwned,
+    bool allowAmbiguousFrontend)
+{
+    if (cameraOnlyOwned)
+        return false;
+    if (activeTitle == GameTitle::Unknown && allowAmbiguousFrontend)
+        return true;
+    return TitleRegistry_AllowsSharedGameplayFeatures(
+        activeTitle, halo3CameraOwned, false);
+}
+
 bool TitleRegistry_Halo3CameraOwnsAmbiguousState(
     uint64_t now, uint64_t lastCamera, uint64_t titleTransition)
 {

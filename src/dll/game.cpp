@@ -399,7 +399,8 @@ namespace
         uint64_t lWristDescendants = 0;
         bool armIk = false;
         BoneMatrix root{};
-        BoneMatrix source[64]{};
+        BoneMatrix original[64]{};
+        BoneMatrix solved[64]{};
     };
 
     struct FpStereoSolveScope
@@ -2509,7 +2510,8 @@ namespace
         return true;
     }
 
-    bool ReconstructVisiblePaletteSource(const FpInterpolationContext& context,
+    bool ReconstructVisiblePaletteSource(uint16_t tag,
+                                         const FpInterpolationContext& context,
                                          const BoneMatrix& root,
                                          const BoneMatrix* source,
                                          const BoneMatrix*& replacement)
@@ -2525,6 +2527,80 @@ namespace
         // Slot-1 failures never touch the primary arm diagnostics.
         const bool dual=(context.slot==1);
         const BoneMatrix* const unmodified=g_fpUnmodifiedInterpolations[context.slot];
+        const size_t paletteBytes = static_cast<size_t>(context.count) *
+            sizeof(BoneMatrix);
+
+        auto cacheMatches = [&](const FpStereoPaletteCache& cache) {
+            return cache.valid && cache.tag == tag &&
+                cache.player == context.player && cache.slot == context.slot &&
+                cache.count == context.count && cache.wrist == context.wrist &&
+                cache.elbow == context.elbow &&
+                cache.shoulder == context.shoulder &&
+                cache.wristDescendants == context.wristDescendants &&
+                cache.lWrist == context.lWrist &&
+                cache.lElbow == context.lElbow &&
+                cache.lShoulder == context.lShoulder &&
+                cache.lWristDescendants == context.lWristDescendants &&
+                cache.armIk == g_config.arm_ik &&
+                memcmp(cache.original, unmodified, paletteBytes) == 0;
+        };
+        if (g_fpStereoSolveScope.armed)
+        {
+            for (const auto& cache : g_fpStereoSolveScope.palettes)
+            {
+                if (!cacheMatches(cache))
+                    continue;
+                bool reused = false;
+                if (memcmp(&cache.root, &root, sizeof(BoneMatrix)) == 0)
+                {
+                    memcpy(g_fpPaletteScratch, cache.solved, paletteBytes);
+                    reused = true;
+                }
+                else
+                {
+                    BoneMatrix inverseRoot{}, cachedToCurrent{};
+                    reused = InvertBoneMatrix(root, inverseRoot) &&
+                        ComposeBoneMatrices(
+                            inverseRoot, cache.root, cachedToCurrent);
+                    for (int i = 0; reused && i < context.count; ++i)
+                        reused = ComposeBoneMatrices(
+                            cachedToCurrent, cache.solved[i],
+                            g_fpPaletteScratch[i]);
+                }
+                if (reused)
+                {
+                    replacement = g_fpPaletteScratch;
+                    return true;
+                }
+            }
+        }
+        auto cacheSolvedPalette = [&](const BoneMatrix* solved) {
+            if (!g_fpStereoSolveScope.armed || !solved)
+                return;
+            for (auto& cache : g_fpStereoSolveScope.palettes)
+            {
+                if (cache.valid)
+                    continue;
+                cache.valid = true;
+                cache.tag = tag;
+                cache.player = context.player;
+                cache.slot = context.slot;
+                cache.count = context.count;
+                cache.wrist = context.wrist;
+                cache.elbow = context.elbow;
+                cache.shoulder = context.shoulder;
+                cache.wristDescendants = context.wristDescendants;
+                cache.lWrist = context.lWrist;
+                cache.lElbow = context.lElbow;
+                cache.lShoulder = context.lShoulder;
+                cache.lWristDescendants = context.lWristDescendants;
+                cache.armIk = g_config.arm_ik;
+                cache.root = root;
+                memcpy(cache.original, unmodified, paletteBytes);
+                memcpy(cache.solved, solved, paletteBytes);
+                return;
+            }
+        };
 
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
@@ -2921,14 +2997,15 @@ namespace
                     // "the length just moves the gun"). Size trims are
                     // gun_scale (uniform) and gun_forward_m (seat depth).
                     replacement=g_fpPaletteScratch;
+                    cacheSolvedPalette(g_fpPaletteScratch);
                     static std::atomic<bool> loggedIk{false};
                     if (!loggedIk.exchange(true))
                         LOG("M3 VRIK: arm IK active — shoulder %d planted, elbow %d solved, "
                             "wrist %d + %lld subtree bones to controller",
                             context.shoulder,context.elbow,context.wrist,
                             (long long)__popcnt64(context.wristDescendants));
-                    // Full-solve rate (both arms). ~2x fps today (once per eye);
-                    // the Session B once-per-frame cache should halve this to ~fps.
+                    // Full-solve cache misses. Exact duplicate palettes inside
+                    // this stereo pair return above without repeating arm IK.
                     {
                         static std::atomic<uint32_t> solves{0};
                         static std::atomic<DWORD> lastLog{GetTickCount()};
@@ -2936,7 +3013,7 @@ namespace
                         const DWORD now=GetTickCount(); DWORD last=lastLog.load();
                         if (now-last>=10000 && lastLog.compare_exchange_strong(last,now))
                             LOG("PERF: FP palette full solves %.0f/sec "
-                                "(compare to fps; ~2x fps = once per eye)",
+                                "(exact stereo-pair cache misses)",
                                 solves.exchange(0)*1000.0/(now-last));
                     }
                     return true;
@@ -3017,6 +3094,7 @@ namespace
         }
 
         replacement=g_fpPaletteScratch;
+        cacheSolvedPalette(g_fpPaletteScratch);
         static std::atomic<bool> logged{false};
         if (!logged.exchange(true))
             LOG("M3: FP palette rigid-parented to the controller "
@@ -3050,7 +3128,7 @@ namespace
         bool reconstructed=false;
         if (root && source)
             reconstructed=ReconstructVisiblePaletteSource(
-                context,*root,source,selectedSource);
+                tag,context,*root,source,selectedSource);
 
         // FLOATING HANDS (optional, OFF by default): a pure presentation filter
         // over the already-solved palette. The VRIK solve above still tracks the
@@ -3970,6 +4048,11 @@ namespace
                     "a multiple => extra engine views)", n * 1000.0 / (now - last));
             }
         }
+        // Cache visible FP palette solves only within this one stereo pair.
+        // Exact input matching in ReconstructVisiblePaletteSource keeps any
+        // changed animation pass on the existing full-solve path.
+        g_fpStereoSolveScope = {};
+        g_fpStereoSolveScope.armed = true;
         const int firstEye = g_config.right_eye_first ? 1 : 0;
         for (int pass = 0; pass < 2; ++pass)
         {
@@ -4145,6 +4228,7 @@ namespace
             VR_CaptureRenderedEye(eye);
             VR_EndRasterEye();
         }
+        g_fpStereoSolveScope.armed = false;
         g_stereoEye = -1;
         g_eyeFpView.store(nullptr,std::memory_order_release);
 
@@ -4376,15 +4460,6 @@ namespace
                 bytes + layout.finalTailBoolean) == 0;
     }
 
-    bool OdstBytesAreZero(const void* memory, size_t size)
-    {
-        const unsigned char* bytes = static_cast<const unsigned char*>(memory);
-        for (size_t i = 0; i < size; ++i)
-            if (bytes[i] != 0)
-                return false;
-        return true;
-    }
-
     bool OdstCameraArraySupportsBringup(uintptr_t cameraArray)
     {
         if (!cameraArray)
@@ -4392,19 +4467,75 @@ namespace
         const auto& layout = kOdstCameraProfile.layout;
         const char* view = reinterpret_cast<const char*>(cameraArray);
         if (!OdstSingleUserTailIsValid(view) ||
-            !OdstCompactCameraUsesProvenMode(view + layout.rootCurrentCompact) ||
-            *reinterpret_cast<const uintptr_t*>(
-                view + layout.nestedSourceCamera) !=
-                cameraArray + layout.rootCurrentCompact)
+            !OdstCompactCameraUsesProvenMode(view + layout.rootCurrentCompact))
             return false;
+
+        // The nested FP driver publishes its source pointer after the root
+        // camera becomes usable. A null pointer is therefore a valid pre-hook
+        // installation state; any non-null pointer must still own slot 0's
+        // proven compact camera exactly.
+        const uintptr_t nestedSource = *reinterpret_cast<const uintptr_t*>(
+            view + layout.nestedSourceCamera);
+        if (!OdstNestedSourceIsCompatible(
+                nestedSource, cameraArray + layout.rootCurrentCompact))
+            return false;
+
+        // Constructors may leave non-camera bookkeeping in the unused objects.
+        // The single-user tail is authoritative; reject only another ACTIVE
+        // compact camera rather than demanding byte-for-byte zero storage.
+        bool inactive[3]{};
         for (size_t slot = 1; slot < 4; ++slot)
         {
-            const char* inactive = view + slot * layout.viewStride;
-            if (!OdstBytesAreZero(inactive + layout.rootCurrentCompact,
-                                  0x2A8 - layout.rootCurrentCompact))
-                return false;
+            const char* candidate = view + slot * layout.viewStride;
+            inactive[slot - 1] = OdstCompactCameraIsActive(
+                candidate + layout.rootCurrentCompact);
         }
-        return true;
+        return OdstInactiveCameraSlotsAreSafe(
+            inactive[0], inactive[1], inactive[2]);
+    }
+
+    void LogOdstCameraReadiness(uintptr_t cameraArray)
+    {
+        if (!cameraArray)
+            return;
+        const auto& layout = kOdstCameraProfile.layout;
+        const char* view = reinterpret_cast<const char*>(cameraArray);
+        const char* compact = view + layout.rootCurrentCompact;
+        const int32_t* tail = reinterpret_cast<const int32_t*>(
+            view + layout.constructedViewSlot);
+        const uint32_t mode = *reinterpret_cast<const uint32_t*>(
+            compact + layout.compactModeFlags);
+        const float blend = *reinterpret_cast<const float*>(
+            compact + layout.compactFpBlend);
+        const float fov = *reinterpret_cast<const float*>(
+            compact + layout.verticalFov);
+        const float reference = *reinterpret_cast<const float*>(
+            compact + layout.referenceFov);
+        const float offset = *reinterpret_cast<const float*>(
+            compact + layout.verticalOffset);
+        const float nearClip = *reinterpret_cast<const float*>(
+            compact + layout.nearClip);
+        const float farClip = *reinterpret_cast<const float*>(
+            compact + layout.farClip);
+        const uintptr_t nestedSource = *reinterpret_cast<const uintptr_t*>(
+            view + layout.nestedSourceCamera);
+        bool inactive[3]{};
+        for (size_t slot = 1; slot < 4; ++slot)
+            inactive[slot - 1] = OdstCompactCameraIsActive(
+                view + slot * layout.viewStride + layout.rootCurrentCompact);
+        LOG("ODST camera readiness: tail=[%d,%d,%d,%d,%d,%d,%d,%u] "
+            "mode=0x%08X blend=%.6f fov=%.6f ref=%.6f offset=%.6f "
+            "near=%.6f far=%.3f",
+            tail[0], tail[1], tail[2], tail[3], tail[4], tail[5], tail[6],
+            static_cast<unsigned>(*reinterpret_cast<const uint8_t*>(
+                view + layout.finalTailBoolean)),
+            mode, blend, fov, reference, offset, nearClip, farClip);
+        LOG("ODST camera readiness: nestedSource=%p expected=%p "
+            "inactiveSlots=%d/%d/%d",
+            reinterpret_cast<void*>(nestedSource),
+            reinterpret_cast<void*>(cameraArray + layout.rootCurrentCompact),
+            inactive[0] ? 1 : 0, inactive[1] ? 1 : 0,
+            inactive[2] ? 1 : 0);
     }
 
     void OdstApplyHeadLook(void* source)
@@ -6174,8 +6305,11 @@ namespace
         if (!OdstCameraArraySupportsBringup(resolved.gunCameraArray))
         {
             if (!g_odstCamera.waitingLogged.exchange(true))
+            {
                 LOG("ODST camera preflight passed; waiting for the proven "
                     "slot-0/user-0 ordinary camera mode");
+                LogOdstCameraReadiness(resolved.gunCameraArray);
+            }
             return OdstInstallResult::NotReady;
         }
 
@@ -7090,6 +7224,30 @@ bool Game_AllowsSharedGameplayFeatures()
             now, lastCamera, titleTransition);
     return TitleRegistry_AllowsSharedGameplayFeatures(
         activeTitle, halo3CameraOwned, cameraOnlyOwned);
+}
+bool Game_AllowsSharedControllerInput()
+{
+    const uint64_t now = GetTickCount64();
+    const uint64_t lastCamera = g_lastCamCopyMs.load(std::memory_order_acquire);
+    const GameTitle activeTitle = TitleAdapter_GetActiveTitle();
+    const uint64_t titleTransition = TitleAdapter_GetActiveTitleEpochMs();
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    const bool cameraOnlyOwned = OdstCameraOnlyContext();
+#else
+    const bool cameraOnlyOwned = false;
+#endif
+    const bool halo3CameraOwned = !cameraOnlyOwned &&
+        activeTitle == GameTitle::Unknown &&
+        TitleRegistry_Halo3CameraOwnsAmbiguousState(
+            now, lastCamera, titleTransition);
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    const bool allowAmbiguousFrontend = activeTitle == GameTitle::Unknown;
+#else
+    const bool allowAmbiguousFrontend = false;
+#endif
+    return TitleRegistry_AllowsSharedControllerInput(
+        activeTitle, halo3CameraOwned, cameraOnlyOwned,
+        allowAmbiguousFrontend);
 }
 bool Game_CanToggleImmersiveView()
 {

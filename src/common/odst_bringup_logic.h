@@ -30,6 +30,18 @@ inline bool OdstManualArmEligible(
         !teardownRequested;
 }
 
+inline bool OdstNestedSourceIsCompatible(
+    uintptr_t nestedSource, uintptr_t expectedSource)
+{
+    return nestedSource == 0 || nestedSource == expectedSource;
+}
+
+inline bool OdstInactiveCameraSlotsAreSafe(
+    bool slot1Active, bool slot2Active, bool slot3Active)
+{
+    return !slot1Active && !slot2Active && !slot3Active;
+}
+
 inline OdstHeartbeatAction EvaluateOdstHeartbeat(
     uint64_t now, uint64_t installedAt, uint64_t lastCamera,
     bool sawCamera, bool cameraReady)

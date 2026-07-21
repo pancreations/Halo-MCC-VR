@@ -1517,6 +1517,19 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (authoredThisFrame)
             return true;
 
+        // Halo can omit the authored widget in some of the repeated FP passes
+        // of one displayed frame. Retain the last authored image across that
+        // short gap; otherwise the render thread alternates upload/clear and
+        // pays a swapchain repaint every frame. A genuine death/loading gap
+        // still clears once after this small grace window.
+        constexpr uint64_t kAuthoredReticleGraceFrames = 2;
+        const bool authoredCaptureRecent = g_authoredReticleSerial != 0 &&
+            g_preparedFrame.serial >= g_authoredReticleSerial &&
+            g_preparedFrame.serial - g_authoredReticleSerial <=
+                kAuthoredReticleGraceFrames;
+        if (g_reticleContainsAuthored && authoredCaptureRecent)
+            return true;
+
         // Halo can stop drawing its authored widget during death and other
         // non-gameplay states. Keep the old procedural fallback fully
         // transparent so it cannot appear close to the viewer; authored
@@ -1535,6 +1548,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         g_reticlePaintedColor[2] != g_config.reticle_b));
         if (!colorChanged)
             return true;
+        const bool clearingAuthored = g_reticleContainsAuthored;
         if (!PaintReticle(wantR, wantG, wantB, kProceduralOpacity))
         {
             failed = true;
@@ -1545,7 +1559,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_reticlePaintedColor[2]=wantB;
         g_reticleEnemyPainted=enemy;
         g_reticleContainsAuthored=false;
-        LOG("M3: procedural crosshair fallback cleared (authored texture only)");
+        if (clearingAuthored)
+            LOG("M3: authored crosshair cleared after capture stopped");
         return true;
     }
 

@@ -31,16 +31,18 @@ set "DEST_DIR=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\
 set "DLL_DST=%DEST_DIR%\halo3xr.dll"
 set "LAUNCHER_DST=%DEST_DIR%\halo3xr_launcher.exe"
 set "ODST_DLL=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\halo3odst\halo3odst.dll"
-set "BACKUP_DIR=%DEST_DIR%\pre-odst-private-backup"
-set "BASELINE_DLL=%BACKUP_DIR%\halo3xr.dll"
-set "STAGED_PRIVATE_DLL=%BACKUP_DIR%\halo3xr.odst-private.dll"
-set "STATE_PREPARED=%BACKUP_DIR%\PREPARED.txt"
-set "STATE_DEPLOYING=%BACKUP_DIR%\DEPLOYING.txt"
-set "STATE_ACTIVE=%BACKUP_DIR%\ACTIVE.txt"
-set "STATE_RESTORING=%BACKUP_DIR%\RESTORING.txt"
+set "BACKUP_ROOT=%DEST_DIR%\pre-odst-private-backup"
+set "BACKUP_DIR="
+set "BASELINE_DLL="
+set "STAGED_PRIVATE_DLL="
+set "STATE_PREPARED="
+set "STATE_DEPLOYING="
+set "STATE_ACTIVE="
+set "STATE_RESTORING="
 set "STATUS_SNAPSHOT=%TEMP%\HaloMCCVR-ODST-status-%RANDOM%-%RANDOM%.txt"
 set "BRANCH_SNAPSHOT=%TEMP%\HaloMCCVR-ODST-branch-%RANDOM%-%RANDOM%.txt"
 set "HEAD_SNAPSHOT=%TEMP%\HaloMCCVR-ODST-head-%RANDOM%-%RANDOM%.txt"
+set "BACKUP_SNAPSHOT=%TEMP%\HaloMCCVR-ODST-backup-%RANDOM%-%RANDOM%.txt"
 set "EXPECTED_ODST_SHA=5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A"
 set "EXPECTED_BASELINE_DLL_SHA=0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA"
 set "EXPECTED_LAUNCHER_SHA=BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D"
@@ -48,7 +50,11 @@ set "VERIFY_ONLY=0"
 set "TEST_BRANCH="
 set "TEST_COMMIT="
 
-if /I "%~1"=="RESTORE-ODST-BASELINE" goto :restore
+if /I "%~1"=="RESTORE-ODST-BASELINE" (
+    call :select_recovery_backup
+    if errorlevel 1 goto :restore_not_proven
+    goto :restore
+)
 if /I "%~1"=="VERIFY-ODST-TEST" (
     set "VERIFY_ONLY=1"
 ) else (
@@ -198,9 +204,11 @@ if errorlevel 1 goto :abort_no_install
 call :verify_predeploy_identities
 if errorlevel 1 goto :abort_no_install
 if "%VERIFY_ONLY%"=="1" goto :verified
+call :select_new_backup
+if errorlevel 1 goto :abort_no_install
+echo   Recovery record: %BACKUP_DIR%
 if exist "%BACKUP_DIR%" (
-    echo *** FAILED: %BACKUP_DIR% already exists.
-    echo     Preserve and inspect that original baseline/ACTIVE marker.
+    echo *** FAILED: selected recovery path already exists: %BACKUP_DIR%
     goto :abort_no_install
 )
 mkdir "%BACKUP_DIR%" >nul 2>&1
@@ -317,6 +325,49 @@ echo   Re-run with I-APPROVE-ODST-TEST to create the backup and deploy the DLL.
 if /I not "%~2"=="auto" pause
 exit /b 0
 
+:set_backup_paths
+set "BASELINE_DLL=%BACKUP_DIR%\halo3xr.dll"
+set "STAGED_PRIVATE_DLL=%BACKUP_DIR%\halo3xr.odst-private.dll"
+set "STATE_PREPARED=%BACKUP_DIR%\PREPARED.txt"
+set "STATE_DEPLOYING=%BACKUP_DIR%\DEPLOYING.txt"
+set "STATE_ACTIVE=%BACKUP_DIR%\ACTIVE.txt"
+set "STATE_RESTORING=%BACKUP_DIR%\RESTORING.txt"
+exit /b 0
+
+:select_new_backup
+if exist "%BACKUP_SNAPSHOT%" del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
+"%POWERSHELL%" -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; $root='%BACKUP_ROOT%'; $records=@(); if (Test-Path -LiteralPath $root -PathType Container) { $records+=Get-Item -LiteralPath $root }; $records+=@(Get-ChildItem -LiteralPath '%DEST_DIR%' -Directory -Filter 'pre-odst-private-backup-*' -ErrorAction Stop); $states=@('PREPARED.txt','DEPLOYING.txt','ACTIVE.txt','RESTORING.txt'); $live=@(); foreach ($record in $records) { foreach ($state in $states) { $marker=Join-Path $record.FullName $state; if (Test-Path -LiteralPath $marker -PathType Leaf) { $live+=$marker } } }; if ($live.Count -ne 0) { throw ('existing live recovery state: '+($live -join ', ')) }; if (-not (Test-Path -LiteralPath $root)) { [Console]::Out.WriteLine($root); exit 0 }; for ($i=2; $i -le 999; $i++) { $candidate=$root+'-'+$i; if (-not (Test-Path -LiteralPath $candidate)) { [Console]::Out.WriteLine($candidate); exit 0 } }; throw 'no unused private recovery path is available' " >"%BACKUP_SNAPSHOT%" 2>nul
+if errorlevel 1 (
+    if exist "%BACKUP_SNAPSHOT%" del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
+    echo *** FAILED: a new isolated recovery record could not be selected.
+    echo     Preserve every existing record and resolve any live state first.
+    exit /b 1
+)
+set /p "BACKUP_DIR="<"%BACKUP_SNAPSHOT%"
+del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
+if not defined BACKUP_DIR (
+    echo *** FAILED: the selected recovery path is empty.
+    exit /b 1
+)
+call :set_backup_paths
+exit /b %ERRORLEVEL%
+
+:select_recovery_backup
+if exist "%BACKUP_SNAPSHOT%" del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
+"%POWERSHELL%" -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; $root='%BACKUP_ROOT%'; $records=@(); if (Test-Path -LiteralPath $root -PathType Container) { $records+=Get-Item -LiteralPath $root }; $records+=@(Get-ChildItem -LiteralPath '%DEST_DIR%' -Directory -Filter 'pre-odst-private-backup-*' -ErrorAction Stop); $states=@('PREPARED.txt','DEPLOYING.txt','ACTIVE.txt','RESTORING.txt'); $live=@(); foreach ($record in $records) { foreach ($state in $states) { if (Test-Path -LiteralPath (Join-Path $record.FullName $state) -PathType Leaf) { $live+=$record.FullName } } }; if ($live.Count -ne 1) { throw ('expected exactly one live private recovery state, found '+$live.Count) }; [Console]::Out.WriteLine($live[0])" >"%BACKUP_SNAPSHOT%" 2>nul
+if errorlevel 1 (
+    if exist "%BACKUP_SNAPSHOT%" del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
+    echo *** FAILED: exactly one live private recovery record was not found.
+    exit /b 1
+)
+set /p "BACKUP_DIR="<"%BACKUP_SNAPSHOT%"
+del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
+if not defined BACKUP_DIR (
+    echo *** FAILED: the recovery record path is empty.
+    exit /b 1
+)
+call :set_backup_paths
+exit /b %ERRORLEVEL%
 :verify_cache
 "%POWERSHELL%" -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; $lines=@(Get-Content -LiteralPath '%~1'); $required=@('HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP:BOOL=%~2','BUILD_TESTING:BOOL=ON','CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022','CMAKE_GENERATOR_PLATFORM:INTERNAL=x64','CMAKE_HOME_DIRECTORY:INTERNAL=N:/dev/halo3-openxr','CMAKE_COMMAND:INTERNAL=C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe','CMAKE_CTEST_COMMAND:INTERNAL=C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe'); foreach ($requiredLine in $required) { if (@($lines | Where-Object { $_ -ceq $requiredLine }).Count -ne 1) { throw ('cache identity mismatch: '+$requiredLine) } }"
 if errorlevel 1 (
@@ -549,6 +600,7 @@ echo     The live state marker remains authoritative. Do not launch; restore.
 if exist "%STATUS_SNAPSHOT%" del /Q "%STATUS_SNAPSHOT%" >nul 2>&1
 if exist "%BRANCH_SNAPSHOT%" del /Q "%BRANCH_SNAPSHOT%" >nul 2>&1
 if exist "%HEAD_SNAPSHOT%" del /Q "%HEAD_SNAPSHOT%" >nul 2>&1
+if exist "%BACKUP_SNAPSHOT%" del /Q "%BACKUP_SNAPSHOT%" >nul 2>&1
 echo.
 echo ===== PRIVATE ODST DEPLOY FAILED - DO NOT LAUNCH OR TEST =====
 if /I not "%~2"=="auto" pause

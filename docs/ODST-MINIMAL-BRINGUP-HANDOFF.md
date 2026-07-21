@@ -65,16 +65,55 @@ into an ODST commit without the user's explicit direction.
 - Position currently uses a `1 / 3.048` game-unit-per-OpenXR-meter multiplier.
   This is a headset-calibration hypothesis, not accepted ODST scale evidence.
 - Both option-OFF and private option-ON final Release builds and CTest pass
-  locally. The private Release hook wrappers also passed their unwind-metadata
-  check. No implementation binary has been deployed or launched, and no ODST
-  headset test has occurred.
+  locally. The private Release hook wrappers also pass their unwind-metadata
+  check.
 
-The next runtime step is the narrowly scoped private headset checkpoint below.
-On 2026-07-21 the user asked to prepare the next chat so they can test ODST.
-That authorizes the next chat to review and run the dedicated private procedure
-documented here. It does not authorize public packaging/support, additional ODST
-features, or an unattended game launch. Nothing was deployed or launched while
-preparing this handoff.
+## First private headset result and recovery
+
+The first private candidate was deployed from source commit `bccf4c7` with DLL
+SHA-256
+`533CE571B6AD0E955F1722DFF1341EE77A02184C1705D2616630C577BF34B103`.
+It failed the initial smoke test: MCC menu VR controls stopped merging, ODST
+loaded only as a stock 2D image with no hook/tracking/stereo, and Halo 3
+performance regressed considerably. MCC was closed and the dedicated restore
+mode restored the exact headset-confirmed baseline DLL
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
+The sealed backup at
+`Halo_MCC_VR\pre-odst-private-backup` remains the recovery record and must not
+be removed or overwritten. `stash@{0}` also remains untouched.
+
+The failed-run log separated the symptoms:
+
+- ODST passed static signature/layout preflight but remained at the camera
+  readiness wait, so no ODST detours were installed and stereo stayed off. The
+  gate had required the nested FP source pointer to be published already and
+  every byte in three inactive camera objects to be zero. The next checkpoint
+  accepts a not-yet-published null nested source, still rejects any unexpected
+  non-null owner, and uses the authoritative single-user tail plus absence of
+  another active compact camera instead of demanding zero constructor storage.
+  A one-shot readiness dump now records the complete tail, compact mode/FOV/
+  clip fields, nested-source ownership, and inactive-slot activity if the
+  stricter compact-camera proof still waits.
+- The input path used the shared gameplay policy for MCC frontend controller
+  merging. A private-build-only frontend ambiguity permission now restores menu
+  navigation while explicit ODST camera ownership, teardown, and explicitly
+  unsupported titles remain fail-closed. The normal option-OFF build preserves
+  its prior ambiguous-title policy.
+- Halo 3 emitted 4,328 synchronous reticle-clear log records in a 4,883-line
+  log and repeatedly repainted the reticle swapchain. It also reported about
+  532 full first-person palette solves per second at roughly 89 FPS. The next
+  checkpoint retains an authored reticle across a two-frame capture gap, logs
+  only the actual authored-to-cleared transition, and activates an exact-input,
+  per-stereo-pair palette cache. Any changed tag, slot, bone map, config,
+  original palette, or unsafe transform falls through to the existing full
+  solve; the cache never spans frames.
+
+No replacement candidate has been deployed. Before another private headset
+attempt, commit the isolated fixes from a clean worktree, repeat both clean
+Release builds/CTest suites and the private wrapper unwind check, then run only
+the dedicated private procedure with explicit deployment authorization. Do not
+launch MCC on the user's behalf. Public packaging/support and the normal
+OFF-only deployment/export paths remain unchanged.
 
 ## Proven evidence available to implementation
 
@@ -243,10 +282,13 @@ retail `halo3odst.dll` SHA-256
 The currently installed headset-confirmed DLL is
 `0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
 A new OFF-tree build is not byte-identical, so recovery must restore those exact
-installed bytes rather than rebuild. The script copies that DLL under
-`Halo_MCC_VR\pre-odst-private-backup` and seals the source commit, baseline and
-candidate hashes, candidate size/time, and exact manifest before overwrite. Its
-exclusive recovery states advance `PREPARED -> DEPLOYING -> ACTIVE`; restore or
+installed bytes rather than rebuild. The first sealed record is
+`Halo_MCC_VR\pre-odst-private-backup`; later attempts preserve every terminal
+record and select the first unused `pre-odst-private-backup-N` directory. A new
+attempt is refused if any prior record still has a live recovery state. Each
+record seals the source commit, baseline and candidate hashes, candidate
+size/time, and exact manifest before overwrite. Its exclusive recovery states
+advance `PREPARED -> DEPLOYING -> ACTIVE`; restore or
 rollback enters `RESTORING` before copying the baseline and finishes as
 `RESTORED` or `ROLLED_BACK`. An interrupted `DEPLOYING`/`RESTORING` copy can
 therefore be retried even if the destination contains partial bytes, while a
@@ -266,10 +308,11 @@ MCC and restore the exact saved baseline:
 .\deploy-odst-private.bat RESTORE-ODST-BASELINE auto
 ```
 
-The restore mode validates the exclusive recovery state and sealed record,
-restores only the DLL, and byte/hash-compares it. Preserve the backup directory
-as the test record; do not delete or overwrite it merely to silence the private
-script's repeat-run guard.
+The restore mode requires exactly one live recovery state across all sealed
+records, validates that record, restores only the DLL, and byte/hash-compares
+it. Preserve every terminal backup directory as a test record; the next private
+attempt automatically uses a new numbered directory instead of deleting or
+overwriting an earlier record.
 
 ### Expected scope
 
