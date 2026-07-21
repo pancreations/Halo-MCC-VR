@@ -78,6 +78,11 @@ float BlendXInputMotors(uint16_t lowFrequencyMotor, uint16_t highFrequencyMotor)
     return blended > 1.0f ? 1.0f : blended;
 }
 
+bool UpdateTwoHandHold(bool wasEngaged, bool gripHeld, bool inGrabZone)
+{
+    return gripHeld && (wasEngaged || inGrabZone);
+}
+
 void PauseLevelRecovery::Reset()
 {
     m_sawLoading = false;

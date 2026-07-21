@@ -8,8 +8,9 @@ void Game_Init();
 bool Game_IsHooked();
 bool Game_IsHeadTracking(); // true while F2 head tracking is on
 
-// HUD size: config hud_size drives Halo's own safe-frame floats in the loaded
-// chud_globals tag data (auto-located at runtime; proven live 2026-07-19).
+// HUD layout: hud_size/hud_aspect drive Halo's safe-frame floats, while
+// hud_curvature offsets the adjacent authored destination_offset_z in the
+// loaded chud_globals tag data (auto-located from the same verified anchor).
 void Game_LocateHudSafeFrames();  // manual rescan (menu button; normally automatic)
 void Game_GetHudSafeFrameStatus(int& matches, bool& scanning);
 

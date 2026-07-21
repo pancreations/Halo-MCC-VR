@@ -67,6 +67,9 @@ bool VR_BeginScopeRaster();
 void VR_CaptureScope();
 void VR_EndScopeRaster();
 bool VR_GetScopeRenderAspect(float& outAspect);
+// Current non-persistent scope magnification. It resets to scope_zoom whenever
+// R3 opens the scope and is adjusted by right-stick Y while active.
+float VR_GetScopeZoom();
 
 // Redirects the final scene-color RTV to the active eye's target and, while
 // stereo_sun_shafts is off, neutralizes the sun-shaft occlusion pass (its

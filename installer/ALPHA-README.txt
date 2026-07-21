@@ -1,4 +1,4 @@
-HALO MCC VR - ALPHA 0.1.1
+HALO MCC VR - ALPHA 0.1.2
 =========================
 
 This is an early test build, not a finished public release. Halo 3 campaign is
@@ -59,7 +59,7 @@ INSTALL
 Installing is copying two files. There is no installer script: you place them
 yourself, so you can see exactly what was added and remove it just as easily.
 
-1. Unzip the entire HaloMCCVR-alpha-0.1 folder. Do not run files from inside the
+1. Unzip the entire HaloMCCVR-alpha-0.1.2 folder. Do not run files from inside the
    ZIP.
 2. In Steam, open MCC's Manage > Browse local files folder.
 3. Inside the main "Halo The Master Chief Collection" folder, create a folder

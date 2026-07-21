@@ -146,6 +146,11 @@ Do not rewrite or delete the recovery branch. Start new experiments from a named
 - Native HUD scaling at 0.38, CHUD scripting-class-2 crosshair hiding, and normal pre-regression GPU performance are headset-confirmed.
 - Runtime-FOV HUD aspect correction is headset-confirmed on both Quest 3 and PSVR2 with OpenXR Toolkit disabled. It substantially improves the layout; a mild overall squeeze remains and is accepted for now.
 - The left support-hand wrist-to-palm correction is headset-confirmed. `left_hand_forward_m` defaults to 0.12 m and drives both the rendered left-hand IK target and the two-handed aiming point; the F1 slider tunes them together.
+- Two-handed hold mode is headset-confirmed after changing the barrel zone into
+  an acquisition gate: once acquired, the aim remains engaged while left grip
+  stays held even if either hand leaves the grab zone, and releases when grip is
+  released. Confirmed in deployed build 2026-07-21 05:09 AM, SHA-256
+  860C5A88F70DE943AE29E9A1C95B61C5DBAAA4A513973C8EA6B08B17475B907F.
 - Halo motion blur is off by default because its previous-camera state creates stereo echo trails.
 - Weapon firing no longer shakes the HMD. The dedicated post-observer camera-
   effect stage is bypassed while head tracking is active; the user confirmed
@@ -247,12 +252,26 @@ The working runtime still contains dormant diagnostic and fallback code inherite
   every weapon. The tester's active calibration is now the default: enabled,
   3.39x, 0.182 m wide, local right/up/forward offsets
   -0.081/0.207/0.222 m, refresh divisor 2.
+- The gameplay-origin scope build removed the fixed remote camera at the 10 m
+  VR crosshair, which could start beyond nearby walls. Its first headset result
+  found the lens too wide/weak and still saw the first-person gun in the scope.
+  A 6.78x/16x follow-up remained too wide and still included gun, hands, and
+  native HUD, disproving the FP-driver early-return as a complete suppression
+  gate. The final test constrains the lens to 6x..24x (about 12x on activation),
+  lets the FP pipeline finish, then collapses its final gun/hand palette and
+  skips every CHUD widget only during the scope pass. The upload shader's own
+  centered crosshair remains. Headset-confirmed "works great" on 2026-07-21
+  with the byte-verified 04:52 AM deployed DLL: the tighter zoom and
+  crosshair-only floating screen are accepted.
 - Per-weapon authored-tier attempt `6e1a4f8` failed in the headset because its
   required runtime signature group did not resolve. The input path still
   consumed R3, but weapon lookup always failed and no scope layer activated.
   It was fully reverted at `e1f608a`; repair the locator separately before
   attempting authored tiers again.
 - HUD size: the chud_globals safe-frame lever and the automatic hud_size slider are headset-confirmed. A value of 0.38 visibly and correctly scaled the native HUD layout (2026-07-19).
+- HUD curvature: Quest 3 testing proved the adjacent `destination_offset_z` field controls curvature/depth, not vertical placement. The user scale is normalized: 0.00 = flat (+0.30 delta), 1.00 = fully curved (-0.30 delta), and 0.50 restores each skin's authored baseline. Config version 2 migrates the short-lived signed/one-tenth values without changing their physical curve; the temporary `hud_height` key also migrates on load (2026-07-21).
+- HUD aspect: live `hud_size` adjustment was perceived as squishing the HUD on Quest 3. `hud_aspect` now provides an independent 0.50..2.00 horizontal trim after automatic runtime-FOV correction, so width can be tuned without changing overall safe-frame size or curvature. Headset confirmation of the useful value is pending (2026-07-21).
+- HUD height: a separate `hud_vertical_offset` setting and F1 `HUD height` slider now translate the CHUD anchor-basis Y coordinate by -300..+300 virtual pixels (positive raises, negative lowers). The signature-located hook is VR-only and excludes the separately captured authored crosshair, so height does not move the aiming ray reticle. Quest 3 validation of direction and useful range is pending (2026-07-21).
 - HUD aspect: commit `1b53139` was tested on Quest 3 and PSVR2 with OpenXR Toolkit disabled. The headset-derived anisotropic safe frame is a clear improvement on both, though still mildly squished.
 - Resolution scaling is headset-confirmed at the 0.67 Low setting with Toolkit scaling disabled: the complete eye remains intact and fills the unchanged OpenXR projection. The launcher scales Halo's 2912x2100 internal raster evenly; the values other than Low still need headset coverage, and nothing above 1.10 has ever been run in a headset — the high end is an untested option, not a validated tier.
 - `resolution_scale` is free-form as of 2026-07-20: any value from 0.35 to 2.00 is honored exactly. It previously snapped to six tiers in three separate places (`Clamp()`, the launcher's reader, and the F1 combo), so a hand-typed 0.90 silently became 0.80. `kResolutionScaleMin/Max` and `kNativeRenderWidth/Height` now live in `src/common/config.h` and are read by both the DLL and the launcher, which does not link `config.cpp`. F1 shows a free slider with the six tiers as shortcut buttons and the resulting pixel count. Desk-verified in `core_tests.cpp`; not yet headset-confirmed at a non-tier value.
@@ -420,6 +439,13 @@ alpha is safe to distribute on machines that also have ODST installed.
 - Product decision: no FOV slider and no built-in FSR. Resolution presets are the supported performance control; third-party upscalers remain external and unsupported.
 
 ## Alpha distribution (2026-07-19)
+
+- Alpha 0.1.2 release candidate freezes the exact headset-tested 2026-07-21
+  05:09 DLL rather than rebuilding after the test. DLL SHA-256
+  `860C5A88F70DE943AE29E9A1C95B61C5DBAAA4A513973C8EA6B08B17475B907F`;
+  launcher SHA-256
+  `6F44B75CA1669DE224C192F13F71C27671E3ADBD993934E677210BB10AD28D70`.
+  The package label and documentation do not alter either tested binary.
 
 - RELEASE-BLOCKING SAFETY INCIDENT (2026-07-20): the original alpha
   uninstall.bat treated any directory containing halo3xr.dll as the mod folder

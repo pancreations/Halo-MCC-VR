@@ -33,6 +33,11 @@ MenuPointerHit IntersectMenuQuad(const float origin[3], const float direction[3]
 
 float BlendXInputMotors(uint16_t lowFrequencyMotor, uint16_t highFrequencyMotor);
 
+// Hold-mode two-hand aiming uses the barrel zone only to acquire the support
+// grip. Once acquired, ordinary movement of either hand must not drop the hold;
+// releasing the grip is the explicit disengage action.
+bool UpdateTwoHandHold(bool wasEngaged, bool gripHeld, bool inGrabZone);
+
 // Tracks the loading gap caused by Restart Level while Halo's pause menu owns
 // the screen. Restart bypasses the normal Start/unpause edge, so the next
 // stable gameplay camera must clear the 2D pause presentation.

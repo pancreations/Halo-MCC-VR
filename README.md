@@ -48,7 +48,7 @@ Installing is copying two files; there is no installer script.
 
 The final layout must be `Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder. To update, close MCC and copy the two new files over the old ones — `halomccvr.cfg` is left alone. To uninstall, close MCC and delete only the dedicated `Halo_MCC_VR` folder you created. The mod does not patch game files.
 
-Settings live in `Halo_MCC_VR\halomccvr.cfg`, written with defaults on first run. Every setting carries its description, default, and range, so it can be edited by hand in Notepad with MCC closed; the F1 menu edits the same file live. Deleting the file regenerates it with defaults.
+Settings live in `Halo_MCC_VR\halomccvr.cfg`, written with defaults on first run. Every setting carries its description, default, and range, so it can be edited by hand in Notepad with MCC closed; the F1 menu edits the same file live. Display & HUD has separate live controls for overall size, width/aspect, curvature, and vertical height. Deleting the file regenerates it with defaults.
 
 ## Required MCC settings
 

@@ -292,8 +292,8 @@ namespace
         if (g_config.scope_enabled)
         {
             ImGui::Indent();
-            changed |= ImGui::SliderFloat("Scope zoom strength", &g_config.scope_zoom,
-                                          1.25f, 8.0f, "%.2fx");
+            changed |= ImGui::SliderFloat("Default scope zoom", &g_config.scope_zoom,
+                                          6.0f, 24.0f, "%.2fx");
             changed |= ImGui::SliderFloat("Screen width (m)##scope",
                                           &g_config.scope_screen_width_m,
                                           0.04f, 0.25f, "%.3f");
@@ -400,12 +400,27 @@ namespace
         {
         ImGui::Text("HUD layout");
         changed |= ImGui::SliderFloat("HUD size", &g_config.hud_size, 0.30f, 1.00f, "%.2f");
+        changed |= ImGui::SliderFloat("HUD width / aspect", &g_config.hud_aspect,
+                                      kHudAspectMin, kHudAspectMax, "%.2f");
+        changed |= ImGui::SliderFloat("HUD curvature", &g_config.hud_curvature,
+                                      kHudCurvatureMin, kHudCurvatureMax, "%.2f");
+        changed |= ImGui::SliderFloat("HUD height", &g_config.hud_vertical_offset,
+                                      kHudHeightMin, kHudHeightMax, "%+.0f px");
         if (ImGui::SmallButton("Set VR preset (0.45)##sf"))
         { g_config.hud_size = 0.45f; changed = true; }
         ImGui::SameLine();
-        if (ImGui::SmallButton("Back to stock (0.87)##sf"))
-        { g_config.hud_size = 0.87f; changed = true; }
+        if (ImGui::SmallButton("Reset HUD layout##sf"))
+        {
+            g_config.hud_size = 0.87f;
+            g_config.hud_aspect = 1.0f;
+            g_config.hud_curvature = 0.5f;
+            g_config.hud_vertical_offset = 0.0f;
+            changed = true;
+        }
         ImGui::TextDisabled("0.87 is Halo stock; lower values pull HUD elements toward both eyes.");
+        ImGui::TextDisabled("Width corrects squeeze separately from size; 1.00 uses automatic correction.");
+        ImGui::TextDisabled("Curvature: 0.00 = flat (+0.30), 1.00 = curved (-0.30); 0.50 is authored.");
+        ImGui::TextDisabled("Height: positive raises the HUD, negative lowers it; the aiming reticle stays fixed.");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Picture");

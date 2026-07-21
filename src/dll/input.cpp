@@ -169,10 +169,20 @@ namespace
             if (!g_overrideLogged.exchange(true))
                 LOG("M3: VR aim override active (right stick steered by the controller)");
         }
-        else if (fabsf(pad.turnX) > 0.15f || fabsf(pad.turnY) > 0.15f)
+        else
         {
-            state->Gamepad.sThumbRX = ToRawStick(pad.turnX);
-            state->Gamepad.sThumbRY = ToRawStick(pad.turnY);
+            const bool scopeActive = VR_IsScopeActive();
+            // Scope magnification owns the vertical axis while the scope is
+            // open. Horizontal snap/smooth turning remains available.
+            if (scopeActive)
+                state->Gamepad.sThumbRY = 0;
+            if (fabsf(pad.turnX) > 0.15f ||
+                (!scopeActive && fabsf(pad.turnY) > 0.15f))
+            {
+                state->Gamepad.sThumbRX = ToRawStick(pad.turnX);
+                state->Gamepad.sThumbRY = scopeActive
+                    ? 0 : ToRawStick(pad.turnY);
+            }
         }
     }
 

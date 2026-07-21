@@ -218,6 +218,7 @@ namespace
     thread_local FpInterpolationContext g_fpInterpolationContexts[2];
     thread_local BoneMatrix g_fpUnmodifiedInterpolations[2][64];
     thread_local BoneMatrix g_fpPaletteScratch[64];
+    thread_local BoneMatrix g_scopeHiddenPalette[64];
     // The render-thread IK path publishes only pointer-sized diagnostics.
     // Present consumes them and owns all logging, keeping file I/O and log
     // locks out of the palette hot path.
@@ -327,12 +328,44 @@ namespace
     HudDrawWidgetFn g_realHudDrawWidget = nullptr;
     thread_local bool g_insideHudDrawWidget = false;
     thread_local bool g_authoredReticleCaptureStarted = false;
+    // Shared because Halo can execute first-person work on a render worker.
+    std::atomic<bool> g_scopeRenderActive{false};
+
+    // chud_compute_anchor_basis produces a real_matrix4x3-like basis. Its final
+    // vector starts at +0x28, with the vertical screen coordinate at +0x2C.
+    // Moving that coordinate translates every native HUD widget without
+    // changing its scale/aspect or the curvature tag data.
+    using HudAnchorBasisFn = bool(__fastcall*)(int, void*, int, void*);
+    HudAnchorBasisFn g_realHudAnchorBasis = nullptr;
+
+    bool __fastcall HudAnchorBasisHook(int userIndex, void* drawWidgetData,
+                                       int anchorType, void* basis)
+    {
+        const bool result = g_realHudAnchorBasis(
+            userIndex, drawWidgetData, anchorType, basis);
+        if (result && basis && !g_authoredReticleCaptureStarted &&
+            g_enabled.load(std::memory_order_relaxed) && VR_IsStereoEnabled())
+        {
+            const float height = g_config.hud_vertical_offset;
+            if (isfinite(height) && height >= kHudHeightMin && height <= kHudHeightMax)
+            {
+                // Halo screen Y grows downward. The user-facing setting follows
+                // normal height semantics: positive raises, negative lowers.
+                reinterpret_cast<float*>(basis)[0x2C / sizeof(float)] -= height;
+            }
+        }
+        return result;
+    }
 
     void __fastcall HudDrawWidgetHook(int userIndex, void* descriptor,
                                       unsigned short widgetIndex,
                                       unsigned char useAlternatePath,
                                       void* drawState)
     {
+        // The scope has its own centered crosshair in the upload shader. Keep
+        // every native CHUD widget out of the magnified world-only picture.
+        if (g_scopeRenderActive.load(std::memory_order_acquire))
+            return;
         const bool previousInside = g_insideHudDrawWidget;
         const bool previousCapture = g_authoredReticleCaptureStarted;
         g_insideHudDrawWidget = true;
@@ -423,14 +456,11 @@ namespace
         g_renderHooked = false;
         g_fpInterpolatorHooked = false;
     }
-    thread_local bool g_scopeRenderActive = false;
-
     void __fastcall FpDriverHook(void* view, unsigned char flag)
     {
-        // The scope's third camera is world-only. Suppress this dedicated
-        // first-person driver for that pass so neither gun nor CHUD is duplicated.
-        if (g_scopeRenderActive)
-            return;
+        // During the scope pass this driver must still run so the palette and
+        // HUD hooks can suppress their final submissions. Returning here left
+        // previously prepared gun/HUD packets available to the renderer.
         VR_TraceEvent("fp-driver", (int)flag, g_stereoEye.load());
         // (The hud_zoom layout-factor poke that lived here is retired
         // 2026-07-19: [view+0x2B0]+0x174 never resized the visible HUD. HUD
@@ -718,23 +748,26 @@ namespace
     // their immutable neighborhood, byte-verified against the shipped tag:
     //   [int32 1280][int32 720][55.f][661.f][58.f][4.f]
     //   (virtual canvas w/h, sensor origin x/y, sensor radius, blip radius)
-    // with the two safe-frame floats at +24/+28. Exactly 3 such blocks exist
+    // with destination_offset_z immediately before the anchor (-4) and the two
+    // safe-frame floats at +24/+28. Exactly 3 such blocks exist
     // in ui\chud\globals (one per skin: default/dervish/monitor, 720p
-    // fullscreen). A hit only counts if +24/+28 hold the exact shipped 0.87f
-    // bit pattern (0x3F5EB852) AND the region is private read-write — pattern
-    // and payload must BOTH agree before we ever write (no-guessing rule).
+    // fullscreen). A hit only counts when the immutable anchor, plausible
+    // destination-Z value, plausible safe-frame pair, and private read-write
+    // region all agree before we ever write (no-guessing rule).
     // User-triggered from the F1 menu; the scan runs on its own thread, never
     // the render thread. The poke buttons are the decisive MCC experiment:
     // does the live game re-layout the HUD when these floats change?
     constexpr int kMaxSafeFrameHits = 16;
-    constexpr uint32_t kSafeFrameBits = 0x3F5EB852u; // 0.87f, bit-exact as shipped
     static const unsigned char kSafeFrameAnchor[24] = {
         0x00,0x05,0x00,0x00, 0xD0,0x02,0x00,0x00,   // int32 1280, int32 720
         0x00,0x00,0x5C,0x42, 0x00,0x40,0x25,0x44,   // 55.0f, 661.0f
         0x00,0x00,0x68,0x42, 0x00,0x00,0x80,0x40 }; // 58.0f, 4.0f
     std::atomic<uintptr_t> g_safeFrameSlots[kMaxSafeFrameHits]{};
+    std::atomic<uint32_t> g_safeFrameBaseCurvatureBits[kMaxSafeFrameHits]{};
     std::atomic<int> g_safeFrameHitCount{-1}; // -1 never/none, -2 scanning, >0 found
     std::atomic<uint32_t> g_hudAppliedBits{0}; // last value confirmed in live slots
+    std::atomic<uint32_t> g_hudAppliedAspectBits{0};
+    std::atomic<uint32_t> g_hudAppliedCurvatureBits{0};
     // Freshness beacon shared with auto-VR: CamCopyHook updates it only while a
     // level camera is running. HUD discovery reads it from Present.
     std::atomic<uint64_t> g_lastCamCopyMs{0};
@@ -745,6 +778,7 @@ namespace
     // these (anchor + payload, same certainty as the scan) usually re-acquires
     // instantly instead of costing a full rescan.
     std::atomic<uintptr_t> g_safeFrameLastGood[kMaxSafeFrameHits]{};
+    std::atomic<uint32_t> g_safeFrameLastGoodBaseCurvatureBits[kMaxSafeFrameHits]{};
     std::atomic<int> g_safeFrameLastGoodCount{0};
 
     // Plain helpers: SEH frames must stay free of C++ unwinding (C2712), and a
@@ -770,10 +804,12 @@ namespace
         return found;
     }
 
-    static int SafeFrameReadPair(uintptr_t slot, uint32_t* h, uint32_t* v)
+    static int SafeFrameReadLayout(uintptr_t slot, uint32_t* destinationZ,
+                                   uint32_t* h, uint32_t* v)
     {
         __try
         {
+            *destinationZ = *reinterpret_cast<const volatile uint32_t*>(slot - 28);
             *h = *reinterpret_cast<const volatile uint32_t*>(slot);
             *v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
         }
@@ -781,10 +817,12 @@ namespace
         return 1;
     }
 
-    static int SafeFrameWritePair(uintptr_t slot, float horizontal, float vertical)
+    static int SafeFrameWriteLayout(uintptr_t slot, float destinationZ,
+                                    float horizontal, float vertical)
     {
         __try
         {
+            *reinterpret_cast<volatile float*>(slot - 28) = destinationZ;
             *reinterpret_cast<volatile float*>(slot) = horizontal;
             *reinterpret_cast<volatile float*>(slot + 4) = vertical;
         }
@@ -794,12 +832,14 @@ namespace
 
     // Full verification of an address: the 24-byte anchor must sit at slot-24;
     // on success the payload pair is read out under the same guard.
-    static int SafeFrameVerifySlot(uintptr_t slot, uint32_t* h, uint32_t* v)
+    static int SafeFrameVerifySlot(uintptr_t slot, uint32_t* destinationZ,
+                                   uint32_t* h, uint32_t* v)
     {
         __try
         {
             if (memcmp(reinterpret_cast<const void*>(slot - 24),
                        kSafeFrameAnchor, 24) != 0) return 0;
+            *destinationZ = *reinterpret_cast<const volatile uint32_t*>(slot - 28);
             *h = *reinterpret_cast<const volatile uint32_t*>(slot);
             *v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
             return 1;
@@ -821,6 +861,28 @@ namespace
                vf >= 0.15f && vf <= 1.05f;
     }
 
+    static bool HudDestinationPlausible(uint32_t bits)
+    {
+        float value = 0.0f;
+        memcpy(&value, &bits, sizeof(value));
+        return isfinite(value) && value >= -10.0f && value <= 10.0f;
+    }
+
+    // A manual rescan can run while our offset is already live. Reuse the
+    // authored baseline remembered for that exact address so the configured
+    // delta never compounds across rescans or map transitions.
+    static uint32_t RememberedHudCurvatureBaseline(uintptr_t slot, uint32_t fallback)
+    {
+        const int count = g_safeFrameLastGoodCount.load(std::memory_order_acquire);
+        for (int i = 0; i < count && i < kMaxSafeFrameHits; ++i)
+        {
+            if (g_safeFrameLastGood[i].load(std::memory_order_relaxed) == slot)
+                return g_safeFrameLastGoodBaseCurvatureBits[i].load(
+                    std::memory_order_relaxed);
+        }
+        return fallback;
+    }
+
     // Halo builds its native HUD for the game render surface's pixel aspect.
     // In VR that image is submitted across the headset's tangent-space FOV.
     // Those happened to agree on the PSVR2 setup the launcher was designed
@@ -828,26 +890,30 @@ namespace
     // ~0.964 tangent-space, making the HUD geometry visibly too narrow. Keep
     // hud_size as the larger safe-frame axis and reduce the other axis so the
     // HUD's perceived X:Y geometry remains square on any runtime/headset.
-    static void ComputeHudSafeFramePair(float size, float& horizontal, float& vertical)
+    static void ComputeHudSafeFramePair(float size, float aspect,
+                                        float& horizontal, float& vertical)
     {
         horizontal = vertical = size;
         float gameAspect = 0.0f;
         float eyeFov[4]{};
-        if (!VR_GetGameRenderAspect(gameAspect) || !VR_GetEyeFov(0, eyeFov))
-            return;
-        const float halfX = fmaxf(-eyeFov[0], eyeFov[1]);
-        const float halfY = fmaxf(eyeFov[2], -eyeFov[3]);
-        const float tanX = tanf(halfX), tanY = tanf(halfY);
-        if (!isfinite(tanX) || !isfinite(tanY) || tanX <= 0.01f || tanY <= 0.01f)
-            return;
-        const float headsetAspect = tanX / tanY;
-        const float correction = gameAspect / headsetAspect;
-        if (!isfinite(correction) || correction < 0.25f || correction > 4.0f)
-            return;
-        if (correction > 1.0f)
-            vertical = size / correction;
-        else
-            horizontal = size * correction;
+        if (VR_GetGameRenderAspect(gameAspect) && VR_GetEyeFov(0, eyeFov))
+        {
+            const float halfX = fmaxf(-eyeFov[0], eyeFov[1]);
+            const float halfY = fmaxf(eyeFov[2], -eyeFov[3]);
+            const float tanX = tanf(halfX), tanY = tanf(halfY);
+            if (isfinite(tanX) && isfinite(tanY) && tanX > 0.01f && tanY > 0.01f)
+            {
+                const float correction = gameAspect / (tanX / tanY);
+                if (isfinite(correction) && correction >= 0.25f && correction <= 4.0f)
+                {
+                    if (correction > 1.0f)
+                        vertical = size / correction;
+                    else
+                        horizontal = size * correction;
+                }
+            }
+        }
+        horizontal *= aspect;
         horizontal = fmaxf(0.15f, fminf(horizontal, 1.0f));
         vertical = fmaxf(0.15f, fminf(vertical, 1.0f));
     }
@@ -886,16 +952,23 @@ namespace
                 for (int k = 0; k < n; ++k)
                 {
                     ++rawHits;
-                    uint32_t h = 0, v = 0;
-                    if (!SafeFrameReadPair(hits[k], &h, &v)) continue;
-                    const bool payloadOk = SafeFramePairPlausible(h, v);
+                    uint32_t destinationZ = 0, h = 0, v = 0;
+                    if (!SafeFrameReadLayout(hits[k], &destinationZ, &h, &v)) continue;
+                    const bool payloadOk = SafeFramePairPlausible(h, v) &&
+                                           HudDestinationPlausible(destinationZ);
                     LOG("SAFEFRAME: anchor at %p (type 0x%X protect 0x%X) "
-                        "payload %08X/%08X -> %s",
+                        "destination-Z %08X, safe frame %08X/%08X -> %s",
                         reinterpret_cast<void*>(hits[k]),
-                        (unsigned)mbi.Type, (unsigned)mbi.Protect, h, v,
+                        (unsigned)mbi.Type, (unsigned)mbi.Protect,
+                        destinationZ, h, v,
                         payloadOk ? "VERIFIED" : "payload implausible, REJECTED");
                     if (payloadOk && accepted < kMaxSafeFrameHits)
-                        g_safeFrameSlots[accepted++].store(hits[k]);
+                    {
+                        g_safeFrameSlots[accepted].store(hits[k]);
+                        g_safeFrameBaseCurvatureBits[accepted].store(
+                            RememberedHudCurvatureBaseline(hits[k], destinationZ));
+                        ++accepted;
+                    }
                 }
             }
             addr = next;
@@ -903,11 +976,15 @@ namespace
         LOG("SAFEFRAME: scan done in %llu ms (private-RW only) — %d raw anchor "
             "hit(s), %d verified pair(s)%s",
             (unsigned long long)(GetTickCount64() - t0), rawHits, accepted,
-            accepted ? "; hud_size applies from the next frame" : "");
+            accepted ? "; HUD layout settings apply from the next frame" : "");
         if (accepted > 0) // remember for instant reacquire after map changes
         {
             for (int i = 0; i < accepted; ++i)
+            {
                 g_safeFrameLastGood[i].store(g_safeFrameSlots[i].load());
+                g_safeFrameLastGoodBaseCurvatureBits[i].store(
+                    g_safeFrameBaseCurvatureBits[i].load());
+            }
             g_safeFrameLastGoodCount.store(accepted, std::memory_order_release);
         }
         g_safeFrameHitCount.store(accepted, std::memory_order_release);
@@ -917,8 +994,14 @@ namespace
     void LaunchSafeFrameScan(const char* why)
     {
         if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2) return;
-        for (int i = 0; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
+        for (int i = 0; i < kMaxSafeFrameHits; ++i)
+        {
+            g_safeFrameSlots[i].store(0);
+            g_safeFrameBaseCurvatureBits[i].store(0);
+        }
         g_hudAppliedBits.store(0, std::memory_order_relaxed);
+        g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
+        g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
         g_safeFrameHitCount.store(-2, std::memory_order_release);
         HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
         if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (%s)", why); }
@@ -927,19 +1010,26 @@ namespace
 
     // Present-thread, change/validation only. This used to run from every
     // camera-copy hot-hook call; there is no need to reapply persistent tag
-    // floats hundreds of times per second. HudSizeAutoTick invokes it when the
+    // floats hundreds of times per second. HudLayoutAutoTick invokes it when a
     // slider changes and once per second to catch a map reload.
-    void ApplyHudSizeOnce()
+    void ApplyHudLayoutOnce()
     {
         const int n = g_safeFrameHitCount.load(std::memory_order_acquire);
         if (n <= 0) return;
-        const float want = g_config.hud_size;
-        if (!(want >= 0.30f && want <= 1.00f)) return; // bad cfg: leave stock
-        float wantH = want, wantV = want;
-        ComputeHudSafeFramePair(want, wantH, wantV);
-        uint32_t wantBits = 0;
+        const float wantSize = g_config.hud_size;
+        const float wantAspect = g_config.hud_aspect;
+        const float wantCurvature = g_config.hud_curvature;
+        if (!(wantSize >= 0.30f && wantSize <= 1.00f) ||
+            !(wantAspect >= kHudAspectMin && wantAspect <= kHudAspectMax) ||
+            !(wantCurvature >= kHudCurvatureMin && wantCurvature <= kHudCurvatureMax))
+            return; // bad cfg: leave the verified tag data untouched
+        float wantH = wantSize, wantV = wantSize;
+        ComputeHudSafeFramePair(wantSize, wantAspect, wantH, wantV);
+        uint32_t wantBits = 0, wantAspectBits = 0, wantCurvatureBits = 0;
         uint32_t wantHBits = 0, wantVBits = 0;
-        memcpy(&wantBits, &want, 4);
+        memcpy(&wantBits, &wantSize, 4);
+        memcpy(&wantAspectBits, &wantAspect, 4);
+        memcpy(&wantCurvatureBits, &wantCurvature, 4);
         memcpy(&wantHBits, &wantH, 4);
         memcpy(&wantVBits, &wantV, 4);
         int live = 0;
@@ -947,20 +1037,42 @@ namespace
         {
             const uintptr_t slot = g_safeFrameSlots[i].load(std::memory_order_relaxed);
             if (!slot) continue;
-            uint32_t h = 0, v = 0;
-            if (!SafeFrameVerifySlot(slot, &h, &v)) continue; // anchor gone: stale
-            if (!SafeFramePairPlausible(h, v)) continue;      // junk pair: stale
-            if (h == wantHBits && v == wantVBits) { ++live; continue; } // already ours
-            if (SafeFrameWritePair(slot, wantH, wantV)) ++live;
+            uint32_t destinationZ = 0, h = 0, v = 0;
+            if (!SafeFrameVerifySlot(slot, &destinationZ, &h, &v)) continue;
+            if (!SafeFramePairPlausible(h, v) ||
+                !HudDestinationPlausible(destinationZ)) continue;
+            const uint32_t baseBits =
+                g_safeFrameBaseCurvatureBits[i].load(std::memory_order_relaxed);
+            if (!HudDestinationPlausible(baseBits)) continue;
+            float authoredDestinationZ = 0.0f;
+            memcpy(&authoredDestinationZ, &baseBits, sizeof(authoredDestinationZ));
+            // User scale runs in the intuitive direction: 0 is flat and 1 is
+            // curved. Map it linearly onto the headset-proven +0.30..-0.30
+            // destination-Z delta; 0.5 therefore restores the authored value.
+            const float curvatureDelta = 0.30f - 0.60f * wantCurvature;
+            const float targetDestinationZ = authoredDestinationZ + curvatureDelta;
+            uint32_t targetDestinationBits = 0;
+            memcpy(&targetDestinationBits, &targetDestinationZ, sizeof(targetDestinationBits));
+            if (!HudDestinationPlausible(targetDestinationBits)) continue;
+            if (destinationZ == targetDestinationBits && h == wantHBits && v == wantVBits)
+            {
+                ++live;
+                continue;
+            }
+            if (SafeFrameWriteLayout(slot, targetDestinationZ, wantH, wantV)) ++live;
         }
         if (live > 0)
         {
             g_hudAppliedBits.store(wantBits, std::memory_order_relaxed);
+            g_hudAppliedAspectBits.store(wantAspectBits, std::memory_order_relaxed);
+            g_hudAppliedCurvatureBits.store(wantCurvatureBits, std::memory_order_relaxed);
             // Pair is re-evaluated once per second as runtime FOV becomes valid.
         }
         else
         {
             g_hudAppliedBits.store(0, std::memory_order_relaxed);
+            g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
+            g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
             g_safeFrameHitCount.store(-1, std::memory_order_release); // relocate
         }
     }
@@ -977,43 +1089,70 @@ namespace
         for (int i = 0; i < m && i < kMaxSafeFrameHits; ++i)
         {
             const uintptr_t slot = g_safeFrameLastGood[i].load(std::memory_order_relaxed);
-            uint32_t h = 0, v = 0;
-            if (slot && SafeFrameVerifySlot(slot, &h, &v) && SafeFramePairPlausible(h, v))
-                g_safeFrameSlots[accepted++].store(slot);
+            uint32_t destinationZ = 0, h = 0, v = 0;
+            const uint32_t baseCurvature =
+                g_safeFrameLastGoodBaseCurvatureBits[i].load(std::memory_order_relaxed);
+            if (slot && SafeFrameVerifySlot(slot, &destinationZ, &h, &v) &&
+                SafeFramePairPlausible(h, v) &&
+                HudDestinationPlausible(destinationZ) &&
+                HudDestinationPlausible(baseCurvature))
+            {
+                g_safeFrameSlots[accepted].store(slot);
+                g_safeFrameBaseCurvatureBits[accepted].store(baseCurvature);
+                ++accepted;
+            }
         }
         if (!accepted) return false;
-        for (int i = accepted; i < kMaxSafeFrameHits; ++i) g_safeFrameSlots[i].store(0);
+        for (int i = accepted; i < kMaxSafeFrameHits; ++i)
+        {
+            g_safeFrameSlots[i].store(0);
+            g_safeFrameBaseCurvatureBits[i].store(0);
+        }
         g_hudAppliedBits.store(0, std::memory_order_relaxed); // force one apply
+        g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
+        g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
         g_safeFrameHitCount.store(accepted, std::memory_order_release);
-        LOG("SAFEFRAME: reacquired %d pair(s) at previous address(es); scan skipped", accepted);
+        LOG("SAFEFRAME: reacquired %d layout block(s) at previous address(es); scan skipped",
+            accepted);
         return true;
     }
 
     // Called every frame from Game_AutoVrTick (Present thread — logging and
-    // thread creation are fine here). While hud_size is non-stock and no
+    // thread creation are fine here). While either HUD layout setting is
+    // non-stock and no
     // verified slots exist: first try the instant reacquire (once a second),
     // then fall back to the full background scan (at most every 15 seconds).
     // Both only while a level is actually rendering (CamCopyHook heartbeat).
-    void HudSizeAutoTick()
+    void HudLayoutAutoTick()
     {
-        const float want = g_config.hud_size;
-        uint32_t wantBits = 0;
-        memcpy(&wantBits, &want, sizeof(wantBits));
+        const float wantSize = g_config.hud_size;
+        const float wantAspect = g_config.hud_aspect;
+        const float wantCurvature = g_config.hud_curvature;
+        uint32_t wantBits = 0, wantAspectBits = 0, wantCurvatureBits = 0;
+        memcpy(&wantBits, &wantSize, sizeof(wantBits));
+        memcpy(&wantAspectBits, &wantAspect, sizeof(wantAspectBits));
+        memcpy(&wantCurvatureBits, &wantCurvature, sizeof(wantCurvatureBits));
         const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
         const uint64_t now = GetTickCount64();
         if (c > 0)
         {
             static uint64_t lastVerifyMs = 0;
             if (g_hudAppliedBits.load(std::memory_order_relaxed) != wantBits ||
+                g_hudAppliedAspectBits.load(std::memory_order_relaxed) != wantAspectBits ||
+                g_hudAppliedCurvatureBits.load(std::memory_order_relaxed) != wantCurvatureBits ||
                 now - lastVerifyMs >= 1000)
             {
                 lastVerifyMs = now;
-                ApplyHudSizeOnce();
+                ApplyHudLayoutOnce();
             }
             return;
         }
         if (c == -2) return; // scan already running
-        if (want >= 0.8695f && want <= 0.8705f) return; // stock needs no locate
+        const bool stockSize = wantSize >= 0.8695f && wantSize <= 0.8705f;
+        const bool stockAspect = wantAspect >= 0.9995f && wantAspect <= 1.0005f;
+        const bool stockCurvature =
+            wantCurvature >= 0.4995f && wantCurvature <= 0.5005f;
+        if (stockSize && stockAspect && stockCurvature) return; // stock needs no locate
         const uint64_t lastCam = g_lastCamCopyMs.load(std::memory_order_relaxed);
         if (!lastCam || now - lastCam > 1000) return; // not rendering a level
         static uint64_t lastReacquireMs = 0;
@@ -1025,7 +1164,7 @@ namespace
         static uint64_t lastAttemptMs = 0;
         if (now - lastAttemptMs < 15000) return;
         lastAttemptMs = now;
-        LaunchSafeFrameScan("auto: hud_size is set and no slots are located");
+        LaunchSafeFrameScan("auto: HUD layout is customized and no slots are located");
     }
 
     void ResolveBodyVars(uintptr_t base, size_t size)
@@ -1071,8 +1210,8 @@ namespace
     // (Removed 2026-07-19: the old ResolveChudScale/ApplyChudScale patched the
     // 1.0f immediates in 0x278EE0 — the headset proved those are the CHUD ALPHA,
     // not size. That function turned out to drive game BRIGHTNESS; it's now the
-    // brightness hook, HudXformHook. HUD size has no single in-place lever; it
-    // needs a captured VR panel, tracked separately.)
+    // brightness hook, HudXformHook. HUD layout is instead controlled through
+    // the verified chud_globals curvature fields above.)
 
     // Bullet-origin measurement: on each right-trigger pull, log where Halo
     // spawns the bullet (the camera) vs the gun muzzle world position, so the
@@ -2788,6 +2927,21 @@ namespace
                     g_fpPaletteScratch[i].scale=0.0001f; // collapse to the joint
         }
 
+        // The scope is a magnified world view, not a second first-person view.
+        // Let Halo finish the normal FP submission path, but feed its final
+        // palette a private zero-scale copy so gun, hands, and arms contribute
+        // no pixels. The normal stereo palettes remain completely untouched.
+        if (g_scopeRenderActive.load(std::memory_order_acquire) &&
+            context.valid && selectedSource &&
+            context.count>0 && context.count<=64)
+        {
+            memcpy(g_scopeHiddenPalette,selectedSource,
+                   static_cast<size_t>(context.count)*sizeof(BoneMatrix));
+            for (int i=0;i<context.count;++i)
+                g_scopeHiddenPalette[i].scale=0.0001f;
+            selectedSource=g_scopeHiddenPalette;
+        }
+
         g_origFpVisiblePalette(tag,root,destination,unused,selectedSource,boneMap);
 
         // Collect every UNIQUE final-palette submission, not just the first
@@ -3598,13 +3752,12 @@ namespace
         float controllerBasis[9], weaponSeat[3], meshScale=1.0f;
         if(!ControllerWorldPoseEx(false,controllerBasis,weaponSeat,meshScale))
             return false;
+        const float* cameraOrigin=reinterpret_cast<const float*>(saved);
         const float bulletForward[3]={
             g_aimFwdX.load(),g_aimFwdY.load(),g_aimFwdZ.load()};
         ScopeCameraPose pose{};
-        if(!ComputeScopeCameraPose(
-               controllerBasis,weaponSeat,bulletForward,g_worldScale.load(),
-               Clamp(g_config.gun_forward_m,-0.3f,0.5f),
-               Clamp(g_config.crosshair_distance_m,2.0f,50.0f),pose))
+        if(!ComputeScopeCameraPose(controllerBasis,cameraOrigin,
+                                   bulletForward,pose))
             return false;
         memcpy(camera,saved,0x90);
         memcpy(camera+0x00,pose.position,sizeof(pose.position));
@@ -3849,13 +4002,14 @@ namespace
         g_stereoEye = -1;
         g_eyeFpView.store(nullptr,std::memory_order_release);
 
-        // One mono world-only remote camera at the VR crosshair point. The
-        // physical 4:3 display remains mounted on the gun independently.
+        // One mono world-only camera at Halo's collision-safe gameplay origin.
+        // Its bullet-aligned direction remains hand-aimed, and the physical 4:3
+        // display remains mounted on the gun independently.
         if(g_buildViewport && g_buildMatrices && VR_ScopeShouldRenderThisFrame() &&
            BuildRightHandScopeCamera(camera,saved) && VR_BeginScopeRaster())
         {
             alignas(16) unsigned char scopeTemporary[0x40]{};
-            const float zoom=Clamp(g_config.scope_zoom,1.25f,8.0f);
+            const float zoom=VR_GetScopeZoom();
             float sourceAspect=4.0f/3.0f;
             VR_GetScopeRenderAspect(sourceAspect);
             const ScopeProjectionTangents scopeProjection=
@@ -3881,15 +4035,15 @@ namespace
             memcpy(reinterpret_cast<char*>(view)+0x158,camera,0x90);
             memcpy(reinterpret_cast<char*>(view)+0x1E8,
                    reinterpret_cast<char*>(view)+0x98,0x90);
-            g_scopeRenderActive=true;
+            g_scopeRenderActive.store(true,std::memory_order_release);
             if(g_prepareView) g_prepareView(view,0);
             g_origRenderView(view);
-            g_scopeRenderActive=false;
+            g_scopeRenderActive.store(false,std::memory_order_release);
             VR_CaptureScope();
             VR_EndScopeRaster();
             static std::atomic<bool> logged{false};
             if(!logged.exchange(true))
-                LOG("scope camera active: remote origin at VR crosshair, %.2fx 4:3 lens",
+                LOG("scope camera active: collision-safe bullet origin, %.2fx 4:3 lens",
                     zoom);
         }
         memcpy(camera, saved, sizeof(saved));
@@ -4363,6 +4517,39 @@ namespace
         // play. NOP only that short-circuit and hook the existing class-gated
         // predicate; no tag-table reads are added to the render hook.
         {
+            // True HUD height: translate Halo's computed CHUD anchor basis. The
+            // prologue is unique in the current halo3.dll and fails open if MCC
+            // changes it. The authored crosshair capture is excluded in the hook.
+            const char* kHudAnchorBasisSig =
+                "48 8B C4 48 89 58 08 48 89 70 10 48 89 78 20 55 "
+                "41 54 41 55 41 56 41 57 48 8D 68 88 48 81 EC 50 01 00 00";
+            uintptr_t anchorBasis = sig::Find(base, size, kHudAnchorBasisSig);
+            const bool uniqueAnchorBasis = anchorBasis &&
+                !sig::Find(anchorBasis + 1, base + size - anchorBasis - 1,
+                           kHudAnchorBasisSig);
+            bool anchorHookReady = false;
+            if (uniqueAnchorBasis)
+            {
+                const MH_STATUS createStatus = MH_CreateHook(
+                    reinterpret_cast<void*>(anchorBasis),
+                    reinterpret_cast<void*>(&HudAnchorBasisHook),
+                    reinterpret_cast<void**>(&g_realHudAnchorBasis));
+                anchorHookReady = createStatus == MH_OK;
+                if (anchorHookReady)
+                    anchorHookReady = MH_EnableHook(
+                        reinterpret_cast<void*>(anchorBasis)) == MH_OK;
+                if (anchorHookReady)
+                    RememberInstalledGameHook(reinterpret_cast<void*>(anchorBasis));
+                else if (createStatus == MH_OK)
+                    MH_RemoveHook(reinterpret_cast<void*>(anchorBasis));
+            }
+            if (anchorHookReady)
+                LOG("M3: HUD height anchor hook installed at halo3.dll+0x%llX",
+                    (unsigned long long)(anchorBasis - base));
+            else
+                LOG("M3: HUD height anchor signature missing/ambiguous or hook failed; "
+                    "height remains stock");
+
             const char* kHudElemSig =
                 "48 89 5C 24 10 57 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 41 8A F9 45 0F B7 C0";
             uintptr_t hudElem = sig::Find(base, size, kHudElemSig);
@@ -4773,8 +4960,8 @@ bool Game_IsHooked() { return g_hooked; }
 bool Game_IsHeadTracking() { return g_enabled.load(); }
 bool Game_HasAuthoritativePauseState() { return g_enginePauseValidated.load(); }
 
-// HUD size (F1 menu): manual rescan + status. The scan normally starts itself
-// (HudSizeAutoTick) whenever hud_size is non-stock and no slots are located.
+// HUD layout (F1 menu): manual rescan + status. The scan normally starts itself
+// whenever size, aspect, or curvature is non-stock and no slots are located.
 void Game_LocateHudSafeFrames()
 {
     LaunchSafeFrameScan("manual rescan from the menu");
@@ -4807,7 +4994,7 @@ void Game_ToggleHeadTracking()
 void Game_AutoVrTick()
 {
     UpdateCinematicFovPolicy();
-    HudSizeAutoTick(); // HUD size: (re)locate the tag slots when needed
+    HudLayoutAutoTick(); // HUD size/aspect/curvature: locate tag slots when needed
     {
         static uint32_t loggedSerial = 0;
         const uint32_t serial =

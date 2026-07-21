@@ -1,4 +1,5 @@
 #include "scope_logic.h"
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -68,6 +69,45 @@ bool ScopeRefreshScheduler::Advance(bool active, int divisor)
     if (divisor < 1) divisor = 1;
     if (divisor > 4) divisor = 4;
     return (++m_frame % static_cast<unsigned>(divisor)) == 0;
+}
+
+float ScopeZoomController::Update(bool active, float stickY,
+                                  float deltaSeconds, float defaultZoom)
+{
+    constexpr float kMinZoom = 6.0f;
+    constexpr float kMaxZoom = 24.0f;
+    constexpr float kDeadzone = 0.20f;
+    constexpr float kZoomUnitsPerSecond = 10.0f;
+
+    if (!std::isfinite(defaultZoom)) defaultZoom = kMinZoom;
+    defaultZoom = std::clamp(defaultZoom, kMinZoom, kMaxZoom);
+    if (!active)
+    {
+        m_wasActive = false;
+        return m_zoom;
+    }
+    if (!m_wasActive)
+    {
+        m_zoom = defaultZoom;
+        m_wasActive = true;
+        return m_zoom;
+    }
+
+    if (!std::isfinite(stickY)) stickY = 0.0f;
+    if (!std::isfinite(deltaSeconds) || deltaSeconds < 0.0f)
+        deltaSeconds = 0.0f;
+    deltaSeconds = std::min(deltaSeconds, 0.10f);
+    const float magnitude = std::fabs(stickY);
+    if (magnitude > kDeadzone)
+    {
+        const float normalized = std::min(
+            (magnitude - kDeadzone) / (1.0f - kDeadzone), 1.0f);
+        const float direction = stickY > 0.0f ? 1.0f : -1.0f;
+        m_zoom = std::clamp(m_zoom + direction * normalized *
+                            kZoomUnitsPerSecond * deltaSeconds,
+                            kMinZoom, kMaxZoom);
+    }
+    return m_zoom;
 }
 
 void ScopeZoomResolver::RequestToggle()
@@ -141,26 +181,18 @@ ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],
 }
 
 bool ComputeScopeCameraPose(const float controllerBasis[9],
-                            const float weaponSeat[3],
+                            const float cameraOrigin[3],
                             const float bulletForward[3],
-                            float worldScale,
-                            float gunForwardMeters,
-                            float crosshairDistanceMeters,
                             ScopeCameraPose& result)
 {
-    if (!controllerBasis || !weaponSeat || !bulletForward ||
-        !std::isfinite(worldScale) || worldScale <= 0.0f)
+    if (!controllerBasis || !cameraOrigin || !bulletForward)
         return false;
 
-    const float* controllerForward = controllerBasis;
     const float* controllerUp = controllerBasis + 6;
-    float rawOrigin[3]{};
     for (int i = 0; i < 3; ++i)
     {
-        rawOrigin[i] = weaponSeat[i] -
-            controllerForward[i] * gunForwardMeters * worldScale;
-        result.position[i] = rawOrigin[i] +
-            controllerForward[i] * crosshairDistanceMeters * worldScale;
+        if (!std::isfinite(cameraOrigin[i])) return false;
+        result.position[i] = cameraOrigin[i];
         result.forward[i] = bulletForward[i];
     }
 

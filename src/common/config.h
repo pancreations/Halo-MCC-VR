@@ -13,10 +13,16 @@ inline constexpr int kNativeRenderWidth = 2912;
 inline constexpr int kNativeRenderHeight = 2100;
 inline constexpr float kResolutionScaleMin = 0.35f;
 inline constexpr float kResolutionScaleMax = 2.00f;
+inline constexpr float kHudCurvatureMin = 0.00f;
+inline constexpr float kHudCurvatureMax = 1.00f;
+inline constexpr float kHudAspectMin = 0.50f;
+inline constexpr float kHudAspectMax = 2.00f;
+inline constexpr float kHudHeightMin = -300.0f;
+inline constexpr float kHudHeightMax = 300.0f;
 
 struct Config
 {
-    int config_version = 1;
+    int config_version = 4;
 
     // Portable OpenXR feedback and pose stabilization. Headset smoothing is a
     // deliberately tiny previous-frame blend (raw by default, 10% hard maximum)
@@ -87,10 +93,10 @@ struct Config
     float gun_forward_m = 0.0f;
 
     // Experimental gun-mounted VR zoom screen. R3 is isolated from Halo's
-    // native zoom so the full VR gun/body remain visible; scope_zoom controls
-    // the fixed 4:3 lens. Defaults are the headset-confirmed user calibration.
+    // native zoom so the full VR gun/body remain visible; scope_zoom is the
+    // fixed 4:3 lens restored on every activation before right-stick adjustment.
     bool scope_enabled = true;
-    float scope_zoom = 3.39f;
+    float scope_zoom = 12.0f;
     float scope_screen_width_m = 0.182f;
     float scope_screen_right_m = -0.081f;
     float scope_screen_up_m = 0.207f;
@@ -136,6 +142,19 @@ struct Config
     // stock value (mod applies nothing); smaller pulls shields/radar/ammo
     // toward the screen center where both VR eyes can see them.
     float hud_size = 0.87f;
+
+    // Extra horizontal trim after the runtime headset-aspect correction.
+    // 1 = automatic shape, lower = narrower, higher = wider.
+    float hud_aspect = 1.0f;
+
+    // Normalized curvature: 0 = flat (+0.30 destination-Z delta), 1 = fully
+    // curved (-0.30 delta), and 0.5 retains each HUD skin's authored value.
+    float hud_curvature = 0.5f;
+
+    // Vertical HUD translation in Halo virtual-screen pixels. Positive raises
+    // the complete HUD and negative lowers it; the authored reticle is excluded
+    // because VR renders it separately on the controller aim ray.
+    float hud_vertical_offset = 0.0f;
 
     // Automatically enter VR (head tracking + stereo) when a level loads, and
     // drop back to the flat menu screen when you leave — no F2/F11 needed.

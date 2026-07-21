@@ -38,7 +38,7 @@ static bool FileExists(const wchar_t* path)
 
 static void Clamp()
 {
-    g_config.config_version = 1;
+    g_config.config_version = 4;
     g_config.haptic_intensity = std::clamp(g_config.haptic_intensity, 0.0f, 1.0f);
     g_config.headset_smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.10f);
     g_config.aim_stabilization = std::clamp(g_config.aim_stabilization, 0.0f, 0.95f);
@@ -59,6 +59,11 @@ static void Clamp()
     g_config.resolution_scale = std::clamp(g_config.resolution_scale,
                                            kResolutionScaleMin, kResolutionScaleMax);
     g_config.hud_size = std::clamp(g_config.hud_size, 0.30f, 1.00f);
+    g_config.hud_aspect = std::clamp(g_config.hud_aspect, kHudAspectMin, kHudAspectMax);
+    g_config.hud_curvature = std::clamp(g_config.hud_curvature,
+                                        kHudCurvatureMin, kHudCurvatureMax);
+    g_config.hud_vertical_offset = std::clamp(g_config.hud_vertical_offset,
+                                              kHudHeightMin, kHudHeightMax);
     g_config.left_hand_forward_m = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
     g_config.left_grip_forward_m = std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
@@ -67,7 +72,7 @@ static void Clamp()
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
     g_config.gun_roll_deg = std::clamp(g_config.gun_roll_deg, -180.0f, 180.0f);
     g_config.gun_forward_m = std::clamp(g_config.gun_forward_m, -0.3f, 0.5f);
-    g_config.scope_zoom = std::clamp(g_config.scope_zoom, 1.25f, 8.0f);
+    g_config.scope_zoom = std::clamp(g_config.scope_zoom, 6.0f, 24.0f);
     g_config.scope_screen_width_m = std::clamp(g_config.scope_screen_width_m, 0.04f, 0.25f);
     g_config.scope_screen_right_m = std::clamp(g_config.scope_screen_right_m, -0.30f, 0.30f);
     g_config.scope_screen_up_m = std::clamp(g_config.scope_screen_up_m, -0.20f, 0.30f);
@@ -88,6 +93,9 @@ void ConfigLoad(const wchar_t* path)
         return;
     }
     char line[512];
+    int loadedConfigVersion = 1;
+    bool loadedLegacyCurvature = false;
+    bool loadedScopeZoom = false;
     while (fgets(line, sizeof(line), f))
     {
         if (char* hash = strchr(line, '#'))
@@ -112,8 +120,12 @@ void ConfigLoad(const wchar_t* path)
                 ++end;
             if (end == val || !end || *end != 0 || parsed < 1)
                 LOG("config: malformed value for 'config_version' ignored; using version 1");
-            else if (parsed > 1)
-                LOG("config: version %ld is newer than supported version 1; known keys will be loaded", parsed);
+            else
+            {
+                loadedConfigVersion = static_cast<int>(parsed);
+                if (parsed > 4)
+                    LOG("config: version %ld is newer than supported version 4; known keys will be loaded", parsed);
+            }
         }
         else if (!strcmp(key, "haptic_intensity"))
             ParseFloatSetting(key, val, g_config.haptic_intensity);
@@ -172,7 +184,10 @@ void ConfigLoad(const wchar_t* path)
         else if (!strcmp(key, "scope_enabled"))
             g_config.scope_enabled = atoi(val) != 0;
         else if (!strcmp(key, "scope_zoom"))
+        {
             g_config.scope_zoom = (float)atof(val);
+            loadedScopeZoom = true;
+        }
         else if (!strcmp(key, "scope_screen_width_m"))
             g_config.scope_screen_width_m = (float)atof(val);
         else if (!strcmp(key, "scope_screen_right_m"))
@@ -202,6 +217,15 @@ void ConfigLoad(const wchar_t* path)
             g_config.resolution_scale = (float)atof(val);
         else if (!strcmp(key, "hud_size"))
             g_config.hud_size = (float)atof(val);
+        else if (!strcmp(key, "hud_aspect"))
+            ParseFloatSetting(key, val, g_config.hud_aspect);
+        else if (!strcmp(key, "hud_curvature") || !strcmp(key, "hud_height"))
+        {
+            ParseFloatSetting(key, val, g_config.hud_curvature);
+            loadedLegacyCurvature = loadedConfigVersion < 2 || !strcmp(key, "hud_height");
+        }
+        else if (!strcmp(key, "hud_vertical_offset"))
+            ParseFloatSetting(key, val, g_config.hud_vertical_offset);
         else if (!strcmp(key, "hud_offset_x") || !strcmp(key, "hud_offset_y") ||
                  !strcmp(key, "hud_elem_scale"))
             continue; // retired placement-experiment keys; accept old cfgs quietly
@@ -242,6 +266,28 @@ void ConfigLoad(const wchar_t* path)
             LOG("config: unknown key '%s' ignored", key);
     }
     fclose(f);
+    if (loadedConfigVersion < 3 && loadedScopeZoom)
+    {
+        // Version 3 moved the scope to the gameplay/bullet origin. The former
+        // crosshair-origin calibration is too wide there, so preserve the
+        // user's relative setting while doubling the available lens strength.
+        g_config.scope_zoom *= 2.0f;
+        LOG("config: migrated scope zoom to the stronger gameplay-origin lens");
+    }
+    if (loadedConfigVersion < 4 && loadedScopeZoom)
+    {
+        // The first gameplay-origin headset pass was still much too wide. Keep
+        // the prior relative setting but move it into the tighter 6x..24x lens.
+        g_config.scope_zoom *= 1.75f;
+        LOG("config: migrated scope zoom to the tighter world-only lens");
+    }
+    if (loadedLegacyCurvature)
+    {
+        // Version 1 stored a signed value whose physical delta was value*0.1.
+        // Preserve that exact curve when migrating to normalized 0(flat)..1(curved).
+        const float legacyDelta = g_config.hud_curvature * 0.1f;
+        g_config.hud_curvature = (0.30f - legacyDelta) / 0.60f;
+    }
     Clamp();
     LOG("config: loaded (screen %.2fm wide at %.2fm)", g_config.screen_width_m, g_config.screen_distance_m);
 }
@@ -366,8 +412,9 @@ void ConfigSave()
     fprintf(f, "# The main VR view stays wide while a fixed-magnification image appears. 1 = on.\n");
     fprintf(f, "# (default %d)\n", d.scope_enabled ? 1 : 0);
     fprintf(f, "scope_enabled = %d\n\n", g_config.scope_enabled ? 1 : 0);
-    fprintf(f, "# Fixed experimental magnification used for every weapon.\n");
-    fprintf(f, "# (default %.2f, range 1.25 to 8.0)\n", d.scope_zoom);
+    fprintf(f, "# Default experimental magnification used for every weapon.\n");
+    fprintf(f, "# Initial zoom restored whenever R3 opens the scope; right-stick Y adjusts it.\n");
+    fprintf(f, "# (default %.2f, range 6.0 to 24.0)\n", d.scope_zoom);
     fprintf(f, "scope_zoom = %.2f\n\n", g_config.scope_zoom);
     fprintf(f, "# Fixed physical screen width in meters; height is always 3/4 of width.\n");
     fprintf(f, "# (default %.3f, range 0.04 to 0.25)\n", d.scope_screen_width_m);
@@ -416,6 +463,20 @@ void ConfigSave()
     fprintf(f, "# shields/radar/ammo toward the center so both VR eyes see them.\n");
     fprintf(f, "# (default %.2f = Halo's stock value, range 0.30 to 1.00)\n", d.hud_size);
     fprintf(f, "hud_size = %.2f\n\n", g_config.hud_size);
+    fprintf(f, "# HUD width/aspect trim after automatic headset correction.\n");
+    fprintf(f, "# 1 = automatic, lower = narrower, higher = wider.\n");
+    fprintf(f, "# (default %.2f, range %.2f to %.2f)\n",
+            d.hud_aspect, kHudAspectMin, kHudAspectMax);
+    fprintf(f, "hud_aspect = %.2f\n\n", g_config.hud_aspect);
+    fprintf(f, "# HUD curvature: 0 = flat (+0.30), 1 = fully curved (-0.30).\n");
+    fprintf(f, "# 0.50 keeps Halo's authored curvature.\n");
+    fprintf(f, "# (default %.2f, range %.2f to %.2f)\n",
+            d.hud_curvature, kHudCurvatureMin, kHudCurvatureMax);
+    fprintf(f, "hud_curvature = %.2f\n\n", g_config.hud_curvature);
+    fprintf(f, "# HUD height in virtual-screen pixels. Positive = higher, negative = lower.\n");
+    fprintf(f, "# (default %+.0f, range %+.0f to %+.0f)\n",
+            d.hud_vertical_offset, kHudHeightMin, kHudHeightMax);
+    fprintf(f, "hud_vertical_offset = %+.0f\n\n", g_config.hud_vertical_offset);
     fprintf(f, "# Automatically enter VR when a level loads (no F2/F11 needed).\n");
     fprintf(f, "# (default %d)\n", d.auto_vr ? 1 : 0);
     fprintf(f, "auto_vr = %d\n\n", g_config.auto_vr ? 1 : 0);

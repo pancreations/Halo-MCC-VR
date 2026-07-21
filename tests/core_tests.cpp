@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -100,8 +101,57 @@ int main()
         file << "resolution_scale = 5.0\n";
     }
     ConfigLoad(primary.c_str());
+    Check(!UpdateTwoHandHold(false, true, false) &&
+          UpdateTwoHandHold(false, true, true) &&
+          UpdateTwoHandHold(true, true, false) &&
+          !UpdateTwoHandHold(true, false, true), __func__);
+
     Check(g_config.resolution_scale == kResolutionScaleMax,
         "A too-large resolution scale is pulled down to the maximum");
+
+    {
+        std::ofstream file(primary);
+        file << "hud_height = 1.25\n"; // compatibility alias from the first test build
+        file << "hud_aspect = 1.35\n";
+        file << "hud_vertical_offset = -125\n";
+    }
+    ConfigLoad(primary.c_str());
+    const float migratedCurvature = (0.30f - 1.25f * 0.1f) / 0.60f;
+    Check(std::abs(g_config.hud_curvature - migratedCurvature) < 0.0001f &&
+          g_config.hud_aspect == 1.35f &&
+          g_config.hud_vertical_offset == -125.0f,
+        "Legacy HUD curvature, aspect trim, and height migrate exactly");
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(std::abs(g_config.hud_curvature - migratedCurvature) < 0.01f &&
+          g_config.hud_aspect == 1.35f &&
+          g_config.hud_vertical_offset == -125.0f,
+        "Normalized HUD curvature, aspect, and height survive save/reload");
+    {
+        std::ofstream file(primary);
+        file << "config_version = 2\n";
+        file << "hud_curvature = 99\n";
+        file << "hud_aspect = 99\n";
+        file << "hud_vertical_offset = -999\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.hud_curvature == kHudCurvatureMax &&
+          g_config.hud_aspect == kHudAspectMax &&
+          g_config.hud_vertical_offset == kHudHeightMin,
+        "Excessive HUD curvature, aspect, and height values are safely clamped");
+
+    {
+        std::ofstream file(primary);
+        file << "config_version = 2\n";
+        file << "scope_zoom = 3.39\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(std::fabs(g_config.scope_zoom - 11.865f) < 1e-4f,
+        "Version 2 scope zoom migrates into the tighter gameplay-origin lens");
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(std::fabs(g_config.scope_zoom - 11.87f) < 1e-4f,
+        "Migrated scope zoom is not strengthened again after saving version 4");
 
     {
         std::ofstream file(primary);
@@ -114,14 +164,14 @@ int main()
         file << "scope_refresh_divisor = 99\n";
     }
     ConfigLoad(primary.c_str());
-    Check(g_config.scope_enabled && g_config.scope_zoom == 8.0f &&
+    Check(g_config.scope_enabled && g_config.scope_zoom == 24.0f &&
           g_config.scope_screen_width_m == 0.25f &&
           g_config.scope_screen_right_m == -0.30f &&
           g_config.scope_screen_up_m == 0.30f &&
           g_config.scope_screen_forward_m == 0.05f &&
           g_config.scope_refresh_divisor == 4,
         "Universal scope settings are safely clamped");
-    g_config.scope_zoom = 3.25f;
+    g_config.scope_zoom = 8.25f;
     g_config.scope_screen_width_m = 0.12f;
     g_config.scope_screen_right_m = 0.03f;
     g_config.scope_screen_up_m = 0.09f;
@@ -129,7 +179,7 @@ int main()
     g_config.scope_refresh_divisor = 3;
     ConfigSave();
     ConfigLoad(primary.c_str());
-    Check(g_config.scope_zoom == 3.25f &&
+    Check(g_config.scope_zoom == 8.25f &&
           g_config.scope_screen_width_m == 0.12f &&
           g_config.scope_screen_right_m == 0.03f &&
           g_config.scope_screen_up_m == 0.09f &&
@@ -152,8 +202,11 @@ int main()
     Check(g_config.gun_scale == defaults.gun_scale &&
           g_config.resolution_scale == defaults.resolution_scale &&
           g_config.hud_size == defaults.hud_size &&
+          g_config.hud_aspect == defaults.hud_aspect &&
+          g_config.hud_curvature == defaults.hud_curvature &&
+          g_config.hud_vertical_offset == defaults.hud_vertical_offset &&
           g_config.scope_enabled &&
-          g_config.scope_zoom == 3.39f &&
+          g_config.scope_zoom == 12.0f &&
           g_config.scope_screen_width_m == 0.182f &&
           g_config.scope_screen_right_m == -0.081f &&
           g_config.scope_screen_up_m == 0.207f &&
@@ -230,16 +283,16 @@ int main()
         1, 0, 0,  // forward
         0, 1, 0,  // left
         0, 0, 1}; // up
-    const float weaponSeat[3] = {0.2f, 0.0f, 0.0f};
+    const float safeCameraOrigin[3] = {4.0f, 5.0f, 6.0f};
     const float bulletForward[3] = {1.0f, 0.02f, -0.01f};
     ScopeCameraPose scopeCamera{};
-    Check(ComputeScopeCameraPose(gameBasis, weaponSeat, bulletForward,
-                                 2.0f, 0.10f, 10.0f, scopeCamera),
-        "Remote scope camera accepts valid crosshair and bullet inputs");
-    Check(std::fabs(scopeCamera.position[0] - 20.0f) < 1e-5f &&
-          std::fabs(scopeCamera.position[1]) < 1e-5f &&
-          std::fabs(scopeCamera.position[2]) < 1e-5f,
-        "Scope camera origin is exactly the VR crosshair point");
+    Check(ComputeScopeCameraPose(gameBasis, safeCameraOrigin,
+                                 bulletForward, scopeCamera),
+        "Scope camera accepts valid gameplay-camera and bullet inputs");
+    Check(std::fabs(scopeCamera.position[0] - 4.0f) < 1e-5f &&
+          std::fabs(scopeCamera.position[1] - 5.0f) < 1e-5f &&
+          std::fabs(scopeCamera.position[2] - 6.0f) < 1e-5f,
+        "Scope camera keeps Halo's collision-safe gameplay origin");
     const float bulletLength = std::sqrt(1.0f + 0.02f * 0.02f + 0.01f * 0.01f);
     Check(std::fabs(scopeCamera.forward[0] - bulletForward[0] / bulletLength) < 1e-5f &&
           std::fabs(scopeCamera.forward[1] - bulletForward[1] / bulletLength) < 1e-5f &&
@@ -263,6 +316,19 @@ int main()
         "Closing the scope resets its image refresh schedule");
     Check(refresh.Advance(true, 0),
         "Scope refresh divisor clamps safely to one");
+
+    ScopeZoomController runtimeZoom;
+    Check(std::fabs(runtimeZoom.Update(true, 1.0f, 0.5f, 8.0f) - 8.0f) < 1e-5f,
+        "Opening the scope restores configured zoom before applying stick input");
+    Check(std::fabs(runtimeZoom.Update(true, 1.0f, 0.10f, 8.0f) - 9.0f) < 1e-5f,
+        "Right-stick up increases runtime scope zoom");
+    Check(std::fabs(runtimeZoom.Update(true, -1.0f, 0.10f, 8.0f) - 8.0f) < 1e-5f,
+        "Right-stick down decreases runtime scope zoom");
+    Check(std::fabs(runtimeZoom.Update(true, 0.15f, 0.10f, 8.0f) - 8.0f) < 1e-5f,
+        "Scope zoom ignores right-stick deadzone noise");
+    runtimeZoom.Update(false, 0.0f, 0.0f, 8.0f);
+    Check(std::fabs(runtimeZoom.Update(true, 0.0f, 0.0f, 12.0f) - 12.0f) < 1e-5f,
+        "Reopening the scope resets temporary zoom to the configured default");
 
     ScopeZoomResolver zoomResolver;
     zoomResolver.RequestToggle();

@@ -31,6 +31,21 @@ private:
     unsigned m_frame = 0;
 };
 
+// Runtime magnification for the universal scope. Opening the scope always
+// restores the configured default; while it remains open, right-stick Y trims
+// the lens continuously. Keeping this state outside Config avoids making a
+// temporary in-game adjustment permanent.
+class ScopeZoomController
+{
+public:
+    float Update(bool active, float stickY, float deltaSeconds,
+                 float defaultZoom);
+    float Zoom() const { return m_zoom; }
+private:
+    float m_zoom = 1.25f;
+    bool m_wasActive = false;
+};
+
 // Resolves one R3 stream into Halo-authored zoom behavior for scoped weapons
 // and a delayed fallback toggle for weapons that do not react to native zoom.
 class ScopeZoomResolver
@@ -69,15 +84,12 @@ struct ScopeCameraPose
     float up[3]{};
 };
 
-// Builds a remote camera at the bullet-aligned VR crosshair point. Its view
-// direction is Halo's actual projectile direction while its roll follows the
-// controller. The physical scope quad is positioned independently.
+// Builds a bullet-aligned scope camera from Halo's collision-safe gameplay
+// camera origin. Its roll follows the controller, while the physical scope quad
+// remains positioned independently on the gun.
 bool ComputeScopeCameraPose(const float controllerBasis[9],
-                            const float weaponSeat[3],
+                            const float cameraOrigin[3],
                             const float bulletForward[3],
-                            float worldScale,
-                            float gunForwardMeters,
-                            float crosshairDistanceMeters,
                             ScopeCameraPose& result);
 
 struct ScopeProjectionTangents

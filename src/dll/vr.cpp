@@ -112,6 +112,10 @@ namespace
     std::atomic<bool> g_scopeHasImage{false};
     ScopeRefreshScheduler g_scopeRefreshScheduler;
     ScopeZoomResolver g_scopeZoomResolver;
+    ScopeZoomController g_scopeZoomController;
+    std::atomic<float> g_scopeRuntimeZoom{3.39f};
+    std::atomic<float> g_scopeZoomStickY{0.0f};
+    uint64_t g_scopeZoomLastMs = 0;
     std::atomic<uint64_t> g_scopeToggleSerial{0};
     uint64_t g_scopeToggleObserved = 0;
     std::atomic<bool> g_scopeResetRequested{false};
@@ -1974,7 +1978,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     // Called once per frame from the pose capture. Toggle mode (default): a
     // left-grip press while the left hand is inside the thin/long barrel zone
     // flips two-hand ON; the next left-grip press flips it OFF (anywhere). Hold
-    // mode: engaged only while the grip is held with the hand in the zone.
+    // mode: the zone acquires the hold, which stays engaged until grip release.
     // The OpenXR aim pose sits back at the wrist. Shift the left-hand sample to
     // the palm so activation and the two-hand line are measured at the rendered
     // support hand. The same configured correction is used by game.cpp's left
@@ -2033,7 +2037,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         }
         else // hold mode
         {
-            g_twoHandLatched.store(gripHeld && inZone);
+            g_twoHandLatched.store(UpdateTwoHandHold(
+                g_twoHandLatched.load(), gripHeld, inZone));
         }
     }
 
@@ -2196,6 +2201,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (pad.x && !previousPad.x) LOG("controller edge: X");
         if (pad.y && !previousPad.y) LOG("controller edge: Y");
         previousPad = pad;
+        g_scopeZoomStickY.store(pad.valid?pad.turnY:0.0f,
+                                std::memory_order_release);
         EnterCriticalSection(&g_headCs);
         g_padState = pad;
         LeaveCriticalSection(&g_headCs);
@@ -3202,6 +3209,14 @@ bool VR_ScopeShouldRenderThisFrame()
     const bool previous=g_scopeActive.exchange(active,std::memory_order_acq_rel);
     if(previous && !active)
         g_scopeHasImage.store(false,std::memory_order_release);
+    const uint64_t now=GetTickCount64();
+    const float deltaSeconds=active && g_scopeZoomLastMs
+        ? static_cast<float>(now-g_scopeZoomLastMs)/1000.0f : 0.0f;
+    g_scopeZoomLastMs=active?now:0;
+    const float zoom=g_scopeZoomController.Update(
+        active,g_scopeZoomStickY.load(std::memory_order_acquire),
+        deltaSeconds,g_config.scope_zoom);
+    g_scopeRuntimeZoom.store(zoom,std::memory_order_release);
     return g_scopeRefreshScheduler.Advance(active,g_config.scope_refresh_divisor);
 }
 
@@ -3457,6 +3472,11 @@ bool VR_GetEyeViewOffset(int eye, float outPosition[3], float outQuat[4])
     outQuat[3] = cw * e.w + cx * e.x + cy * e.y + cz * e.z;
     return std::isfinite(outQuat[0]) && std::isfinite(outQuat[1]) &&
            std::isfinite(outQuat[2]) && std::isfinite(outQuat[3]);
+}
+
+float VR_GetScopeZoom()
+{
+    return g_scopeRuntimeZoom.load(std::memory_order_acquire);
 }
 
 bool VR_BeginAuthoredReticleCapture()
