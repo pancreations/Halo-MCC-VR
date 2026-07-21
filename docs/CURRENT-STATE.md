@@ -472,6 +472,18 @@ gameplay one isolated headset checkpoint at a time. H3ODSTEK is installed at
 evidence. No Halo 3 offset, bone, marker, tag meaning, or tuned engine constant
 may be reused without independent ODST proof.
 
+Universal-config organization candidate on `feature/odst-bringup` (2026-07-21):
+the generated `halomccvr.cfg` now explains its cross-title role and groups every
+existing key under stable OpenXR/comfort, controls, reticle/aiming, weapon,
+scope, HUD/presentation/performance, gameplay/hands/IK, and diagnostics headings.
+All key names, defaults, clamps, parsing, and the launcher's
+`resolution_scale = value` contract remain unchanged. The F1 wording is
+title-neutral without changing its controls. Tests verify legacy import, section
+order, exactly one assignment for every supported key, value round trips, and
+launcher-readable resolution output. Release and CTest pass. This is a
+config-only candidate with no ODST hooks or support gate changes; Halo 3 headset
+regression is still required before beginning ODST runtime work.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

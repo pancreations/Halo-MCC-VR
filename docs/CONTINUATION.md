@@ -24,8 +24,9 @@ until the ODST adapter passes its own headset acceptance gates.
 
 ## First checkpoint: universal configuration
 
-Before adding an ODST hook, organize the existing configuration and prove that
-Halo 3 behaves exactly as before:
+The config-only implementation is now on `feature/odst-bringup`. Release and
+CTest pass; no ODST hooks or support flags changed. Its remaining gate is an
+exact deployed Halo 3 headset regression proving behavior is unchanged:
 
 - Keep one `halomccvr.cfg` and one consistent F1 menu for every supported MCC
   title. Never introduce a separate ODST user config.

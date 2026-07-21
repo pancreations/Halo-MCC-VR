@@ -1,11 +1,12 @@
 #pragma once
 
-// Settings live in halomccvr.cfg next to the DLL, as plain "key = value" text
-// so users can edit them by hand. The in-headset menu edits the same values
-// live and saves them back. Saving from the menu rewrites the whole file, so a
-// hand-editor's own comments do not survive (their VALUES do).
+// Every supported MCC title shares one halomccvr.cfg next to the DLL, as plain
+// "key = value" text. These are portable user preferences; title-specific
+// camera, weapon, skeleton, and HUD calibration belongs in the title adapter.
+// The in-headset menu edits the same values live and saves them back. Saving
+// rewrites the whole file, so hand-written comments do not survive (values do).
 
-// Halo's VR raster size at resolution_scale 1.00, and the range a hand-edited
+// MCC's VR raster size at resolution_scale 1.00, and the range a hand-edited
 // scale may take. The launcher turns these into -ResX/-ResY; the DLL upscales
 // the finished eye into the unchanged full-size OpenXR projection. Both the
 // launcher and the config clamp read these so the two can never disagree.

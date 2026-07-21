@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 #include <string_view>
 #include <windows.h>
 
@@ -22,6 +24,21 @@ namespace
             std::cerr << "FAIL: " << message << '\n';
             ++g_failures;
         }
+    }
+
+    std::string ReadTextFile(const std::filesystem::path& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        return { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
+    }
+
+    size_t CountText(std::string_view text, std::string_view needle)
+    {
+        size_t count = 0;
+        for (size_t pos = 0; (pos = text.find(needle, pos)) != std::string_view::npos;
+             pos += needle.size())
+            ++count;
+        return count;
     }
 }
 
@@ -63,6 +80,47 @@ int main()
     Check(g_config.screen_width_m == 6.25f, "Legacy values survive migration");
     Check(g_config.haptic_intensity == 0.70f,
         "Malformed new values retain their individual default");
+    const std::string organizedConfig = ReadTextFile(primary);
+    const size_t openXrSection = organizedConfig.find("#  OPENXR & COMFORT");
+    const size_t controlsSection = organizedConfig.find("#  CONTROLS & TURNING");
+    const size_t aimingSection = organizedConfig.find("#  RETICLE & AIMING");
+    const size_t weaponSection = organizedConfig.find("#  WEAPON CALIBRATION");
+    const size_t scopeSection = organizedConfig.find("#  EXPERIMENTAL SCOPE");
+    const size_t displaySection = organizedConfig.find("#  HUD, PRESENTATION & PERFORMANCE");
+    const size_t handsSection = organizedConfig.find("#  GAMEPLAY, HANDS & IK");
+    const size_t diagnosticsSection = organizedConfig.find("#  DEVELOPMENT DIAGNOSTICS");
+    Check(openXrSection < controlsSection && controlsSection < aimingSection &&
+          aimingSection < weaponSection && weaponSection < scopeSection &&
+          scopeSection < displaySection && displaySection < handsSection &&
+          handsSection < diagnosticsSection,
+        "The generated universal config has stable, readable section ordering");
+    Check(organizedConfig.find("This ONE file is shared by every supported MCC game") !=
+              std::string::npos,
+        "The generated config explains that preferences are shared across titles");
+    constexpr const char* universalKeys[] = {
+        "config_version", "haptic_intensity", "headset_smoothing",
+        "aim_stabilization", "screen_width_m", "screen_distance_m",
+        "turn_smooth", "turn_snap_deg", "turn_smooth_deg_s", "dpad_hand",
+        "crosshair", "crosshair_distance_m", "crosshair_size_deg",
+        "reticle_r", "reticle_g", "reticle_b", "kill_reticle",
+        "gun_scale", "left_hand_scale", "gun_pitch_deg", "gun_yaw_deg",
+        "gun_roll_deg", "gun_forward_m", "scope_enabled", "scope_zoom",
+        "scope_screen_width_m", "scope_screen_right_m", "scope_screen_up_m",
+        "scope_screen_forward_m", "scope_refresh_divisor", "game_brightness",
+        "resolution_scale", "hud_size", "hud_aspect", "hud_curvature",
+        "hud_vertical_offset", "motion_blur", "auto_vr", "two_handed_aim",
+        "two_hand_toggle", "left_hand_forward_m", "two_hand_zone_right_m",
+        "left_grip_forward_m", "arm_ik", "floating_hands",
+        "right_shoulder_drop", "shoulder_level", "body_wip", "weapon_probe",
+        "hud_probe", "bullet_probe", "right_eye_first"
+    };
+    for (const char* key : universalKeys)
+    {
+        const std::string assignment = std::string("\n") + key + " = ";
+        const std::string message = std::string("Generated config writes exactly one '") +
+            key + "' assignment";
+        Check(CountText(organizedConfig, assignment) == 1, message.c_str());
+    }
     {
         std::ofstream file(primary);
         file << "config_version = 1\n";
@@ -86,6 +144,9 @@ int main()
     Check(g_config.resolution_scale == 0.90f,
         "A custom resolution scale is honored exactly, not snapped to a preset");
     ConfigSave();
+    const std::string savedResolutionConfig = ReadTextFile(primary);
+    Check(CountText(savedResolutionConfig, "resolution_scale = 0.90") == 1,
+        "Organized config keeps the launcher's resolution_scale line compatible");
     ConfigLoad(primary.c_str());
     Check(g_config.resolution_scale == 0.90f,
         "A custom resolution scale survives a save/reload round trip");
