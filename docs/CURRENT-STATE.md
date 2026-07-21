@@ -19,11 +19,21 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
 - User-designated best-working dual-wield runtime checkpoint: `c2e6a27` on
   `feature/dual-wield`; deployed DLL SHA-256
   `4D7FE27DD501AD9110DF9905DB825C9CA545021431ED4BE910CBF46D76064E5A`
-- Current best-working checkpoint: `recovery/best-working-20260720`, also the
+- Previous best-working checkpoint: `recovery/best-working-20260720`, also the
   `master` tip. Adds the headset-confirmed smooth-turn jitter fix and the
   optional floating-hands mode on top of the dual-wield build. Deployed DLL
   build 2026-07-20 12:35 AM, SHA-256
   `a9da286ddd983306010a812608aaefce41f912115bd5eb6b9cc7a8bfbfc61459`
+- Current headset-confirmed best-working runtime checkpoint: `139e266`,
+  preserved at `recovery/best-working-20260721-mission-transitions`. It layers
+  runtime-provided eye poses, prompt level-exit presentation detach, Halo hook
+  reattachment, and the guarded mission-end cutscene-policy pointer on the
+  user-designated cutscene build. Deployed DLL build 2026-07-21 03:08:43 AM,
+  SHA-256
+  `F4A8AFABA6448001EF9414A8BE83C563E240939350AD1862DD09832A716CA5FC`.
+  The user completed the exit/re-entry test with automatic 3D and tracking
+  recovery and reported `working great`, designating this exact build as the
+  best-working version for the next bug.
 - Headset-confirmed camera-recoil runtime checkpoint: `56dad79` on
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
@@ -75,9 +85,9 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   XInput hooks are not cycled. Release build and CTest pass; deployed
   2026-07-21 02:51:37 AM with SHA-256
   `056E35E6487720E122F4F90DAC49921C3DE0205C33562F90EF72ADF379273174`.
-  Headset validation must show the repeated Halo hook-install logs, new camera
-  copies, automatic stereo/head-tracking rearm, and no fatal error.
-- Mission-end crash candidate `139e266` on
+  Headset result: Halo re-entry restored camera callbacks, stereo, and tracking
+  automatically without needing the F1 menu.
+- Headset-confirmed mission-end crash checkpoint `139e266` on
   `fix/mission-end-stale-policy` follows the successful hook reattachment.
   Windows Error Reporting identified access violation `0xc0000005` at
   `halo3xr.dll+0x1D61A`; disassembly maps that exact instruction to the
@@ -88,9 +98,8 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   Halo module instance. Release build and CTest pass; deployed 2026-07-21
   03:08:43 AM with SHA-256
   `F4A8AFABA6448001EF9414A8BE83C563E240939350AD1862DD09832A716CA5FC`.
-  Headset confirmation is pending: finish/exit a mission, return to the MCC
-  shell, enter another Halo mission, and repeat the transition without a fatal
-  error while stereo and tracking automatically return.
+  Headset result: mission exit, MCC shell return, and Halo mission re-entry all
+  completed without the fatal error; stereo and tracking returned correctly.
 - Pose-smoothing/gun-calibration branch: `a229dfb` passed the independent
   crosshair-smoothing slider and all three local gun-trim axes in the headset,
   but its HMD path caused nausea and 0% did not remove the perceived delay.
