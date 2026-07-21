@@ -31,42 +31,19 @@ private:
     unsigned m_frame = 0;
 };
 
-constexpr int kMaximumWeaponZoomLevels = 16;
-
-// Normalized live weapon-tag data. Runtime adapters populate this from the
-// title currently loaded; the scope logic itself never knows weapon names or
-// title-specific memory layouts.
-struct WeaponZoomDescriptor
-{
-    unsigned weaponId = 0xFFFFFFFFu;
-    int levelCount = 0;
-    float magnifications[kMaximumWeaponZoomLevels]{};
-    bool valid = false;
-};
-
-struct ScopeTierState
-{
-    bool active = false;
-    float zoom = 1.0f;
-    int tier = -1;
-};
-
-// R3 advances through the held weapon's authored stages, then closes. A valid
-// zero-level weapon gets the configurable universal fallback. Missing identity
-// never becomes fallback, and changing weapons closes stale scope state.
-class ScopeTierController
+// Resolves one R3 stream into Halo-authored zoom behavior for scoped weapons
+// and a delayed fallback toggle for weapons that do not react to native zoom.
+class ScopeZoomResolver
 {
 public:
-    void RequestAdvance();
-    ScopeTierState Update(bool enabled,
-                          const WeaponZoomDescriptor* weapon,
-                          float fallbackZoom);
+    void RequestToggle();
+    bool Update(bool enabled, bool nativeZoomed);
     void Reset();
-
 private:
-    unsigned m_weaponId = 0xFFFFFFFFu;
-    int m_tier = -1;
-    bool m_pendingAdvance = false;
+    bool m_fallbackActive = false;
+    bool m_nativeEngaged = false;
+    unsigned m_pendingFrames = 0;
+    unsigned m_ignoreRequestFrames = 0;
 };
 
 struct ScopeQuadTransform

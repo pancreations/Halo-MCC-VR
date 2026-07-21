@@ -70,59 +70,54 @@ bool ScopeRefreshScheduler::Advance(bool active, int divisor)
     return (++m_frame % static_cast<unsigned>(divisor)) == 0;
 }
 
-void ScopeTierController::RequestAdvance()
+void ScopeZoomResolver::RequestToggle()
 {
-    m_pendingAdvance = true;
+    if (m_ignoreRequestFrames)
+    {
+        m_ignoreRequestFrames = 0;
+        return;
+    }
+    m_pendingFrames = 2;
 }
 
-ScopeTierState ScopeTierController::Update(bool enabled,
-                                           const WeaponZoomDescriptor* weapon,
-                                           float fallbackZoom)
+bool ScopeZoomResolver::Update(bool enabled, bool nativeZoomed)
 {
     if (!enabled)
     {
         Reset();
-        return {};
+        return false;
     }
-
-    // A lookup miss is not evidence that the weapon has no authored zoom.
-    // Keep a release pending so a transient swap/update frame cannot turn a BR
-    // or sniper into the generic fallback.
-    if (!weapon || !weapon->valid)
+    if (nativeZoomed)
     {
-        return {};
+        m_nativeEngaged = true;
+        m_fallbackActive = false;
+        m_pendingFrames = 0;
+        m_ignoreRequestFrames = 0;
+        return true;
     }
-
-    if (weapon->weaponId != m_weaponId)
+    if (m_nativeEngaged)
     {
-        m_weaponId = weapon->weaponId;
-        m_tier = -1;
+        const bool matchingRequestAlreadyArrived = m_pendingFrames != 0;
+        m_nativeEngaged = false;
+        m_fallbackActive = false;
+        m_pendingFrames = 0;
+        // Halo changes zoom on the R3 press; its release request reaches this
+        // resolver later. Swallow that matching release even for a long click.
+        m_ignoreRequestFrames = matchingRequestAlreadyArrived ? 0 : 120;
+        return false;
     }
-
-    const int levelCount = weapon->levelCount < 0 ? 0 :
-        (weapon->levelCount > kMaximumWeaponZoomLevels
-            ? kMaximumWeaponZoomLevels : weapon->levelCount);
-    if (m_pendingAdvance)
-    {
-        m_pendingAdvance = false;
-        const int stages = levelCount > 0 ? levelCount : 1;
-        m_tier = (m_tier + 1 < stages) ? m_tier + 1 : -1;
-    }
-
-    if (m_tier < 0)
-        return {};
-
-    float zoom = levelCount > 0 ? weapon->magnifications[m_tier] : fallbackZoom;
-    if (!std::isfinite(zoom) || zoom < 1.0f)
-        zoom = 1.0f;
-    return {true, zoom, m_tier};
+    if (m_ignoreRequestFrames) --m_ignoreRequestFrames;
+    if (m_pendingFrames && --m_pendingFrames == 0)
+        m_fallbackActive = !m_fallbackActive;
+    return m_fallbackActive;
 }
 
-void ScopeTierController::Reset()
+void ScopeZoomResolver::Reset()
 {
-    m_weaponId = 0xFFFFFFFFu;
-    m_tier = -1;
-    m_pendingAdvance = false;
+    m_fallbackActive = false;
+    m_nativeEngaged = false;
+    m_pendingFrames = 0;
+    m_ignoreRequestFrames = 0;
 }
 
 ScopeQuadTransform ComputeScopeQuadTransform(const float orientation[4],

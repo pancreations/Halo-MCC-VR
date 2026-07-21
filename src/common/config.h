@@ -87,8 +87,7 @@ struct Config
     float gun_forward_m = 0.0f;
 
     // Gun-mounted VR zoom screen. R3 is isolated from Halo's native zoom so
-    // the full VR gun/body remain visible; scope_zoom is used only when the
-    // confirmed held weapon tag has no authored zoom stages.
+    // the full VR gun/body remain visible; scope_zoom controls the 4:3 lens.
     bool scope_enabled = false;
     float scope_zoom = 2.5f;
     float scope_screen_width_m = 0.10f;

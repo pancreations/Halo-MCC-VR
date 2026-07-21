@@ -142,15 +142,6 @@ namespace
 
     uint32_t* g_engineTlsIndex = nullptr;
     unsigned char** g_animationTagData = nullptr;
-    using PlayerUnitByOutputUserFn = int(__fastcall*)(int outputUser);
-    using ActivePrimaryWeaponFn = int(__fastcall*)(int unitIndex, int* ownerUnit);
-    using WeaponZoomMagnificationFn = float(__fastcall*)(int weaponIndex,
-                                                         short zoomLevel);
-    PlayerUnitByOutputUserFn g_playerUnitByOutputUser = nullptr;
-    ActivePrimaryWeaponFn g_activePrimaryWeapon = nullptr;
-    WeaponZoomMagnificationFn g_weaponZoomMagnification = nullptr;
-    unsigned char** g_tagIndexOffsets = nullptr;
-    unsigned char** g_tagDataBase = nullptr;
     // Halo real_matrix4x3: uniform scale, then forward/left/up basis vectors,
     // then translation. The first headset build incorrectly put scale last,
     // shifting every basis read by one float and making weapon pieces diverge.
@@ -3667,7 +3658,7 @@ namespace
            BuildRightHandScopeCamera(camera,saved) && VR_BeginScopeRaster())
         {
             alignas(16) unsigned char scopeTemporary[0x40]{};
-            const float zoom=VR_GetScopeZoom();
+            const float zoom=Clamp(g_config.scope_zoom,1.25f,8.0f);
             float sourceAspect=4.0f/3.0f;
             VR_GetScopeRenderAspect(sourceAspect);
             const ScopeProjectionTangents scopeProjection=
@@ -3850,58 +3841,9 @@ namespace
         }
     }
 
-    void LocateWeaponZoomRuntime(uintptr_t base, size_t size)
-    {
-        const char* playerUnitSig =
-            "83 C8 FF 3B C8 74 27 8B 15 ?? ?? ?? ?? 65 48 8B 04 25 "
-            "58 00 00 00 41 B8 10 01 00 00 48 63 C9";
-        const char* activeWeaponSig =
-            "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 "
-            "48 83 EC 20 44 8B 05 ?? ?? ?? ?? 48 8B DA 65 48 8B 04 25 "
-            "58 00 00 00 BD 38 00 00 00";
-        const char* zoomSig =
-            "48 83 EC 38 44 8B 05 ?? ?? ?? ?? 44 0F B7 CA 65 48 8B 04 25 "
-            "58 00 00 00 F3 0F 10 0D ?? ?? ?? ?? 0F B7 C9 BA 38 00 00 00";
-
-        const uintptr_t playerUnit = sig::Find(base, size, playerUnitSig);
-        const uintptr_t activeWeapon = sig::Find(base, size, activeWeaponSig);
-        const uintptr_t zoom = sig::Find(base, size, zoomSig);
-        const auto unique = [base, size](uintptr_t hit, const char* pattern) {
-            return hit && !sig::Find(hit + 1, base + size - hit - 1, pattern);
-        };
-        if (!unique(playerUnit, playerUnitSig) ||
-            !unique(activeWeapon, activeWeaponSig) || !unique(zoom, zoomSig))
-        {
-            LOG("scope weapon adapter: required Halo 3 signatures missing or ambiguous; "
-                "authored zoom disabled (no generic fallback will be guessed)");
-            return;
-        }
-
-        // Resolve the engine TLS index from player_mapping_get_unit_by_output_user.
-        const int32_t tlsDisp = *reinterpret_cast<const int32_t*>(playerUnit + 9);
-        g_engineTlsIndex = reinterpret_cast<uint32_t*>(playerUnit + 13 + tlsDisp);
-
-        // Resolve the two tag globals from weapon_get_zoom_magnification. The
-        // routine itself remains the authority for each stage's interpolation.
-        const int32_t offsetsDisp = *reinterpret_cast<const int32_t*>(zoom + 0x45);
-        const int32_t dataDisp = *reinterpret_cast<const int32_t*>(zoom + 0x5D);
-        g_tagIndexOffsets = reinterpret_cast<unsigned char**>(
-            zoom + 0x49 + offsetsDisp);
-        g_tagDataBase = reinterpret_cast<unsigned char**>(zoom + 0x61 + dataDisp);
-        g_playerUnitByOutputUser = reinterpret_cast<PlayerUnitByOutputUserFn>(playerUnit);
-        g_activePrimaryWeapon = reinterpret_cast<ActivePrimaryWeaponFn>(activeWeapon);
-        g_weaponZoomMagnification = reinterpret_cast<WeaponZoomMagnificationFn>(zoom);
-        LOG("scope weapon adapter: live Halo 3 unit/weapon/tag zoom path resolved "
-            "at +0x%llX/+0x%llX/+0x%llX",
-            (unsigned long long)(playerUnit - base),
-            (unsigned long long)(activeWeapon - base),
-            (unsigned long long)(zoom - base));
-    }
-
     void InstallHook(uintptr_t base, size_t size)
     {
         LocateNativePauseFlag(base, size);
-        LocateWeaponZoomRuntime(base, size);
         uintptr_t hit = sig::Find(base, size, kCamCopySig);
         if (!hit)
         {
@@ -4907,107 +4849,6 @@ void Game_GunScale(int dir)
 
 float Game_GetWorldScale() { return g_worldScale.load(); }
 float Game_GetZoomFactor() { return g_zoomFactor.load(); }
-
-bool Game_GetHeldWeaponZoom(WeaponZoomDescriptor& out)
-{
-    out = {};
-    const WeaponZoomTagLayout layout = TitleAdapter_GetWeaponZoomTagLayout();
-    if (!layout.supported || !g_engineTlsIndex ||
-        !g_playerUnitByOutputUser || !g_activePrimaryWeapon ||
-        !g_weaponZoomMagnification || !g_tagIndexOffsets || !g_tagDataBase)
-        return false;
-
-    __try
-    {
-        const int unitIndex = g_playerUnitByOutputUser(0);
-        if (unitIndex == -1)
-            return false;
-        const int weaponIndex = g_activePrimaryWeapon(unitIndex, nullptr);
-        if (weaponIndex == -1)
-            return false;
-
-        auto** tlsSlots = reinterpret_cast<void**>(__readgsqword(0x58));
-        auto* tls = tlsSlots
-            ? reinterpret_cast<unsigned char*>(tlsSlots[*g_engineTlsIndex]) : nullptr;
-        auto* objectPool = tls
-            ? *reinterpret_cast<unsigned char**>(tls + 0x38) : nullptr;
-        auto* objectEntries = objectPool
-            ? *reinterpret_cast<unsigned char**>(objectPool + 0x48) : nullptr;
-        auto* weaponObject = objectEntries
-            ? *reinterpret_cast<unsigned char**>(
-                objectEntries + static_cast<unsigned short>(weaponIndex) * 0x18 + 0x10)
-            : nullptr;
-        auto* tagOffsets = *g_tagIndexOffsets;
-        auto* tagData = *g_tagDataBase;
-        if (!weaponObject || !tagOffsets || !tagData)
-            return false;
-
-        const unsigned short tagIndex =
-            *reinterpret_cast<const unsigned short*>(weaponObject);
-        const uint32_t definitionOffset = *reinterpret_cast<const uint32_t*>(
-            tagOffsets + static_cast<size_t>(tagIndex) * 8 + 4);
-        if (!definitionOffset)
-            return false;
-        const auto* definition = tagData + static_cast<size_t>(definitionOffset) * 4;
-
-        // The full datum includes Halo's reuse salt and the definition pointer
-        // changes with map/tag data, so this cache cannot leak tiers across a
-        // swap, object reuse, new map or differently tagged mod weapon.
-        static WeaponZoomDescriptor cached{};
-        static const unsigned char* cachedDefinition = nullptr;
-        if (cached.valid && cached.weaponId == static_cast<unsigned>(weaponIndex) &&
-            cachedDefinition == definition)
-        {
-            out = cached;
-            return true;
-        }
-        const int levels = *reinterpret_cast<const short*>(
-            definition + layout.levelCountOffset);
-        if (levels < 0 || levels > layout.maximumLevels ||
-            levels > kMaximumWeaponZoomLevels)
-            return false;
-
-        out.weaponId = static_cast<unsigned>(weaponIndex);
-        out.levelCount = levels;
-        for (int level = 0; level < levels; ++level)
-        {
-            const float zoom = g_weaponZoomMagnification(
-                weaponIndex, static_cast<short>(level));
-            if (!std::isfinite(zoom) || zoom < 1.0f)
-                return false;
-            out.magnifications[level] = zoom;
-        }
-        out.valid = true;
-        cached = out;
-        cachedDefinition = definition;
-
-        static std::atomic<unsigned> loggedWeapon{0xFFFFFFFFu};
-        if (loggedWeapon.exchange(out.weaponId) != out.weaponId)
-        {
-            if (levels > 0)
-            {
-                const float minimum = *reinterpret_cast<const float*>(
-                    definition + layout.minimumZoomOffset);
-                const float maximum = *reinterpret_cast<const float*>(
-                    definition + layout.maximumZoomOffset);
-                LOG("scope held weapon 0x%08X: %d authored zoom stage(s), "
-                    "tag range %.2fx..%.2fx", out.weaponId, levels,
-                    minimum, maximum);
-            }
-            else
-            {
-                LOG("scope held weapon 0x%08X: tag has zero zoom stages; "
-                    "universal fallback eligible", out.weaponId);
-            }
-        }
-        return true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        out = {};
-        return false;
-    }
-}
 
 void Game_GetProjectionTangents(float& tanX, float& tanY)
 {

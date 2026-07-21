@@ -16,21 +16,6 @@ const TitleDescriptor* TitleAdapter_GetActive()
     return TitleRegistry_Find(g_activeTitle.load(std::memory_order_acquire));
 }
 
-WeaponZoomTagLayout TitleAdapter_GetWeaponZoomTagLayout()
-{
-    switch (g_activeTitle.load(std::memory_order_acquire))
-    {
-    case GameTitle::Halo3:
-        // Halo 3 MCC weapon tag, independently verified against the editing
-        // kit schema and the shipping zoom-magnification routine.
-        return {true, 0x31E, 0x320, 0x324, 16};
-    default:
-        // ODST and later games deliberately fail closed until their object and
-        // tag layouts have their own verified adapter.
-        return {};
-    }
-}
-
 RuntimeMode TitleAdapter_GetRuntimeMode()
 {
     return g_runtimeMode.load(std::memory_order_acquire);

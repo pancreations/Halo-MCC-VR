@@ -257,66 +257,29 @@ int main()
     Check(refresh.Advance(true, 0),
         "Scope refresh divisor clamps safely to one");
 
-    ScopeTierController scopeTiers;
-    WeaponZoomDescriptor br{};
-    br.valid = true;
-    br.weaponId = 0x1001;
-    br.levelCount = 1;
-    br.magnifications[0] = 2.0f;
-    scopeTiers.RequestAdvance();
-    ScopeTierState tier = scopeTiers.Update(true, &br, 2.5f);
-    Check(tier.active && tier.tier == 0 && tier.zoom == 2.0f,
-        "BR opens directly at its authored 2x stage");
-    scopeTiers.RequestAdvance();
-    Check(!scopeTiers.Update(true, &br, 2.5f).active,
-        "BR closes after its single authored stage");
-
-    WeaponZoomDescriptor sniper{};
-    sniper.valid = true;
-    sniper.weaponId = 0x1002;
-    sniper.levelCount = 2;
-    sniper.magnifications[0] = 4.0f;
-    sniper.magnifications[1] = 8.0f;
-    scopeTiers.RequestAdvance();
-    tier = scopeTiers.Update(true, &sniper, 2.5f);
-    Check(tier.active && tier.tier == 0 && tier.zoom == 4.0f,
-        "Sniper first click selects its authored first tier");
-    scopeTiers.RequestAdvance();
-    tier = scopeTiers.Update(true, &sniper, 2.5f);
-    Check(tier.active && tier.tier == 1 && tier.zoom == 8.0f,
-        "Sniper second click selects its authored second tier");
-    scopeTiers.RequestAdvance();
-    Check(!scopeTiers.Update(true, &sniper, 2.5f).active,
-        "Sniper closes only after both authored tiers");
-
-    WeaponZoomDescriptor ar{};
-    ar.valid = true;
-    ar.weaponId = 0x1003;
-    ar.levelCount = 0;
-    scopeTiers.RequestAdvance();
-    tier = scopeTiers.Update(true, &ar, 3.25f);
-    Check(tier.active && tier.zoom == 3.25f,
-        "A confirmed zero-level weapon alone receives the fallback zoom");
-    scopeTiers.RequestAdvance();
-    Check(!scopeTiers.Update(true, &ar, 3.25f).active,
-        "A second fallback-weapon click closes the scope");
-
-    scopeTiers.RequestAdvance();
-    Check(!scopeTiers.Update(true, nullptr, 2.5f).active,
-        "Missing weapon identity never opens the generic fallback");
-    tier = scopeTiers.Update(true, &br, 2.5f);
-    Check(tier.active && tier.zoom == 2.0f,
-        "A pending release waits for the real weapon descriptor");
-    Check(!scopeTiers.Update(true, nullptr, 2.5f).active &&
-          scopeTiers.Update(true, &br, 2.5f).active,
-        "A transient lookup miss suppresses one frame without losing the BR tier");
-    Check(!scopeTiers.Update(true, &sniper, 2.5f).active,
-        "Changing held weapons closes stale zoom state");
-    scopeTiers.RequestAdvance();
-    Check(scopeTiers.Update(true, &sniper, 2.5f).active,
-        "The newly held weapon starts again at its first tier");
-    Check(!scopeTiers.Update(false, &sniper, 2.5f).active,
-        "Disabling gameplay resets authored scope state");
+    ScopeZoomResolver zoomResolver;
+    zoomResolver.RequestToggle();
+    Check(!zoomResolver.Update(true, false) && zoomResolver.Update(true, false),
+        "A weapon with no native zoom opens the fallback scope after detection");
+    zoomResolver.RequestToggle();
+    Check(zoomResolver.Update(true, false) && !zoomResolver.Update(true, false),
+        "A second non-zoom weapon click closes the fallback scope");
+    zoomResolver.Reset();
+    Check(zoomResolver.Update(true, true),
+        "Halo native zoom immediately owns scope visibility");
+    zoomResolver.RequestToggle();
+    Check(zoomResolver.Update(true, true),
+        "A second authored zoom stage keeps the scope visible");
+    zoomResolver.RequestToggle();
+    Check(!zoomResolver.Update(true, false) && !zoomResolver.Update(true, false),
+        "Leaving Halo native zoom closes without enabling fallback");
+    zoomResolver.Reset();
+    zoomResolver.Update(true, true);
+    Check(!zoomResolver.Update(true, false),
+        "Native zoom can close before its R3 release is observed");
+    zoomResolver.RequestToggle();
+    Check(!zoomResolver.Update(true, false) && !zoomResolver.Update(true, false),
+        "The late release from native zoom-off is not mistaken for fallback");
 
     PauseLevelRecovery pauseRecovery;
     Check(!pauseRecovery.Update(true, false, false),

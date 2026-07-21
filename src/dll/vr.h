@@ -120,7 +120,6 @@ void VR_GetPadState(VrPadState& out);
 void VR_SetScopeActive(bool active);
 bool VR_IsScopeActive();
 void VR_RequestScopeToggle();
-float VR_GetScopeZoom();
 // Receives Halo's blended XInput rumble level (0..1). The render thread maps
 // it to portable OpenXR feedback on both hands and owns all stop conditions.
 void VR_SetGameHaptics(float amplitude);

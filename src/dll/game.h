@@ -1,7 +1,5 @@
 #pragma once
 
-struct WeaponZoomDescriptor;
-
 // The Halo 3 engine (halo3.dll) loads only once you enter a level. This module
 // waits for it, then (M1) drives the in-game camera from the headset. Runs on
 // its own threads and never blocks rendering.
@@ -59,10 +57,6 @@ void Game_SetStereoEye(int eye);
 float Game_GetWorldScale();
 // >1 while the player is zoomed (weapon scope); 1.0 at hip. Drives the scope.
 float Game_GetZoomFactor();
-// Reads the currently held weapon's authored zoom stages through the active
-// title adapter. False means identity/data is unavailable, not a zero-level
-// weapon.
-bool Game_GetHeldWeaponZoom(WeaponZoomDescriptor& out);
 // The mount-trimmed controller-local aim direction (unit, OpenXR local axes).
 // Shared by bullet steering (game.cpp) and the reticle (vr.cpp) so barrel,
 // flash, reticle and bullets stay on one ray as the user trims the mount.

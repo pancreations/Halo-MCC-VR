@@ -111,8 +111,7 @@ namespace
     bool g_scopeRedirected = false;
     std::atomic<bool> g_scopeHasImage{false};
     ScopeRefreshScheduler g_scopeRefreshScheduler;
-    ScopeTierController g_scopeTierController;
-    std::atomic<float> g_scopeZoom{1.0f};
+    ScopeZoomResolver g_scopeZoomResolver;
     std::atomic<uint64_t> g_scopeToggleSerial{0};
     uint64_t g_scopeToggleObserved = 0;
     std::atomic<bool> g_scopeResetRequested{false};
@@ -3158,22 +3157,19 @@ bool VR_ScopeShouldRenderThisFrame()
                        Game_IsHeadTracking();
     if(g_scopeResetRequested.exchange(false,std::memory_order_acq_rel))
     {
-        g_scopeTierController.Reset();
-        g_scopeZoom.store(1.0f,std::memory_order_release);
+        g_scopeZoomResolver.Reset();
         g_scopeToggleObserved=g_scopeToggleSerial.load(std::memory_order_acquire);
     }
     const uint64_t requested=g_scopeToggleSerial.load(std::memory_order_acquire);
     if(requested!=g_scopeToggleObserved)
     {
         g_scopeToggleObserved=requested;
-        g_scopeTierController.RequestAdvance();
+        g_scopeZoomResolver.RequestToggle();
     }
-    WeaponZoomDescriptor weapon{};
-    const bool haveWeapon=enabled && Game_GetHeldWeaponZoom(weapon);
-    const ScopeTierState tier=g_scopeTierController.Update(
-        enabled,haveWeapon?&weapon:nullptr,g_config.scope_zoom);
-    const bool active=tier.active;
-    g_scopeZoom.store(tier.zoom,std::memory_order_release);
+    // Native Halo zoom is deliberately suppressed by the input layer: it hides
+    // the VR body/viewmodel. This resolver now supplies only the delayed R3
+    // toggle that keeps input and render-thread ownership race-free.
+    const bool active=g_scopeZoomResolver.Update(enabled,false);
     const bool previous=g_scopeActive.exchange(active,std::memory_order_acq_rel);
     if(previous && !active)
         g_scopeHasImage.store(false,std::memory_order_release);
@@ -3207,11 +3203,6 @@ bool VR_GetScopeRenderAspect(float& outAspect)
     outAspect = static_cast<float>(g_scopeCacheDesc.Width) /
                 static_cast<float>(g_scopeCacheDesc.Height);
     return std::isfinite(outAspect) && outAspect > 0.0f;
-}
-
-float VR_GetScopeZoom()
-{
-    return g_scopeZoom.load(std::memory_order_acquire);
 }
 
 
