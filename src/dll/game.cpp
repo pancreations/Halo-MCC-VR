@@ -382,16 +382,28 @@ namespace
     {
         // Halo has already proved this widget is scripting class 2 before this
         // predicate runs. During VR, redirect that one widget into the hand-ray
-        // texture. If capture is unavailable, keep the native center reticle
-        // hidden and let vr.cpp show its procedural hand-ray fallback.
+        // texture. Never leave the player with no aiming reference: if capture
+        // is unavailable, fail open to Halo's native center reticle. Setting
+        // kill_reticle=0 deliberately selects that native fallback as well.
         if (g_enabled.load(std::memory_order_relaxed) && VR_IsStereoEnabled())
         {
+            if (!g_config.crosshair)
+                return false;
+            if (!g_config.kill_reticle)
+                return true;
+
             const int eye = g_stereoEye.load(std::memory_order_relaxed);
             const int captureEye = g_config.right_eye_first ? 1 : 0;
-            if ((eye < 0 || eye == captureEye) &&
-                g_insideHudDrawWidget && VR_BeginAuthoredReticleCapture())
+            if (eye < 0 || eye == captureEye)
             {
-                g_authoredReticleCaptureStarted = true;
+                if (g_insideHudDrawWidget && VR_BeginAuthoredReticleCapture())
+                {
+                    g_authoredReticleCaptureStarted = true;
+                    return true;
+                }
+                static std::atomic<bool> loggedFallback{false};
+                if (!loggedFallback.exchange(true))
+                    LOG("M3: authored crosshair redirect unavailable; keeping native crosshair visible");
                 return true;
             }
             return false;

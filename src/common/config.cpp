@@ -428,8 +428,8 @@ void ConfigSave()
     fprintf(f, "# Refresh the final zoom picture every Nth frame. 1 = full rate.\n");
     fprintf(f, "# (default %d, range 1 to 4)\n", d.scope_refresh_divisor);
     fprintf(f, "scope_refresh_divisor = %d\n\n", g_config.scope_refresh_divisor);
-    fprintf(f, "# Hide every native CHUD crosshair class. The floating motion-control\n");
-    fprintf(f, "# reticle remains visible. Not in the F1 menu; this file only.\n");
+    fprintf(f, "# Hide the native head-centered CHUD crosshair after the floating\n");
+    fprintf(f, "# motion-control reticle is ready. Set 0 for an emergency native fallback.\n");
     fprintf(f, "# (default %d)\n", d.kill_reticle ? 1 : 0);
     fprintf(f, "kill_reticle = %d\n\n", g_config.kill_reticle ? 1 : 0);
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");

@@ -3483,8 +3483,14 @@ bool VR_BeginAuthoredReticleCapture()
 {
     if (!g_context || !g_config.crosshair ||
         !g_stereoEnabled.load(std::memory_order_relaxed) ||
-        !g_preparedFrame.begun || g_reticleCaptureState.active ||
-        !EnsureAuthoredReticleTexture())
+        !g_preparedFrame.begun || g_reticleCaptureState.active)
+        return false;
+
+    // Prove that the runtime can host the hand-ray composition layer before
+    // diverting Halo's native crosshair away from the eye render. Previously
+    // the native widget could be hidden first and the swapchain could fail
+    // later, leaving no crosshair on any headset using that runtime path.
+    if (!EnsureReticleChain() || !EnsureAuthoredReticleTexture())
         return false;
 
     const uint64_t serial = g_preparedFrame.serial;
