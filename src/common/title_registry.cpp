@@ -2,6 +2,13 @@
 
 #include <cwctype>
 
+#ifndef HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+#define HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP 0
+#endif
+
+static_assert(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 0 ||
+              HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 1);
+
 namespace
 {
     constexpr uint32_t kHalo3Capabilities =
@@ -63,6 +70,54 @@ const TitleDescriptor* TitleRegistry_FromModuleName(std::wstring_view moduleName
             return &descriptor;
     }
     return nullptr;
+}
+
+TitleHookPlan TitleRegistry_HookPlan(GameTitle title)
+{
+    switch (title)
+    {
+    case GameTitle::Halo3:
+        return TitleHookPlan::Halo3Full;
+    case GameTitle::Halo3ODST:
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+        return TitleHookPlan::OdstExperimentalCameraCore;
+#else
+        return TitleHookPlan::None;
+#endif
+    default:
+        return TitleHookPlan::None;
+    }
+}
+
+bool TitleRegistry_AllowsSharedGameplayFeatures(
+    GameTitle activeTitle, bool halo3CameraOwned, bool cameraOnlyOwned)
+{
+    if (cameraOnlyOwned)
+        return false;
+    if (activeTitle == GameTitle::None || activeTitle == GameTitle::Halo3)
+        return true;
+    return activeTitle == GameTitle::Unknown && halo3CameraOwned;
+}
+
+bool TitleRegistry_AllowsSharedControllerInput(
+    GameTitle activeTitle, bool halo3CameraOwned, bool cameraOnlyOwned,
+    bool allowAmbiguousFrontend, bool allowCameraOnlyControllerInput)
+{
+    if (cameraOnlyOwned)
+        return allowCameraOnlyControllerInput &&
+            activeTitle == GameTitle::Halo3ODST;
+    if (activeTitle == GameTitle::Unknown && allowAmbiguousFrontend)
+        return true;
+    return TitleRegistry_AllowsSharedGameplayFeatures(
+        activeTitle, halo3CameraOwned, false);
+}
+
+bool TitleRegistry_Halo3CameraOwnsAmbiguousState(
+    uint64_t now, uint64_t lastCamera, uint64_t titleTransition)
+{
+    return titleTransition != 0 && lastCamera > titleTransition &&
+        now >= lastCamera &&
+        now - lastCamera < kHalo3AmbiguousCameraOwnershipMs;
 }
 
 const char* RuntimeModeName(RuntimeMode mode)

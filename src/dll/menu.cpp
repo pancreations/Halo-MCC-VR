@@ -88,7 +88,9 @@ namespace
             case VK_F8: Game_PitchTrim(-1); return 0;
             case VK_F9: Game_PitchTrim(+1); return 0;
             case VK_F10: VR_ToggleScreenFollow(); return 0;
-            case VK_F11: VR_ToggleStereo(); return 0;
+            case VK_F11:
+                if (Game_CanToggleImmersiveView()) VR_ToggleStereo();
+                return 0;
             case VK_PRIOR: Game_LeanScale(+1); return 0; // Page Up
             case VK_NEXT:  Game_LeanScale(-1); return 0; // Page Down
             case VK_HOME: Game_GunScale(+1); return 0; // bigger hand-held weapon
@@ -152,14 +154,15 @@ namespace
         }
         ImGui::SameLine();
         if (ImGui::Button(VR_IsPausePresentation()
-                ? "Resume Halo (Start)"
-                : "Pause Halo in 2D (Start)"))
+                ? "Resume game (Start)"
+                : "Pause game in 2D (Start)"))
         {
             Input_RequestPauseToggle();
             Menu_Toggle();
         }
         ImGui::TextDisabled("PSVR2 fallback: press Y+B together to Pause/Resume.");
         ImGui::Separator();
+        ImGui::BeginDisabled(!Game_CanToggleImmersiveView());
         if (ImGui::Button(Game_IsHeadTracking()
                 ? "Turn head tracking OFF (F2)"
                 : "Turn head tracking ON (F2)"))
@@ -173,6 +176,7 @@ namespace
         {
             VR_ToggleStereo();
         }
+        ImGui::EndDisabled();
         ImGui::Text("Head tracking: %s   |   Stereo rendering: %s   |   View: %s",
                     Game_IsHeadTracking() ? "ON" : "OFF",
                     VR_IsStereoEnabled() ? "ON" : "OFF",
@@ -330,7 +334,7 @@ namespace
                                           0.3f, 20.0f, "%.1f");
             changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
                                           2.0f, 50.0f, "%.0f");
-            ImGui::TextDisabled("Uses the equipped weapon's Halo crosshair and stock target colors.");
+            ImGui::TextDisabled("Uses the equipped weapon's authored crosshair and target colors.");
         }
         ImGui::TextDisabled("Crosshair smoothing is visual only; bullets keep the current controller ray.\n"
                             "Set it to 0%% for exact raw tracking.");
@@ -417,7 +421,7 @@ namespace
             g_config.hud_vertical_offset = 0.0f;
             changed = true;
         }
-        ImGui::TextDisabled("0.87 is Halo stock; lower values pull HUD elements toward both eyes.");
+        ImGui::TextDisabled("0.87 is the calibrated stock layout; lower pulls HUD elements inward.");
         ImGui::TextDisabled("Width corrects squeeze separately from size; 1.00 uses automatic correction.");
         ImGui::TextDisabled("Curvature: 0.00 = flat (+0.30), 1.00 = curved (-0.30); 0.50 is authored.");
         ImGui::TextDisabled("Height: positive raises the HUD, negative lowers it; the aiming reticle stays fixed.");
@@ -427,7 +431,7 @@ namespace
         changed |= ImGui::SliderFloat("Resolution scale", &g_config.resolution_scale,
                                       kResolutionScaleMin, kResolutionScaleMax, "%.2fx");
         // Same even-rounding the launcher applies, so this is the exact render
-        // size the next launch will ask Halo for.
+        // size the next launch will ask MCC for.
         auto scaleEven = [](int base, float scale) {
             int value = (int)lroundf((float)base * scale);
             return (value & 1) ? value + 1 : value;

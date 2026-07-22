@@ -7,6 +7,12 @@
 void Game_Init();
 bool Game_IsHooked();
 bool Game_IsHeadTracking(); // true while F2 head tracking is on
+bool Game_IsCameraOnlyBringup(); // private ODST camera core; no gameplay features
+bool Game_AllowsSharedGameplayFeatures();
+bool Game_AllowsSharedControllerInput();
+bool Game_AllowsOdstMotionAim(); // narrow ODST-only weapon-aim capability
+bool Game_CanToggleImmersiveView();
+bool Game_ProcessPresentationDetachRequest();
 
 // HUD layout: hud_size/hud_aspect drive Halo's safe-frame floats, while
 // hud_curvature offsets the adjacent authored destination_offset_z in the
@@ -38,6 +44,11 @@ bool Game_ComputeAimStick(float& outRx, float& outRy);
 // Rotates a move-stick vector so pushing forward walks toward the gaze
 // instead of the hand-steered aim heading. No-op when VR aim is inactive.
 void Game_MapMoveStick(float& mx, float& my);
+// True only while the game is actually consuming the left stick to move the
+// player (gameplay/vehicle/turret). False in menus, pause, loading, cutscene,
+// death and the shell, where the same stick navigates the game's own menus and
+// must pass through as a plain analog stick (see input.cpp / GitHub #9).
+bool Game_MoveStickIsLocomotion();
 // Hooks XInputGetState in every loaded xinput DLL; returns how many are
 // hooked. Safe to call repeatedly until it succeeds.
 int Input_InstallXInputHook();
@@ -63,4 +74,4 @@ float Game_GetZoomFactor();
 // flash, reticle and bullets stay on one ray as the user trims the mount.
 // Symmetric half-frustum tangents from Halo's active world camera.
 void Game_GetProjectionTangents(float& tanX, float& tanY);
-void Game_GetRenderHalfFov(float& halfX, float& halfY);
+void Game_GetRenderHalfFov(int eye, float& halfX, float& halfY);

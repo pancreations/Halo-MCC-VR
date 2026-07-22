@@ -1,9 +1,284 @@
 # Current state
 
-Authoritative as of 2026-07-20. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
+Authoritative as of 2026-07-22. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
+
+## Non-negotiable Halo 3 parity contract (user decision 2026-07-21)
+
+Halo 3's headset-confirmed behavior is the player-facing foundation for ODST
+and every later MCC title. All agents must implement each target-title feature
+to behave the same as Halo 3 for the end user: input/control semantics, camera
+ownership, stereo and transitions, HUD, weapons, comfort, universal settings,
+and recovery across death, pause, unload, and title changes. Prefer the same
+shared behavior path with a per-title evidence adapter. Engine addresses,
+layouts, skeleton data, and tag meanings still require target-title proof and
+must never be copied blindly. Any unavoidable player-visible difference must be
+recorded honestly and approved by the user; an approximation is not parity.
+Completion requires target-title headset confirmation and a Halo 3 regression
+check whenever shared behavior or cross-title lifecycle state could change.
+
+## Render-pipeline parity rule (user decision 2026-07-22)
+
+For every MCC title, Halo 3's player-visible frame lifecycle is mandatory:
+first eligible fresh camera heartbeat, the same one-second continuous-camera
+safety interval, then each eye's world, first-person/weapon, native CHUD, and
+capture work as one transaction. A title adapter may use its own verified
+signatures and engine stages to reach that lifecycle, but may not add a later
+2D-to-3D gate, substitute a HUD panel/copy workaround, or change the ordering
+without explicit user approval. This rule applies to every feature,
+troubleshoot, and bug fix.
 
 ## Recovery points
 
+- IN-GAME MENU STICK OVER-SENSITIVITY — HEADSET-CONFIRMED 2026-07-22 ("works
+  great", GitHub issue #9): Halo's OWN menus (pause/settings, NOT the F1 VR
+  menu) no longer read up/down left-stick pushes as left/right (and vice
+  versa). Root cause was title- and headset-agnostic: the XInput merge in
+  `MergeVrPad` (`input.cpp`) always fed the left stick through the gameplay-
+  locomotion path — `Game_MapMoveStick`'s head-relative rotation PLUS
+  `ToRawStick`'s per-axis deadzone floor. A near-vertical push like (0.15,
+  0.98) had its 0.15 minor axis floored past MCC's inner menu deadzone, so
+  a straight-up push leaked sideways in the menu. Fix `034c4a6` on
+  `feature/odst-bringup`: new `Game_MoveStickIsLocomotion()` gates the walking
+  transform on the actual movement modes (Gameplay/Vehicle/Turret via
+  `TitleAdapter_GetRuntimeMode()`); the in-game pause/settings menu reports
+  `Paused`, so it — and Shell/Loading/Cutscene/Dead/Unsupported — now passes
+  the left stick through raw via the new `ToRawMenuStick` (no head-relative
+  rotation, no per-axis floor), letting MCC's own menu deadzone reject the
+  minor axis. Character movement is byte-for-byte unchanged: the locomotion
+  branch is the exact previous logic and only runs in the movement modes.
+  This is SHARED behavior outside the ODST `#if`, so Halo 3 gets the same
+  menu improvement. OFF and ON Release builds and both CTest suites passed
+  before guarded deployment. Deployed private DLL build `Jul 22 2026 12:59:32`
+  (`2026-07-22 17:59:37 UTC`), SHA-256
+  `B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF`, recovery
+  record `pre-odst-private-backup-41`. The running DLL's embedded build stamp
+  in `halo3xr.log` matched, confirming the user tested this exact DLL. A
+  private laptop-test zip of this exact ON build was handed to the user
+  (`dist/HaloMCCVR-odst-menu-fix-034c4a6.zip`, DLL `B7363F79`, launcher
+  `BDC0A20F`); the public GitHub release is planned for the NEXT session.
+  BASELINE CHANGE (user decision 2026-07-22): the headset-confirmed vibration
+  build `B4FB36A8` is now the frozen ODST baseline — `deploy-odst-private.bat`
+  `EXPECTED_BASELINE_DLL_SHA` was bumped to it, and the stale `backup-40`
+  `ACTIVE` marker was retired IN PLACE (`SUPERSEDED-NEW-BASELINE.txt`), NOT
+  rolled back to the old `DFF8A406`. `RESTORE-ODST-BASELINE` now returns to
+  the vibration build. STILL OWED before the public release: an explicit
+  Halo 3 menu + walk regression pass on this shared input change ("works
+  great" was reported for the ODST test; the gameplay locomotion path is
+  byte-unchanged, but the Halo 3 menu behavior did change and should be
+  headset-checked next session per the parity contract).
+- ODST CONTROLLER VIBRATION — HEADSET-CONFIRMED 2026-07-22 ("rumble works"):
+  ODST now delivers controller vibration during gameplay exactly like Halo 3.
+  Root cause it was silent: the haptic INPUT side was already title-agnostic
+  (the process-wide XInput `SetState` hook feeds `VR_SetGameHaptics` for ODST,
+  since ODST's `GetState`/motion controls work), but the APPLY side
+  `ApplyControllerHaptics` (`vr.cpp`) only fires when
+  `TitleAdapter_GetRuntimeMode()` is Gameplay/Vehicle/Turret, and
+  `Game_AutoVrTick` hardcoded ODST's runtime mode to `Unsupported` — so every
+  captured rumble was immediately stopped. Fix `f2e4138` on
+  `feature/odst-bringup`: the ODST branch of `Game_AutoVrTick` now reports the
+  shared runtime mode like Halo 3 — `Paused` when natively paused, `Gameplay`
+  once the fresh-camera debounce is stable, otherwise `Loading`. The exact
+  deployed log corroborates it: `Runtime mode: loading -> gameplay` now appears
+  for ODST (from `TitleAdapter_SetRuntimeMode`), the gate that unblocks haptics;
+  before the fix ODST could only ever reach `unsupported`. The configurator
+  needed NO change: `ApplyControllerHaptics` already multiplies the requested
+  amplitude by the universal `haptic_intensity`, so the shared `halomccvr.cfg`
+  value and the F1 → Controls "Controller vibration" slider tune ODST rumble
+  strength with no per-title profile. The change is entirely inside
+  `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP`; the public Halo 3 build is
+  byte-unaffected, and Halo 3's own runtime-mode assignment is untouched (Halo 3
+  never enters the ODST branch). OFF and ON Release builds and both CTest suites
+  passed before guarded deployment. Deployed private DLL build
+  `2026-07-22 17:23:48 UTC`, SHA-256
+  `B4FB36A85BFD045BEB94AD5E744AAA415DE4141C4EE31ED3D1D8C7DEE48F07EB`, recovery
+  record `pre-odst-private-backup-40` (restored from baseline `DFF8A406`).
+  The shared-code Halo 3 regression is headset-confirmed on this exact installed
+  DLL (user: "halo 3 is working"), so the vibration change is fully closed. Only
+  the private baseline restore remains, to return the ODST test folder to its
+  frozen baseline when ODST testing pauses.
+- RELEASE DEFAULTS SET FROM USER CALIBRATION 2026-07-22: the built-in
+  `halomccvr.cfg` defaults in `src/common/config.h` were updated to the user's
+  headset-tuned values so a fresh install / F1 "Reset to defaults" ships their
+  dialed-in experience for the upcoming ODST-inclusive release. Changed:
+  `haptic_intensity` 0.86, `headset_smoothing` 0.03, `aim_stabilization` 0.48,
+  `turn_smooth` on, `crosshair_distance_m` 41.0, `crosshair_size_deg` 10.10,
+  `gun_scale` 0.96, `left_hand_scale` 0.96, `gun_pitch_deg` -3, `gun_forward_m`
+  -0.14, `scope_zoom` 24.0, `scope_screen_width_m` 0.159, scope offsets
+  -0.058/0.216/0.050, `scope_refresh_divisor` 3, `game_brightness` 1.11,
+  `hud_size` 0.38, `hud_aspect` 1.22, `hud_curvature` 0.48,
+  `hud_vertical_offset` +16, `left_hand_forward_m` -0.063, `left_grip_forward_m`
+  0.097, `floating_hands` on. Deliberately KEPT Halo-3-safe (user-approved):
+  `shoulder_back_m` 0.0 and `right_shoulder_drop` 0.06 — the user's ODST values
+  (0.10 / 0.30) would move Halo 3's shoulders if a player re-enables arms, and
+  are invisible under the shipped floating-hands default anyway. The generated
+  cfg's "(default ...)" comment lines read from a default-constructed `Config`,
+  so every annotation updates automatically; `config.cpp` needed no edit and
+  `core_tests.cpp` default assertions were updated to match. OFF and ON Release
+  builds and both CTest suites pass. Existing user cfg files are unaffected —
+  their saved values still override the defaults on load; only fresh installs
+  and an explicit reset pick up the new defaults.
+- ODST NATIVE HUD PIPELINE PARITY - HEADSET-CONFIRMED 2026-07-22: commit
+  `fa37870b8cddf9e3ef9687f664aa876fdd787108` was deployed through the guarded
+  private path as DLL SHA-256
+  `C123703E2789AD8DC6672FA9B2E174CED9DCCC96D39CCD90E67DFAE7768C03F3`
+  (recovery record `pre-odst-private-backup-38`). The user confirmed the native
+  ODST HUD is visible in the headset while the game is running. The matching
+  cold-worker report recorded `completedScopes=136`, `provenOmMatches=0`,
+  `exactCopyScopes=0`, and `copySubstitutions=0`: the working path is the scoped
+  CHUD phase-output bind, not the retained-world-target comparison or copy
+  substitution. Inside the two unique TLS-scoped per-eye CHUD hooks it admits
+  only a non-null slot-0 phase output, routes it to the active eye cache, and
+  restores OM/depth/viewports/scissors before returning. Unknown or null
+  surfaces remain stock. The earlier deployed candidates `ecdfd94`, `f6c6c52`,
+  and `3ef2dd4` remain headset-disproven history: their stricter pointer identity
+  test rejected ODST's legitimate distinct CHUD output view even though the HUD
+  remained visible on the desktop. Native-HUD visibility is accepted and
+  retained by the superseding slider baseline below, whose required Halo 3
+  regression is now headset-confirmed.
+- ODST HUD CONFIG SLIDER PARITY - HEADSET-CONFIRMED 2026-07-22: deployed
+  source commit `cac61f3f13dc9da90ec7683a3ee6167084247994`, installed DLL
+  SHA-256 `9693A175EB674DCAEB8806AE80AB68B6AD98646C58D990081CEBBA9A29BB87D8`,
+  recovery record `pre-odst-private-backup-39`. After exercising the F1/config
+  HUD controls in ODST, the user accepted this as "the best version" and
+  "working perfectly." The exact deployed log corroborates the title adapter:
+  the ODST height hook installed at `halo3odst.dll+0x329824`, the two authored
+  crosshair hooks installed, and the one exact private-RW ODST safe-frame block
+  resolved and published (`1` raw, `1` plausible, `1` accepted) in `2922 ms` on
+  a background thread. Stereo armed independently on Halo 3's one-second
+  fresh-camera lifecycle and then held about `100 fps`; native CHUD routing
+  remained active in both eyes. Exit reached verified teardown, restored stock
+  motion-blur values, and logged `stock renderer owns the title`.
+  `hud_size`, `hud_aspect`, `hud_curvature`, and `hud_vertical_offset` now use
+  Halo 3's shared live config/F1 behavior while retaining ODST-only anchor and
+  basis evidence. ODST brightness remains explicitly excluded because its prior
+  experiment hid the entire HUD. Public option-OFF and private option-ON Release
+  builds and both CTest suites passed before guarded deployment. ODST slider
+  acceptance and the shared-code Halo 3 headset regression are complete for
+  this exact DLL. In Halo 3, the same installed DLL resolved `3` raw, `3`
+  plausible, and `3` accepted Halo 3 safe-frame blocks in `2860 ms`, installed
+  the established native HUD/weapon hooks, armed stereo through the normal
+  lifecycle, and sustained about `100 fps`; the user confirmed that Halo 3
+  "works great." The project-wide regression gate for this change is closed.
+- ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
+  you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
+  hides ODST's native reticle and captures the active weapon's authored widget
+  as the floating VR crosshair, at Halo 3's exact shared size
+  (`crosshair_size_deg`). Root cause: the ODST installer wired only the 7
+  camera/FP/weapon hooks and none of the four HUD hooks, so ODST showed its
+  native crosshair plus the mod's procedural fallback (wrong art/size). Fix
+  `92d8dfd` on `feature/odst-bringup` (checkpoint
+  `recovery/pre-odst-crosshair-20260722`): new `InstallOdstCrosshairHider` uses
+  ODST-proven locations only — `kHudElemSig` candidate at
+  `halo3odst.dll+0x329488` (docs/ODST-SIGNATURE-EVIDENCE.md), class-gate block
+  byte-identical to Halo 3 but shifted -3 bytes inside the recompiled function
+  (playback call E8 @ +0x7A → `0x10B0A8`, short-circuit je `74 17` @ +0x81
+  NOP'd, class-2 predicate call E8 @ +0x91 → `0x32939C`). It hooks the shared
+  `HudCrosshairVisibleHook` + `HudDrawWidgetHook`, which already key off
+  `g_enabled` + `VR_IsStereoEnabled()` (both set by the ODST arm path). It is
+  best-effort/fail-open (any signature or byte mismatch leaves the native
+  crosshair visible and never affects the camera transaction); teardown removes
+  both hooks (registered in `hookTargets`), restores the je
+  (`RestoreOdstCrosshairClassGate`), and nulls the shared trampoline pointers
+  to prevent a stale cross-title call. All changes are inside
+  `#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP`, so the public Halo 3 build is
+  byte-unaffected. OFF and ON Release builds pass; both CTest runs pass.
+  Deployed private DLL build `2026-07-22 07:01:08 UTC`, SHA-256
+  `B1A215C85B7871C0B4CFF80580E1128D65DB200D43C9BECAAF75452AA91470E0`, recovery
+  record `pre-odst-private-backup-30` (sealed baseline `DFF8A406`). Built on the
+  cutscene-parity tip (`6beace3`) so ODST cutscene 3D/head-look/shot-facing are
+  retained. Later results supersede that historical roadmap: brightness was
+  headset-disproven and reverted, the native ODST HUD is now headset-confirmed,
+  and the size/aspect/curvature/height slider candidate is build-tested but
+  still awaits headset acceptance as recorded above.
+- ODST HUD BRIGHTNESS — HEADSET-DISPROVEN AND REVERTED (2026-07-22): hooking
+  ODST's `kHudXformSig` function (`halo3odst.dll+0x2A6308`) with a non-1.0
+  brightness makes the ENTIRE native ODST HUD disappear immediately on level
+  load (only the separate VR crosshair quad survives). Confirmed by headset +
+  log: build `Jul 22 2026 02:16:00` logged `ODST brightness: game-brightness
+  hook active at halo3odst.dll+0x2A6308` and `M3: brightness hook active
+  (game_brightness 1.11)`, and the user saw the HUD gone. The offline evidence
+  had this signature byte-identical to Halo 3 and "semantically equivalent as
+  the screen color/gamma constant uploader," but the ODST runtime disproves that
+  for scaling: on ODST that function's scaled floats are coupled to native HUD
+  visibility, not just screen gamma. Per the failure-ledger rule the experiment
+  was fully reverted (revert of `aeb26d7`) rather than gated behind a flag —
+  `InstallOdstBrightnessHook` removed; ODST brightness stays at engine default.
+  DO NOT re-scale `0x2A6308` on ODST for brightness; if ODST brightness is ever
+  wanted, re-derive the correct ODST function from scratch with headset proof.
+  The reverted build restores the headset-confirmed ODST crosshair + working
+  native HUD.
+- ODST CUTSCENE PARITY COMPLETE — BEST-WORKING VERSION (user-designated
+  2026-07-22): ODST cinematics now match Halo 3 end to end -- stereo 3D depth,
+  head tracking, AND the view re-orients to the authored shot at every cut.
+  User result on the opening drop-pod cutscene: "works perfectly. This is the
+  best working version that we have so far." This is Stage 1 (arm on cinematic
+  cameras) + Stage 2 (per-cut yaw rebasing) together. Stage 2 commit `3ddb5c0`
+  on `feature/odst-bringup`; deployed private DLL build `Jul 22 2026 01:25:32`,
+  SHA-256 `A282356A41A55AC17E5EA069E6EDD39906086E124B7DE3E604443D3FD3B2455C`,
+  recovery record `pre-odst-private-backup-29` (sealed baseline `DFF8A406`).
+  Stage 2 evidence + implementation: ODST's `cinematic_in_progress` getter is
+  byte-identical to Halo 3 (TLS+0xA8, byte+5); `cinematic_set_shot` is identical
+  except the shot-state TLS offset (`mov edx, 0xA0` ODST vs `0x90` Halo 3),
+  scene(+4)/shot(+8) unchanged, both resolving the same TLS-index global. The
+  shared `kCinematicSetShotSig` wildcards that offset byte (unique in both DLLs)
+  and `LocateCinematicState` reads the exact per-title value into
+  `g_cinematicShotStateOffset`; `ReadCinematicShot` consumes it (Halo 3 stays
+  0x90 = unchanged). ODST install calls `LocateCinematicState`, and
+  `OdstApplyHeadLook` rebases `g_gameYawRef`/`g_headYawRef` at each scene/shot
+  boundary like Halo 3's `ApplyHeadLook`. Log confirms `cutscene facing: exact
+  scene/shot state resolved (shot-state TLS offset 0xA0)`. OFF and ON Release
+  build; CTest passes both; Halo 3 shot-facing is backward-compatible. STILL
+  OPEN and important to the user: the intermittent cross-title kicked-to-menu
+  bug (see the next entry) -- unfixed, diagnostic is in this build.
+- ODST CUTSCENE 3D — HEADSET-CONFIRMED 2026-07-22 (Stage 1 of cutscene parity):
+  ODST cinematic cameras now render in stereo 3D with head tracking. Root cause
+  (log-proven): ODST auto-arm required a first-person camera
+  (`OdstCameraArraySupportsBringup` -> `requireFirstPerson`, blend >= 0.95), so a
+  level that OPENS on a cinematic (the drop-pod intro, a blend-0 camera) never
+  armed -- the whole cutscene was flat with "stereo off". Fix `7a4d9e1` on
+  `feature/odst-bringup`: arm on any active plain-perspective slot-0 single-user
+  camera (the same stereo-redirect predicate the render path already uses since
+  Build G). Once armed, `OdstApplyHeadLook` + the per-eye redirect already drive
+  any active camera regardless of blend, so the cutscene renders 3D + head-
+  tracked like Halo 3. Also adds the read-only diagnostics `ODST RENDER SKIP`,
+  granular `ODST NON-FP CAMERA`, and `ODST camera WAIT`. Deployed private DLL
+  build `Jul 22 2026 00:29:07`, SHA-256
+  `2314023A38DD1D2154E6F90CB5BF3628EA90D835EC7EC77B459E88045EE2CF8D`, recovery
+  record `pre-odst-private-backup-27` (sealed baseline `DFF8A406`). Log confirms
+  the opening armed on a blend-0 camera (`WAIT ... blend=0.000000 arm-eligible=YES`
+  -> `stereo ON` at 00:46:36). User result: "3D depth now working and I can look
+  around." Remaining for full cutscene parity: per-cut yaw rebasing so each
+  authored shot faces forward (Stage 2, the Halo 3 `dd1abc5` behavior).
+- SEPARATE PRE-EXISTING ISSUE (not caused by the cutscene fix, confirmed
+  2026-07-22): within one MCC session, loading/quitting/switching titles leaves
+  multiple Halo game modules resident; `TitleAdapter_PollLoaded`
+  (`title_adapter.cpp:58`) treats any >1-module state as "ambiguous MCC state"
+  and disables all hooks, and MCC then kicks the level load back to the menu.
+  Symptom: "levels won't load". Workaround: fully restart MCC (unloads the extra
+  modules); the first fresh load then works. The first ODST level of the session
+  loaded and played perfectly on the fix build (stereo/6DOF/VRIK/weapon), and no
+  crash occurred. Proper fix (backlog): disambiguate by the actively-rendering
+  title (camera heartbeat) instead of disabling hooks -- a delicate title-adapter
+  change with cross-title-crash history; do it on its own branch with evidence.
+- CURRENT DEFINITIVE BUILD (user-approved 2026-07-21, not released): ODST
+  first-person weapon/arm motion controls now work like Halo 3 — hands and gun
+  are off the head, controller-driven aim and the base VR cursor function.
+  Commit `132b353` on `feature/odst-bringup`, preserved at
+  `recovery/best-working-20260721-odst-motion`. Built with
+  `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` and deployed ONLY via
+  `deploy-odst-private.bat`; the public `deploy.bat`/master path stays OFF.
+  Layers: cherry-picked Halo 3 weapon/arm IK parity path (`2183591`), the
+  one-shot FP weapon-layout self-check (`47a3d64`), and the universal
+  `shoulder_back_m` knob (`132b353`, user running `0.100` to seat ODST shoulders
+  at the torso; default `0.0` leaves Halo 3 unchanged). Deployed DLL build
+  2026-07-21 11:24:49 PM, SHA-256
+  `696E1A9826E3BB698052FAA261207735BBA07D636499614290C2EE587A573DF0`. Log
+  confirms build `Jul 21 2026 23:24:49` with `ODST FP WEAPON SELF-CHECK ...
+  layoutAccepted=YES ... driven by controller = YES` across weapons. User
+  result: "motion controls are working perfectly." Root cause of the prior
+  "hands stuck to the head" was that the finished IK commit (`33d246c`) had been
+  orphaned on `feature/odst-weapons-ik` and never built. Next objective: link
+  the VR crosshair + HUD (and their configs) to full Halo 3 parity.
 - Headset-proven baseline: 330a568
 - Protected branch: recovery/best-working-20260719-1300
 - Safe documentation-cleanup branch: cleanup/production-baseline-20260719; runtime restored by ddfe109
@@ -41,6 +316,25 @@ Authoritative as of 2026-07-20. If another note conflicts with this file, this f
   eye-order gate prevents a successful redirect from leaving the native
   crosshair in only one eye. User result: "it's working". Deployed DLL
   SHA-256 `BD5F8FB653163A5788BB6762B09EA929A81658A1267FB10280899F2751441412`.
+- Frozen Halo 3 alpha baseline: tag `v0.1.3-alpha` at `6f8236b`. Its runtime
+  source is unchanged from the headset-confirmed `bb4bb6f` crosshair-fallback
+  build; the intervening commits are release documentation/export changes.
+  Preserve `recovery/best-working-20260721-crosshair` at `c58db2e` and do not
+  mix ODST experiments into the Halo 3 release line.
+- Private ODST FOV/depth checkpoint `347b232` was headset-tested from DLL
+  `5B12235AD0B12A2804918B88057DA129D24CCAE7521DC89DE22D37F5FF0EA97B`.
+  The deeper stereo worked continuously, but activation lag, left-eye motion
+  blur, raw right-stick pitch, and head recoil remained. MCC was closed and
+  exact baseline `0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`
+  was restored; preserve sealed `pre-odst-private-backup-6`.
+- The next private ODST comfort-parity candidate is source-complete but not
+  headset-confirmed. It primes presentation detach during ODST's zero-camera
+  loading interval without shortening Halo 3's proven one-second debounce;
+  uses Halo 3's recentered-yaw/absolute-HMD-pitch-and-roll formula and
+  snap/smooth turn ownership; adds the unique ODST post-observer camera-effect
+  hook at evidence RVA `0x1ACAF0`; and resolves ODST-native
+  `motion_blur_scale`/`motion_blur_max` by name. OFF and ON Release builds and
+  both CTest runs pass. A fresh explicit approval is required before deployment.
 - Headset-confirmed camera-recoil runtime checkpoint: `56dad79` on
   `fix/vr-camera-recoil`. Deployed DLL build 2026-07-20 05:04 AM, SHA-256
   `6ED54EAC5084C0B8D76FCD5BE40A2023269FDC35D3D52054BB926DF97EA24177`.
@@ -237,8 +531,12 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 
 ## Known limitations
 
-- Halo 3 only is validated. ODST is not, and is not a quick port: see the ODST
-  scope section below for the measured signature/layout evidence.
+- Halo 3 is the release baseline. ODST now has headset-confirmed stereo/6DOF,
+  motion-controlled weapon/arms, head-relative movement, authored crosshair,
+  native HUD and controls, cutscenes, vibration, death/respawn recovery, and one
+  tested car on the private option-ON path. Broader weapon/vehicle/turret and
+  cross-title coverage remains incomplete; do not describe ODST as universally
+  validated yet.
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering across all weapons, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
@@ -422,10 +720,724 @@ Consequences for planning:
   the same functions, then a live scan for the shifted camera struct. It is not
   a code change.
 
-Shipping safety today: ODST is registered in `src/common/title_registry.cpp`
-with `runtimeSupported=false`, and hook installation in `game.cpp` is gated on
-`GameTitle::Halo3`. ODST therefore loads stock and untouched, so the Halo 3
-alpha is safe to distribute on machines that also have ODST installed.
+Shipping safety at the offline-survey checkpoint: ODST was registered in
+`src/common/title_registry.cpp` with `runtimeSupported=false`, and hook
+installation in `game.cpp` was gated on `GameTitle::Halo3`. The current normal
+option-OFF build preserves the same stock ODST result; the later private ON-only
+implementation is recorded below.
+
+### ODST direction approved 2026-07-21
+
+The user considers Halo 3 to be in a great state and approved beginning the
+ODST port. Halo 3 remains a protected regression baseline; this approval does
+not permit broad cleanup or conversion of the proven Halo 3 hook path while
+ODST is being brought up. Start ODST work on a dedicated named branch from the
+frozen `v0.1.3-alpha` line and keep ODST `runtimeSupported=false` until its own
+headset acceptance gates pass.
+
+The first implementation checkpoint is the configuration architecture, tested
+against Halo 3 before any ODST runtime hook is introduced:
+
+- There is one universal user file, `halomccvr.cfg`, and one consistent F1 menu
+  across all supported MCC games. Never require users to swap configuration
+  files when changing titles.
+- Existing key names and values remain backward compatible. Reorganize the
+  generated file into clear OpenXR/comfort, controls, reticle/aiming,
+  weapons/hands, HUD/presentation, performance, and diagnostics groups without
+  resetting a user's Halo 3 tuning. The launcher must continue to read
+  `resolution_scale` from the same file.
+- User-facing values express portable intent: physical meters/degrees,
+  normalized presentation values, and personal comfort choices. Per-title
+  camera scale, weapon mount, skeleton, shoulder/hand, HUD, reticle, brightness,
+  and motion-blur calibration belongs inside the title adapter, not in a second
+  user profile. A universal user trim is applied on top of the verified base
+  calibration for the active title.
+- The menu keeps the same names and layout. A feature unavailable in one title
+  is shown disabled or omitted by capability while its saved universal value is
+  preserved for titles that support it.
+
+After that Halo 3-only configuration regression passes, ODST proceeds in this
+order: verify the eight matching signatures against their actual functions;
+derive the twelve failed signatures; use H3ODSTEK and read-only/live probes to
+prove every consumed ODST layout and offset; bring up camera/stereo/6DOF with
+stock fallback; then add input/aim, reticle, arms/VRIK, HUD/VISR, and broader
+gameplay one isolated headset checkpoint at a time. H3ODSTEK is installed at
+`N:\SteamLibrary\steamapps\common\H3ODSTEK` and is mandatory title-specific
+evidence. No Halo 3 offset, bone, marker, tag meaning, or tuned engine constant
+may be reused without independent ODST proof.
+
+Universal-config organization candidate on `feature/odst-bringup` (2026-07-21):
+the generated `halomccvr.cfg` now explains its cross-title role and groups every
+existing key under stable OpenXR/comfort, controls, reticle/aiming, weapon,
+scope, HUD/presentation/performance, gameplay/hands/IK, and diagnostics headings.
+All key names, defaults, clamps, parsing, and the launcher's
+`resolution_scale = value` contract remain unchanged. The F1 wording is
+title-neutral without changing its controls. Tests verify legacy import, section
+order, exactly one assignment for every supported key, value round trips, and
+launcher-readable resolution output. Release and CTest pass. This is a
+config-only candidate at `148f971` with no ODST hooks or support gate changes.
+Deployed with `deploy.bat auto` on 2026-07-21 (DLL build 06:23 AM), DLL SHA-256
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`, launcher
+SHA-256 `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
+Both installed files byte-match the Release outputs. User headset result on
+2026-07-21: "seem like it." Treat this as a positive initial confirmation that
+the config-only build preserved Halo 3 behavior, not as a claim that every Halo
+3 regression case was exhaustively rerun. The universal-config checkpoint is
+accepted for continued use. The subsequent ODST non-hook signature and camera
+layout evidence gates are recorded below. Keep the full Halo 3 matrix as a
+required safeguard before merging or publicly enabling ODST runtime support.
+
+### ODST signature and camera-layout gates passed 2026-07-21
+
+The non-hook stage is complete. `docs/ODST-SIGNATURE-EVIDENCE.md` proves that
+the eight byte-identical signatures land in equivalent ODST functions and gives
+unique title-specific patterns for all twelve formerly failing production
+roles. `docs/ODST-CAMERA-LAYOUT.md` covers every byte of the `0x90` compact
+camera, the `0xC0` derived blocks, the prepared-view front and nested FP
+structures, `view+0x27FC` render user index, and the `0x2810` four-slot camera
+stride.
+
+Read-only stock ODST captures with EAC off covered movement/look, zoom,
+death/respawn, clean level unload/reload, a cutscene, and vehicle entry/exit.
+They proved the nested source pointer at root `+0x970`, zoom/reference FOV at
+compact `+0x2C`, first-person blend weight at `+0x30`, title-safe rectangles,
+and the FP near-plane behavior. H3ODSTEK/retail formulas prove `+0x34` as the
+vertical projection/observer offset and `+0x6C..+0x7B` as the optional oblique
+near-clip plane. The single-user stock camera layout gate passes. Original
+engine member spelling and unobserved mirrored/custom/oblique stock modes remain
+documented ambiguity, but their sizes, formulas, enable conditions, and required
+preservation behavior are known.
+
+At the evidence-pass checkpoint, no runtime source, game memory, hook, support
+flag, or game file changed. That remains the historical boundary of the
+accepted evidence. ODST remains registered with `runtimeSupported=false` and
+capabilities `None`; the later private implementation described below does not
+change those public declarations.
+
+### Private ODST camera-core implementation checkpoint (desk-side only)
+
+The current `feature/odst-bringup` worktree now contains the deliberately
+private implementation specified by `docs/ODST-MINIMAL-BRINGUP-HANDOFF.md`.
+This is an implementation candidate, not public ODST support:
+
+- CMake option `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP` defaults to `OFF`. An
+  option-OFF build gives ODST no hook plan and leaves it stock. The normal
+  `deploy.bat` and `export-alpha.bat` paths require an exact `OFF` cache entry
+  and refuse an ON or otherwise unverified cache, preventing a private binary
+  from entering the public deploy/package flow.
+- A private option-ON build dispatches only the isolated ODST camera installer;
+  it never calls the monolithic Halo 3 installer. Preflight requires the exact
+  retail PE timestamp `0x68A0F232` and image size `0x4797000`, eleven unique
+  title-specific signatures inside the expected image/code ranges, two native
+  motion-blur debug variables, the derived four-slot camera array, and the
+  proven `0x90`/`0xC0`/`0x2810` layout and single-user camera invariants before
+  creating any hook.
+- The complete installed set is five detours: compact-camera copy, inner
+  prepared-view renderer, FP camera rebuild, FP driver, and the unique
+  post-observer camera-effect boundary. Resolved viewport, matrix, prepare-view,
+  upload, guard, and constructor roles are dependencies or validation anchors,
+  not additional behavioral hooks.
+- The enabled behavior is limited to stereo rendering, Halo 3-owned headset
+  orientation, positional 6DOF, minimum first-person camera coherence, native
+  blur suppression, native recoil/shake suppression, and ordinary virtual-pad
+  controls. During tracked gameplay the OpenXR right stick uses Halo 3's
+  snap/smooth turn path and raw stock look axes are consumed. Motion-controller
+  weapon aim, head-relative movement, reticle suppression, HUD/VISR changes,
+  scopes, pause, brightness, weapon/bone/arm/VRIK work, and all gameplay patches
+  remain disabled. Shared gameplay behavior and the normal option-OFF build
+  remain fail-closed outside their proven context.
+- Installation is all-or-stock. Hooks are created and enabled as one
+  transaction and initially remain disarmed until a continuously fresh camera
+  passes the debounce. Any failed identity/signature/layout/runtime invariant
+  requests stock fallback. Teardown disables outer render entry before its FP
+  dependencies, drains and verifies detour ingress, retains the exact title
+  module and hook state if safe removal cannot yet be proved, and retries rather
+  than freeing a possibly live trampoline. Rearm is blocked until a proven
+  inactive-to-active camera reload edge or genuine title re-entry.
+- Camera-array readiness is published atomically by the worker only while it
+  owns the title-module lease. The render detour still revalidates the complete
+  four-slot array immediately before touching camera bytes. Presentation detach
+  uses request/completion generations acknowledged on the Present thread before
+  XR early exits; completing one resets the fresh-camera debounce and cannot
+  re-arm stereo in the same Present.
+- Title activation is polled every 50 ms; module polling is not an atomic title
+  transition signal because MCC can retain more than one title module. An
+  `Unknown` ownership state may retain Halo 3 shared gameplay behavior only
+  after a Halo 3 camera heartbeat newer than the observed transition and less
+  than 100 ms old. Explicit ODST or private camera-only ownership always blocks
+  those shared Halo 3 features.
+- The current positional conversion uses `1 / 3.048` game units per OpenXR
+  meter. This is a private headset-calibration hypothesis, not accepted ODST
+  scale evidence. Direction and scale must be observed in the headset before it
+  can be retained or documented as title calibration.
+
+The first private candidate was deployed from `bccf4c7` with DLL SHA-256
+`533CE571B6AD0E955F1722DFF1341EE77A02184C1705D2616630C577BF34B103`.
+The headset smoke failed: MCC menu VR controls stopped merging, ODST remained a
+stock 2D image because its camera-readiness gate never installed detours, and
+Halo 3 performance regressed. MCC was closed and
+`deploy-odst-private.bat RESTORE-ODST-BASELINE auto` restored the exact
+headset-confirmed DLL
+`0BD0233CD28975CADFCE7E03F9B9CA353CD533CD37D257FDCA362983D00B11BA`.
+The sealed recovery record remains at
+`Halo_MCC_VR\pre-odst-private-backup`; preserve it and `stash@{0}`. The private
+procedure now selects a new numbered record for later candidates, refuses to
+start while any earlier record has a live state, and restores from exactly one
+live record.
+
+The second private candidate from `dcdf49e`
+(`28BEC371529D826B8F89544F77B92EB00D46B9319E6C100CD1CED3130B3870DE`)
+restored MCC frontend controller merging and kept Halo 3 healthy at roughly
+85-90 FPS, but ODST still remained stock 2D and its controls did not respond.
+The log showed VR button edges and `merged=33404` before ODST activation.
+Once ODST became explicit, the camera-only policy stopped controller merging,
+so the title never reached a level and the prepared camera array remained in
+its stock all-zero unloaded state. The exact baseline was restored from the
+sealed `pre-odst-private-backup-3` record.
+
+The third candidate from `6e37807`
+(`7E711A3AEF33080471E82BC6B447173CE81FF91372DEC0D7EC9A8F30C1AEDC79`)
+made controls work and reached stereo/head-tracked/6DOF ODST, but presentation
+repeatedly detached on camera-heartbeat gaps shorter than the already-proven
+unload watchdog. Halo 3 remained healthy. The exact baseline was restored from
+sealed record `pre-odst-private-backup-4`.
+
+The fourth candidate from `cab874c`
+(`AD1619740DB200C419965B4F7D105DC0AB0AD935FDE06E8484DE3E2693CA97D4`)
+kept ODST stereo continuously active at about 90 FPS, confirming the heartbeat
+fix. The user rejected its shallow/disorienting depth compared with Halo 3, and
+the exact baseline was restored from sealed record
+`pre-odst-private-backup-5`.
+
+Same-machine live capture then measured stock ODST vertical/reference FOVs
+`56.111/50.117` degrees and projection `1.353137/1.876350`; known-good Halo 3
+used compact inputs `1.8418/1.3290` and final projection `0.54296/0.75246`.
+The rejected ODST path already matched the final projection but mixed its
+widened world input with the stock `0.8747` first-person reference. The next
+single-hypothesis checkpoint feeds both ODST compact inputs from Halo 3's exact
+headset pair and logs the final per-eye projection. Public behavior remains
+unchanged.
+
+Reviewed camera-core checkpoint `7c25a1a` remains the minimum ancestor for a
+private test build. `deploy-odst-private.bat` remains the only private opt-in
+path: it requires a clean reviewed branch/descendant, exact x64 OFF and ON
+caches, fresh Release builds/tests, closed MCC/launcher, the evidenced retail
+ODST hash, exact installed-baseline backup, byte verification, and hash
+reporting. It deploys/restores only the DLL and never launches the game. The
+launcher remains untouched at
+`BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D`.
+Public deploy/export remain OFF-only.
+
+### Cross-title reload crash: root-caused and fixed, headset test pending (2026-07-21)
+
+A live session hopping ODST -> Halo3 -> ODST -> Halo3 crashed MCC on the
+second Halo3 load. Windows Error Reporting recorded access violation
+`0xc0000005` in `halo3xr.dll` at fault offset `0x1C0B3`, faulting process
+`MCC-Win64-Shipping.exe`. Disassembling that exact crashed binary
+(`build-odst-private/Release/halo3xr.dll`, byte-identical to the installed
+DLL, confirmed by SHA-256) at the fault RVA landed on the `*var.slot` read in
+`ApplyMotionBlurSetting`. The runtime log for that exact session showed the
+second Halo3 load resolving a fresh `halo3.dll` instance at a different base
+address than the first (`00007FFC3A220000` vs `00007FFC4D910000`), and the
+"M3: motion blur forced OFF" line present after the first Halo3 load was
+missing after the second, right before the log went silent.
+
+Root cause: `g_motionBlurVarCount` only starts at `-1` ("not yet resolved")
+once, at process start. It was never reset when Halo3 stopped being the
+active title, so across a Halo3 -> ODST -> Halo3 cycle it stays at its stale
+value of `4` the entire time. The freshly re-enabled `CamCopyHook` can call
+`ApplyMotionBlurSetting` and dereference `g_motionBlurVars[]` pointers that
+still point into the first, now-unloaded `halo3.dll` instance, before
+`ResolveMotionBlurVars()` has re-resolved them against the new instance.
+
+Fix on `353cfc9` (tip of `feature/odst-bringup`): reset the counter to `-1`
+the instant Halo3 is marked inactive, mirroring the existing "not yet
+resolved" sentinel, so the gap is a safe no-op instead of a stale dereference.
+The reads/writes themselves are also now SEH-guarded (matching the existing
+`SafeReadByte`/`SafeWriteByte` pattern already used for the cinematic-FOV
+variable), as defense in depth against any other unforeseen staleness in this
+class of resolved pointer. No other behavior changed; this does not touch
+ODST's own teardown path, MinHook bookkeeping, or the private bring-up gating.
+
+OFF and ON Release builds and both CTest runs pass. Deployed via
+`deploy-odst-private.bat I-APPROVE-ODST-TEST auto` after first restoring the
+sealed baseline with `RESTORE-ODST-BASELINE` (the installed DLL from the
+crashed session was not the accepted baseline). Deployed private DLL SHA-256
+`C0A6A90D7010CC5CC31B1B14111E6ABB403D0DB4D2AFEC149133666CA2DFE5F9`, recovery
+record `pre-odst-private-backup-12`.
+
+Headset result: the user repeated the exact ODST -> Halo3 -> ODST -> Halo3
+repro sequence and confirmed "it works now" — no crash. This is the current
+best-working private ODST checkpoint, on top of the confirmed pause-boundary
+and shell-pause-isolation fixes (`49fa8a3`, `9937ab3`). `deploy-odst-private.bat`'s
+`EXPECTED_BASELINE_DLL_SHA` was advanced to this confirmed DLL's hash
+(`C0A6A90D...`) so future private candidates snapshot and roll back against
+this checkpoint instead of the pre-fix one.
+
+### ODST comfort parity accepted; advancing to motion aim + reticle (2026-07-21)
+
+On the current installed private checkpoint `C0A6A90D...` the user reported ODST
+now feels good and at Halo 3 comfort parity, and directed advancing the port.
+This is the user's feel-acceptance of the depth-match (`347b232`) plus the four
+comfort fixes bundled in `a44f5ed` (activation-lag presentation-detach priming,
+ODST-native `motion_blur_scale`/`motion_blur_max` suppression, Halo 3
+recentered-yaw/absolute-pitch/roll + snap/smooth-turn ownership, and the ODST
+post-observer camera-effect hook at `0x1ACAF0`) that had been coded but never
+given a clean dedicated headset confirmation because the prior sessions were
+consumed by the pause and cross-title-reload stability fixes. Treat this as a
+positive comfort-feel acceptance, not an exhaustive comfort regression matrix.
+
+Next gate (per PLAN.md Gate 4 bring-up order): ODST motion-controller weapon aim
+plus the floating VR reticle. Offline finding, not yet a code change at this
+line: the ODST aim-forward source is already read by the private camera detour.
+`OdstCamCopyBody` already saves `source + layout.sourceForward` (the pre-head-look
+"true aim direction") before `OdstApplyHeadLook` overwrites it; Halo 3 publishes
+that same field to `g_aimFwd` at the `CamCopyHook` site. The closed-loop
+`Game_ComputeAimStick` and the reticle quad are title-agnostic; they are gated
+off for ODST only because `Game_AllowsSharedGameplayFeatures()` returns false for
+the camera-only context. The planned change publishes `g_aimFwd`/`g_aimSeen` for
+ODST and adds a narrow `Game_AllowsOdstMotionAim()` capability that opens only the
+two aim gates (aim-stick + reticle), leaving movement mapping, scope, HUD, bones,
+and every other shared transform stock. Movement stays stock for ODST. The
+unknowns that require the headset: whether ODST's source-forward is truly
+aim-derived (bullets track the controller ray), whether its stock aim integrator
+consumes the injected stick like Halo 3's, and the closed-loop gain feel.
+
+### ODST aim/reticle build headset result, and Build 2 scope (2026-07-21)
+
+The aim/reticle candidate `74bca82` was deployed as private DLL
+`64224A36DBDF1641C3ED9B0C50ACE82F270950BFFBA9029E5DB139A94869108F`
+(record `pre-odst-private-backup-13`, baseline `c0a6a90d`) and headset-tested.
+The `halo3xr.log` build stamp `Jul 21 2026 16:51:45` matched the deployed DLL.
+
+Result: closed-loop weapon aim **works** — bullet traces follow the controller,
+confirming ODST's `layout.sourceForward` is the true aim vector and its stock
+turn integrator consumes the injected stick, exactly as in Halo 3. The user
+reported five remaining gaps:
+
+1. Aim has catch-up lag / not 1:1 (only the bullet trace gave feedback).
+2. The visible first-person gun and hands are stuck to the face (no controller-
+   driven weapon pose yet).
+3. The floating VR crosshair never appeared.
+4. The native HUD did not appear; the user wants the native HUD rendered, the
+   native center crosshair hidden, and its authored asset + green/red target
+   states routed onto the VR crosshair.
+5. Movement is not head-relative: pressing forward walks a fixed world
+   direction, not where the user looks. This is the Halo 3 head-relative-move
+   fix the user explicitly referenced.
+
+Two root causes were confirmed from source, not guessed:
+
+- Movement: `Game_MapMoveStick` early-returns for ODST because its only gate is
+  `Game_AllowsSharedGameplayFeatures()` (false for camera-only). The left stick
+  is otherwise passed through, so ODST walks along the fixed body heading.
+- Crosshair: the procedural reticle is painted with opacity `0.0` (deliberately
+  transparent) because Halo 3's visible crosshair comes from the authored CHUD
+  capture; a stale procedural fallback could flash during death. ODST installs
+  no authored capture, so its reticle falls back to the transparent procedural
+  path and shows nothing. Gap 1 is largely a symptom of gap 3 — the reticle quad
+  is drawn from the raw controller aim pose at 0% smoothing, so a visible reticle
+  tracks 1:1 with no closed-loop lag.
+
+Build 2 (this session, on `feature/odst-bringup`) is the user-selected first
+follow-up: head-relative movement plus a visible VR crosshair, both fenced to
+the ODST camera-only context and no-ops for Halo 3 and the public OFF build.
+`Game_MapMoveStick` also allows `Game_AllowsOdstMotionAim()`; the procedural
+reticle opacity is `1.0` when `Game_IsCameraOnlyBringup()` (repainting on the
+transition) and stays `0.0` for Halo 3. Gaps 2 (gun/hands off the face; VRIK/
+palette) and 4 (HUD + native-crosshair hide + color-routed reticle; CHUD/HUD)
+remain larger, separate ODST gates for later builds, each needing independent
+ODST evidence.
+
+### Build 2 headset-confirmed; bullet-trailing analysis (2026-07-21)
+
+Build 2 (`3d688e6`, deployed private DLL
+`E997103E4991272C6B31B78B6496605FAE317244D1D8E2D139CA14F048A4B4D5`, record
+`pre-odst-private-backup-14`, baseline `c0a6a90d`) was headset-tested. The user
+confirmed **both fixes work**: ODST movement is now head-relative (forward walks
+where you look), and the VR crosshair is visible and tracks the controller 1:1.
+
+One aim issue remains: the **bullets trail the crosshair** — pointing left and
+firing sends the shots sweeping from the right and slowly converging on the
+crosshair rather than snapping to it as in Halo 3. The crosshair itself is 1:1
+because its quad is drawn from the raw controller aim pose; only the *bullet
+direction* lags.
+
+Analysis (from the code, not a guess): the bullet direction is steered by the
+proportional closed loop in `Game_ComputeAimStick`. For any large angular error
+the emitted stick already saturates to full deflection (gain `k = 12` reaches
+full stick at ~4.8 deg of error), so the convergence rate is bounded by the
+**game's own turn rate at full stick**, which the code comment
+([src/dll/game.cpp:8082](src/dll/game.cpp#L8082)) documents as set by the
+in-game look sensitivity. Halo 3 feels snappy because that ceiling is high;
+ODST trails, indicating a lower effective ODST turn rate (in-game look
+sensitivity and/or look acceleration). The closed loop is the only aim lever —
+the engine recomputes the aim forward from its own state each frame, so directly
+writing the forward does not move bullets, and the fire boundary is not reachable
+from the static binary (see the bullet-origin limitation above).
+
+Next step is therefore a no-build diagnostic before any code change: set ODST's
+in-game Look Sensitivity to maximum and Look Acceleration off, and re-test aim on
+the currently installed `E997103E`. If that snaps it, the fix is a settings match
+(and possibly having the mod read/raise ODST's sensitivity, exposed through the
+universal config). If ODST sensitivity is already maxed and it still trails, the
+fix becomes a real ODST turn-rate/sensitivity RE task, not a stick-gain tweak.
+
+User-resequenced ODST roadmap (each a config-file-integrated build):
+1. Bullet snap-to-crosshair (this analysis; diagnostic first).
+2. Motion-controlled weapon: gun and hands off the face, driven by the
+   controller (the VRIK/palette gate). DONE 2026-07-21 — headset-confirmed on
+   commit `132b353` (see the CURRENT DEFINITIVE BUILD entry under Recovery
+   points); ODST FP skeleton accepted at runtime (self-check `layoutAccepted=YES`,
+   wrist 6 / cameraControl = count-1) and `shoulder_back_m` seats the shoulders.
+3. HUD: native HUD render + hide the native center crosshair + route its authored
+   asset and green/red target states onto the VR crosshair, plus IK arms and
+   floating-hand options. All user-facing options must live in the one universal
+   `halomccvr.cfg` / F1 menu.
+
+### ODST 3D-through-death / vehicles / turrets: Build C non-FP survival + capture (2026-07-21)
+
+Background: Build A (skeleton probe, DLL `36E565E0`, commit `1b78f09`,
+backup-15) captured the ODST weapon on render nodes 37-43; the bone-count
+pairing refinement for the arm map is still deferred. Mid-session the user died
+and ODST dropped to 2D and would not recover. Root cause: the ODST death-cam is
+a **third-person camera occupying gun-camera slot 0** (active, not first-person).
+The core gated stereo on the *proven first-person mode* and, on any active
+non-FP camera, requested `UnsupportedCameraMode` -> full teardown ->
+`BlockUntilTitleExit` (never re-arms this session). User directive: full parity
+-- "do what halo 3 does", keep 3D through death **and vehicles, turrets, and
+cutscenes**.
+
+Build C (this build) makes the core survive every non-FP camera and captures
+the evidence needed to render them in true stereo next. No stereo redirect on an
+unproven camera object was guessed (that layout is not yet ODST-verified).
+
+Implemented (private ON tree; both trees build Release clean, CTest green):
+- **A live render frame is never a teardown.** `OdstRenderViewBody` now
+  stereo-redirects ONLY the proven first-person camera (`OdstShouldStereoRedirect`
+  = own slot 0 + valid single-user tail + nested-source identity + proven FP
+  mode). Any other live camera -- third-person death-cam, vehicles, turrets,
+  cutscenes, a foreign slot, or a mode transition -- renders **stock** with the
+  core left armed. The former `UnsupportedCameraMode`/`LevelUnloaded` teardown
+  gates there (and the late `OdstCameraArraySupportsBringup` recheck) are gone.
+- **Heartbeat stays fed by any active camera.** `OdstCamCopyBody` now updates
+  `g_lastCamCopyMs`/`sawValidCamera` (and applies the motion-blur setting) for
+  any active slot-0 camera (`ownsActiveCamera`), FP or not. Head-look injection
+  and aim-forward publish remain first-person-only (`monitoring`). Camera-copy
+  tears down ONLY when the slot-0 single-user tail breaks
+  (`OdstCamCopyRequestsTeardown`) -- a real level unload/transition -- never on
+  an active non-FP camera.
+- Because the heartbeat never lapses, the worker heartbeat and the Present-side
+  `cameraLost` disarm do not fire during death; the FP driver/rebuild hooks are
+  `eyeView`-gated (null during stock frames) so they stay safe pass-throughs.
+- **Non-FP camera capture (log-only):** `OdstCaptureNonFpCamera` publishes the
+  slot-0 non-FP camera's fields atomically; the 50 ms worker emits
+  `ODST NON-FP CAMERA: mode=.. tail/nested/active/plainPersp .. -- stereo-
+  redirectable next build = YES/NO`. Deduped by modeFlags, reset on each FP
+  frame. This tells the next build whether the death/vehicle camera shares the
+  FP object structure (then a stereo redirect is a safe flip) or needs its own
+  path.
+
+Expected headset behavior this build: on death/vehicle/turret the view holds the
+**last first-person stereo frame (frozen 3D, not a 2D drop)** and live 3D resumes
+automatically on respawn / when first-person returns -- no restart, no stuck 2D.
+The death-cam does not yet animate in stereo; that is Build D, gated on the
+`ODST NON-FP CAMERA` capture from this session.
+
+Test checklist: die, ride/drive a vehicle, use a turret. Confirm (1) no drop to
+flat 2D that stays, (2) 3D returns on its own, (3) grep the log for
+`ODST NON-FP CAMERA` lines for each (death, vehicle, turret) and read the
+`stereo-redirectable` verdict. Quick Halo 3 sanity pass (same DLL) unchanged.
+
+Build C deployed (DLL `8A758104`, commit `1bc19e2`, backup-16) and headset-
+tested. Result: no crash, no stuck-2D -- the core survived death and vehicles
+and recovered. The headset **froze on the last 3D frame** for the whole
+death/vehicle duration (expected: compositor holds the last stereo frame while
+non-FP frames render stock). The capture delivered the decisive evidence: every
+`ODST NON-FP CAMERA` line (death `blend=0.0`, vehicle `blend~0.998`) reported
+`mode=0 slot=0 tail=1 nested=1 active=1 plainPersp=1 voff=0 -- stereo-
+redirectable = YES`. The third-person cameras share the FP view-object layout
+exactly and differ only in fpBlend.
+
+### Build D: full-parity stereo redirect for third-person cameras (2026-07-21)
+
+Evidence-backed flip enabled by the Build C capture. Splits the camera-mode
+check: `OdstCompactCameraIsStereoRedirectable` = the proven-mode checks MINUS
+the fpBlend gate (active, mode 0, vertical offset 0, plain perspective, ordered
+bounds, valid clips); `OdstCompactCameraUsesProvenMode` = redirectable +
+fpBlend~=1 (unchanged behavior). The render hook now redirects any
+stereo-redirectable slot-0 camera, so the death-cam and vehicle/turret cameras
+render in **live stereo 3D** instead of a frozen frame. Auto-arm, the heartbeat
+(`OdstCameraArraySupportsBringup`), and head-look/aim injection stay first-person
+-only (`OdstCameraArraySupportsRedirect` is the render-only broadened recheck);
+a third-person camera therefore follows the game exactly while rendering in 3D.
+The eye redirect never reads fpBlend -- it offsets each eye from the camera's own
+basis and drives the headset FOV -- so this is not a guess about the death-cam's
+layout; it is the same proven per-eye path applied to a camera proven identical.
+
+Non-redirectable cameras (a custom-projection cutscene, foreign slot, transition)
+still render stock and are captured -- a live frame is never a teardown.
+
+Both trees build Release clean; CTest green; public OFF and Halo 3 unchanged.
+
+### Build D headset result: reclassify -- vehicles are first-person, death is not (2026-07-21)
+
+Build D deployed (DLL `F8FA7BEF`, commit `fe247a6`, backup-17). Headset result
+disproved the "death-cam in stereo" assumption and reframed the vehicle:
+- **Vehicle** (`blend~0.998`): the redirect captured fine (no teardown) but
+  looked wrong -- "the floor followed my head" -- because it was treated as
+  third-person with **no head-look injected**, so the rendered image was locked
+  to the vehicle camera while submitted at the head pose (compositor reprojects
+  it onto the head). The mod's FP input remapping was also half-applied: right
+  stick did not move the camera, crosshair did not steer. The vehicle is really
+  **first person** (99.8% blended in) and belongs on the full FP path.
+- **Death-cam** (`blend=0.0`): log line `ODST camera teardown complete (eye
+  redirect unavailable)`. The truly third-person death-cam does NOT render
+  through the scene-color path the eye capture needs -> `VR_CaptureRenderedEye`
+  fails -> `EyeRedirectUnavailable` -> teardown, which never re-arms in-session
+  -> "keeps me kicked out" on respawn. It cannot be redirected with this
+  mechanism ("turns into a screen").
+
+### Build E: near-1 blend is first-person; death-cam renders stock + recovers (2026-07-21)
+
+Fix: introduce `kOdstFirstPersonBlendMin = 0.95f` and treat any camera with
+`fpBlend >= 0.95` as first person in BOTH gates (`OdstSourceCameraIsFirstPerson`
+for head-look/heartbeat/aim, `OdstCompactCameraUsesProvenMode` for the render
+redirect + auto-arm). Vehicles (0.998) now take the full first-person path --
+head-look, stable world, native right-stick/crosshair controls -- matching Halo
+3, so behavior is consistent across titles. The Build D third-person redirect
+broadening is reverted (the split `IsStereoRedirectable` and
+`OdstCameraArraySupportsRedirect` are gone): the death-cam (blend 0) is not
+redirected, renders stock (frozen last stereo frame, no capture attempt, no
+`EyeRedirectUnavailable` teardown) and **recovers on respawn**. Net delta vs
+Build C is only the blend threshold (`<=0.001` -> `>=0.95`) in the two FP checks.
+
+Limitation recorded honestly: the ODST death-cam cannot render in live stereo via
+the current eye-capture path (the game doesn't expose it); frozen-3D-that-recovers
+is the best available without a separate death-cam capture path. Vehicles ARE the
+third-person 3D win, delivered via the FP path.
+
+Both trees build Release clean; CTest green; public OFF and Halo 3 unchanged.
+
+### Build E headset result: death still dismantles VR (2026-07-21)
+
+Build E was deployed as private DLL
+`67C668D1FA245B18BF39B6A519B0D9D5F2990291369297AE297607DDBC63944E`
+from commit `1a20ecc` (backup-18). The first actual death test failed. The log
+proved the mode switch occurred inside one render call: entry still passed the
+first-person gate, then ODST selected its direct death renderer and never bound
+the learned internal scene-color RTV. At `20:32:00.648` capture reported no
+redirect; the old one-strike policy disabled stereo and completed an
+`eye redirect unavailable` teardown at `20:32:01.342`. Respawn could not recover
+because that fallback removes the camera hooks for the title session.
+
+This disproves Build E's claimed recovery. Treat its frozen-frame policy as a
+failed experiment, not a working checkpoint.
+
+### Build F candidate: live third-person death through direct backbuffer capture
+
+ODST's death renderer bypasses the internal scene-color target but completes a
+real camera draw in the game swapchain buffer. The new candidate retains the
+next flip-model buffer immediately after Present (outside camera/render hooks),
+then copies that completed buffer into the appropriate eye cache after each
+death-camera render. No GetBuffer, QI, allocation, lock, or file operation is
+added to the render hook.
+
+The proven plain-perspective slot-0 layout is again stereo-rendered regardless
+of first-person blend. Blend remains the ownership split: on-foot and vehicle
+views keep first-person aim/controls and internal scene-color capture; the
+blend-0 death camera receives headset camera orientation like Halo 3, does not
+publish weapon aim, and uses direct backbuffer eye capture. A camera transition
+may miss up to seven consecutive first-person captures without dismantling VR;
+the eighth persistent first-person miss still fails closed. A third-person
+capture miss never tears down the session, preserving the last valid stereo pair
+until the direct capture or first-person camera returns.
+
+Public-OFF and private-ON Release builds succeed and both CTest runs pass. This
+is a desk-side candidate until death, live death-camera motion, respawn recovery,
+and the normal ODST aim/movement/crosshair path are confirmed in the headset.
+
+### Build F headset result: deployed correctly, threshold still tears down
+
+Build F deployed from commit `4b0fbd4` as private DLL
+`65656BECC956120C91FD3B29FEFECF9C75D181D4B23B68C23DC1D060F1A3DD52`
+(backup-19). The installed file and launch log matched. Death still kicked the
+user out of VR. At `20:59:42.125` the first capture miss appeared, stereo was
+disabled at `20:59:42.205`, and the worker completed an
+`eye redirect unavailable` teardown at `20:59:42.942`.
+
+The log disproved the blend-based threshold: ODST continued reporting the
+first-person compact mode for at least eight render calls after it had already
+switched to the direct death renderer. Build F therefore withheld its direct
+backbuffer fallback and eventually fired the remaining eight-strike teardown.
+
+### Build G candidate: copy Halo 3's non-fatal live-capture policy
+
+Halo 3 calls `VR_CaptureRenderedEye` after each eye but never uses a missing
+capture as a hook-removal signal. Build G applies that exact ownership rule to
+ODST: every scene-color miss attempts the retained-current-backbuffer copy,
+regardless of the stale first-person blend, and no live render capture miss can
+request fallback or disable stereo. Capture failure remains diagnostic only and
+the last valid stereo pair stays available. True camera-tail unload, title exit,
+native pause, install failure, and heartbeat loss remain the teardown boundaries.
+
+This specifically removes the path that produced both headset failures while
+retaining the direct death-render capture introduced in Build F.
+
+### Build G headset acceptance: death/respawn and cross-title re-entry pass
+
+Build G deployed from commit `5a66ed456bb0e567e1e43757fd81a3f18ba5dbc0`
+as private DLL
+`36E74C018415B1000C75E13793678904BF1494B19912F70AD231A7F8E014C0EE`
+(backup-20). Headset testing confirmed that death no longer exits VR, respawn
+returns correctly, and an ODST -> Halo 3 -> ODST title round trip also works.
+The user reported that the cameras worked throughout. Promote this exact DLL as
+the private ODST rollback baseline before vehicle-control work; do not restore
+the older pre-Build-G DLL.
+
+### Build H candidate: Halo 3 cursor-guided vehicle steering in ODST
+
+User clarification corrected the vehicle-control target: in Halo 3 the right
+cursor/aim direction guides the vehicle. The accepted Build G still ran
+`Game_MapMoveStick`'s headset-relative on-foot rotation in the ODST vehicle,
+which cancels that cursor-relative relationship.
+
+The ODST camera evidence provides an isolated mode signal without a new title
+offset: on-foot is `fpBlend=1.0`, while the headset-captured vehicle driver is
+about `0.998` (death is `0.0`). Build H keeps the existing shared Halo 3
+closed-loop right-controller aim active for both on-foot and vehicle cameras,
+but while the observed vehicle blend owns slot 0 it passes the left stick
+through unrotated to ODST's native vehicle input. On foot remains head-relative;
+death receives neither gameplay-control classification; Halo 3 and public-OFF
+builds are unchanged. The mode is cleared on camera teardown/reinstall.
+
+### Build H headset result: no change; vehicle branch never activated
+
+Build H deployed from commit `69ac63445cfd6235bb01ab83e516a27b28ad216b`
+as DLL `FC6BC98E454A2D9209A0446C0019BF4832593CFBEC9372E9E99278FA84300E4D`
+(backup-21). The user reported no change. The deployed hash and launch stamp
+matched, but the log contained no `ODST vehicle controls` activation during the
+test. Build H therefore did not exercise its intended behavior and is failed.
+The exact accepted Build G DLL `36E74C...C0EE` was restored and byte-verified.
+
+Root cause: Build H classified the pre-copy source `sourceFpBlend`. The decisive
+vehicle evidence (`blend~0.998`) was captured from the completed compact camera
+used by the renderer. ODST's native copy/interpolation may leave source at 1.0
+while producing the rendered vehicle blend in destination.
+
+### Build I candidate: publish vehicle controls from the rendered compact camera
+
+Keep Build H's isolated control behavior, but remove its incorrect pre-copy
+classification. After the native camera-copy function finishes, read the proven
+destination compact `fpBlend` field and publish cursor-guided vehicle ownership
+from that value. This is the same completed camera field that produced the
+headset evidence. The right-controller aim path remains active; only the ODST
+vehicle's head-relative movement rotation is bypassed. The input hook logs
+`ODST vehicle controls: ...` on first activation, making deployment and mode
+entry independently visible in the next test log.
+
+### Build I live headset result: branch activates, behavior unchanged
+
+Build I deployed as DLL
+`0928D5812308C984487E5F6AF584FFBB1519DE0DBE67E15C0123C36A43A36E92`.
+While the user remained in the car, the log proved the post-copy classifier did
+activate at `21:28:30`, but the user again observed no control change. A
+simultaneous read-only live camera capture then showed the settled vehicle state:
+both root and nested compact cameras had `fpBlend=0.0`; the near-1 value exists
+only during vehicle entry. Build I's raw-left-stick theory is therefore disproven
+and the Build H/I movement bypass must be removed.
+
+The live log exposed the real divergence: `Game_ComputeAimStick` repeatedly
+reported `camera hook not running` throughout the ride. Halo 3's `CamCopyHook`
+publishes the pre-head-look aim forward and sets `g_aimSeen` on every live camera
+copy, with no first-person-blend gate, and keeps that ownership latched until a
+real lifecycle boundary. ODST instead published aim only above the FP blend
+threshold and cleared `g_aimSeen` every update. A settled blend-0 vehicle
+therefore lost the right-controller/right-stick path entirely.
+
+### Build J candidate: copy Halo 3's continuous camera-aim ownership
+
+Remove the failed Build H/I movement override. Keep the shared Halo 3
+head-relative movement mapping unchanged. In ODST's proven active slot-0 camera
+copy, publish the source's pre-head-look forward and notify the aim/reticle path
+for every active camera exactly as Halo 3 does, including the blend-0 vehicle.
+Stop clearing `g_aimSeen` every ODST update; install, heartbeat teardown, pause,
+and title exit already clear it at real ownership boundaries. This supplies the
+vehicle with Halo 3's continuous right-controller -> injected right stick ->
+native camera/vehicle steering chain without a vehicle-specific engine patch.
+
+### Build J headset acceptance and third-person coverage audit
+
+Build J deployed from commit `75804f40795b1866ecb3729f31776b3c1bdb58e5`
+as DLL `DFF8A406BA78808F2F308CD7FA063E9D9047385A07BC4BD6959B835B1D08F7EB`
+(backup-23). The user confirmed the tested car now works great. The matching
+run logged one `VR aim override active` at camera activation and none of the
+former repeated `aim steering blocked: camera hook not running` dropouts.
+Promote this exact DLL as the private ODST rollback baseline.
+
+The control path is camera-wide, not car- or weapon-specific. Every active
+camera in the proven slot-0/single-user layout publishes its pre-head-look aim
+forward, notifies the aim/reticle path, and feeds the same shared closed-loop
+right-stick injection used by Halo 3. There is no vehicle, turret, seat, or
+weapon allowlist. This structurally covers drivable vehicles, vehicle weapons,
+mounted/passenger guns, turrets, and other third-person weapon cameras that use
+the proven active slot-0 layout. The stereo path likewise accepts every active
+plain-perspective slot-0 camera, with direct-backbuffer capture available when
+ODST bypasses the internal scene target.
+
+Only the car is headset-confirmed so far. Do not claim all third-person weapons
+and vehicles tested until the focused matrix passes: driver weapon (if present),
+passenger-mounted gun, stationary turret, and each distinct campaign vehicle,
+including entry/exit and a death/respawn afterward. Any camera outside the
+proven slot-0/plain-perspective layout must render safely but needs separate
+evidence before it can be called full parity.
+
+### ODST weapon/arm-IK parity candidate: desk-side only (2026-07-21)
+
+Work is on `feature/odst-weapons-ik`, starting from the clean post-Build-J
+tree. The accepted Build J DLL/hash above remains the private rollback baseline;
+this candidate has not been deployed or headset-tested.
+
+The candidate replaces the earlier two log-only ODST skeleton probes with
+functional ODST interpolation and final visible-palette hooks inside the same
+atomic transaction as the five proven camera hooks. H3ODSTEK proves the ODST
+FP body's own 37-node arm hierarchy and the combined-graph rule (weapon subtree
+starts at 37; `camera_control` is final). The ODST adapter builds only that
+title-specific context, then calls the accepted shared Halo 3 arm/gun solver.
+No Halo 3 TLS/tag offset, bone lookup, or sway patch is used.
+
+The title's unique native weapon-IK decision is now independently authorized by
+official shotgun/SMG graph evidence plus exact ODST retail bytes. The
+seven-hook install verifies and enables as one transaction, changes ODST's
+`74 05` branch to its existing no-weapon-IK path `EB 18`, and restores the
+original bytes only after verified detour quiescence. The ODST camera publishes
+the same center-origin/post-head-look atoms consumed by Halo 3, marker/muzzle
+bones receive the same hand transform as the visible gun, and the stereo render
+owns one shared articulated solve per eye pair.
+
+There are no ODST-only weapon settings. The candidate consumes the existing
+universal F1/config values and defaults for arm IK, gun/left-hand scale and
+trims, support-hand placement, two-hand hold/toggle and zone calibration,
+shoulder controls, and floating hands.
+
+The runtime slot-1 path is wired exactly like Halo 3, and official ODST automag
+and SMG graphs retain full dual animation sets. ODST campaign gameplay normally
+does not produce a dual-wield slot, however. No safe retail gameplay-enablement
+gate has yet been proved, so this candidate may claim slot-1 render support but
+not campaign dual-wield availability. If headset testing cannot produce slot 1,
+that gate is a separate evidence task.
+
+Desk-side validation passed:
+
+- private option-ON Release build and `halomccvr_core_tests`; candidate DLL
+  SHA-256 `1DB633B20B640020472CF3C8521F7CD426B9486BBF15A5AB54FF91ECEA23FF09`;
+- public/default option-OFF Release build and `halomccvr_core_tests`;
+- `git diff --check`.
+
+Full evidence and the required ODST headset plus Halo 3 regression matrix are
+in `docs/ODST-WEAPON-IK-EVIDENCE.md`. Do not deploy this private candidate
+without the user's explicit approval of the reviewed checkpoint, and do not
+call it parity until that headset matrix passes.
 
 ## 2026-07-19 session closeout
 
@@ -535,3 +1547,8 @@ tracking, movement, and controller vibration all working.
     .\deploy.bat auto
 
 Then verify both DLL and launcher build times/hashes, launch without anti-cheat, and test only the behavior named for that build. Record the result before the next change.
+
+For ODST, that command sequence remains the public option-OFF path and cannot
+deploy the private camera core. `deploy.bat auto` intentionally rejects an ON
+cache. Do not create, bypass, or run a private deployment path until the user
+explicitly approves the reviewed ODST headset checkpoint.

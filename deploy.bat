@@ -20,6 +20,16 @@ set LAUNCHER_OUT=%SRC%\build\Release\halo3xr_launcher.exe
 set DLL_DST=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR\halo3xr.dll
 set LAUNCHER_DST=N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe
 
+rem Public/normal deployment must never inherit a private ON value from the
+rem persistent CMake cache. A reviewed headset experiment gets a separate,
+rem explicit deployment mode later; this established path is stock-ODST only.
+"%SystemRoot%\System32\findstr.exe" /X /C:"HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP:BOOL=OFF" "%SRC%\build\CMakeCache.txt" >nul
+if errorlevel 1 (
+    echo *** FAILED: the normal build cache is not explicitly configured with
+    echo     HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=OFF. Nothing was deployed.
+    goto :fail
+)
+
 echo.
 echo [1/4] Checking the game is closed...
 "%SystemRoot%\System32\tasklist.exe" /FI "IMAGENAME eq MCC-Win64-Shipping.exe" | "%SystemRoot%\System32\find.exe" /I "MCC-Win64-Shipping.exe" >nul

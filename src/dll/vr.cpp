@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <d3dcompiler.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -122,6 +123,7 @@ namespace
     // Color the reticle was last painted with, so we repaint only when the
     // user changes it (not every frame). Sentinel forces the first paint.
     float g_reticlePaintedColor[3] = {-1.0f, -1.0f, -1.0f};
+    float g_reticlePaintedOpacity = -1.0f; // last painted opacity; sentinel forces first paint
     bool g_reticleEnemyPainted = false; // which color is currently on the image
     // Set by the game layer when the crosshair is over an enemy (the engine's
     // target-lock state). While set, the reticle repaints red like the OG HUD.
@@ -196,8 +198,38 @@ namespace
     // plus a 128-entry linear scan on nearly every RTV bind and could collapse
     // stereo from 90 fps into the 20s.
     ID3D11RenderTargetView* g_sceneColorRtv = nullptr;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    ID3D11Resource* g_sceneColorResource = nullptr;
+    struct NativeHudEyeRouteState
+    {
+        ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+        ID3D11DepthStencilView* dsv = nullptr;
+        ID3D11RenderTargetView* phaseOutputRtv = nullptr;
+        D3D11_VIEWPORT viewports[
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        D3D11_RECT scissors[
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        UINT viewportCount = 0;
+        UINT scissorCount = 0;
+        int eye = -1;
+        bool active = false;
+        bool bypassOmRedirect = false;
+        bool targetCopy = false;
+    };
+    thread_local NativeHudEyeRouteState g_nativeHudEyeRoute{};
+    std::atomic<unsigned> g_nativeHudPhaseScopes{0};
+    std::atomic<unsigned> g_nativeHudProvenOmMatches{0};
+    std::atomic<unsigned> g_nativeHudExactCopyScopes{0};
+    std::atomic<unsigned> g_nativeHudCopySubstitutions{0};
+#endif
     D3D11_TEXTURE2D_DESC g_gameBackbufferDesc{};
     bool g_gameBackbufferDescValid = false;
+    // Retained immediately after Present using the flip chain's current buffer
+    // index. ODST can copy it after each death-camera eye draw without COM
+    // discovery in the hot render path.
+    std::atomic<ID3D11Texture2D*> g_nextGameBackbuffer{nullptr};
+    IDXGISwapChain* g_flipIndexOwner = nullptr;
+    IDXGISwapChain3* g_flipIndexChain = nullptr;
 
     // Where the virtual screen sits: yaw-only orientation + head position,
     // captured once at start (and again on "re-center").
@@ -272,6 +304,7 @@ namespace
     };
     PreparedFrame g_preparedFrame{};
     uint64_t g_nextPreparedSerial = 0;
+    std::atomic<bool> g_preparedShouldRender{false};
 
     template <size_t N>
     struct TimingRing
@@ -1204,6 +1237,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 
     void ResetPreparedFrame()
     {
+        g_preparedShouldRender.store(false, std::memory_order_release);
         g_preparedFrame.begun = false;
         g_preparedFrame.viewsValid = false;
         g_preparedFrame.viewCount = 0;
@@ -1517,24 +1551,48 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (authoredThisFrame)
             return true;
 
+        // Halo can omit the authored widget in some of the repeated FP passes
+        // of one displayed frame. Retain the last authored image across that
+        // short gap; otherwise the render thread alternates upload/clear and
+        // pays a swapchain repaint every frame. A genuine death/loading gap
+        // still clears once after this small grace window.
+        constexpr uint64_t kAuthoredReticleGraceFrames = 2;
+        const bool authoredCaptureRecent = g_authoredReticleSerial != 0 &&
+            g_preparedFrame.serial >= g_authoredReticleSerial &&
+            g_preparedFrame.serial - g_authoredReticleSerial <=
+                kAuthoredReticleGraceFrames;
+        if (g_reticleContainsAuthored && authoredCaptureRecent)
+            return true;
+
         // Halo can stop drawing its authored widget during death and other
         // non-gameplay states. Keep the old procedural fallback fully
         // transparent so it cannot appear close to the viewer; authored
         // crosshairs use UploadAuthoredReticle below and are unaffected.
-        constexpr float kProceduralOpacity = 0.0f;
+        // The procedural reticle is normally transparent: titles with the
+        // authored CHUD capture (Halo 3) get their visible crosshair from
+        // UploadAuthoredReticle, and a visible procedural fallback could flash
+        // during death/loading gaps. The private ODST camera core installs no
+        // authored capture yet, so there the procedural reticle IS the
+        // crosshair and must be opaque to be seen at all.
+        const float kProceduralOpacity =
+            Game_IsCameraOnlyBringup() ? 1.0f : 0.0f;
         const bool enemy = g_reticleEnemy.load(std::memory_order_relaxed);
         const float wantR = enemy ? 1.0f : g_config.reticle_r;
         const float wantG = enemy ? 0.18f : g_config.reticle_g;
         const float wantB = enemy ? 0.14f : g_config.reticle_b;
-        // Repaint only when the desired color changed (compositor keeps showing
-        // the last released image, so a static color costs nothing per frame).
+        // Repaint only when the desired color OR opacity changed (compositor
+        // keeps showing the last released image, so a static reticle costs
+        // nothing per frame). Opacity is included so a Halo 3 -> ODST transition
+        // repaints the swapchain from transparent to visible.
         const bool colorChanged = g_reticleContainsAuthored ||
             g_reticleEnemyPainted != enemy ||
+            g_reticlePaintedOpacity != kProceduralOpacity ||
             (!enemy && (g_reticlePaintedColor[0] != g_config.reticle_r ||
                         g_reticlePaintedColor[1] != g_config.reticle_g ||
                         g_reticlePaintedColor[2] != g_config.reticle_b));
         if (!colorChanged)
             return true;
+        const bool clearingAuthored = g_reticleContainsAuthored;
         if (!PaintReticle(wantR, wantG, wantB, kProceduralOpacity))
         {
             failed = true;
@@ -1543,9 +1601,11 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_reticlePaintedColor[0]=wantR;
         g_reticlePaintedColor[1]=wantG;
         g_reticlePaintedColor[2]=wantB;
+        g_reticlePaintedOpacity=kProceduralOpacity;
         g_reticleEnemyPainted=enemy;
         g_reticleContainsAuthored=false;
-        LOG("M3: procedural crosshair fallback cleared (authored texture only)");
+        if (clearingAuthored)
+            LOG("M3: authored crosshair cleared after capture stopped");
         return true;
     }
 
@@ -2195,7 +2255,19 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         getB(g_actClickR, pad.clickR);
         getB(g_actMenu, pad.menu);
         static VrPadState previousPad{};
-        if (pad.menu && !previousPad.menu) LOG("controller edge: Menu/Start");
+        static bool previousRawMenu = false;
+        static uint64_t odstMenuPulseUntil = 0;
+        const uint64_t inputNow = GetTickCount64();
+        const bool rawMenuEdge = pad.menu && !previousRawMenu;
+        if (rawMenuEdge)
+        {
+            LOG("controller edge: Menu/Start");
+            if (Game_IsCameraOnlyBringup())
+                odstMenuPulseUntil = inputNow + 350;
+        }
+        previousRawMenu = pad.menu;
+        if (Game_IsCameraOnlyBringup() && inputNow < odstMenuPulseUntil)
+            pad.menu = true;
         if (pad.a && !previousPad.a) LOG("controller edge: A");
         if (pad.b && !previousPad.b) LOG("controller edge: B");
         if (pad.x && !previousPad.x) LOG("controller edge: X");
@@ -2467,6 +2539,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_preparedFrame.state = frameState;
         g_preparedFrame.begun = true;
         g_preparedFrame.serial = ++g_nextPreparedSerial;
+        g_preparedShouldRender.store(
+            frameState.shouldRender == XR_TRUE, std::memory_order_release);
 
         if (g_lastPredictedDisplayTime)
         {
@@ -2588,9 +2662,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             // whenever Halo's internal projection produces different scales.
             float haloHalfX = atanf(1.091595f);
             float haloHalfY = atanf(1.114286f);
-            Game_GetRenderHalfFov(haloHalfX, haloHalfY);
             for (uint32_t i = 0; i < locatedViewCount; ++i)
             {
+                Game_GetRenderHalfFov(static_cast<int>(i), haloHalfX, haloHalfY);
                 projectionViews[i].pose = g_views[i].pose;
                 projectionViews[i].fov = {-haloHalfX, haloHalfX, haloHalfY, -haloHalfY};
                 projectionViews[i].subImage.swapchain = g_stereoChain;
@@ -2662,7 +2736,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         // deliberately trade visual reticle response for calm.
                         float aimQ[4], aimP[3];
                         const bool haveAim = VR_GetAimPose(aimQ, aimP);
-                        if (g_config.crosshair && haveAim && EnsureReticleChain())
+                        if ((Game_AllowsSharedGameplayFeatures() ||
+                             Game_AllowsOdstMotionAim()) &&
+                            g_config.crosshair &&
+                            haveAim && EnsureReticleChain())
                         {
                             if (g_authoredReticleReady &&
                                 g_authoredReticleSerial == g_preparedFrame.serial &&
@@ -2727,7 +2804,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                             g_reticleAimPoseValid = false;
                         }
 
-                        if (g_config.scope_enabled && g_scopeActive.load() &&
+                        if (Game_AllowsSharedGameplayFeatures() &&
+                            g_config.scope_enabled &&
+                            g_scopeActive.load() &&
                             !Menu_IsOpen() && haveAim && PrepareScopeImageDelivery())
                         {
                             const ScopeQuadTransform transform = ComputeScopeQuadTransform(
@@ -2894,6 +2973,13 @@ void VR_InitInstance()
 void VR_BeforePresent(IDXGISwapChain* sc)
 {
     g_gameSwapchain = sc;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    // Presentation cleanup must not depend on a healthy/running OpenXR session.
+    // The D3D Present hook still reaches this path when instance/session setup
+    // failed, so it can acknowledge ODST teardown and restore shared title
+    // policy without leaving camera-only ownership latched indefinitely.
+    Game_ProcessPresentationDetachRequest();
+#endif
     if (!g_gameBackbufferDescValid && sc)
     {
         ID3D11Texture2D* backbuffer = nullptr;
@@ -2991,7 +3077,7 @@ void VR_BeforePresent(IDXGISwapChain* sc)
     QueryPerformanceCounter(&g_dxgiPresentStartQpc);
 }
 
-void VR_AfterPresent(IDXGISwapChain*)
+void VR_AfterPresent(IDXGISwapChain* sc)
 {
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
@@ -2999,6 +3085,33 @@ void VR_AfterPresent(IDXGISwapChain*)
         g_presentDurationsMs.Add(
             QpcMs(now.QuadPart - g_dxgiPresentStartQpc.QuadPart));
     g_dxgiPresentStartQpc = {};
+
+    // Present has advanced the flip-model chain. Retain its reported current
+    // buffer outside all camera/render hooks for ODST's direct death capture.
+    if (sc)
+    {
+        UINT currentIndex = 0;
+        if (g_flipIndexOwner != sc)
+        {
+            if (g_flipIndexChain)
+                g_flipIndexChain->Release();
+            g_flipIndexChain = nullptr;
+            g_flipIndexOwner = sc;
+            sc->QueryInterface(__uuidof(IDXGISwapChain3),
+                reinterpret_cast<void**>(&g_flipIndexChain));
+        }
+        if (g_flipIndexChain)
+            currentIndex = g_flipIndexChain->GetCurrentBackBufferIndex();
+        ID3D11Texture2D* next = nullptr;
+        if (SUCCEEDED(sc->GetBuffer(currentIndex, __uuidof(ID3D11Texture2D),
+                                    reinterpret_cast<void**>(&next))) && next)
+        {
+            ID3D11Texture2D* previous =
+                g_nextGameBackbuffer.exchange(next, std::memory_order_acq_rel);
+            if (previous)
+                previous->Release();
+        }
+    }
 
     if (g_state != State::Ready || !g_sessionRunning)
         return;
@@ -3043,8 +3156,18 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
         g_sceneColorRtv->Release();
         g_sceneColorRtv = nullptr;
     }
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (g_sceneColorResource)
+    {
+        g_sceneColorResource->Release();
+        g_sceneColorResource = nullptr;
+    }
+#endif
     g_gameBackbufferDesc = {};
     g_gameBackbufferDescValid = false;
+    if (ID3D11Texture2D* retained =
+            g_nextGameBackbuffer.exchange(nullptr, std::memory_order_acq_rel))
+        retained->Release();
 }
 
 void VR_RequestRecenter()
@@ -3094,6 +3217,11 @@ bool VR_IsStereoEnabled()
     return g_stereoEnabled.load();
 }
 
+bool VR_ShouldRenderPreparedFrame()
+{
+    return g_preparedShouldRender.load(std::memory_order_acquire);
+}
+
 void VR_DetachGamePresentation()
 {
     // Game_AutoVrTick calls this from Present, after Halo has stopped issuing
@@ -3121,16 +3249,23 @@ void VR_DetachGamePresentation()
         g_sceneColorRtv->Release();
         g_sceneColorRtv = nullptr;
     }
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (g_sceneColorResource)
+    {
+        g_sceneColorResource->Release();
+        g_sceneColorResource = nullptr;
+    }
+#endif
 }
 
-void VR_CaptureRenderedEye(int eye)
+bool VR_CaptureRenderedEye(int eye)
 {
     if (eye < 0 || eye > 1)
-        return;
+        return false;
     if (g_rasterRedirected[eye] && g_eyeCache[eye])
     {
         g_eyeHasImage[eye] = true;
-        return;
+        return true;
     }
     static bool loggedMissing = false;
     if (!loggedMissing)
@@ -3138,6 +3273,29 @@ void VR_CaptureRenderedEye(int eye)
         LOG("M2 RASTER: no internal scene-color RTV redirect occurred; refusing fake eye copy");
         loggedMissing = true;
     }
+    return false;
+}
+
+bool VR_CaptureBackbufferEye(int eye)
+{
+    if (eye < 0 || eye > 1 || !g_context || !g_gameBackbufferDescValid ||
+        !g_eyeCache[eye] || !g_eyeCacheRtvs[eye])
+        return false;
+    ID3D11Texture2D* backbuffer =
+        g_nextGameBackbuffer.load(std::memory_order_acquire);
+    if (!backbuffer ||
+        g_eyeCacheDesc.Width != g_gameBackbufferDesc.Width ||
+        g_eyeCacheDesc.Height != g_gameBackbufferDesc.Height)
+        return false;
+    if (!Blit(backbuffer, g_gameBackbufferDesc, g_eyeCache[eye],
+              g_eyeCacheDesc.Width, g_eyeCacheDesc.Height,
+              g_eyeCacheRtvs[eye]))
+        return false;
+    g_eyeHasImage[eye] = true;
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true, std::memory_order_relaxed))
+        LOG("M2 RASTER: ODST direct backbuffer death-camera capture active");
+    return true;
 }
 
 void VR_TraceEvent(const char* tag, int a, int b)
@@ -3186,6 +3344,133 @@ void VR_EndRasterEye()
     g_rasterEye = -1;
 }
 
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+bool VR_BeginNativeHudEyeDraw(int eye)
+{
+    auto& route = g_nativeHudEyeRoute;
+    if (!g_context || eye < 0 || eye > 1 || !g_eyeCacheRtvs[eye] || route.active)
+        return false;
+
+    g_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  route.rtvs, &route.dsv);
+    route.viewportCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    g_context->RSGetViewports(&route.viewportCount, route.viewports);
+    route.scissorCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    g_context->RSGetScissorRects(&route.scissorCount, route.scissors);
+    // ODST's unique prepare callback owns slot 0 at both native CHUD boundaries:
+    // it establishes target 1 immediately before secondary, then performs its
+    // engine-owned transition before primary. A non-null slot-0 RTV captured
+    // only at these TLS-scoped hooks is therefore the title-proven phase output,
+    // even when its view pointer differs from the later scene-color view.
+    if (!route.rtvs[0])
+    {
+        for (auto*& rtv : route.rtvs)
+        {
+            if (rtv) rtv->Release();
+            rtv = nullptr;
+        }
+        if (route.dsv)
+        {
+            route.dsv->Release();
+            route.dsv = nullptr;
+        }
+        route.viewportCount = 0;
+        route.scissorCount = 0;
+        return false;
+    }
+
+    route.phaseOutputRtv = route.rtvs[0];
+    route.eye = eye;
+    ID3D11RenderTargetView* routed[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+        routed[i] = route.rtvs[i];
+    routed[0] = g_eyeCacheRtvs[eye];
+    route.bypassOmRedirect = true;
+    g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  routed, route.dsv);
+    route.bypassOmRedirect = false;
+    route.targetCopy = false;
+    route.active = true;
+    return true;
+}
+
+void VR_EndNativeHudEyeDraw()
+{
+    auto& route = g_nativeHudEyeRoute;
+    if (!route.active || !g_context)
+        return;
+
+    route.active = false;
+    route.targetCopy = false;
+    route.bypassOmRedirect = true;
+    g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  route.rtvs, route.dsv);
+    route.bypassOmRedirect = false;
+    g_context->RSSetViewports(route.viewportCount,
+                              route.viewportCount ? route.viewports : nullptr);
+    g_context->RSSetScissorRects(route.scissorCount,
+                                 route.scissorCount ? route.scissors : nullptr);
+    for (auto*& rtv : route.rtvs)
+    {
+        if (rtv) rtv->Release();
+        rtv = nullptr;
+    }
+    if (route.dsv)
+    {
+        route.dsv->Release();
+        route.dsv = nullptr;
+    }
+    route.phaseOutputRtv = nullptr;
+    route.viewportCount = 0;
+    route.scissorCount = 0;
+    route.eye = -1;
+    g_nativeHudPhaseScopes.fetch_add(1, std::memory_order_release);
+}
+
+void VR_BeginNativeHudTargetCopy()
+{
+    auto& route = g_nativeHudEyeRoute;
+    route.targetCopy = route.active;
+}
+
+void VR_EndNativeHudTargetCopy()
+{
+    auto& route = g_nativeHudEyeRoute;
+    if (!route.targetCopy)
+        return;
+    route.targetCopy = false;
+    g_nativeHudExactCopyScopes.fetch_add(1, std::memory_order_relaxed);
+}
+
+ID3D11Resource* VR_RedirectNativeHudCopySource(ID3D11Resource* source)
+{
+    const auto& route = g_nativeHudEyeRoute;
+    if (!route.active || !route.targetCopy || route.eye < 0 || route.eye > 1 ||
+        !g_eyeCache[route.eye] || !g_sceneColorResource ||
+        source != g_sceneColorResource)
+        return source;
+
+    g_nativeHudCopySubstitutions.fetch_add(1, std::memory_order_relaxed);
+    return g_eyeCache[route.eye];
+}
+
+void VR_GetNativeHudRouteStats(unsigned& completedPhaseScopes,
+                               unsigned& provenOmMatches,
+                               unsigned& exactCopyScopes,
+                               unsigned& copySubstitutions)
+{
+    completedPhaseScopes =
+        g_nativeHudPhaseScopes.load(std::memory_order_acquire);
+    provenOmMatches = g_nativeHudProvenOmMatches.load(std::memory_order_relaxed);
+    exactCopyScopes =
+        g_nativeHudExactCopyScopes.load(std::memory_order_relaxed);
+    copySubstitutions =
+        g_nativeHudCopySubstitutions.load(std::memory_order_relaxed);
+}
+
+#endif
 
 bool VR_ScopeShouldRenderThisFrame()
 {
@@ -3254,17 +3539,56 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                               ID3D11RenderTargetView* const* input,
                               ID3D11RenderTargetView** output)
 {
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    auto& hudRoute = g_nativeHudEyeRoute;
+    if (hudRoute.bypassOmRedirect)
+        return false;
+#endif
     const int eye = g_rasterEye.load();
     const bool scope=g_rasterScope.load(std::memory_order_acquire);
-    if ((!scope && (eye < 0 || eye > 1)) || !input || !output || !g_gameSwapchain)
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    const bool nativeHud = hudRoute.active && hudRoute.eye >= 0 &&
+        hudRoute.eye <= 1;
+#else
+    constexpr bool nativeHud = false;
+#endif
+    if ((!scope && !nativeHud && (eye < 0 || eye > 1)) || !input || !output ||
+        !g_gameSwapchain)
         return false;
-    ID3D11RenderTargetView* target=scope?g_scopeCacheRtv:g_eyeCacheRtvs[eye];
+    int targetEye = eye;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (nativeHud)
+        targetEye = hudRoute.eye;
+#endif
+    ID3D11RenderTargetView* target = scope ? g_scopeCacheRtv :
+        g_eyeCacheRtvs[targetEye];
     bool changed = false;      // any slot rewritten (scene color or sun shaft)
     bool sceneChanged = false; // scene-color redirect only: marks the eye image valid
     for (UINT i = 0; i < count; ++i)
     {
         output[i] = input[i];
         if (!input[i]) continue;
+
+        // ODST's CHUD phase is logically inside this eye render just like Halo
+        // 3, but its recompiled phase can bind the flat output RTV. Redirect
+        // only the exact target saved at the proven CHUD phase boundary. This
+        // is a pointer comparison in the OM hot hook; all COM work occurs once
+        // at phase entry/exit.
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+        if (nativeHud)
+        {
+            if (target && input[i] == hudRoute.phaseOutputRtv)
+            {
+                output[i] = target;
+                g_nativeHudProvenOmMatches.fetch_add(1, std::memory_order_relaxed);
+                changed = true;
+            }
+            // A phase-local target which is not the captured proven pointer
+            // stays stock. In particular, never enter scene-target discovery
+            // while a CHUD phase is active.
+            continue;
+        }
+#endif
 
         // Normal steady-state path: two pointer comparisons and no COM calls.
         if (g_sceneColorRtv)
@@ -3315,6 +3639,10 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         {
             input[i]->AddRef();
             g_sceneColorRtv = input[i];
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+            g_sceneColorResource = resource;
+            resource = nullptr;
+#endif
             output[i] = g_eyeCacheRtvs[eye];
             changed = true;
             sceneChanged = true;

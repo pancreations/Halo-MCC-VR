@@ -1,6 +1,15 @@
 # Project instructions
 
-Halo 3 OpenXR is a native C++20 OpenXR VR mod for Halo 3 in MCC Steam. Before changing code, read docs/CURRENT-STATE.md. It is the only authoritative status and failure ledger. docs/RE-notes.md contains only verified reverse-engineering facts.
+Halo MCC VR is a native C++20 OpenXR VR mod for MCC Steam. Halo 3 is the first
+headset-confirmed title and ODST is the next approved adapter. Before changing
+code, read docs/CURRENT-STATE.md. It is the only authoritative status and
+failure ledger. docs/RE-notes.md contains only verified reverse-engineering
+facts, and docs/EDITING-KIT-EVIDENCE.md governs per-title evidence.
+
+Read and obey `AGENTS.md`. Its Halo 3 player-facing parity contract applies to
+every agent and every title adapter. Halo 3's headset-confirmed behavior is the
+foundation; title-specific engine evidence changes how that behavior is reached,
+not what the end user receives.
 
 ## User and testing
 
@@ -18,6 +27,10 @@ The user is a game modder, not a programmer. Explain test steps in plain languag
 8. Keep logging, file I/O, locks, COM, and allocation out of render and palette hot hooks.
 9. Never patch game files on disk or interact with Easy Anti-Cheat. The mod runs only through MCC's official EAC-disabled mode.
 10. Never hook halo3+0x120DF8; even a pass-through detour crashed on level load.
+11. Preserve one universal halomccvr.cfg/F1 experience. Keep user preferences
+    portable and put verified engine/skeleton/HUD calibration in title adapters.
+12. For ODST, use H3ODSTEK and halo3odst.dll as primary evidence. Never copy a
+    Halo 3 offset, signature, bone, marker, or tag meaning without ODST proof.
 
 ## Paths
 
@@ -25,6 +38,8 @@ The user is a game modder, not a programmer. Explain test steps in plain languag
 - Game: N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection
 - Host: MCC\Binaries\Win64\MCC-Win64-Shipping.exe
 - Engine: halo3\halo3.dll
+- ODST engine: halo3odst\halo3odst.dll
+- ODST editing kit: N:\SteamLibrary\steamapps\common\H3ODSTEK
 - Deployed mod: Halo_MCC_VR\halo3xr.dll
 - Runtime log: Halo_MCC_VR\halo3xr.log
 

@@ -68,6 +68,7 @@ static void Clamp()
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
     g_config.left_grip_forward_m = std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
+    g_config.shoulder_back_m = std::clamp(g_config.shoulder_back_m, -0.3f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
     g_config.gun_roll_deg = std::clamp(g_config.gun_roll_deg, -180.0f, 180.0f);
@@ -256,6 +257,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.floating_hands = atoi(val) != 0;
         else if (!strcmp(key, "right_shoulder_drop"))
             g_config.right_shoulder_drop = (float)atof(val);
+        else if (!strcmp(key, "shoulder_back_m"))
+            g_config.shoulder_back_m = (float)atof(val);
         else if (!strcmp(key, "shoulder_level"))
             g_config.shoulder_level = atoi(val) != 0;
         else if (!strcmp(key, "motion_blur"))
@@ -331,6 +334,9 @@ void ConfigSave()
     fprintf(f, "#  Edit this file in Notepad with MCC CLOSED, or press F1 in game.\n");
     fprintf(f, "#  Every setting below lists what it does and its default value, so\n");
     fprintf(f, "#  you can always put one back the way it was.\n");
+    fprintf(f, "#  This ONE file is shared by every supported MCC game. Your comfort,\n");
+    fprintf(f, "#  control, aiming, and presentation preferences follow you between\n");
+    fprintf(f, "#  titles; each game keeps its own internal engine calibration.\n");
     fprintf(f, "#\n");
     fprintf(f, "#  * Lost? Close MCC, DELETE this file, and start the game. A fresh\n");
     fprintf(f, "#    one with all the defaults is written for you. Nothing else in\n");
@@ -344,21 +350,26 @@ void ConfigSave()
     fprintf(f, "#    the mod, and out-of-range numbers are pulled back into range.\n");
     fprintf(f, "# ===================================================================\n\n");
     fprintf(f, "config_version = %d\n\n", g_config.config_version);
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  OPENXR & COMFORT\n");
+    fprintf(f, "#  Headset, controller feedback, and the shared 2D menu screen.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
     fprintf(f, "# OpenXR controller vibration strength, 0 = off and 1 = full.\n");
     fprintf(f, "# (default %.2f, range 0 to 1)\n", d.haptic_intensity);
     fprintf(f, "haptic_intensity = %.2f\n\n", g_config.haptic_intensity);
     fprintf(f, "# Headset micro-smoothing, 0 = raw. Try 0.05 only for micro-jitter.\n");
     fprintf(f, "# (default %.2f, range 0 to 0.10)\n", d.headset_smoothing);
     fprintf(f, "headset_smoothing = %.2f\n\n", g_config.headset_smoothing);
-    fprintf(f, "# Floating VR-crosshair smoothing only; bullets stay raw.\n");
-    fprintf(f, "# (default %.2f, range 0 to 0.95)\n", d.aim_stabilization);
-    fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
     fprintf(f, "# Width of the virtual screen in meters (menus / 2D mode).\n");
     fprintf(f, "# (default %.2f, range 0.5 to 20)\n", d.screen_width_m);
     fprintf(f, "screen_width_m = %.2f\n\n", g_config.screen_width_m);
     fprintf(f, "# Distance from your head to that screen, in meters.\n");
     fprintf(f, "# (default %.2f, range 0.3 to 20)\n", d.screen_distance_m);
     fprintf(f, "screen_distance_m = %.2f\n\n", g_config.screen_distance_m);
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  CONTROLS & TURNING\n");
+    fprintf(f, "#  Universal controller choices used in every supported title.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
     fprintf(f, "# VR turning with the right controller stick: 0 = snap, 1 = smooth.\n");
     fprintf(f, "# (default %d)\n", d.turn_smooth ? 1 : 0);
     fprintf(f, "turn_smooth = %d\n\n", g_config.turn_smooth ? 1 : 0);
@@ -372,6 +383,13 @@ void ConfigSave()
     fprintf(f, "# 0 = left controller, 1 = right controller.\n");
     fprintf(f, "# (default %d)\n", d.dpad_hand);
     fprintf(f, "dpad_hand = %d\n\n", g_config.dpad_hand);
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  RETICLE & AIMING\n");
+    fprintf(f, "#  Portable aiming preferences; title adapters supply engine offsets.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
+    fprintf(f, "# Floating VR-crosshair smoothing only; bullets stay raw.\n");
+    fprintf(f, "# (default %.2f, range 0 to 0.95)\n", d.aim_stabilization);
+    fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
     fprintf(f, "# Aim crosshair in stereo: a floating reticle where the weapon actually\n");
     fprintf(f, "# shoots (the game's own reticle follows your head, not your hand).\n");
     fprintf(f, "# (default %d)\n", d.crosshair ? 1 : 0);
@@ -383,13 +401,21 @@ void ConfigSave()
     fprintf(f, "# (default %.2f, range 0.3 to 20)\n", d.crosshair_size_deg);
     fprintf(f, "crosshair_size_deg = %.2f\n\n", g_config.crosshair_size_deg);
     fprintf(f, "# Crosshair color, 0-1 per channel. Not in the F1 menu; this file only.\n");
-    fprintf(f, "# (defaults %.3f / %.3f / %.3f = Halo 3 light blue, range 0 to 1)\n",
-            d.reticle_r, d.reticle_g, d.reticle_b);
+    fprintf(f, "# (defaults %.3f / %.3f / %.3f = light blue, range 0 to 1)\n",
+             d.reticle_r, d.reticle_g, d.reticle_b);
     fprintf(f, "reticle_r = %.3f\n", g_config.reticle_r);
     fprintf(f, "reticle_g = %.3f\n", g_config.reticle_g);
     fprintf(f, "reticle_b = %.3f\n\n", g_config.reticle_b);
+    fprintf(f, "# Hide the native head-centered crosshair after the floating\n");
+    fprintf(f, "# motion-control reticle is ready. Set 0 for an emergency native fallback.\n");
+    fprintf(f, "# (default %d)\n", d.kill_reticle ? 1 : 0);
+    fprintf(f, "kill_reticle = %d\n\n", g_config.kill_reticle ? 1 : 0);
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  WEAPON CALIBRATION\n");
+    fprintf(f, "#  Personal trims applied over the active title's verified base pose.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
     fprintf(f, "# Size of the right hand and the weapon it holds. Home/End adjust it\n");
-    fprintf(f, "# in-game. 1.00 = the size Halo authored the model at.\n");
+    fprintf(f, "# in-game. 1.00 = the size the active game authored the model at.\n");
     fprintf(f, "# (default %.2f, range 0.3 to 3)\n", d.gun_scale);
     fprintf(f, "gun_scale = %.2f\n\n", g_config.gun_scale);
     fprintf(f, "# Size of the LEFT hand, and of the second gun when dual-wielding.\n");
@@ -408,7 +434,11 @@ void ConfigSave()
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "# (default %.2f, range -0.3 to 0.5)\n", d.gun_forward_m);
     fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
-    fprintf(f, "# --- Experimental gun-mounted zoom screen. R3 toggles it without hiding the VR body.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  EXPERIMENTAL SCOPE\n");
+    fprintf(f, "#  Universal physical placement and performance preferences.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
+    fprintf(f, "# Gun-mounted zoom screen. R3 toggles it without hiding the VR body.\n");
     fprintf(f, "# The main VR view stays wide while a fixed-magnification image appears. 1 = on.\n");
     fprintf(f, "# (default %d)\n", d.scope_enabled ? 1 : 0);
     fprintf(f, "scope_enabled = %d\n\n", g_config.scope_enabled ? 1 : 0);
@@ -428,16 +458,16 @@ void ConfigSave()
     fprintf(f, "# Refresh the final zoom picture every Nth frame. 1 = full rate.\n");
     fprintf(f, "# (default %d, range 1 to 4)\n", d.scope_refresh_divisor);
     fprintf(f, "scope_refresh_divisor = %d\n\n", g_config.scope_refresh_divisor);
-    fprintf(f, "# Hide the native head-centered CHUD crosshair after the floating\n");
-    fprintf(f, "# motion-control reticle is ready. Set 0 for an emergency native fallback.\n");
-    fprintf(f, "# (default %d)\n", d.kill_reticle ? 1 : 0);
-    fprintf(f, "kill_reticle = %d\n\n", g_config.kill_reticle ? 1 : 0);
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  HUD, PRESENTATION & PERFORMANCE\n");
+    fprintf(f, "#  Shared intent; each title adapter maps it to that game's renderer.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
     fprintf(f, "# Game brightness / gamma. 1.0 = the game's own; higher = brighter.\n");
     fprintf(f, "# (default %.2f, range 0.5 to 2)\n", d.game_brightness);
     fprintf(f, "game_brightness = %.2f\n\n", g_config.game_brightness);
     fprintf(f, "# How sharp the game renders inside the headset. ANY value in range\n");
     fprintf(f, "# works, so pick your own: 0.90 really means 90%%, not \"rounded to 80\".\n");
-    fprintf(f, "# The named tiers are only shortcuts in the F1 menu and the installer:\n");
+    fprintf(f, "# The named tiers are only shortcuts in the F1 menu:\n");
     fprintf(f, "#   0.50 potato   0.67 low     0.80 medium\n");
     fprintf(f, "#   1.00 high     1.10 ultra   1.50 keith david\n");
     fprintf(f, "# %d x %d is 1.00; your value scales both numbers together.\n",
@@ -461,7 +491,7 @@ void ConfigSave()
     fprintf(f, "resolution_scale = %.2f\n\n", g_config.resolution_scale);
     fprintf(f, "# HUD size: fraction of the view the HUD lays out into. Smaller pulls\n");
     fprintf(f, "# shields/radar/ammo toward the center so both VR eyes see them.\n");
-    fprintf(f, "# (default %.2f = Halo's stock value, range 0.30 to 1.00)\n", d.hud_size);
+    fprintf(f, "# (default %.2f = calibrated stock layout, range 0.30 to 1.00)\n", d.hud_size);
     fprintf(f, "hud_size = %.2f\n\n", g_config.hud_size);
     fprintf(f, "# HUD width/aspect trim after automatic headset correction.\n");
     fprintf(f, "# 1 = automatic, lower = narrower, higher = wider.\n");
@@ -469,14 +499,22 @@ void ConfigSave()
             d.hud_aspect, kHudAspectMin, kHudAspectMax);
     fprintf(f, "hud_aspect = %.2f\n\n", g_config.hud_aspect);
     fprintf(f, "# HUD curvature: 0 = flat (+0.30), 1 = fully curved (-0.30).\n");
-    fprintf(f, "# 0.50 keeps Halo's authored curvature.\n");
+    fprintf(f, "# 0.50 keeps the active game's authored curvature.\n");
     fprintf(f, "# (default %.2f, range %.2f to %.2f)\n",
             d.hud_curvature, kHudCurvatureMin, kHudCurvatureMax);
     fprintf(f, "hud_curvature = %.2f\n\n", g_config.hud_curvature);
     fprintf(f, "# HUD height in virtual-screen pixels. Positive = higher, negative = lower.\n");
     fprintf(f, "# (default %+.0f, range %+.0f to %+.0f)\n",
-            d.hud_vertical_offset, kHudHeightMin, kHudHeightMax);
+             d.hud_vertical_offset, kHudHeightMin, kHudHeightMax);
     fprintf(f, "hud_vertical_offset = %+.0f\n\n", g_config.hud_vertical_offset);
+    fprintf(f, "# Game camera motion blur: 0 = off (VR default; also removes\n");
+    fprintf(f, "# repeating stereo echo artifacts), 1 = the game's normal blur.\n");
+    fprintf(f, "# (default %d)\n", d.motion_blur ? 1 : 0);
+    fprintf(f, "motion_blur = %d\n\n", g_config.motion_blur ? 1 : 0);
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  GAMEPLAY, HANDS & IK\n");
+    fprintf(f, "#  Shared behavior with title-specific skeleton calibration underneath.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
     fprintf(f, "# Automatically enter VR when a level loads (no F2/F11 needed).\n");
     fprintf(f, "# (default %d)\n", d.auto_vr ? 1 : 0);
     fprintf(f, "auto_vr = %d\n\n", g_config.auto_vr ? 1 : 0);
@@ -511,6 +549,11 @@ void ConfigSave()
     fprintf(f, "# (0 = authored, higher = lower; ~world units).\n");
     fprintf(f, "# (default %.3f, range 0 to 0.3)\n", d.right_shoulder_drop);
     fprintf(f, "right_shoulder_drop = %.3f\n\n", g_config.right_shoulder_drop);
+    fprintf(f, "# Push BOTH shoulders back toward your torso, along your heading.\n");
+    fprintf(f, "# Some titles (e.g. ODST) plant the shoulders in front of you;\n");
+    fprintf(f, "# raise this until they sit at your body. Negative = forward.\n");
+    fprintf(f, "# (default %.3f, range -0.3 to 0.3; ~world units)\n", d.shoulder_back_m);
+    fprintf(f, "shoulder_back_m = %.3f\n\n", g_config.shoulder_back_m);
     fprintf(f, "# Keep the IK shoulders level with the horizon instead of pitching\n");
     fprintf(f, "# with your head. 1 = level torso (shoulders stay put); 0 = old.\n");
     fprintf(f, "# (default %d)\n", d.shoulder_level ? 1 : 0);
@@ -518,11 +561,10 @@ void ConfigSave()
     fprintf(f, "# VRIK stage A1: show the player's game-animated body (experimental).\n");
     fprintf(f, "# (default %d)\n", d.body_wip ? 1 : 0);
     fprintf(f, "body_wip = %d\n\n", g_config.body_wip ? 1 : 0);
-    fprintf(f, "# Halo's camera motion blur: 0 = off (VR default; also removes the\n");
-    fprintf(f, "# repeating echo artifacts in stereo), 1 = the game's normal blur.\n");
-    fprintf(f, "# (default %d)\n", d.motion_blur ? 1 : 0);
-    fprintf(f, "motion_blur = %d\n\n", g_config.motion_blur ? 1 : 0);
-    fprintf(f, "# --- Diagnostics. Leave these off unless you are asked to turn one on.\n\n");
+    fprintf(f, "# -------------------------------------------------------------------\n");
+    fprintf(f, "#  DEVELOPMENT DIAGNOSTICS\n");
+    fprintf(f, "#  Leave these off unless a developer asks you to enable one.\n");
+    fprintf(f, "# -------------------------------------------------------------------\n\n");
     fprintf(f, "# Diagnostic: 1 ignores the controller and pushes the weapon a fixed\n");
     fprintf(f, "# distance left, to test whether the gun mesh reads our matrices.\n");
     fprintf(f, "# (default %d)\n", d.weapon_probe ? 1 : 0);

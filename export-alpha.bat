@@ -35,6 +35,15 @@ if not exist "%BUILD_DIR%\CMakeCache.txt" (
     goto :fail
 )
 
+rem Never package a private ODST bring-up cache as a public alpha by accident.
+"%SystemRoot%\System32\findstr.exe" /X /C:"HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP:BOOL=OFF" "%BUILD_DIR%\CMakeCache.txt" >nul
+if errorlevel 1 (
+    echo [ERROR] The normal build cache is not explicitly configured with
+    echo         HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=OFF.
+    echo         Refusing to package an experimental ODST runtime.
+    goto :fail
+)
+
 rem A configured build tree must be driven by the same CMake that created it.
 rem Mixing a newer PATH CMake with Visual Studio's bundled CMake can fail while
 rem regenerating and can even leave old output files behind.

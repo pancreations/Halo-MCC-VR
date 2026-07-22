@@ -33,6 +33,10 @@ MenuPointerHit IntersectMenuQuad(const float origin[3], const float direction[3]
 
 float BlendXInputMotors(uint16_t lowFrequencyMotor, uint16_t highFrequencyMotor);
 
+// Menu/Start is always passed through as controller input, but only a proven
+// Halo 3 gameplay owner may use its edge to change VR pause presentation.
+bool PausePresentationInputAllowed(bool sharedGameplayOwner);
+
 // Hold-mode two-hand aiming uses the barrel zone only to acquire the support
 // grip. Once acquired, ordinary movement of either hand must not drop the hold;
 // releasing the grip is the explicit disengage action.

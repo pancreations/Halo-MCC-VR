@@ -18,21 +18,31 @@ typedef HRESULT(STDMETHODCALLTYPE* Present1Fn)(IDXGISwapChain1*, UINT, UINT, con
 typedef HRESULT(STDMETHODCALLTYPE* ResizeBuffersFn)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 typedef void(STDMETHODCALLTYPE* OMSetRenderTargetsFn)(ID3D11DeviceContext*, UINT,
     ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+typedef void(STDMETHODCALLTYPE* CopyResourceFn)(ID3D11DeviceContext*,
+    ID3D11Resource*, ID3D11Resource*);
+#endif
 
 static PresentFn g_origPresent = nullptr;
 static Present1Fn g_origPresent1 = nullptr;
 static ResizeBuffersFn g_origResizeBuffers = nullptr;
 static OMSetRenderTargetsFn g_origOMSetRenderTargets = nullptr;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+static CopyResourceFn g_origCopyResource = nullptr;
+#endif
 
-// Hooks deliberately NOT installed here, each retired after disproving a
+// Broad probe paths deliberately NOT installed here; each was retired after
 // theory. Re-adding any of them costs frame time for information we already
 // have:
 //   UpdateSubresource/Map/Unmap - constant census sagged fps ~25%; the
 //     exact-match matrix matcher scored zero hits in a full session.
-//   CopyResource/CopySubresourceRegion - learned the frame-level scene
-//     snapshot pairs; per-eye substitution of both sides left the ghost
+//   CopySubresourceRegion and frame-wide CopyResource learning - learned the
+//     scene snapshot pairs; per-eye substitution of both sides left the ghost
 //     unchanged. The learning also allocated a full-resolution shadow texture
 //     per eye per pair (~25 MB each) and re-copied them every eye pass.
+// CopyResource itself is now intercepted only for ODST's exact native-CHUD
+// phase scope. It performs one retained-pointer comparison and may substitute
+// only the source with the already-owned eye cache; it does no discovery.
 //   PSSetShaderResources - cross-pass history discovery promoted 0 targets in
 //     two sessions.
 //   OMSetRenderTargetsAndUnorderedAccessViews - frame-level RTV discovery
@@ -54,6 +64,15 @@ static void STDMETHODCALLTYPE OMSetRenderTargetsHook(ID3D11DeviceContext* contex
     }
     g_origOMSetRenderTargets(context, count, rtvs, dsv);
 }
+
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+static void STDMETHODCALLTYPE CopyResourceHook(ID3D11DeviceContext* context,
+    ID3D11Resource* destination, ID3D11Resource* source)
+{
+    g_origCopyResource(context, destination,
+                       VR_RedirectNativeHudCopySource(source));
+}
+#endif
 
 // Present1 can forward to Present internally; this depth counter makes sure
 // we only run the VR frame once per game frame.
@@ -141,6 +160,10 @@ bool InstallD3D11Hooks()
               MH_CreateHook(vtbl[13], (void*)&ResizeBuffersHook, (void**)&g_origResizeBuffers) == MH_OK &&
               MH_CreateHook(contextVtbl[33], (void*)&OMSetRenderTargetsHook,
                             (void**)&g_origOMSetRenderTargets) == MH_OK;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    ok = ok && MH_CreateHook(contextVtbl[47], (void*)&CopyResourceHook,
+                             (void**)&g_origCopyResource) == MH_OK;
+#endif
 
     IDXGISwapChain1* sc1 = nullptr;
     if (SUCCEEDED(sc->QueryInterface(__uuidof(IDXGISwapChain1), (void**)&sc1)))
@@ -159,7 +182,7 @@ bool InstallD3D11Hooks()
 
     if (!ok)
     {
-        LOG("MinHook could not hook Present/ResizeBuffers/HUD draw path");
+        LOG("MinHook could not hook the required D3D render path");
         return false;
     }
     return MH_EnableHook(MH_ALL_HOOKS) == MH_OK;

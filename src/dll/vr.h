@@ -49,6 +49,10 @@ void VR_ToggleScreenFollow();
 // submits the two retained images as an OpenXR projection layer.
 void VR_ToggleStereo();
 bool VR_IsStereoEnabled();
+// True only for the begun OpenXR frame the runtime asked us to render. A
+// synchronized/unfocused session commonly publishes false while the headset is
+// idle; game hooks must not treat the resulting absent eye raster as failure.
+bool VR_ShouldRenderPreparedFrame();
 // Called on the render thread when Halo stops driving its level camera. Makes
 // every 3D path inactive immediately and drops references to Halo's scene
 // target before MCC switches to its shell or another resident game engine.
@@ -56,9 +60,29 @@ void VR_DetachGamePresentation();
 
 // Called by the M2 game render hook immediately after each eye's scene pass,
 // before the next eye overwrites the game backbuffer.
-void VR_CaptureRenderedEye(int eye);
+bool VR_CaptureRenderedEye(int eye);
+// ODST's third-person death renderer bypasses the internal scene-color RTV and
+// draws directly into the current swapchain buffer. Copy that completed draw
+// into the eye cache without doing COM discovery in the game render hook.
+bool VR_CaptureBackbufferEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
+// ODST's native CHUD phases are part of the same logical per-eye render as
+// Halo 3, but ODST can rebind the flat output target while those phases run.
+// Keep that title-specific phase on the active eye cache and restore every
+// output-merger reference afterward. Called at CHUD-phase granularity, never
+// per widget.
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+bool VR_BeginNativeHudEyeDraw(int eye);
+void VR_EndNativeHudEyeDraw();
+void VR_BeginNativeHudTargetCopy();
+void VR_EndNativeHudTargetCopy();
+ID3D11Resource* VR_RedirectNativeHudCopySource(ID3D11Resource* source);
+void VR_GetNativeHudRouteStats(unsigned& completedPhaseScopes,
+                               unsigned& provenOmMatches,
+                               unsigned& exactCopyScopes,
+                               unsigned& copySubstitutions);
+#endif
 
 // Universal scope: a refresh-limited third world render redirected into a
 // private cache. The physical OpenXR quad continues tracking every frame.

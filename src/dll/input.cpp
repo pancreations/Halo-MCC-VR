@@ -10,6 +10,7 @@
 #include "../common/log.h"
 #include "../common/config.h"
 #include "../common/input_logic.h"
+#include "../common/odst_bringup_logic.h"
 #include "../common/scope_logic.h"
 
 // M3 VR input. MCC reads gamepads through XInputGetState; hooking it lets the
@@ -52,6 +53,18 @@ namespace
         return (SHORT)(v < 0 ? -raw : raw);
     }
 
+    // Plain analog mapping for the game's OWN menus (pause/settings/shell): map
+    // |v| in 0..1 straight to the full stick range with NO deadzone floor, so
+    // MCC's own menu deadzone rejects a small off-axis component. Without this a
+    // near-vertical push like (0.15, 0.98) had its 0.15 minor axis floored past
+    // the deadzone by ToRawStick, so up/down leaked into left/right (GitHub #9).
+    SHORT ToRawMenuStick(float v)
+    {
+        if (v > 1.0f) v = 1.0f;
+        else if (v < -1.0f) v = -1.0f;
+        return (SHORT)(v * 32767.0f);
+    }
+
     void MergeVrPad(XINPUT_STATE* state)
     {
         VrPadState pad;
@@ -68,7 +81,8 @@ namespace
         // into Halo enters native zoom state, which hides the normal VR gun and
         // body even if we restore the eye FOV. Disabled/non-gameplay input still
         // passes through unchanged.
-        const bool scopeAvailable = g_config.scope_enabled && Game_IsHeadTracking();
+        const bool scopeAvailable = g_config.scope_enabled &&
+            Game_IsHeadTracking() && !Game_IsCameraOnlyBringup();
         const ScopeToggleUpdate scope = g_scopeToggle.Update(
             scopeAvailable, pad.clickR, chord.consumeClicks || Menu_IsOpen());
         if (scope.changed && scopeAvailable)
@@ -99,10 +113,27 @@ namespace
         if (pad.clickR && !chord.consumeClicks && !scopeAvailable)
             btn |= XINPUT_GAMEPAD_RIGHT_THUMB;
         static bool previousMenu = false;
-        if (pad.menu && !previousMenu && !Game_HasAuthoritativePauseState())
-            VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
+        const uint64_t inputNow = GetTickCount64();
+        const bool menuEdge = pad.menu && !previousMenu;
+        if (menuEdge)
+        {
+            if (Game_IsCameraOnlyBringup())
+            {
+                // OpenXR exposes the reserved Menu action as a short edge. ODST
+                // polls XInput on a different cadence and missed that edge in
+                // the headset test, so retain a normal Start press long enough
+                // to cross its polling boundary. This branch is private-ODST
+                // only; Halo 3 and normal OFF builds keep their existing path.
+                g_startPulseUntilMs.store(inputNow + 350);
+                LOG("ODST input: Menu/Start latched for native polling");
+            }
+            if (PausePresentationInputAllowed(
+                    Game_AllowsSharedGameplayFeatures()) &&
+                !Game_HasAuthoritativePauseState())
+                VR_RequestPausePresentation(!VR_IsPausePresentationTarget());
+        }
         previousMenu = pad.menu;
-        if (pad.menu || GetTickCount64() < g_startPulseUntilMs.load())
+        if (pad.menu || inputNow < g_startPulseUntilMs.load())
             btn |= XINPUT_GAMEPAD_START;
         if (pad.gripL > 0.6f) btn |= XINPUT_GAMEPAD_LEFT_SHOULDER;
         if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
@@ -145,9 +176,13 @@ namespace
             if (!gestureLogged.exchange(true))
                 LOG("M3: D-pad gesture active (right controller held at head)");
         }
-        else
+        else if (Game_MoveStickIsLocomotion())
         {
-            // Left stick: movement, rotated head-relative so forward = gaze.
+            // Gameplay locomotion (UNCHANGED, headset-confirmed): the left stick
+            // walks the player, rotated head-relative so forward = gaze, and
+            // each axis floored past MCC's inner deadzone so small corrections
+            // still move. This path runs only while the game is actually using
+            // the stick to move the character.
             float mx = pad.moveX, my = pad.moveY;
             Game_MapMoveStick(mx, my);
             if (mx * mx + my * my > 0.02f)
@@ -155,6 +190,18 @@ namespace
                 state->Gamepad.sThumbLX = ToRawStick(mx);
                 state->Gamepad.sThumbLY = ToRawStick(my);
             }
+        }
+        else
+        {
+            // In-game menus (pause/settings) and any other non-locomotion state:
+            // the game reads the left stick as MENU NAVIGATION, not movement.
+            // Pass it through like a plain gamepad — no head-relative rotation
+            // and no per-axis deadzone floor — so a near-vertical push stays
+            // vertical and MCC's own menu deadzone rejects the minor axis.
+            // Fixes GitHub #9 (up/down registering as left/right). Character
+            // movement is untouched; that path is the locomotion branch above.
+            state->Gamepad.sThumbLX = ToRawMenuStick(pad.moveX);
+            state->Gamepad.sThumbLY = ToRawMenuStick(pad.moveY);
         }
 
         // Right stick: hand-steered aim when active; otherwise pass the raw
@@ -168,6 +215,16 @@ namespace
             state->Gamepad.sThumbRY = ToRawStick(ry);
             if (!g_overrideLogged.exchange(true))
                 LOG("M3: VR aim override active (right stick steered by the controller)");
+        }
+        else if (OdstVrOwnsLookStick(
+                     Game_IsCameraOnlyBringup(), Game_IsHeadTracking()))
+        {
+            // Match Halo 3 camera ownership during the private ODST bring-up:
+            // ApplyVrTurn consumes turnX directly from the OpenXR pad, while
+            // the tracked HMD exclusively owns pitch. Do not also feed either
+            // axis into ODST's stock camera/aim integrator.
+            state->Gamepad.sThumbRX = 0;
+            state->Gamepad.sThumbRY = 0;
         }
         else
         {
@@ -203,6 +260,11 @@ namespace
     DWORD ProcessGetState(DWORD r, DWORD user, XINPUT_STATE* state)
     {
         if (user != 0 || !state)
+            return r;
+        // Controller admission is separate from shared gameplay ownership.
+        // The private ODST camera-only build may expose ordinary gamepad input
+        // while motion aim and every Halo 3 gameplay transform stay blocked.
+        if (!Game_AllowsSharedControllerInput())
             return r;
         g_diagReads.fetch_add(1);
         DiagTick();
@@ -246,6 +308,8 @@ namespace
 
     DWORD ProcessGetCaps(DWORD r, DWORD user, XINPUT_CAPABILITIES* caps)
     {
+        if (!Game_AllowsSharedControllerInput())
+            return r;
         if (user != 0 || !caps || r == ERROR_SUCCESS)
             return r;
         // Fabricate a standard wired gamepad UNCONDITIONALLY: MCC enumerates
@@ -281,6 +345,8 @@ namespace
 
     DWORD ProcessSetState(DWORD result, DWORD user, XINPUT_VIBRATION* vibration)
     {
+        if (!Game_AllowsSharedControllerInput())
+            return result;
         if (user != 0 || !vibration)
             return result;
         VR_SetGameHaptics(BlendXInputMotors(
@@ -345,6 +411,8 @@ namespace
 
 void Input_RequestPauseToggle()
 {
+    if (!PausePresentationInputAllowed(Game_AllowsSharedGameplayFeatures()))
+        return;
     const bool paused = !VR_IsPausePresentationTarget();
     // Hold Start long enough to cross MCC's input polling boundary, then let
     // the normal released state provide the edge needed by a later toggle.
