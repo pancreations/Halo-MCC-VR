@@ -296,6 +296,11 @@ namespace
 
     uint32_t* g_engineTlsIndex = nullptr;
     uint32_t* g_cinematicTlsIndex = nullptr;
+    // The cinematic shot-state pointer lives at this TLS byte offset. Halo 3
+    // uses 0x90; ODST recompiled the same function with 0xA0. LocateCinematicState
+    // reads the exact value from the setter's `mov edx, imm32`, so the offset is
+    // evidenced per title rather than hardcoded.
+    uint32_t g_cinematicShotStateOffset = 0x90;
     std::atomic<int32_t> g_cinematicRebaseScene{-1};
     std::atomic<int32_t> g_cinematicRebaseShot{-1};
     std::atomic<uint32_t> g_cinematicRebaseSerial{0};
@@ -3649,7 +3654,8 @@ namespace
             auto* globals = *reinterpret_cast<unsigned char**>(tls + 0xA8);
             if (!globals || globals[5] == 0)
                 return false;
-            auto* shotState = *reinterpret_cast<unsigned char**>(tls + 0x90);
+            auto* shotState = *reinterpret_cast<unsigned char**>(
+                tls + g_cinematicShotStateOffset);
             if (!shotState)
                 return false;
             scene = *reinterpret_cast<const int32_t*>(shotState + 4);
@@ -4759,12 +4765,48 @@ namespace
             return;
         const float stockYaw = atan2f(forward[1], forward[0]);
 
-        if (g_needRecenter.exchange(false, std::memory_order_acq_rel))
+        // Halo 3 cutscene-facing parity (dd1abc5): at each authored cinematic
+        // cut, rebase the VR yaw reference so "forward" aligns with the new
+        // shot's camera -- otherwise a cut can leave the viewer facing away from
+        // the action. Between cuts the head looks around freely; pitch and roll
+        // stay HMD-owned to avoid an artificial rotation during continuous
+        // camera motion. Uses ODST's own resolved cinematic scene/shot state.
+        static thread_local bool prevCinematic = false;
+        static thread_local int32_t prevScene = -1;
+        static thread_local int32_t prevShot = -1;
+        int32_t cinematicScene = -1;
+        int32_t cinematicShot = -1;
+        const bool cinematic = ReadCinematicShot(cinematicScene, cinematicShot);
+        const bool cinematicBoundary =
+            (cinematic && (!prevCinematic ||
+                cinematicScene != prevScene || cinematicShot != prevShot)) ||
+            (!cinematic && prevCinematic);
+        prevCinematic = cinematic;
+        prevScene = cinematic ? cinematicScene : -1;
+        prevShot = cinematic ? cinematicShot : -1;
+
+        const bool manualRecenter =
+            g_needRecenter.exchange(false, std::memory_order_acq_rel);
+        if (manualRecenter || cinematicBoundary)
         {
             g_gameYawRef = stockYaw;
             g_headYawRef = headYaw;
-            memcpy(g_headPosRef, headPosition, sizeof(g_headPosRef));
-            g_needPosRecenter.store(false, std::memory_order_release);
+            if (manualRecenter)
+            {
+                memcpy(g_headPosRef, headPosition, sizeof(g_headPosRef));
+                g_needPosRecenter.store(false, std::memory_order_release);
+            }
+            if (cinematicBoundary)
+            {
+                g_cinematicRebaseScene.store(
+                    cinematic ? cinematicScene : -1,
+                    std::memory_order_relaxed);
+                g_cinematicRebaseShot.store(
+                    cinematic ? cinematicShot : -1,
+                    std::memory_order_relaxed);
+                g_cinematicRebaseSerial.fetch_add(
+                    1, std::memory_order_release);
+            }
         }
         else if (g_needPosRecenter.exchange(false, std::memory_order_acq_rel))
         {
@@ -6078,9 +6120,14 @@ namespace
         "E8 ?? ?? ?? ?? 84 C0 75 0A 8B D1 40 8A CE "
         "E8 ?? ?? ?? ?? 40 88 35 ?? ?? ?? ?? E9 ?? ?? ?? ??";
 
-    // Halo's leaf cinematic_in_progress getter reads TLS+0xA8, then byte +5.
-    // The cinematic_set_shot evaluator reads the same TLS index and writes the
-    // current scene/shot pair through TLS+0x90 at +4/+8. Requiring both unique
+    // The leaf cinematic_in_progress getter reads TLS+0xA8, then byte +5. The
+    // cinematic_set_shot evaluator reads the same TLS index and writes the
+    // current scene/shot pair through a TLS shot-state pointer at +4/+8. Halo 3
+    // holds that pointer at TLS+0x90; ODST recompiled the identical function
+    // with TLS+0xA0. The `mov edx, imm32` that carries that offset is wildcarded
+    // here so the one signature matches both titles (verified unique in each),
+    // and LocateCinematicState reads the exact per-title offset from it. The
+    // getter is byte-identical between Halo 3 and ODST. Requiring both unique
     // signatures to resolve the same TLS-index global proves every offset used
     // by ReadCinematicShot; otherwise automatic shot-facing stays disabled.
     const char* kCinematicInProgressSig =
@@ -6090,7 +6137,7 @@ namespace
     const char* kCinematicSetShotSig =
         "40 53 48 83 EC 20 8B DA E8 ?? ?? ?? ?? 48 85 C0 74 33 "
         "44 8B 48 04 8B 00 44 8B 05 ?? ?? ?? ?? "
-        "65 48 8B 0C 25 58 00 00 00 BA 90 00 00 00 "
+        "65 48 8B 0C 25 58 00 00 00 BA ?? 00 00 00 "
         "4A 8B 0C C1 48 8B 14 0A 8B CB 89 42 04 44 89 4A 08";
 
     void LocateCinematicState(uintptr_t base, size_t size)
@@ -6134,9 +6181,23 @@ namespace
             return;
         }
 
+        // Read the per-title shot-state TLS offset directly from the setter's
+        // `mov edx, imm32` (0x90 Halo 3 / 0xA0 ODST). Reject an out-of-range
+        // value rather than trusting a mismatched build.
+        const uint32_t shotStateOffset =
+            *reinterpret_cast<const uint32_t*>(setter + 0x29);
+        if (shotStateOffset < 0x40 || shotStateOffset > 0x400)
+        {
+            LOG("cutscene facing: shot-state offset 0x%X out of range; "
+                "automatic shot yaw disabled", shotStateOffset);
+            return;
+        }
+
+        g_cinematicShotStateOffset = shotStateOffset;
         g_cinematicTlsIndex = getterIndex;
-        LOG("cutscene facing: exact scene/shot state resolved; "
-            "yaw will rebase at cinematic cuts");
+        LOG("cutscene facing: exact scene/shot state resolved (shot-state "
+            "TLS offset 0x%X); yaw will rebase at cinematic cuts",
+            shotStateOffset);
     }
 
     void LocateNativePauseFlag(uintptr_t base, size_t size)
@@ -7943,6 +8004,11 @@ namespace
         g_positional.store(true, std::memory_order_release);
         g_needRecenter.store(true, std::memory_order_release);
         VR_SetScopeActive(false);
+        // Resolve ODST's cinematic scene/shot state so OdstApplyHeadLook can
+        // rebase the VR yaw at each authored cut, matching Halo 3. The signature
+        // is title-agnostic; the shot-state TLS offset is read from ODST's own
+        // instruction (0xA0). Failure logs and leaves shot-facing disabled.
+        LocateCinematicState(base, size);
         LOG("ODST camera install: seven-hook camera/weapon transaction retained "
             "and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
@@ -8538,6 +8604,27 @@ void Game_AutoVrTick()
         if (activeTitle && activeTitle->title == GameTitle::Halo3ODST)
             TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
         VR_SetScopeActive(false);
+        // Cutscene-facing confirmation for ODST: OdstApplyHeadLook bumps the
+        // shared rebase serial at each authored cut. Log the transition here (a
+        // cold worker-side path), mirroring the Halo 3 report, so the headset
+        // test can see each cut re-align the view.
+        {
+            static uint32_t odstLoggedCineSerial = 0;
+            const uint32_t serial =
+                g_cinematicRebaseSerial.load(std::memory_order_acquire);
+            if (serial != odstLoggedCineSerial)
+            {
+                odstLoggedCineSerial = serial;
+                const int32_t scene =
+                    g_cinematicRebaseScene.load(std::memory_order_relaxed);
+                const int32_t shot =
+                    g_cinematicRebaseShot.load(std::memory_order_relaxed);
+                if (scene >= 0 && shot >= 0)
+                    LOG("cutscene facing: aligned to scene %d shot %d", scene, shot);
+                else
+                    LOG("cutscene facing: aligned to gameplay camera on exit");
+            }
+        }
         // Halo 3 latches aimSeen once its live camera hook publishes. Keep the
         // same ownership here; camera heartbeat teardown and title transitions
         // already clear it. Per-update clearing caused XInput aim to drop out
