@@ -4761,35 +4761,47 @@ namespace
         const bool singleUserPath = ownsPrimaryCamera &&
             OdstSingleUserTailIsValid(
                 reinterpret_cast<const void*>(g_odstCamera.gunCameraArray));
-        const bool monitoring =
+        // Any active camera in our proven slot-0 view keeps the core alive and
+        // its heartbeat fed -- the first-person camera OR a third-person
+        // death/vehicle/turret/cutscene camera. Head-look and aim publishing
+        // still apply ONLY to the proven first-person camera; a non-FP camera
+        // is left exactly as the engine produced it and simply renders stock,
+        // so 3D resumes automatically the instant first-person returns.
+        const bool ownsActiveCamera =
             g_odstCamera.installed.load(std::memory_order_acquire) &&
             singleUserPath &&
-            OdstSourceCameraIsFirstPerson(source);
+            OdstSourceCameraIsActive(source);
+        const bool monitoring =
+            ownsActiveCamera && OdstSourceCameraIsFirstPerson(source);
         const bool transform = monitoring &&
             g_odstCamera.armed.load(std::memory_order_acquire) &&
             !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
             g_enabled.load(std::memory_order_relaxed);
         float savedPosition[3]{}, savedForward[3]{}, savedUp[3]{};
-        if (monitoring)
+        if (ownsActiveCamera)
         {
             ApplyOdstMotionBlurSetting();
-            // Publish the ODST weapon aim direction from the source camera's
-            // pre-head-look forward, mirroring Halo 3's CamCopyHook. The engine
-            // recomputes this forward from aim state every frame, so before
-            // OdstApplyHeadLook rewrites it below it equals the true aim ray
-            // that the closed-loop aim stick and the floating reticle consume.
-            // Reads only the already-proven source layout; no new offset.
-            const char* srcBytes = static_cast<const char*>(source);
-            float aimForward[3];
-            memcpy(aimForward, srcBytes + layout.sourceForward,
-                   sizeof(aimForward));
-            if (isfinite(aimForward[0]) && isfinite(aimForward[1]) &&
-                isfinite(aimForward[2]))
+            if (monitoring)
             {
-                g_aimFwdX.store(aimForward[0]);
-                g_aimFwdY.store(aimForward[1]);
-                g_aimFwdZ.store(aimForward[2]);
-                g_aimSeen = true;
+                // Publish the ODST weapon aim direction from the source
+                // camera's pre-head-look forward, mirroring Halo 3's
+                // CamCopyHook. The engine recomputes this forward from aim
+                // state every frame, so before OdstApplyHeadLook rewrites it
+                // below it equals the true aim ray that the closed-loop aim
+                // stick and the floating reticle consume. Reads only the
+                // already-proven source layout; no new offset.
+                const char* srcBytes = static_cast<const char*>(source);
+                float aimForward[3];
+                memcpy(aimForward, srcBytes + layout.sourceForward,
+                       sizeof(aimForward));
+                if (isfinite(aimForward[0]) && isfinite(aimForward[1]) &&
+                    isfinite(aimForward[2]))
+                {
+                    g_aimFwdX.store(aimForward[0]);
+                    g_aimFwdY.store(aimForward[1]);
+                    g_aimFwdZ.store(aimForward[2]);
+                    g_aimSeen = true;
+                }
             }
         }
         if (transform)
@@ -4803,10 +4815,14 @@ namespace
             memcpy(savedUp, bytes + layout.sourceUp, sizeof(savedUp));
             OdstApplyHeadLook(source);
         }
-        else if (g_odstCamera.armed.load(std::memory_order_acquire) &&
-                 ownsPrimaryCamera &&
-                 (!singleUserPath || OdstSourceCameraIsActive(source)))
+        else if (OdstCamCopyRequestsTeardown(
+                     g_odstCamera.armed.load(std::memory_order_acquire),
+                     ownsPrimaryCamera, singleUserPath))
         {
+            // Our slot-0 view object no longer matches the single-user layout:
+            // a genuine level unload/transition, not a mere non-FP camera. An
+            // active third-person camera (singleUserPath still valid) is NOT a
+            // teardown -- it renders stock and keeps the core armed.
             OdstRequestFallback(OdstSourceCameraIsActive(source)
                 ? OdstFallbackReason::UnsupportedCameraMode
                 : OdstFallbackReason::LevelUnloaded);
@@ -4821,9 +4837,15 @@ namespace
                    sizeof(savedForward));
             memcpy(bytes + layout.sourceUp, savedUp, sizeof(savedUp));
         }
-        if (monitoring)
+        if (ownsActiveCamera)
         {
-            if (g_odstCamera.armed.load(std::memory_order_acquire))
+            // The camera-transform notify is an aim/reticle timing signal, so
+            // it stays first-person-only; the heartbeat, however, must be fed
+            // by any active camera (including a non-FP death/vehicle cam) so
+            // the worker and Present-side never read a heartbeat loss and drop
+            // stereo during death.
+            if (monitoring &&
+                g_odstCamera.armed.load(std::memory_order_acquire))
                 VR_NotifyCameraTransform();
             g_lastCamCopyMs.store(GetTickCount64(), std::memory_order_release);
             g_odstCamera.sawValidCamera.store(true, std::memory_order_release);
@@ -5123,6 +5145,145 @@ namespace
         return true;
     }
 
+    // ---- Full-parity diagnostics: non-first-person camera capture ----------
+    // When slot 0 renders a live camera that is not the proven first-person
+    // mode (the third-person death-cam, vehicles, turrets, cutscenes), the core
+    // now renders it stock and stays armed instead of tearing down. This
+    // log-only capture records that camera's field layout so the next build can
+    // enable a stereo redirect for it with ODST evidence rather than a guess.
+    // Publish is atomic-only from the hot render hook; the 50 ms worker emits.
+    struct OdstNonFpCameraCapture
+    {
+        std::atomic<uint32_t> seq{0};        // even = stable, odd = mid-write
+        std::atomic<uint32_t> modeFlags{0};
+        std::atomic<uint32_t> arrayOffset{0};
+        std::atomic<uint32_t> flags{0};      // see the OdstNonFpFlag bits below
+        std::atomic<float> fpBlend{0.0f};
+        std::atomic<float> verticalOffset{0.0f};
+        std::atomic<float> verticalFov{0.0f};
+        std::atomic<float> referenceFov{0.0f};
+        std::atomic<float> nearClip{0.0f};
+        std::atomic<float> farClip{0.0f};
+    };
+    enum OdstNonFpFlag : uint32_t
+    {
+        OdstNonFpTailValid = 1u << 0,
+        OdstNonFpNestedMatch = 1u << 1,
+        OdstNonFpActive = 1u << 2,
+        OdstNonFpPlainPerspective = 1u << 3,  // no oblique/custom projection,
+                                              // ordered bounds, valid clips
+    };
+    OdstNonFpCameraCapture g_odstNonFpCameraCapture;
+    std::atomic<uint32_t> g_odstNonFpCameraLoggedSeq{0};
+    // Sentinel modeFlags so a fresh non-FP camera re-captures after any FP frame.
+    constexpr uint32_t kOdstNonFpNoCapture = 0xFFFFFFFFu;
+    std::atomic<uint32_t> g_odstNonFpCameraLastMode{kOdstNonFpNoCapture};
+
+    // Called from the hot render hook on a non-FP slot-0 frame. Reads only the
+    // already-bounds-checked view object (slot < 4, offsets < viewStride) and
+    // never dereferences the nested-source pointer -- it only compares its
+    // value. Deduped by modeFlags so full work happens at most once per distinct
+    // non-FP camera kind between first-person frames.
+    void OdstCaptureNonFpCamera(void* view, uintptr_t arrayOffset)
+    {
+        const auto& layout = kOdstCameraProfile.layout;
+        const char* bytes = static_cast<const char*>(view);
+        const char* compact = bytes + layout.rootCurrentCompact;
+        const uint32_t modeFlags = *reinterpret_cast<const uint32_t*>(
+            compact + layout.compactModeFlags);
+        if (g_odstNonFpCameraLastMode.load(std::memory_order_relaxed) ==
+            modeFlags)
+            return;
+
+        const auto readFloat = [compact](uintptr_t offset) {
+            return *reinterpret_cast<const float*>(compact + offset);
+        };
+        const float* oblique = reinterpret_cast<const float*>(
+            compact + layout.obliquePlane);
+        const uint32_t customProjection = *reinterpret_cast<const uint32_t*>(
+            compact + layout.customProjection);
+        const float* customData = reinterpret_cast<const float*>(
+            compact + layout.customProjectionData);
+        const auto boundsOrdered = [compact](uintptr_t offset) {
+            const int16_t* b = reinterpret_cast<const int16_t*>(compact + offset);
+            return b[0] < b[2] && b[1] < b[3];
+        };
+        const float nearClip = readFloat(layout.nearClip);
+        const float farClip = readFloat(layout.farClip);
+        const bool plainPerspective =
+            oblique[0] == 0.0f && oblique[1] == 0.0f && oblique[2] == 0.0f &&
+            oblique[3] == 0.0f && customProjection == 0 &&
+            customData[0] == 0.0f && customData[1] == 0.0f &&
+            customData[2] == 0.0f && customData[3] == 0.0f &&
+            boundsOrdered(layout.windowBounds) &&
+            boundsOrdered(layout.renderBounds) &&
+            boundsOrdered(layout.activeBounds) && isfinite(nearClip) &&
+            isfinite(farClip) && nearClip > 0.0f && farClip > nearClip;
+
+        const uintptr_t nestedSource = *reinterpret_cast<const uintptr_t*>(
+            bytes + layout.nestedSourceCamera);
+        uint32_t flags = 0;
+        if (OdstSingleUserTailIsValid(view)) flags |= OdstNonFpTailValid;
+        if (nestedSource ==
+            reinterpret_cast<uintptr_t>(view) + layout.rootCurrentCompact)
+            flags |= OdstNonFpNestedMatch;
+        if (OdstCompactCameraIsActive(compact)) flags |= OdstNonFpActive;
+        if (plainPerspective) flags |= OdstNonFpPlainPerspective;
+
+        OdstNonFpCameraCapture& cap = g_odstNonFpCameraCapture;
+        cap.seq.fetch_add(1, std::memory_order_acq_rel);  // -> odd (writing)
+        cap.modeFlags.store(modeFlags, std::memory_order_relaxed);
+        cap.arrayOffset.store(static_cast<uint32_t>(arrayOffset),
+                              std::memory_order_relaxed);
+        cap.flags.store(flags, std::memory_order_relaxed);
+        cap.fpBlend.store(readFloat(layout.compactFpBlend),
+                          std::memory_order_relaxed);
+        cap.verticalOffset.store(readFloat(layout.verticalOffset),
+                                 std::memory_order_relaxed);
+        cap.verticalFov.store(readFloat(layout.verticalFov),
+                              std::memory_order_relaxed);
+        cap.referenceFov.store(readFloat(layout.referenceFov),
+                               std::memory_order_relaxed);
+        cap.nearClip.store(nearClip, std::memory_order_relaxed);
+        cap.farClip.store(farClip, std::memory_order_relaxed);
+        cap.seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
+        g_odstNonFpCameraLastMode.store(modeFlags, std::memory_order_relaxed);
+    }
+
+    // Called from the 50 ms worker (NOT a hot hook), so logging is safe here.
+    void LogOdstNonFpCameraIfNew()
+    {
+        OdstNonFpCameraCapture& cap = g_odstNonFpCameraCapture;
+        const uint32_t seq = cap.seq.load(std::memory_order_acquire);
+        if ((seq & 1u) || seq == 0)
+            return; // mid-write or nothing captured yet
+        if (seq == g_odstNonFpCameraLoggedSeq.load(std::memory_order_relaxed))
+            return; // already logged this capture
+        const uint32_t modeFlags = cap.modeFlags.load(std::memory_order_relaxed);
+        const uint32_t arrayOffset =
+            cap.arrayOffset.load(std::memory_order_relaxed);
+        const uint32_t flags = cap.flags.load(std::memory_order_relaxed);
+        const float fpBlend = cap.fpBlend.load(std::memory_order_relaxed);
+        const float voff = cap.verticalOffset.load(std::memory_order_relaxed);
+        const float vfov = cap.verticalFov.load(std::memory_order_relaxed);
+        const float rfov = cap.referenceFov.load(std::memory_order_relaxed);
+        const float nearClip = cap.nearClip.load(std::memory_order_relaxed);
+        const float farClip = cap.farClip.load(std::memory_order_relaxed);
+        if (cap.seq.load(std::memory_order_acquire) != seq)
+            return; // a newer capture started; re-read next tick
+        const bool tail = (flags & OdstNonFpTailValid) != 0;
+        const bool nested = (flags & OdstNonFpNestedMatch) != 0;
+        const bool active = (flags & OdstNonFpActive) != 0;
+        const bool plain = (flags & OdstNonFpPlainPerspective) != 0;
+        LOG("ODST NON-FP CAMERA: mode=0x%08X slot=%u tail=%d nested=%d "
+            "active=%d plainPersp=%d blend=%.4f voff=%.4f vfov=%.4f rfov=%.4f "
+            "near=%.4f far=%.1f -- stereo-redirectable next build = %s",
+            modeFlags, arrayOffset, tail, nested, active, plain, fpBlend, voff,
+            vfov, rfov, nearClip, farClip,
+            (tail && nested && active && plain) ? "YES" : "NO (render stock)");
+        g_odstNonFpCameraLoggedSeq.store(seq, std::memory_order_relaxed);
+    }
+
     __declspec(noinline) void __fastcall OdstRenderViewBody(void* view)
     {
         RenderViewFn original = g_odstCamera.originalRenderView;
@@ -5160,35 +5321,39 @@ namespace
             original(view);
             return;
         }
-        if (arrayOffset != 0 || !OdstSingleUserTailIsValid(view))
-        {
-            OdstRequestFallback(OdstFallbackReason::UnsupportedCameraMode);
-            original(view);
-            return;
-        }
-
         char* bytes = static_cast<char*>(view);
-        const uintptr_t nestedSource = *reinterpret_cast<const uintptr_t*>(
-            bytes + layout.nestedSourceCamera);
-        if (nestedSource != viewAddress + layout.rootCurrentCompact)
-        {
-            // This identity was observed in the accepted ordinary-camera
-            // layout. Recheck it on every rendered frame so a live mode
-            // transition cannot feed the first-person rebuild from an
-            // unproven camera object between worker preflight polls.
-            OdstRequestFallback(OdstFallbackReason::UnsupportedCameraMode);
-            original(view);
-            return;
-        }
         char* camera = bytes + layout.rootCurrentCompact;
-        if (!OdstCompactCameraUsesProvenMode(camera))
+        // Full-parity camera policy: stereo-redirect ONLY the proven
+        // first-person camera in slot 0. Any other live camera -- the
+        // third-person death-cam, vehicles, turrets, cutscenes, a foreign slot,
+        // or a mode transition -- renders stock (the compositor holds the last
+        // stereo frame, so death shows a frozen 3D view, not a 2D drop) with
+        // the core left armed, so 3D resumes the instant first-person returns.
+        // A live render frame is NEVER a teardown trigger; true level unloads
+        // are detected by the worker heartbeat and the camera-copy tail check.
+        const bool ownsPrimarySlot = arrayOffset == 0;
+        const bool tailValid =
+            ownsPrimarySlot && OdstSingleUserTailIsValid(view);
+        const bool nestedMatch = ownsPrimarySlot &&
+            *reinterpret_cast<const uintptr_t*>(
+                bytes + layout.nestedSourceCamera) ==
+                viewAddress + layout.rootCurrentCompact;
+        const bool provenMode =
+            ownsPrimarySlot && OdstCompactCameraUsesProvenMode(camera);
+        if (!OdstShouldStereoRedirect(ownsPrimarySlot, tailValid, nestedMatch,
+                                      provenMode))
         {
-            OdstRequestFallback(OdstCompactCameraIsActive(camera)
-                ? OdstFallbackReason::UnsupportedCameraMode
-                : OdstFallbackReason::LevelUnloaded);
+            // Record the non-FP camera's field layout (log-only) so the next
+            // build can enable a stereo redirect for it with ODST evidence.
+            if (ownsPrimarySlot)
+                OdstCaptureNonFpCamera(view, arrayOffset);
             original(view);
             return;
         }
+        // A proven first-person frame: allow a fresh non-FP camera to re-capture
+        // the next time slot 0 leaves first-person (death, vehicle, turret).
+        g_odstNonFpCameraLastMode.store(kOdstNonFpNoCapture,
+                                        std::memory_order_relaxed);
         struct EyeRenderInput
         {
             float position[3]{};
@@ -5235,10 +5400,9 @@ namespace
         {
             // Eye-location calls above are outside the game camera owner. Check
             // the complete four-slot/single-user invariant again immediately
-            // before the first camera byte is saved or mutated.
-            OdstRequestFallback(OdstCompactCameraIsActive(camera)
-                ? OdstFallbackReason::UnsupportedCameraMode
-                : OdstFallbackReason::LevelUnloaded);
+            // before the first camera byte is saved or mutated. A late failure
+            // here is a race with a mode transition, not a fault: render stock
+            // and keep the core armed rather than tearing down a live frame.
             original(view);
             return;
         }
@@ -7627,6 +7791,7 @@ namespace
             }
             g_hooked.store(gameHooked || odstHooked, std::memory_order_release);
             LogOdstSkeletonCaptureIfNew(); // emit any newly captured FP skeleton
+            LogOdstNonFpCameraIfNew();     // emit any non-FP (death/vehicle) cam
             Sleep(50);
 #else
             Sleep(50);

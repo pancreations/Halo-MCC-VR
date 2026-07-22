@@ -133,6 +133,30 @@ inline bool OdstMustClearForeignPause(
     return cameraOnlyContext && (pauseTarget || pausePresentation);
 }
 
+// Full-parity camera policy. A live render frame is NEVER a teardown by itself.
+// The core stereo-redirects ONLY the proven first-person camera in slot 0; any
+// other live camera -- the third-person death-cam, vehicles, turrets,
+// cutscenes, a foreign slot, or a mode transition -- renders stock while the
+// core stays armed, so 3D resumes automatically the instant the first-person
+// camera returns. Returns true only when the camera should be stereo-redirected.
+inline bool OdstShouldStereoRedirect(
+    bool ownsPrimarySlot, bool singleUserTailValid,
+    bool nestedSourceMatches, bool compactUsesProvenFpMode)
+{
+    return ownsPrimarySlot && singleUserTailValid &&
+        nestedSourceMatches && compactUsesProvenFpMode;
+}
+
+// The camera-copy path tears down only when our slot-0 view object no longer
+// matches the single-user layout -- a genuine level unload/transition. An
+// active third-person camera in a still-valid slot-0 object is NOT a teardown:
+// it renders stock and keeps the core armed for automatic 3D recovery.
+inline bool OdstCamCopyRequestsTeardown(
+    bool armed, bool ownsPrimarySlot, bool singleUserTailValid)
+{
+    return armed && ownsPrimarySlot && !singleUserTailValid;
+}
+
 inline bool OdstNestedSourceIsCompatible(
     uintptr_t nestedSource, uintptr_t expectedSource)
 {

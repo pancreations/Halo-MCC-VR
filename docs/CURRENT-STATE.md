@@ -814,51 +814,63 @@ User-resequenced ODST roadmap (each a config-file-integrated build):
    floating-hand options. All user-facing options must live in the one universal
    `halomccvr.cfg` / F1 menu.
 
-### ODST 3D-through-death (third-person cameras): diagnosed, implement next (2026-07-21)
+### ODST 3D-through-death / vehicles / turrets: Build C non-FP survival + capture (2026-07-21)
 
-Build A (skeleton probe, DLL `36E565E0`, commit `1b78f09`, backup-15) headset
-session: the probe worked (installed at the exact evidenced RVAs
-`interpolate +0x1B3CB8`, `palette +0x2EDD10`), and captured two weapon skeletons
-showing the ODST weapon on render nodes 37-43 (same region as Halo 3). Probe data
-is partial (bone-count pairing bug over-reads past the weapon bones; the arm map
-is not clean) so a probe refinement is still needed before Build B. Deferred.
+Background: Build A (skeleton probe, DLL `36E565E0`, commit `1b78f09`,
+backup-15) captured the ODST weapon on render nodes 37-43; the bone-count
+pairing refinement for the arm map is still deferred. Mid-session the user died
+and ODST dropped to 2D and would not recover. Root cause: the ODST death-cam is
+a **third-person camera occupying gun-camera slot 0** (active, not first-person).
+The core gated stereo on the *proven first-person mode* and, on any active
+non-FP camera, requested `UnsupportedCameraMode` -> full teardown ->
+`BlockUntilTitleExit` (never re-arms this session). User directive: full parity
+-- "do what halo 3 does", keep 3D through death **and vehicles, turrets, and
+cutscenes**.
 
-Mid-session the user died and ODST dropped to 2D and would not recover. Root
-cause from the log: the ODST death-cam is a **third-person camera occupying
-gun-camera array slot 0** (it is active, just not first-person). The ODST core's
-render and camera-copy hooks gate stereo on a *proven first-person camera mode*
-and, on any active non-FP camera, request `UnsupportedCameraMode` -> full
-teardown -> `BlockUntilTitleExit` (never re-arms this session). Halo 3 instead
-renders whatever the world camera is -- including the third-person death-cam --
-in stereo, and only suppresses the FP head-look/weapon. User directive: "do what
-halo 3 does" -- keep 3D through death (and, by the same mechanism, vehicles and
-cutscenes).
+Build C (this build) makes the core survive every non-FP camera and captures
+the evidence needed to render them in true stereo next. No stereo redirect on an
+unproven camera object was guessed (that layout is not yet ODST-verified).
 
-Precise fix plan (crash-sensitive core; implement carefully, one build):
-- The teardown triggers to change are all keyed on an active-but-non-FP slot-0
-  camera: `OdstCamCopyBody` else-if (~game.cpp:4806) and `OdstRenderViewBody`
-  proven-mode/identity gates (~game.cpp:5163-5191). For an **active** slot-0
-  camera that is not the proven FP mode, do NOT request a fallback/teardown --
-  render it stock (flat) and keep the core alive. Only request `LevelUnloaded`
-  when slot 0 is truly **inactive** (zeroed). Title-exit teardown in the worker
-  (`!odstActive`) is unchanged, preserving cross-title crash safety.
-- Keep the heartbeat alive for any active slot-0 camera (update `g_lastCamCopyMs`
-  / `sawValidCamera` for active non-FP too), so neither the worker heartbeat nor
-  the Present-side `cameraLost` disarm fires while alive.
-- Intermediate (safe) result: 3D goes briefly flat during the death-cam, then
-  resumes automatically on respawn with no teardown/re-arm -- directly fixes
-  "3D won't come back."
-- Full parity (death-cam itself in stereo) additionally requires relaxing
-  `OdstCompactCameraUsesProvenMode` in `OdstRenderViewBody` to redirect an active
-  third-person slot-0 camera using its own FOV, so the death-cam renders in
-  stereo. Higher risk (a new stereo-render path); do after the intermediate is
-  headset-confirmed, unless attempted together deliberately.
-- FP driver/rebuild hooks are FP-specific and likely do not fire during a
-  third-person death-cam; verify in the headset that they do not independently
-  teardown. Preserve all SEH guards and the activeCallbacks teardown drain.
+Implemented (private ON tree; both trees build Release clean, CTest green):
+- **A live render frame is never a teardown.** `OdstRenderViewBody` now
+  stereo-redirects ONLY the proven first-person camera (`OdstShouldStereoRedirect`
+  = own slot 0 + valid single-user tail + nested-source identity + proven FP
+  mode). Any other live camera -- third-person death-cam, vehicles, turrets,
+  cutscenes, a foreign slot, or a mode transition -- renders **stock** with the
+  core left armed. The former `UnsupportedCameraMode`/`LevelUnloaded` teardown
+  gates there (and the late `OdstCameraArraySupportsBringup` recheck) are gone.
+- **Heartbeat stays fed by any active camera.** `OdstCamCopyBody` now updates
+  `g_lastCamCopyMs`/`sawValidCamera` (and applies the motion-blur setting) for
+  any active slot-0 camera (`ownsActiveCamera`), FP or not. Head-look injection
+  and aim-forward publish remain first-person-only (`monitoring`). Camera-copy
+  tears down ONLY when the slot-0 single-user tail breaks
+  (`OdstCamCopyRequestsTeardown`) -- a real level unload/transition -- never on
+  an active non-FP camera.
+- Because the heartbeat never lapses, the worker heartbeat and the Present-side
+  `cameraLost` disarm do not fire during death; the FP driver/rebuild hooks are
+  `eyeView`-gated (null during stock frames) so they stay safe pass-throughs.
+- **Non-FP camera capture (log-only):** `OdstCaptureNonFpCamera` publishes the
+  slot-0 non-FP camera's fields atomically; the 50 ms worker emits
+  `ODST NON-FP CAMERA: mode=.. tail/nested/active/plainPersp .. -- stereo-
+  redirectable next build = YES/NO`. Deduped by modeFlags, reset on each FP
+  frame. This tells the next build whether the death/vehicle camera shares the
+  FP object structure (then a stereo redirect is a safe flip) or needs its own
+  path.
 
-Nothing was deployed for this fix yet. Current install remains Build A
-(`36E565E0`, backup-15, baseline `c0a6a90d`).
+Expected headset behavior this build: on death/vehicle/turret the view holds the
+**last first-person stereo frame (frozen 3D, not a 2D drop)** and live 3D resumes
+automatically on respawn / when first-person returns -- no restart, no stuck 2D.
+The death-cam does not yet animate in stereo; that is Build D, gated on the
+`ODST NON-FP CAMERA` capture from this session.
+
+Test checklist: die, ride/drive a vehicle, use a turret. Confirm (1) no drop to
+flat 2D that stays, (2) 3D returns on its own, (3) grep the log for
+`ODST NON-FP CAMERA` lines for each (death, vehicle, turret) and read the
+`stereo-redirectable` verdict. Quick Halo 3 sanity pass (same DLL) unchanged.
+
+Not yet deployed. Current install remains Build A (`36E565E0`, backup-15,
+baseline `c0a6a90d`); deploy Build C via `deploy-odst-private.bat` (RESTORE
+baseline first) only on the user's go.
 
 ## 2026-07-19 session closeout
 

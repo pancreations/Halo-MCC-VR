@@ -86,6 +86,24 @@ int main()
             "ODST motion aim follows head tracking off");
         Check(!OdstMotionAimEligible(true, true, true, true),
             "teardown always vetoes ODST motion aim");
+        Check(OdstShouldStereoRedirect(true, true, true, true),
+            "proven first-person camera in slot 0 is stereo-redirected");
+        Check(!OdstShouldStereoRedirect(true, true, true, false),
+            "an active non-FP slot-0 camera (death/vehicle) renders stock, not stereo");
+        Check(!OdstShouldStereoRedirect(false, true, true, true),
+            "a foreign camera slot is never stereo-redirected");
+        Check(!OdstShouldStereoRedirect(true, false, true, true),
+            "a broken single-user tail is never stereo-redirected");
+        Check(!OdstShouldStereoRedirect(true, true, false, true),
+            "a mismatched nested FP source is never stereo-redirected");
+        Check(OdstCamCopyRequestsTeardown(true, true, false),
+            "a broken slot-0 single-user tail tears down (level unload/transition)");
+        Check(!OdstCamCopyRequestsTeardown(true, true, true),
+            "an active non-FP camera with a valid tail never tears down (3D recovers)");
+        Check(!OdstCamCopyRequestsTeardown(false, true, false),
+            "camera-copy teardown requires the core to be armed");
+        Check(!OdstCamCopyRequestsTeardown(true, false, false),
+            "camera-copy teardown only fires for our own primary slot");
         Check(PausePresentationInputAllowed(true),
             "proven Halo 3 gameplay may control pause presentation");
         Check(!PausePresentationInputAllowed(false),
