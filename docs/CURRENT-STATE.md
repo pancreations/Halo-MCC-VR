@@ -29,6 +29,43 @@ troubleshoot, and bug fix.
 
 ## Recovery points
 
+- IN-GAME MENU STICK OVER-SENSITIVITY — HEADSET-CONFIRMED 2026-07-22 ("works
+  great", GitHub issue #9): Halo's OWN menus (pause/settings, NOT the F1 VR
+  menu) no longer read up/down left-stick pushes as left/right (and vice
+  versa). Root cause was title- and headset-agnostic: the XInput merge in
+  `MergeVrPad` (`input.cpp`) always fed the left stick through the gameplay-
+  locomotion path — `Game_MapMoveStick`'s head-relative rotation PLUS
+  `ToRawStick`'s per-axis deadzone floor. A near-vertical push like (0.15,
+  0.98) had its 0.15 minor axis floored past MCC's inner menu deadzone, so
+  a straight-up push leaked sideways in the menu. Fix `034c4a6` on
+  `feature/odst-bringup`: new `Game_MoveStickIsLocomotion()` gates the walking
+  transform on the actual movement modes (Gameplay/Vehicle/Turret via
+  `TitleAdapter_GetRuntimeMode()`); the in-game pause/settings menu reports
+  `Paused`, so it — and Shell/Loading/Cutscene/Dead/Unsupported — now passes
+  the left stick through raw via the new `ToRawMenuStick` (no head-relative
+  rotation, no per-axis floor), letting MCC's own menu deadzone reject the
+  minor axis. Character movement is byte-for-byte unchanged: the locomotion
+  branch is the exact previous logic and only runs in the movement modes.
+  This is SHARED behavior outside the ODST `#if`, so Halo 3 gets the same
+  menu improvement. OFF and ON Release builds and both CTest suites passed
+  before guarded deployment. Deployed private DLL build `Jul 22 2026 12:59:32`
+  (`2026-07-22 17:59:37 UTC`), SHA-256
+  `B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF`, recovery
+  record `pre-odst-private-backup-41`. The running DLL's embedded build stamp
+  in `halo3xr.log` matched, confirming the user tested this exact DLL. A
+  private laptop-test zip of this exact ON build was handed to the user
+  (`dist/HaloMCCVR-odst-menu-fix-034c4a6.zip`, DLL `B7363F79`, launcher
+  `BDC0A20F`); the public GitHub release is planned for the NEXT session.
+  BASELINE CHANGE (user decision 2026-07-22): the headset-confirmed vibration
+  build `B4FB36A8` is now the frozen ODST baseline — `deploy-odst-private.bat`
+  `EXPECTED_BASELINE_DLL_SHA` was bumped to it, and the stale `backup-40`
+  `ACTIVE` marker was retired IN PLACE (`SUPERSEDED-NEW-BASELINE.txt`), NOT
+  rolled back to the old `DFF8A406`. `RESTORE-ODST-BASELINE` now returns to
+  the vibration build. STILL OWED before the public release: an explicit
+  Halo 3 menu + walk regression pass on this shared input change ("works
+  great" was reported for the ODST test; the gameplay locomotion path is
+  byte-unchanged, but the Halo 3 menu behavior did change and should be
+  headset-checked next session per the parity contract).
 - ODST CONTROLLER VIBRATION — HEADSET-CONFIRMED 2026-07-22 ("rumble works"):
   ODST now delivers controller vibration during gameplay exactly like Halo 3.
   Root cause it was silent: the haptic INPUT side was already title-agnostic
