@@ -3462,21 +3462,6 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
     return changed;
 }
 
-int VR_ProbeBoundRtvCategory()
-{
-    if (!g_context) return 0;
-    ID3D11RenderTargetView* rtv = nullptr;
-    g_context->OMGetRenderTargets(1, &rtv, nullptr);
-    int category;
-    if (!rtv) category = 0;
-    else if (rtv == g_sceneColorRtv) category = 1;
-    else if (rtv == g_eyeCacheRtvs[0]) category = 2;
-    else if (rtv == g_eyeCacheRtvs[1]) category = 3;
-    else category = 4;
-    if (rtv) rtv->Release();
-    return category;
-}
-
 bool VR_GetHeadPose(float outQuat[4], float outPos[3])
 {
     if (!g_headCsInit)

@@ -494,17 +494,6 @@ namespace
     // Shared because Halo can execute first-person work on a render worker.
     std::atomic<bool> g_scopeRenderActive{false};
 
-#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
-    // Read-only ODST HUD render-order probe (2026-07-22, no behavior change).
-    // Answers whether ODST draws its native CHUD per-eye (inside the captured eye
-    // window, where the scene-color RTV is redirected) or once outside it, and
-    // into which surface. HudDrawWidgetHook publishes; Game_AutoVrTick logs it
-    // once per second while the ODST core is armed.
-    std::atomic<int> g_odstHudProbeEyeMask{0};       // bit0 eye0, bit1 eye1, bit2 outside
-    std::atomic<uint32_t> g_odstHudProbeDraws{0};
-    std::atomic<int> g_odstHudProbeRtvCategory{-1};
-#endif
-
     // chud_compute_anchor_basis produces a real_matrix4x3-like basis. Its final
     // vector starts at +0x28, with the vertical screen coordinate at +0x2C.
     // Moving that coordinate translates every native HUD widget without
@@ -540,20 +529,6 @@ namespace
         // every native CHUD widget out of the magnified world-only picture.
         if (g_scopeRenderActive.load(std::memory_order_acquire))
             return;
-#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
-        // ODST HUD render-order probe (read-only): record which eye is active
-        // when the native HUD draws, and sample the bound surface once per window.
-        if (g_odstCamera.armed.load(std::memory_order_relaxed))
-        {
-            const int probeEye = g_stereoEye.load(std::memory_order_relaxed);
-            g_odstHudProbeEyeMask.fetch_or(
-                probeEye == 0 ? 0x1 : probeEye == 1 ? 0x2 : 0x4,
-                std::memory_order_relaxed);
-            if (g_odstHudProbeDraws.fetch_add(1, std::memory_order_relaxed) == 0)
-                g_odstHudProbeRtvCategory.store(
-                    VR_ProbeBoundRtvCategory(), std::memory_order_relaxed);
-        }
-#endif
         const bool previousInside = g_insideHudDrawWidget;
         const bool previousCapture = g_authoredReticleCaptureStarted;
         g_insideHudDrawWidget = true;
@@ -8981,31 +8956,6 @@ void Game_AutoVrTick()
 
     UpdateCinematicFovPolicy();
     HudLayoutAutoTick(); // HUD size/aspect/curvature: locate tag slots when needed
-#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
-    // ODST HUD render-order probe: while the ODST core is armed, report once per
-    // second whether chud_draw_widget ran per-eye or outside the captured eye
-    // window, and which surface it drew into. Read-only; no behavior change.
-    if (g_odstCamera.armed.load(std::memory_order_relaxed))
-    {
-        static uint64_t lastHudProbeMs = 0;
-        const uint64_t nowProbe = GetTickCount64();
-        if (nowProbe - lastHudProbeMs >= 1000)
-        {
-            lastHudProbeMs = nowProbe;
-            const uint32_t draws =
-                g_odstHudProbeDraws.exchange(0, std::memory_order_relaxed);
-            const int mask =
-                g_odstHudProbeEyeMask.exchange(0, std::memory_order_relaxed);
-            const int rtv =
-                g_odstHudProbeRtvCategory.load(std::memory_order_relaxed);
-            if (draws > 0)
-                LOG("ODST HUD PROBE: chud_draw_widget draws=%u eyeMask=0x%X "
-                    "(bit0=eye0 bit1=eye1 bit2=outside-eye-loop) firstBoundRtv=%d "
-                    "(0 none, 1 scene-color, 2 eye0-cache, 3 eye1-cache, 4 other)",
-                    draws, static_cast<unsigned>(mask), rtv);
-        }
-    }
-#endif
     {
         static uint32_t loggedSerial = 0;
         const uint32_t serial =
