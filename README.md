@@ -1,6 +1,7 @@
 # Halo MCC VR
 
-A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
+A native OpenXR VR mod for Halo 3 and Halo 3: ODST in Halo: The Master Chief
+Collection (Steam).
 
 ## This code was written by AI
 
@@ -20,21 +21,43 @@ Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-K
 
 ## Current status
 
-The headset-proven recovery baseline is Git commit 330a568 on branch recovery/best-working-20260719-1300.
-The safe cleanup branch retains that exact runtime source and changes documentation/repository hygiene only. A broader runtime cleanup was rejected after a headset fatal error during level transition.
+The current unified ODST test line is `feature/odst-bringup`. Its runtime at
+commit `034c4a6` was built with `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` and
+headset-tested as DLL SHA-256
+`B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF`.
+The protected pre-ODST Halo 3 release remains tagged `v0.1.3-alpha`.
 
-Working in Halo 3 on PSVR2,HTC, and Quest headsets through SteamVR OpenXR:
+Working in Halo 3 on PSVR2, HTC, and Quest headsets through SteamVR OpenXR:
 
 - true per-eye stereo and 6DOF head tracking;
 - Sense-controller input, snap/smooth turning, melee, grenades, and menu control;
 - controller-driven weapon aim and floating VR reticle;
 - articulated VRIK arms;
 - free left support hand on the shotgun, with assault rifle and pistol as the known-good comparison;
-- native HUD with the centered game reticle hidden by the selected HUD element;
+- native HUD with the centered game reticle hidden and the authored weapon
+  reticle used as the floating VR crosshair;
 - motion blur disabled by default to prevent stereo echo artifacts;
 - verified build/deploy workflow.
 
-This is a development build, not yet a public release. ODST, every weapon, scopes, vehicles, cutscenes, performance targets, and friend-machine installation still need systematic validation. See docs/CURRENT-STATE.md.
+Headset-confirmed on the ODST-enabled build:
+
+- true stereo, 6DOF head tracking, head-relative movement, and snap/smooth turn;
+- controller-driven gun and hands, arm IK, two-hand options, and floating hands;
+- the native ODST HUD, authored floating crosshair, HUD size/aspect/curvature/
+  height controls, and controller vibration;
+- stereo cutscenes with head look and authored-shot facing;
+- death/respawn recovery, a tested drivable car, and ODST -> Halo 3 -> ODST
+  re-entry.
+
+This remains an alpha. ODST brightness intentionally stays at the game default
+because the attempted hook hid the HUD. Broader weapon, turret, passenger-gun,
+vehicle, co-op, and headset coverage is still needed. MCC can also retain more
+than one title module after switching games; if a level returns to the menu,
+fully restart MCC before loading it. The default CMake option remains OFF so a
+normal build stays on the frozen Halo-3-only path; ODST test builds must be
+configured explicitly with `-DHALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON`. See
+[docs/CURRENT-STATE.md](docs/CURRENT-STATE.md) for the exact evidence and
+remaining regression gates.
 
 ## Install
 

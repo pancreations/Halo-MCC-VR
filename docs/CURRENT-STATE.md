@@ -531,8 +531,12 @@ The working runtime still contains dormant diagnostic and fallback code inherite
 
 ## Known limitations
 
-- Halo 3 only is validated. ODST is not, and is not a quick port: see the ODST
-  scope section below for the measured signature/layout evidence.
+- Halo 3 is the release baseline. ODST now has headset-confirmed stereo/6DOF,
+  motion-controlled weapon/arms, head-relative movement, authored crosshair,
+  native HUD and controls, cutscenes, vibration, death/respawn recovery, and one
+  tested car on the private option-ON path. Broader weapon/vehicle/turret and
+  cross-title coverage remains incomplete; do not describe ODST as universally
+  validated yet.
 - Full-body legs/torso are not implemented. Current VRIK is the first-person arms.
 - Weapon coverage is not yet systematic. Re-test shotgun, assault rifle, and pistol from the restored baseline, then cover every weapon class.
 - Scope rendering across all weapons, vehicles/turrets, cutscenes, co-op/split-screen, checkpoints across long sessions, and RTX 2070 Super performance need formal acceptance tests.
