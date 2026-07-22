@@ -72,10 +72,14 @@ target_link_libraries(halo3xr PRIVATE
     openxr_loader minhook imgui_lib
     d3d11 dxgi d3dcompiler)
 
-# --- The launcher: starts MCC without EAC and injects the DLL ---
+# --- The launcher: starts MCC without EAC (Steam or Store) and injects the DLL ---
 add_executable(halo3xr_launcher WIN32 src/launcher/launcher.cpp)
 target_compile_definitions(halo3xr_launcher PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+# ole32/shell32: IApplicationActivationManager for launching the Store (UWP)
+# app. GetPackagesByPackageFamily / GetPackagePathByFullName resolve from
+# kernel32's umbrella lib.
+target_link_libraries(halo3xr_launcher PRIVATE ole32 shell32)
 
 # --- Dev-only: read-only memory finder for locating the camera (not shipped) ---
 add_executable(camscan tools/camscan.cpp)

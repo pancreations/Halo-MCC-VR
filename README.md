@@ -3,7 +3,7 @@
 
 Windows or your antivirus might flag the mod or move a file to quarantine. The Files are not verified so please use at your own risk. More knowledgeable people are yelling at me so I gotta disclose that to you all.  Hopefully we can take care of this issue soon with some human review of the code itself. it's all there take a gander.
 
-A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
+A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam, or the Microsoft Store / Xbox PC app version).
 
 ## This code was written by AI
 
@@ -43,13 +43,27 @@ This is a development build, not yet a public release. ODST, every weapon, scope
 
 Installing is copying two files; there is no installer script.
 
+**Steam:**
+
 1. In Steam, open MCC's **Manage > Browse local files** folder.
 2. Create a folder named exactly `Halo_MCC_VR` inside the main **Halo The Master Chief Collection** folder.
 3. Copy only `halo3xr.dll` and `halo3xr_launcher.exe` from the unzipped package into that new `Halo_MCC_VR` folder.
 4. Start Steam and your OpenXR headset runtime, then run `halo3xr_launcher.exe`.
 5. Optionally right-click the launcher and use **Send to > Desktop (create shortcut)**.
 
-The final layout must be `Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder. To update, close MCC and copy the two new files over the old ones — `halomccvr.cfg` is left alone. To uninstall, close MCC and delete only the dedicated `Halo_MCC_VR` folder you created. The mod does not patch game files.
+The final layout must be `Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder.
+
+**Microsoft Store / Xbox PC app:**
+
+The Store install lives in a protected read-only folder (`C:\Program Files\WindowsApps`), so the mod folder cannot go inside the game folder. Instead:
+
+1. Create a folder named `Halo_MCC_VR` anywhere writable, for example `C:\Games\Halo_MCC_VR`.
+2. Copy `halo3xr.dll` and `halo3xr_launcher.exe` into it.
+3. Start your OpenXR headset runtime, then run `halo3xr_launcher.exe`.
+
+The launcher looks for a Steam install around itself first; when there is none, it finds the Store version of MCC automatically, launches it in the anti-cheat-disabled mode, and injects the same way.
+
+To update either install, close MCC and copy the two new files over the old ones — `halomccvr.cfg` is left alone. To uninstall, close MCC and delete only the dedicated `Halo_MCC_VR` folder you created. The mod does not patch game files.
 
 Settings live in `Halo_MCC_VR\halomccvr.cfg`, written with defaults on first run. Every setting carries its description, default, and range, so it can be edited by hand in Notepad with MCC closed; the F1 menu edits the same file live. Display & HUD has separate live controls for overall size, width/aspect, curvature, and vertical height. Deleting the file regenerates it with defaults.
 
@@ -76,7 +90,7 @@ launch is needed and the mod does not crash when MCC video settings change.
 
 ## Requirements and safety
 
-- Steam copy of MCC and an OpenXR headset/runtime.
+- Steam or Microsoft Store / Xbox PC app copy of MCC, and an OpenXR headset/runtime.
 - Launch through MCC's official "Play without anti-cheat" mode.
 - No game files are patched or redistributed.
 - Do not use the mod in anti-cheat-enabled matchmaking.

@@ -499,6 +499,35 @@ alpha is safe to distribute on machines that also have ODST installed.
 - Required MCC settings, headset-established on the test laptop 2026-07-20: Max Frame Rate 120, V-Sync Off, and Halo 3 in-game Field of View 120. The FOV value is a rendering requirement, not a comfort preference: at the default FOV the engine culls geometry outside the flat-screen frustum and the tester sees scenery pop in and out at the edges of the headset view. FOV 120 pushes culling beyond the headset's field of view. This is the in-game FOV setting only; the mod's own VR projection is still driven by the runtime and there is no mod-side FOV slider. Also headset-observed: MCC's own FSR option must stay off because it breaks the VR image scale, and MCC video settings can be changed with the headset on from inside the VR session without disturbing the mod (no flat-screen launch required). Documented in README.md and installer/ALPHA-README.txt.
 - Still pending: manual update-over-old-copy behavior on a tester machine, and broader external hardware/runtime coverage.
 
+## Microsoft Store / Xbox PC launch support (2026-07-21)
+
+Store launch is HEADSET-CONFIRMED (2026-07-21): Halo 3 campaign was played
+through the Store build via this launcher path with head tracking, controller
+tracking, movement, and controller vibration all working.
+
+- The Store build is package `Microsoft.Chelan` (family
+  `Microsoft.Chelan_8wekyb3d8bbwe`), installed read-only under
+  `C:\Program Files\WindowsApps\`; its anti-cheat-disabled app id is
+  `Microsoft.Chelan_8wekyb3d8bbwe!HaloMCCShippingNoEAC` and its shipping exe
+  is `MCCWinStore-Win64-Shipping.exe` — a different name from the Steam
+  build's `MCC-Win64-Shipping.exe`, which is why the old launcher silently
+  failed to find it.
+- The launcher tries the existing Steam walk-up-from-self-path detection
+  first (unchanged behavior/code path), and if that finds nothing, looks up
+  the Store package via `GetPackagesByPackageFamily` /
+  `GetPackagePathByFullName` and launches it with
+  `IApplicationActivationManager::ActivateApplication` (links `ole32`,
+  `shell32`), passing the same `-WINDOWED -ResX=.. -ResY=..` command line the
+  Steam path already built from `resolution_scale`. It then polls for
+  `MCCWinStore-Win64-Shipping.exe` (up to 90s) and injects with the same
+  `CreateRemoteThread`+`LoadLibraryW` method, refactored into a shared
+  `InjectDll()` helper used by both paths.
+- Because the Store install can't hold a `Halo_MCC_VR` folder (read-only
+  parent), the launcher/DLL run from any writable folder in Store mode (e.g.
+  `C:\Games\Halo_MCC_VR`) since the app is activated by AUMID rather than a
+  relative path walk-up. Steam mode is unaffected and still requires the
+  folder to sit inside the Steam game directory.
+
 ## Required test/deploy sequence
 
     git status --short
