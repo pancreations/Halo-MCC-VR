@@ -68,6 +68,7 @@ static void Clamp()
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
     g_config.left_grip_forward_m = std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
+    g_config.shoulder_back_m = std::clamp(g_config.shoulder_back_m, -0.3f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
     g_config.gun_yaw_deg = std::clamp(g_config.gun_yaw_deg, -180.0f, 180.0f);
     g_config.gun_roll_deg = std::clamp(g_config.gun_roll_deg, -180.0f, 180.0f);
@@ -256,6 +257,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.floating_hands = atoi(val) != 0;
         else if (!strcmp(key, "right_shoulder_drop"))
             g_config.right_shoulder_drop = (float)atof(val);
+        else if (!strcmp(key, "shoulder_back_m"))
+            g_config.shoulder_back_m = (float)atof(val);
         else if (!strcmp(key, "shoulder_level"))
             g_config.shoulder_level = atoi(val) != 0;
         else if (!strcmp(key, "motion_blur"))
@@ -546,6 +549,11 @@ void ConfigSave()
     fprintf(f, "# (0 = authored, higher = lower; ~world units).\n");
     fprintf(f, "# (default %.3f, range 0 to 0.3)\n", d.right_shoulder_drop);
     fprintf(f, "right_shoulder_drop = %.3f\n\n", g_config.right_shoulder_drop);
+    fprintf(f, "# Push BOTH shoulders back toward your torso, along your heading.\n");
+    fprintf(f, "# Some titles (e.g. ODST) plant the shoulders in front of you;\n");
+    fprintf(f, "# raise this until they sit at your body. Negative = forward.\n");
+    fprintf(f, "# (default %.3f, range -0.3 to 0.3; ~world units)\n", d.shoulder_back_m);
+    fprintf(f, "shoulder_back_m = %.3f\n\n", g_config.shoulder_back_m);
     fprintf(f, "# Keep the IK shoulders level with the horizon instead of pitching\n");
     fprintf(f, "# with your head. 1 = level torso (shoulders stay put); 0 = old.\n");
     fprintf(f, "# (default %d)\n", d.shoulder_level ? 1 : 0);

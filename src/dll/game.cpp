@@ -2766,13 +2766,18 @@ namespace
                         !ComposeBoneMatrices(armRoot,unmod[wrist],wrW)) return false;
                     // Lower the shoulder anchor along the view-DOWN axis (camera
                     // up column, negated) so Chief's arm sits lower and stops
-                    // clipping the face. Right arm only (shoulderDrop>0).
-                    if (shoulderDrop>0.0f)
+                    // clipping the face (drop; right arm only, shoulderDrop>0),
+                    // and push BOTH shoulders back along the forward axis so a
+                    // title that plants them in front of you (ODST) seats them at
+                    // the torso. Halo 3 keeps shoulder_back_m=0 -> unchanged.
+                    const float shoulderBack=g_config.shoulder_back_m;
+                    if (shoulderDrop>0.0f || shoulderBack!=0.0f)
                     {
                         float rb[9];
                         if (NormalizedBasis(armRoot,rb))
                             for (int j=0;j<3;++j)
-                                shW.translation[j]-=rb[6+j]*shoulderDrop;
+                                shW.translation[j]-=rb[6+j]*shoulderDrop
+                                                   +rb[0+j]*shoulderBack;
                     }
                     const float* S=shW.translation; const float* Er=elW.translation;
                     const float* Wr=wrW.translation;

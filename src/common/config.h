@@ -218,6 +218,13 @@ struct Config
     // behavior (shoulders ride the camera). Hand and gun are unaffected either way.
     bool shoulder_level = true;
 
+    // Push BOTH shoulder anchors back toward your torso, along your (leveled)
+    // heading. Some titles (e.g. ODST) plant the first-person shoulders in front
+    // of you; raise this until they sit at your body. 0 = the game's authored
+    // shoulder position (Halo 3's confirmed default); higher = further back. In
+    // world units (~1 wu = 3 m). Negative pushes them forward.
+    float shoulder_back_m = 0.0f;
+
     // Halo 3's camera motion blur. In two-render stereo its "previous frame"
     // camera is the other eye's, smearing bright content into repeated echoes
     // (the long-standing first-eye ghost). Off is also the VR comfort
