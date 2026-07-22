@@ -5094,6 +5094,49 @@ namespace
         g_barrelInWristValid[slot].store(true, std::memory_order_release);
     }
 
+    // ---- One-shot FP weapon-layout self-check (headset diagnostics) ---------
+    // The two remaining fail-closed risks for the ODST weapon/arm path are (1)
+    // the FP interpolation hook never firing on a weapon slot and (2) the live
+    // node count falling outside ComputeOdstFpSkeletonLayout's accepted 39..64
+    // range (H3ODSTEK-derived indices vs. the retail skeleton). Neither can be
+    // logged from this hot hook, so it publishes atomically and the 50 ms worker
+    // emits one line -- exactly the pattern the non-FP camera capture uses below.
+    struct OdstFpLayoutSelfCheck
+    {
+        std::atomic<uint32_t> key{0};     // 0 = nothing observed yet
+        std::atomic<int> slot{-1};
+        std::atomic<int> nodeCount{-1};
+        std::atomic<int> accepted{0};     // 1 = layout accepted the node count
+        std::atomic<int> wrist{-1};
+        std::atomic<int> cameraControl{-1};
+    };
+    OdstFpLayoutSelfCheck g_odstFpLayoutSelfCheck;
+    std::atomic<uint32_t> g_odstFpLayoutLoggedKey{0};
+
+    // Atomic-only publish from the hot FP interpolation hook. Deduped by a key
+    // built from slot/count/accepted so it republishes only when the observation
+    // changes; the worker then emits each distinct observation at most once.
+    void PublishOdstFpLayoutSelfCheck(int slot, int nodeCount, bool accepted,
+                                      const OdstFpSkeletonLayout& layout)
+    {
+        const uint32_t key =
+            (static_cast<uint32_t>(slot & 0x3) << 30) |
+            (static_cast<uint32_t>(accepted ? 1u : 0u) << 29) |
+            (static_cast<uint32_t>(nodeCount & 0x1FF) << 20) |
+            0x1u;  // low bit set so a real observation is never key 0
+        OdstFpLayoutSelfCheck& sc = g_odstFpLayoutSelfCheck;
+        if (sc.key.load(std::memory_order_relaxed) == key)
+            return;
+        sc.slot.store(slot, std::memory_order_relaxed);
+        sc.nodeCount.store(nodeCount, std::memory_order_relaxed);
+        sc.accepted.store(accepted ? 1 : 0, std::memory_order_relaxed);
+        sc.wrist.store(accepted ? layout.rightWrist : -1,
+                       std::memory_order_relaxed);
+        sc.cameraControl.store(accepted ? layout.cameraControl : -1,
+                               std::memory_order_relaxed);
+        sc.key.store(key, std::memory_order_release);
+    }
+
     __declspec(noinline) bool __fastcall OdstFpInterpolateWeaponHook(
         int view, int id, int slot, BoneMatrix** outBones, int* outCount)
     {
@@ -5111,8 +5154,12 @@ namespace
         {
             g_fpInterpolationContexts[slot] = {};
             OdstFpSkeletonLayout layout{};
-            if (result && outBones && outCount && *outBones &&
-                ComputeOdstFpSkeletonLayout(*outCount, layout))
+            const bool haveBones = result && outBones && outCount && *outBones;
+            const bool layoutOk =
+                haveBones && ComputeOdstFpSkeletonLayout(*outCount, layout);
+            PublishOdstFpLayoutSelfCheck(
+                slot, haveBones ? *outCount : -1, layoutOk, layout);
+            if (layoutOk)
             {
                 const int count = *outCount;
                 FpInterpolationContext& context =
@@ -5341,6 +5388,34 @@ namespace
             vfov, rfov, nearClip, farClip,
             (tail && nested && active && plain) ? "YES" : "NO (render stock)");
         g_odstNonFpCameraLoggedSeq.store(seq, std::memory_order_relaxed);
+    }
+
+    // Called from the 50 ms worker (NOT a hot hook), so logging is safe here.
+    // Emits the one-shot FP weapon-layout self-check published by the hot FP
+    // interpolation hook: if the hands/gun stay on the head in the headset, this
+    // line tells us whether the hook fired and whether the skeleton was accepted.
+    void LogOdstFpLayoutSelfCheckIfNew()
+    {
+        OdstFpLayoutSelfCheck& sc = g_odstFpLayoutSelfCheck;
+        const uint32_t key = sc.key.load(std::memory_order_acquire);
+        if (key == 0)
+            return; // the FP interpolation hook has not seen a weapon slot yet
+        if (key == g_odstFpLayoutLoggedKey.load(std::memory_order_relaxed))
+            return; // already logged this observation
+        const int slot = sc.slot.load(std::memory_order_relaxed);
+        const int nodeCount = sc.nodeCount.load(std::memory_order_relaxed);
+        const int accepted = sc.accepted.load(std::memory_order_relaxed);
+        const int wrist = sc.wrist.load(std::memory_order_relaxed);
+        const int cameraControl =
+            sc.cameraControl.load(std::memory_order_relaxed);
+        if (sc.key.load(std::memory_order_acquire) != key)
+            return; // a newer observation started; re-read next tick
+        LOG("ODST FP WEAPON SELF-CHECK: interpolation hook fired slot=%d "
+            "nodeCount=%d layoutAccepted=%s (need 39..64) wrist=%d "
+            "cameraControl=%d -- hands/gun driven by controller = %s",
+            slot, nodeCount, accepted ? "YES" : "NO", wrist, cameraControl,
+            accepted ? "YES" : "NO (layout rejected -> stock pose on head)");
+        g_odstFpLayoutLoggedKey.store(key, std::memory_order_relaxed);
     }
 
     __declspec(noinline) void __fastcall OdstRenderViewBody(void* view)
@@ -7989,6 +8064,7 @@ namespace
             }
             g_hooked.store(gameHooked || odstHooked, std::memory_order_release);
             LogOdstNonFpCameraIfNew();     // emit any non-FP (death/vehicle) cam
+            LogOdstFpLayoutSelfCheckIfNew(); // emit FP weapon-layout self-check
             Sleep(50);
 #else
             Sleep(50);
