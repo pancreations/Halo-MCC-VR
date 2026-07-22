@@ -29,6 +29,36 @@ troubleshoot, and bug fix.
 
 ## Recovery points
 
+- ODST CONTROLLER VIBRATION — HEADSET-CONFIRMED 2026-07-22 ("rumble works"):
+  ODST now delivers controller vibration during gameplay exactly like Halo 3.
+  Root cause it was silent: the haptic INPUT side was already title-agnostic
+  (the process-wide XInput `SetState` hook feeds `VR_SetGameHaptics` for ODST,
+  since ODST's `GetState`/motion controls work), but the APPLY side
+  `ApplyControllerHaptics` (`vr.cpp`) only fires when
+  `TitleAdapter_GetRuntimeMode()` is Gameplay/Vehicle/Turret, and
+  `Game_AutoVrTick` hardcoded ODST's runtime mode to `Unsupported` — so every
+  captured rumble was immediately stopped. Fix `f2e4138` on
+  `feature/odst-bringup`: the ODST branch of `Game_AutoVrTick` now reports the
+  shared runtime mode like Halo 3 — `Paused` when natively paused, `Gameplay`
+  once the fresh-camera debounce is stable, otherwise `Loading`. The exact
+  deployed log corroborates it: `Runtime mode: loading -> gameplay` now appears
+  for ODST (from `TitleAdapter_SetRuntimeMode`), the gate that unblocks haptics;
+  before the fix ODST could only ever reach `unsupported`. The configurator
+  needed NO change: `ApplyControllerHaptics` already multiplies the requested
+  amplitude by the universal `haptic_intensity`, so the shared `halomccvr.cfg`
+  value and the F1 → Controls "Controller vibration" slider tune ODST rumble
+  strength with no per-title profile. The change is entirely inside
+  `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP`; the public Halo 3 build is
+  byte-unaffected, and Halo 3's own runtime-mode assignment is untouched (Halo 3
+  never enters the ODST branch). OFF and ON Release builds and both CTest suites
+  passed before guarded deployment. Deployed private DLL build
+  `2026-07-22 17:23:48 UTC`, SHA-256
+  `B4FB36A85BFD045BEB94AD5E744AAA415DE4141C4EE31ED3D1D8C7DEE48F07EB`, recovery
+  record `pre-odst-private-backup-40` (restored from baseline `DFF8A406`).
+  REMAINING for full closure per the parity contract: run the shared-code Halo 3
+  regression while this DLL is installed (risk is nil — the edit is ODST-gated —
+  but the runtime-mode channel is shared lifecycle state), then restore the
+  exact baseline.
 - ODST NATIVE HUD PIPELINE PARITY - HEADSET-CONFIRMED 2026-07-22: commit
   `fa37870b8cddf9e3ef9687f664aa876fdd787108` was deployed through the guarded
   private path as DLL SHA-256
