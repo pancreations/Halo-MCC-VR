@@ -23,7 +23,7 @@ Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-K
 The headset-proven recovery baseline is Git commit 330a568 on branch recovery/best-working-20260719-1300.
 The safe cleanup branch retains that exact runtime source and changes documentation/repository hygiene only. A broader runtime cleanup was rejected after a headset fatal error during level transition.
 
-Working in Halo 3 on PSVR2 and Quest 3 through SteamVR OpenXR:
+Working in Halo 3 on PSVR2,HTC, and Quest headsets through SteamVR OpenXR:
 
 - true per-eye stereo and 6DOF head tracking;
 - Sense-controller input, snap/smooth turning, melee, grenades, and menu control;
@@ -82,6 +82,25 @@ launch is needed and the mod does not crash when MCC video settings change.
   package rather than running it: a version from before 2026-07-20 could
   recursively delete the folder containing it when package files had been
   extracted directly into the MCC root.
+
+## If Windows warns about the files, it's a false alarm
+
+Windows or your antivirus may show a warning about `halo3xr_launcher.exe` or
+`halo3xr.dll`, or move one to quarantine. **The files are safe.** This happens to
+almost every VR mod, because the mod has to load itself into the game to turn on
+VR, and Windows plays it safe with anything it hasn't seen before. Because each
+release is a new file, the warning can come back after an update — that's normal
+and doesn't mean anything is wrong.
+
+If it gets blocked, just choose **Allow** (or **Run anyway**, or restore the file
+from Windows Security → Protection history) and you're good. **You don't need to
+turn your antivirus off** — allow only these two files, or your `Halo_MCC_VR`
+folder.
+
+Just get your download from the official page —
+[github.com/pancreations/Halo-MCC-VR](https://github.com/pancreations/Halo-MCC-VR) —
+where the full source is public too. (For the extra-cautious: each release's
+`BUILD-INFO.txt` lists a SHA-256 fingerprint you can check the files against.)
 
 ## Credits
 

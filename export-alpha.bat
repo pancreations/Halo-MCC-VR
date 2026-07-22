@@ -159,6 +159,13 @@ echo.
 echo On the laptop, unzip the whole ZIP and follow MANUAL-README.txt: copy the
 echo two files into a "Halo_MCC_VR" folder inside the game folder.
 echo.
+echo ANTIVIRUS: this is a new unsigned build, so Defender will flag it again.
+echo Before sharing it, work docs\RELEASE-ANTIVIRUS-CHECKLIST.md:
+echo   - publish the BUILD-INFO.txt SHA-256 hashes in the release notes
+echo   - submit this ZIP to Microsoft as a false positive
+echo     https://www.microsoft.com/en-us/wdsi/filesubmission
+echo   - optionally upload to VirusTotal and link the result
+echo.
 if /I not "%~1"=="auto" pause
 exit /b 0
 
