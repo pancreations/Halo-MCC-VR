@@ -5682,16 +5682,16 @@ namespace
         static bool logged = false;
         if (logged)
             return;
-        unsigned completedPhaseScopes = 0, id1OmMatches = 0;
+        unsigned completedPhaseScopes = 0, provenOmMatches = 0;
         unsigned exactCopyScopes = 0, copySubstitutions = 0;
-        VR_GetNativeHudRouteStats(completedPhaseScopes, id1OmMatches,
+        VR_GetNativeHudRouteStats(completedPhaseScopes, provenOmMatches,
                                   exactCopyScopes, copySubstitutions);
         if (completedPhaseScopes < 120)
             return;
         logged = true;
-        LOG("ODST NATIVE HUD ROUTE: completedScopes=%u id1OmMatches=%u "
+        LOG("ODST NATIVE HUD ROUTE: completedScopes=%u provenOmMatches=%u "
             "exactCopyScopes=%u copySubstitutions=%u -- %s",
-            completedPhaseScopes, id1OmMatches, exactCopyScopes,
+            completedPhaseScopes, provenOmMatches, exactCopyScopes,
             copySubstitutions,
             copySubstitutions
                 ? "target-1 snapshot sourced from the active eye cache"

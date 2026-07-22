@@ -79,7 +79,7 @@ void VR_BeginNativeHudTargetCopy();
 void VR_EndNativeHudTargetCopy();
 ID3D11Resource* VR_RedirectNativeHudCopySource(ID3D11Resource* source);
 void VR_GetNativeHudRouteStats(unsigned& completedPhaseScopes,
-                               unsigned& id1OmMatches,
+                               unsigned& provenOmMatches,
                                unsigned& exactCopyScopes,
                                unsigned& copySubstitutions);
 #endif

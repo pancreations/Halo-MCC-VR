@@ -204,7 +204,7 @@ namespace
     {
         ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
         ID3D11DepthStencilView* dsv = nullptr;
-        ID3D11RenderTargetView* sourceRtv = nullptr;
+        ID3D11RenderTargetView* phaseOutputRtv = nullptr;
         D3D11_VIEWPORT viewports[
             D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
         D3D11_RECT scissors[
@@ -218,7 +218,7 @@ namespace
     };
     thread_local NativeHudEyeRouteState g_nativeHudEyeRoute{};
     std::atomic<unsigned> g_nativeHudPhaseScopes{0};
-    std::atomic<unsigned> g_nativeHudId1OmMatches{0};
+    std::atomic<unsigned> g_nativeHudProvenOmMatches{0};
     std::atomic<unsigned> g_nativeHudExactCopyScopes{0};
     std::atomic<unsigned> g_nativeHudCopySubstitutions{0};
 #endif
@@ -3359,13 +3359,12 @@ bool VR_BeginNativeHudEyeDraw(int eye)
     route.scissorCount =
         D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
     g_context->RSGetScissorRects(&route.scissorCount, route.scissors);
-    // Engine target 1 can already have passed through the normal eye redirect
-    // before this phase boundary, so exactly two slot-0 pointers are proven:
-    // the retained scene RTV and this eye's cache. Anything else stays stock.
-    const bool expectedSource = route.rtvs[0] &&
-        (route.rtvs[0] == g_sceneColorRtv ||
-         route.rtvs[0] == g_eyeCacheRtvs[eye]);
-    if (!expectedSource)
+    // ODST's unique prepare callback owns slot 0 at both native CHUD boundaries:
+    // it establishes target 1 immediately before secondary, then performs its
+    // engine-owned transition before primary. A non-null slot-0 RTV captured
+    // only at these TLS-scoped hooks is therefore the title-proven phase output,
+    // even when its view pointer differs from the later scene-color view.
+    if (!route.rtvs[0])
     {
         for (auto*& rtv : route.rtvs)
         {
@@ -3382,7 +3381,7 @@ bool VR_BeginNativeHudEyeDraw(int eye)
         return false;
     }
 
-    route.sourceRtv = route.rtvs[0];
+    route.phaseOutputRtv = route.rtvs[0];
     route.eye = eye;
     ID3D11RenderTargetView* routed[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
     for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
@@ -3423,7 +3422,7 @@ void VR_EndNativeHudEyeDraw()
         route.dsv->Release();
         route.dsv = nullptr;
     }
-    route.sourceRtv = nullptr;
+    route.phaseOutputRtv = nullptr;
     route.viewportCount = 0;
     route.scissorCount = 0;
     route.eye = -1;
@@ -3458,13 +3457,13 @@ ID3D11Resource* VR_RedirectNativeHudCopySource(ID3D11Resource* source)
 }
 
 void VR_GetNativeHudRouteStats(unsigned& completedPhaseScopes,
-                               unsigned& id1OmMatches,
+                               unsigned& provenOmMatches,
                                unsigned& exactCopyScopes,
                                unsigned& copySubstitutions)
 {
     completedPhaseScopes =
         g_nativeHudPhaseScopes.load(std::memory_order_acquire);
-    id1OmMatches = g_nativeHudId1OmMatches.load(std::memory_order_relaxed);
+    provenOmMatches = g_nativeHudProvenOmMatches.load(std::memory_order_relaxed);
     exactCopyScopes =
         g_nativeHudExactCopyScopes.load(std::memory_order_relaxed);
     copySubstitutions =
@@ -3578,14 +3577,13 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
         if (nativeHud)
         {
-            if (target && (input[i] == hudRoute.sourceRtv ||
-                           input[i] == g_sceneColorRtv))
+            if (target && input[i] == hudRoute.phaseOutputRtv)
             {
                 output[i] = target;
-                g_nativeHudId1OmMatches.fetch_add(1, std::memory_order_relaxed);
+                g_nativeHudProvenOmMatches.fetch_add(1, std::memory_order_relaxed);
                 changed = true;
             }
-            // A phase-local target which is not one of the two proven pointers
+            // A phase-local target which is not the captured proven pointer
             // stays stock. In particular, never enter scene-target discovery
             // while a CHUD phase is active.
             continue;

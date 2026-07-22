@@ -29,36 +29,40 @@ troubleshoot, and bug fix.
 
 ## Recovery points
 
-- ODST NATIVE HUD PIPELINE PARITY - TWO DEPLOYED BUILDS HEADSET-DISPROVEN;
-  THIRD PIPELINE CANDIDATE TESTED, HEADSET TEST PENDING (2026-07-22): headset
-  tests of `ecdfd94` and `f6c6c52` still showed no health, ammo, or
-  motion-tracker HUD. Both DLLs were confirmed deployed. Static parity tracing
-  proves Halo 3 and ODST both submit native CHUD during `prepareView`, after
-  engine target setup and in exact order secondary then primary: H3
-  `0x2D289C`/`0x2D2670`; ODST `0x2FD88C`/`0x2FD694`. Their inner renderers
-  run afterward. Both secondaries snapshot engine target ID 1 into a
-  title-specific stock intermediate before later target-1 work: Halo 3 uses
-  target `0x3C`; ODST uses target `0x35` through copy function `0x2A3BF8`.
-  The failed replay gate required `g_stereoEye < 0`, so it never scoped the
-  natural per-eye calls. The corrected source marks only each active ODST
-  eye's `prepareView`, runs each original phase once in place, and uses a full
-  output/depth/viewport/scissor guard. Its own bind/restore calls bypass the
-  global OM redirect so they restore exact state and never count as a world
-  capture. During exact ODST copy arguments `(1, 0x35)`, a TLS marker permits
-  the D3D `CopyResource` hook to substitute only a retained, pointer-matched
-  target-1 scene source with the active eye cache; destination `0x35` remains
-  stock. Later pointer-proven target-1 binds route to the same eye. Any unknown
-  target or source identity fails open. The copy detour, TLS route, counters,
-  and retained resource compile only into private ODST builds; even there the
-  copy hook is inert outside that exact marker. Hot paths perform no discovery,
-  allocation, file I/O, or logging. The ODST lifecycle now accounts for ten
-  core hooks plus the two optional crosshair hooks across install, quiesce, unwind scan, and teardown.
-  Primary, secondary, and target-copy AOBs each match the supported retail
-  ODST DLL exactly once (SHA-256 `5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`).
-  One cold-worker line reports completed phase scopes, target-1 OM matches,
-  exact copy scopes, and source substitutions. OFF/ON Release builds and both
-  CTest suites pass. Headset confirmation and the Halo 3 regression check
-  remain pending; no source-only result is recorded as parity.
+- ODST NATIVE HUD PIPELINE PARITY - THREE DEPLOYED BUILDS
+  HEADSET-DISPROVEN; REPLACEMENT DESK-TESTED (2026-07-22): `ecdfd94`,
+  `f6c6c52`, and `3ef2dd4` were each confirmed deployed and still showed no
+  health, ammo, or motion-tracker HUD in the headset. The `3ef2dd4` live run
+  (installed SHA-256
+  `697197CD4D9B5BFF624B3B644E1070D671D731C72B20201320BF0A7D112DB531`)
+  kept the HUD visible on the desktop, held stereo at about 100 fps, and never
+  emitted `ODST NATIVE HUD ROUTE` after minutes of focused stereo. Therefore
+  fewer than 120 phase scopes completed; the exact-copy path was never armed.
+  Retail call-graph reconstruction proves this is not a hook-timing failure:
+  ODST `prepareView` `0x1B4694` synchronously invokes callback `0x2AE13C`,
+  which runs target setup `0x2E481C`, secondary CHUD `0x2FD88C`, primary CHUD
+  `0x2FD694`, and teardown before inner renderer `0x2AFB10`. Target setup binds
+  logical target 1 to OM slot 0 before secondary. The rejected candidate then
+  required that live RTV view pointer to equal the separately learned world
+  scene RTV or eye-cache RTV; ODST uses a distinct view pointer, so every
+  legitimate phase failed open to the stock desktop target. The replacement
+  admits a non-null slot-0 RTV only inside the two unique, TLS-scoped per-eye
+  CHUD hooks, captures that exact phase-output pointer, routes it to the active
+  eye cache, and restores the full OM/depth/viewport/scissor guard. Unknown or
+  null surfaces remain stock. During exact copy arguments `(1, 0x35)`, the
+  private-only D3D `CopyResource` hook can still substitute only a retained,
+  pointer-matched target-1 scene source with the active eye cache; destination
+  `0x35` remains stock. All routing hot paths remain allocation-free, log-free,
+  and pointer-comparison-only. Ten core hooks plus two optional crosshair hooks
+  participate in install, quiesce, unwind scan, and teardown. The primary,
+  secondary, and target-copy AOBs each match the supported retail ODST DLL once
+  (SHA-256
+  `5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`).
+  A cold-worker report now labels the OM count `provenOmMatches` and retains
+  separate completed-scope, exact-copy, and substitution counts. Both OFF/ON
+  Release builds and CTest suites pass. Guarded deployment, headset confirmation,
+  and the Halo 3 regression are pending;
+  no source-only result is recorded as parity.
 - ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
   you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget
