@@ -18,6 +18,25 @@ check whenever shared behavior or cross-title lifecycle state could change.
 
 ## Recovery points
 
+- CURRENT DEFINITIVE BUILD (user-approved 2026-07-21, not released): ODST
+  first-person weapon/arm motion controls now work like Halo 3 — hands and gun
+  are off the head, controller-driven aim and the base VR cursor function.
+  Commit `132b353` on `feature/odst-bringup`, preserved at
+  `recovery/best-working-20260721-odst-motion`. Built with
+  `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` and deployed ONLY via
+  `deploy-odst-private.bat`; the public `deploy.bat`/master path stays OFF.
+  Layers: cherry-picked Halo 3 weapon/arm IK parity path (`2183591`), the
+  one-shot FP weapon-layout self-check (`47a3d64`), and the universal
+  `shoulder_back_m` knob (`132b353`, user running `0.100` to seat ODST shoulders
+  at the torso; default `0.0` leaves Halo 3 unchanged). Deployed DLL build
+  2026-07-21 11:24:49 PM, SHA-256
+  `696E1A9826E3BB698052FAA261207735BBA07D636499614290C2EE587A573DF0`. Log
+  confirms build `Jul 21 2026 23:24:49` with `ODST FP WEAPON SELF-CHECK ...
+  layoutAccepted=YES ... driven by controller = YES` across weapons. User
+  result: "motion controls are working perfectly." Root cause of the prior
+  "hands stuck to the head" was that the finished IK commit (`33d246c`) had been
+  orphaned on `feature/odst-weapons-ik` and never built. Next objective: link
+  the VR crosshair + HUD (and their configs) to full Halo 3 parity.
 - Headset-proven baseline: 330a568
 - Protected branch: recovery/best-working-20260719-1300
 - Safe documentation-cleanup branch: cleanup/production-baseline-20260719; runtime restored by ddfe109
@@ -821,8 +840,10 @@ fix becomes a real ODST turn-rate/sensitivity RE task, not a stick-gain tweak.
 User-resequenced ODST roadmap (each a config-file-integrated build):
 1. Bullet snap-to-crosshair (this analysis; diagnostic first).
 2. Motion-controlled weapon: gun and hands off the face, driven by the
-   controller (the VRIK/palette gate; needs ODST FP skeleton/bone/marker
-   evidence).
+   controller (the VRIK/palette gate). DONE 2026-07-21 — headset-confirmed on
+   commit `132b353` (see the CURRENT DEFINITIVE BUILD entry under Recovery
+   points); ODST FP skeleton accepted at runtime (self-check `layoutAccepted=YES`,
+   wrist 6 / cameraControl = count-1) and `shoulder_back_m` seats the shoulders.
 3. HUD: native HUD render + hide the native center crosshair + route its authored
    asset and green/red target states onto the VR crosshair, plus IK arms and
    floating-hand options. All user-facing options must live in the one universal
