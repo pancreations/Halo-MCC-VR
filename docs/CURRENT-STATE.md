@@ -18,8 +18,8 @@ check whenever shared behavior or cross-title lifecycle state could change.
 
 ## Recovery points
 
-- ODST HUD CROSSHAIR PARITY — DEPLOYED, PENDING HEADSET CONFIRMATION
-  (2026-07-22): ODST now installs Halo 3's class-2 CHUD crosshair path — it
+- ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
+  you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget
   as the floating VR crosshair, at Halo 3's exact shared size
   (`crosshair_size_deg`). Root cause: the ODST installer wired only the 7
@@ -49,6 +49,20 @@ check whenever shared behavior or cross-title lifecycle state could change.
   (`kHudXformSig` ODST `0x2A6308`, already proven), then HUD size/curvature/
   aspect (safe-frame tag scan — needs ODST chud_globals layout proof), then HUD
   height (`kHudAnchorBasisSig` ODST signature not yet derived).
+- ODST HUD BRIGHTNESS PARITY — DEPLOYED, PENDING HEADSET CONFIRMATION
+  (2026-07-22): ODST now installs Halo 3's game-brightness hook. Fix `aeb26d7`
+  on `feature/odst-bringup`: `InstallOdstBrightnessHook` hooks the screen
+  color/gamma constant uploader, byte-identical to Halo 3 (`kHudXformSig`,
+  unique ODST match `halo3odst.dll+0x2A6308`). Best-effort/fail-open, no byte
+  patch, registered in `hookTargets`, teardown nulls `g_realHudXform`; inert at
+  the default `game_brightness` 1.0. Same session also exercises HUD
+  size/curvature/aspect, which already tick for ODST via the title-agnostic
+  `HudLayoutAutoTick` safe-frame scan (`Game_AutoVrTick`) — the log will confirm
+  whether ODST's `chud_globals` tag is found. OFF and ON Release builds + both
+  CTests pass; all inside `#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP`. NEXT: HUD
+  height — `chud_compute_anchor_basis` is recompiled in ODST (22 prologue-shape
+  candidates, asserts stripped), so it needs a Rosetta-stone pin against Halo 3
+  and byte-verified `basis+0x2C` before hooking; its own build.
 - ODST CUTSCENE PARITY COMPLETE — BEST-WORKING VERSION (user-designated
   2026-07-22): ODST cinematics now match Halo 3 end to end -- stereo 3D depth,
   head tracking, AND the view re-orients to the authored shot at every cut.
