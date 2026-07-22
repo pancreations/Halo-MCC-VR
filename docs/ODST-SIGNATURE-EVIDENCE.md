@@ -529,8 +529,8 @@ recorded in `ODST-WEAPON-IK-EVIDENCE.md`.
 ## ODST native-HUD and slider evidence addendum (2026-07-22)
 
 This addendum records later title-specific evidence and headset results. It does
-not retroactively broaden the original survey's authorization, and it does not
-claim slider acceptance before the required ODST headset test and Halo 3
+not retroactively broaden the original survey's authorization. The accepted
+slider result below includes both the required ODST headset test and Halo 3
 regression.
 
 ### Native CHUD phase routing result
@@ -583,6 +583,14 @@ slider behavior. Its background scan logged one raw anchor, one plausible pair,
 and one accepted title-owned block in `2922 ms`; this discovery did not delay
 the independent one-second stereo arm. Public option-OFF and private option-ON
 Release builds and both CTest suites passed before deployment.
+
+The required Halo 3 regression was completed against that same installed DLL.
+The live Halo 3 session resolved `3` raw anchors, `3` plausible pairs, and `3`
+accepted title-owned safe-frame blocks in `2860 ms`; installed the established
+native HUD, authored-crosshair, and weapon hooks; armed stereo through Halo 3's
+normal lifecycle; and sustained about `100 fps` with distinct per-eye HUD and
+weapon presentation. The user confirmed that Halo 3 "works great." This closes
+the cross-title regression requirement for the accepted ODST slider build.
 
 ### ODST CHUD anchor-basis function
 

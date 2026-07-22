@@ -45,7 +45,8 @@ troubleshoot, and bug fix.
   and `3ef2dd4` remain headset-disproven history: their stricter pointer identity
   test rejected ODST's legitimate distinct CHUD output view even though the HUD
   remained visible on the desktop. Native-HUD visibility is accepted and
-  retained by the superseding slider baseline below; only its required Halo 3 regression remains unconfirmed.
+  retained by the superseding slider baseline below, whose required Halo 3
+  regression is now headset-confirmed.
 - ODST HUD CONFIG SLIDER PARITY - HEADSET-CONFIRMED 2026-07-22: deployed
   source commit `cac61f3f13dc9da90ec7683a3ee6167084247994`, installed DLL
   SHA-256 `9693A175EB674DCAEB8806AE80AB68B6AD98646C58D990081CEBBA9A29BB87D8`,
@@ -64,8 +65,12 @@ troubleshoot, and bug fix.
   basis evidence. ODST brightness remains explicitly excluded because its prior
   experiment hid the entire HUD. Public option-OFF and private option-ON Release
   builds and both CTest suites passed before guarded deployment. ODST slider
-  acceptance is complete for this exact DLL; the shared-code Halo 3 headset
-  regression is still required before declaring project-wide regression closure.
+  acceptance and the shared-code Halo 3 headset regression are complete for
+  this exact DLL. In Halo 3, the same installed DLL resolved `3` raw, `3`
+  plausible, and `3` accepted Halo 3 safe-frame blocks in `2860 ms`, installed
+  the established native HUD/weapon hooks, armed stereo through the normal
+  lifecycle, and sustained about `100 fps`; the user confirmed that Halo 3
+  "works great." The project-wide regression gate for this change is closed.
 - ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
   you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget
