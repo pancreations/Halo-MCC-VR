@@ -5371,8 +5371,6 @@ namespace
             *reinterpret_cast<const uintptr_t*>(
                 bytes + layout.nestedSourceCamera) ==
                 viewAddress + layout.rootCurrentCompact;
-        const bool firstPersonMode = ownsPrimarySlot &&
-            OdstCompactCameraUsesProvenMode(camera);
         const bool redirectable = ownsPrimarySlot &&
             OdstCompactCameraIsStereoRedirectable(camera);
         if (!OdstShouldStereoRedirect(ownsPrimarySlot, tailValid, nestedMatch,
@@ -5581,7 +5579,7 @@ namespace
             original(view);
             g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
             bool captured = VR_CaptureRenderedEye(eye);
-            if (!captured && !firstPersonMode)
+            if (!captured)
                 captured = VR_CaptureBackbufferEye(eye);
             capturesOk = captured && capturesOk;
             VR_EndRasterEye();
@@ -5608,12 +5606,13 @@ namespace
             g_odstCamera.captureFailures.store(0, std::memory_order_release);
         else
         {
-            const unsigned failures =
-                g_odstCamera.captureFailures.fetch_add(
-                    1, std::memory_order_acq_rel) + 1;
-            if (OdstCaptureFailureRequestsFallback(
-                    firstPersonMode, failures))
-                OdstRequestFallback(OdstFallbackReason::EyeRedirectUnavailable);
+            // Match Halo 3: a live render capture miss never dismantles the
+            // title hooks. ODST can switch to its death renderer while fpBlend
+            // still reports first person, so mode-based failure thresholds are
+            // not reliable. Preserve the last valid eye pair until either the
+            // direct backbuffer capture or normal scene-color capture returns.
+            g_odstCamera.captureFailures.fetch_add(
+                1, std::memory_order_acq_rel);
         }
     }
 

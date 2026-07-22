@@ -146,19 +146,6 @@ inline bool OdstShouldStereoRedirect(
         nestedSourceMatches && compactIsStereoRedirectable;
 }
 
-// ODST can switch to its death renderer inside one render call, after the
-// entry camera was classified as first person. A short missing-capture burst is
-// transition evidence, not a reason to dismantle the VR session. Persistent
-// misses remain fatal while the camera continues to report first person.
-constexpr unsigned kOdstConsecutiveFpCaptureFailureLimit = 8;
-
-inline bool OdstCaptureFailureRequestsFallback(
-    bool firstPersonMode, unsigned consecutiveFailures)
-{
-    return firstPersonMode &&
-        consecutiveFailures >= kOdstConsecutiveFpCaptureFailureLimit;
-}
-
 // The camera-copy path tears down only when our slot-0 view object no longer
 // matches the single-user layout -- a genuine level unload/transition. An
 // active third-person camera in a still-valid slot-0 object is NOT a teardown:

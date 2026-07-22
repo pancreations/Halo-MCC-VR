@@ -976,6 +976,33 @@ Public-OFF and private-ON Release builds succeed and both CTest runs pass. This
 is a desk-side candidate until death, live death-camera motion, respawn recovery,
 and the normal ODST aim/movement/crosshair path are confirmed in the headset.
 
+### Build F headset result: deployed correctly, threshold still tears down
+
+Build F deployed from commit `4b0fbd4` as private DLL
+`65656BECC956120C91FD3B29FEFECF9C75D181D4B23B68C23DC1D060F1A3DD52`
+(backup-19). The installed file and launch log matched. Death still kicked the
+user out of VR. At `20:59:42.125` the first capture miss appeared, stereo was
+disabled at `20:59:42.205`, and the worker completed an
+`eye redirect unavailable` teardown at `20:59:42.942`.
+
+The log disproved the blend-based threshold: ODST continued reporting the
+first-person compact mode for at least eight render calls after it had already
+switched to the direct death renderer. Build F therefore withheld its direct
+backbuffer fallback and eventually fired the remaining eight-strike teardown.
+
+### Build G candidate: copy Halo 3's non-fatal live-capture policy
+
+Halo 3 calls `VR_CaptureRenderedEye` after each eye but never uses a missing
+capture as a hook-removal signal. Build G applies that exact ownership rule to
+ODST: every scene-color miss attempts the retained-current-backbuffer copy,
+regardless of the stale first-person blend, and no live render capture miss can
+request fallback or disable stereo. Capture failure remains diagnostic only and
+the last valid stereo pair stays available. True camera-tail unload, title exit,
+native pause, install failure, and heartbeat loss remain the teardown boundaries.
+
+This specifically removes the path that produced both headset failures while
+retaining the direct death-render capture introduced in Build F.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

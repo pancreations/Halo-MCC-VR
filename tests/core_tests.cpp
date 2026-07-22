@@ -96,14 +96,6 @@ int main()
             "a broken single-user tail is never stereo-redirected");
         Check(!OdstShouldStereoRedirect(true, true, false, true),
             "a mismatched nested FP source is never stereo-redirected");
-        Check(!OdstCaptureFailureRequestsFallback(true, 1),
-            "one missing first-person capture is a tolerated mode transition");
-        Check(!OdstCaptureFailureRequestsFallback(
-                  false, kOdstConsecutiveFpCaptureFailureLimit),
-            "a direct third-person miss never dismantles the VR session");
-        Check(OdstCaptureFailureRequestsFallback(
-                  true, kOdstConsecutiveFpCaptureFailureLimit),
-            "persistent first-person capture failure still fails closed");
         Check(OdstCamCopyRequestsTeardown(true, true, false),
             "a broken slot-0 single-user tail tears down (level unload/transition)");
         Check(!OdstCamCopyRequestsTeardown(true, true, true),
