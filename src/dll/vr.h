@@ -102,6 +102,10 @@ bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3]);
 // of being drawn at the center of either VR eye.
 bool VR_BeginAuthoredReticleCapture();
 void VR_EndAuthoredReticleCapture();
+// Read-only diagnostic: category of the currently-bound render target — 0 none,
+// 1 learned scene-color RTV, 2 eye-0 cache, 3 eye-1 cache, 4 other. Does one COM
+// query; the ODST HUD probe calls it throttled (once per log window).
+int VR_ProbeBoundRtvCategory();
 // M3: the game layer sets this when the crosshair is over an enemy (engine
 // target-lock). While true, the floating reticle repaints red like the OG HUD.
 void VR_SetReticleEnemy(bool enemy);
