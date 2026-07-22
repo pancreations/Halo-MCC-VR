@@ -55,10 +55,10 @@ troubleshoot, and bug fix.
   `2026-07-22 17:23:48 UTC`, SHA-256
   `B4FB36A85BFD045BEB94AD5E744AAA415DE4141C4EE31ED3D1D8C7DEE48F07EB`, recovery
   record `pre-odst-private-backup-40` (restored from baseline `DFF8A406`).
-  REMAINING for full closure per the parity contract: run the shared-code Halo 3
-  regression while this DLL is installed (risk is nil — the edit is ODST-gated —
-  but the runtime-mode channel is shared lifecycle state), then restore the
-  exact baseline.
+  The shared-code Halo 3 regression is headset-confirmed on this exact installed
+  DLL (user: "halo 3 is working"), so the vibration change is fully closed. Only
+  the private baseline restore remains, to return the ODST test folder to its
+  frozen baseline when ODST testing pauses.
 - ODST NATIVE HUD PIPELINE PARITY - HEADSET-CONFIRMED 2026-07-22: commit
   `fa37870b8cddf9e3ef9687f664aa876fdd787108` was deployed through the guarded
   private path as DLL SHA-256
