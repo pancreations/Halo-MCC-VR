@@ -1,6 +1,6 @@
 # Current state
 
-Authoritative as of 2026-07-21. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
+Authoritative as of 2026-07-22. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
 
 ## Non-negotiable Halo 3 parity contract (user decision 2026-07-21)
 
@@ -29,40 +29,42 @@ troubleshoot, and bug fix.
 
 ## Recovery points
 
-- ODST NATIVE HUD PIPELINE PARITY - THREE DEPLOYED BUILDS
-  HEADSET-DISPROVEN; REPLACEMENT DESK-TESTED (2026-07-22): `ecdfd94`,
-  `f6c6c52`, and `3ef2dd4` were each confirmed deployed and still showed no
-  health, ammo, or motion-tracker HUD in the headset. The `3ef2dd4` live run
-  (installed SHA-256
-  `697197CD4D9B5BFF624B3B644E1070D671D731C72B20201320BF0A7D112DB531`)
-  kept the HUD visible on the desktop, held stereo at about 100 fps, and never
-  emitted `ODST NATIVE HUD ROUTE` after minutes of focused stereo. Therefore
-  fewer than 120 phase scopes completed; the exact-copy path was never armed.
-  Retail call-graph reconstruction proves this is not a hook-timing failure:
-  ODST `prepareView` `0x1B4694` synchronously invokes callback `0x2AE13C`,
-  which runs target setup `0x2E481C`, secondary CHUD `0x2FD88C`, primary CHUD
-  `0x2FD694`, and teardown before inner renderer `0x2AFB10`. Target setup binds
-  logical target 1 to OM slot 0 before secondary. The rejected candidate then
-  required that live RTV view pointer to equal the separately learned world
-  scene RTV or eye-cache RTV; ODST uses a distinct view pointer, so every
-  legitimate phase failed open to the stock desktop target. The replacement
-  admits a non-null slot-0 RTV only inside the two unique, TLS-scoped per-eye
-  CHUD hooks, captures that exact phase-output pointer, routes it to the active
-  eye cache, and restores the full OM/depth/viewport/scissor guard. Unknown or
-  null surfaces remain stock. During exact copy arguments `(1, 0x35)`, the
-  private-only D3D `CopyResource` hook can still substitute only a retained,
-  pointer-matched target-1 scene source with the active eye cache; destination
-  `0x35` remains stock. All routing hot paths remain allocation-free, log-free,
-  and pointer-comparison-only. Ten core hooks plus two optional crosshair hooks
-  participate in install, quiesce, unwind scan, and teardown. The primary,
-  secondary, and target-copy AOBs each match the supported retail ODST DLL once
-  (SHA-256
-  `5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`).
-  A cold-worker report now labels the OM count `provenOmMatches` and retains
-  separate completed-scope, exact-copy, and substitution counts. Both OFF/ON
-  Release builds and CTest suites pass. Guarded deployment, headset confirmation,
-  and the Halo 3 regression are pending;
-  no source-only result is recorded as parity.
+- ODST NATIVE HUD PIPELINE PARITY - HEADSET-CONFIRMED 2026-07-22: commit
+  `fa37870b8cddf9e3ef9687f664aa876fdd787108` was deployed through the guarded
+  private path as DLL SHA-256
+  `C123703E2789AD8DC6672FA9B2E174CED9DCCC96D39CCD90E67DFAE7768C03F3`
+  (recovery record `pre-odst-private-backup-38`). The user confirmed the native
+  ODST HUD is visible in the headset while the game is running. The matching
+  cold-worker report recorded `completedScopes=136`, `provenOmMatches=0`,
+  `exactCopyScopes=0`, and `copySubstitutions=0`: the working path is the scoped
+  CHUD phase-output bind, not the retained-world-target comparison or copy
+  substitution. Inside the two unique TLS-scoped per-eye CHUD hooks it admits
+  only a non-null slot-0 phase output, routes it to the active eye cache, and
+  restores OM/depth/viewports/scissors before returning. Unknown or null
+  surfaces remain stock. The earlier deployed candidates `ecdfd94`, `f6c6c52`,
+  and `3ef2dd4` remain headset-disproven history: their stricter pointer identity
+  test rejected ODST's legitimate distinct CHUD output view even though the HUD
+  remained visible on the desktop. Native-HUD visibility is accepted for this
+  exact DLL; slider behavior and the required Halo 3 regression remain separate
+  gates below.
+- ODST HUD CONFIG SLIDER PARITY - BUILD/TEST PASSED, HEADSET-PENDING
+  (2026-07-22): the private candidate now feeds ODST through Halo 3's shared,
+  live `halomccvr.cfg`/F1 math for `hud_size`, `hud_aspect`, `hud_curvature`, and
+  `hud_vertical_offset`, while selecting only ODST-proven integration evidence.
+  The exact ODST `chud_globals` tag anchor is
+  `[int32 1280][int32 720][float 2000][float 2000][float 58][float 4]`; it has
+  one private read/write hit in the live level, authored destination Z `0.17`,
+  and safe-frame scale fields `0.87/0.87`. ODST's retail anchor-basis function
+  begins at `halo3odst.dll+0x329824`; its independently unique semantic tail at
+  entry `+0x932` writes the basis qword at `+0x28`, proving vertical Y at
+  `basis+0x2C`. Title-owned scan generations prevent a stale Halo 3 pointer or
+  timer from crossing into ODST. Public option-OFF and private option-ON Release
+  builds pass, as do both CTest suites. Do not call the sliders accepted yet:
+  size, aspect, height direction/range, live F1/config persistence, and the
+  exact useful curvature range still require headset testing, followed by a
+  Halo 3 regression. ODST brightness remains explicitly excluded; the prior
+  `0x2A6308` scaling experiment made the whole native HUD disappear and was
+  reverted.
 - ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
   you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget
@@ -90,10 +92,10 @@ troubleshoot, and bug fix.
   `B1A215C85B7871C0B4CFF80580E1128D65DB200D43C9BECAAF75452AA91470E0`, recovery
   record `pre-odst-private-backup-30` (sealed baseline `DFF8A406`). Built on the
   cutscene-parity tip (`6beace3`) so ODST cutscene 3D/head-look/shot-facing are
-  retained. NEXT (per user plan, after headset confirmation): brightness
-  (`kHudXformSig` ODST `0x2A6308`, already proven), then HUD size/curvature/
-  aspect (safe-frame tag scan — needs ODST chud_globals layout proof), then HUD
-  height (`kHudAnchorBasisSig` ODST signature not yet derived).
+  retained. Later results supersede that historical roadmap: brightness was
+  headset-disproven and reverted, the native ODST HUD is now headset-confirmed,
+  and the size/aspect/curvature/height slider candidate is build-tested but
+  still awaits headset acceptance as recorded above.
 - ODST HUD BRIGHTNESS — HEADSET-DISPROVEN AND REVERTED (2026-07-22): hooking
   ODST's `kHudXformSig` function (`halo3odst.dll+0x2A6308`) with a non-1.0
   brightness makes the ENTIRE native ODST HUD disappear immediately on level

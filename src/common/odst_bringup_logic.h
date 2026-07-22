@@ -176,6 +176,17 @@ inline bool OdstFirstPersonControlBlend(float fpBlend)
     return std::isfinite(fpBlend) && fpBlend >= kOdstFirstPersonBlendMin;
 }
 
+// The ODST layout locator is a cold Present-thread path. It may begin as soon
+// as this title owns a fresh camera heartbeat, matching Halo 3; it does not
+// wait for stereo arming. Public/foreign/teardown states remain fail-closed.
+inline bool OdstHudLayoutEligible(
+    bool privateBuildEnabled, bool cameraOnlyContext, bool installed,
+    bool cameraFresh, bool teardownRequested, bool nativePaused)
+{
+    return privateBuildEnabled && cameraOnlyContext && installed &&
+        cameraFresh && !teardownRequested && !nativePaused;
+}
+
 inline bool OdstMustClearForeignPause(
     bool cameraOnlyContext, bool pauseTarget, bool pausePresentation)
 {

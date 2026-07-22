@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "config.h"
+#include "hud_layout_logic.h"
 #include "input_logic.h"
 #include "odst_bringup_logic.h"
 #include "scope_logic.h"
@@ -286,6 +287,66 @@ int main()
         Check(pauseGate.CanAttemptInstall(),
             "title exit clears the native-pause reinstall gate");
 
+        const HudLayoutAdapter* halo3Hud =
+            HudLayoutAdapterFor(HudLayoutProfile::Halo3);
+        const HudLayoutAdapter* odstHud =
+            HudLayoutAdapterFor(HudLayoutProfile::Halo3ODST);
+        Check(halo3Hud && halo3Hud->expectedBlocks == 3,
+            "Halo 3 HUD layout retains its three proven skin blocks");
+        Check(odstHud && odstHud->expectedBlocks == 1,
+            "ODST HUD layout accepts only its uniquely proven globals block");
+        constexpr std::array<uint8_t, 24> expectedHalo3HudAnchor = {
+            0x00, 0x05, 0x00, 0x00, 0xD0, 0x02, 0x00, 0x00,
+            0x00, 0x00, 0x5C, 0x42, 0x00, 0x40, 0x25, 0x44,
+            0x00, 0x00, 0x68, 0x42, 0x00, 0x00, 0x80, 0x40,
+        };
+        constexpr std::array<uint8_t, 24> expectedOdstHudAnchor = {
+            0x00, 0x05, 0x00, 0x00, 0xD0, 0x02, 0x00, 0x00,
+            0x00, 0x00, 0xFA, 0x44, 0x00, 0x00, 0xFA, 0x44,
+            0x00, 0x00, 0x68, 0x42, 0x00, 0x00, 0x80, 0x40,
+        };
+        Check(halo3Hud && halo3Hud->anchor == expectedHalo3HudAnchor,
+            "Halo 3 HUD adapter retains its evidence-exact anchor");
+        Check(odstHud && odstHud->anchor == expectedOdstHudAnchor,
+            "ODST HUD adapter retains its evidence-exact 2000/2000 anchor");
+        Check(halo3Hud && odstHud && halo3Hud->anchor != odstHud->anchor,
+            "ODST cannot reuse Halo 3's title-specific safe-frame anchor");
+        Check(HudLayoutCanReacquireFromRemembered(1, 1) &&
+                  HudLayoutCanReacquireFromRemembered(3, 3),
+            "exact per-title remembered cardinality permits stock restoration");
+        Check(!HudLayoutCanReacquireFromRemembered(0, 1) &&
+                  !HudLayoutCanReacquireFromRemembered(1, 3) &&
+                  !HudLayoutCanReacquireFromRemembered(0, 0),
+            "missing, partial, and unproven remembered HUD sets fail closed");
+        Check(!HudLayoutAdapterFor(HudLayoutProfile::None),
+            "an unowned title has no writable HUD layout adapter");
+        Check(!HudLayoutPublicationMatches(
+                  HudLayoutProfile::None, 9,
+                  HudLayoutProfile::None, 9),
+            "matching generations cannot grant HUD ownership to no title");
+        Check(HudLayoutPublicationMatches(
+                  HudLayoutProfile::Halo3ODST, 9,
+                  HudLayoutProfile::Halo3ODST, 9),
+            "HUD scan results publish only to their exact title generation");
+        Check(!HudLayoutPublicationMatches(
+                  HudLayoutProfile::Halo3ODST, 9,
+                  HudLayoutProfile::Halo3, 9) &&
+                  !HudLayoutPublicationMatches(
+                      HudLayoutProfile::Halo3ODST, 9,
+                      HudLayoutProfile::Halo3ODST, 8),
+            "foreign-title and stale-generation HUD results are rejected");
+
+        Check(OdstHudLayoutEligible(true, true, true, true, false, false),
+            "ODST starts shared HUD layout work on its first eligible camera heartbeat");
+        Check(!OdstHudLayoutEligible(false, true, true, true, false, false) &&
+                  !OdstHudLayoutEligible(true, false, true, true, false, false) &&
+                  !OdstHudLayoutEligible(true, true, false, true, false, false) &&
+                  !OdstHudLayoutEligible(true, true, true, false, false, false),
+            "ODST HUD layout writes require private title ownership and a fresh camera");
+        Check(!OdstHudLayoutEligible(true, true, true, true, true, false) &&
+                  !OdstHudLayoutEligible(true, true, true, true, false, true),
+            "teardown and native pause veto ODST HUD layout writes");
+
         OdstFreshCameraDebounce debounce;
         Check(!debounce.Update(100, true),
             "ODST camera does not arm on its first fresh frame");
@@ -296,6 +357,16 @@ int main()
         debounce.Reset();
         Check(!debounce.Update(5000, true),
             "ODST session re-entry resets the stability debounce");
+
+        OdstFreshCameraDebounce interruptedDebounce;
+        Check(!interruptedDebounce.Update(2000, true) &&
+                  !interruptedDebounce.Update(2500, false) &&
+                  !interruptedDebounce.Update(3000, true),
+            "loss of camera freshness restarts the ODST stability interval");
+        Check(!interruptedDebounce.Update(4000, true),
+            "the restarted interval remains flat at its exact one-second boundary");
+        Check(interruptedDebounce.Update(4001, true),
+            "only a continuous fresh-camera interval arms ODST after reset");
 
         Check(EvaluateOdstHeartbeat(1700, 1000, 0, false, false) ==
                   OdstHeartbeatAction::None,

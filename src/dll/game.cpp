@@ -14,6 +14,7 @@
 #include "title_adapter.h"
 #include "../common/log.h"
 #include "../common/config.h"
+#include "../common/hud_layout_logic.h"
 #include "../common/input_logic.h"
 #include "../common/odst_bringup_logic.h"
 #include "../common/scope_logic.h"
@@ -271,6 +272,10 @@ namespace
         OdstHudPhaseFn originalHudPhasePrimary = nullptr;
         OdstHudPhaseFn originalHudPhaseSecondary = nullptr;
         OdstHudTargetCopyFn originalHudTargetCopy = nullptr;
+        // ODST's title-proven chud_compute_anchor_basis equivalent. Kept
+        // separate from Halo 3's trampoline so cross-title teardown can never
+        // leave a stale original pointer.
+        void* originalHudAnchorBasis = nullptr;
         // ODST FP weapon/arm hook originals. Stored as void* because the typed
         // aliases are declared after this lifecycle state.
         void* originalFpInterpolate = nullptr;
@@ -282,6 +287,7 @@ namespace
         // teardown, exactly like nativeWeaponIkBranch above.
         uint8_t* crosshairClassGate = nullptr;
         bool crosshairClassGatePatched = false;
+        DWORD crosshairClassGateOriginalProtect = 0;
         uintptr_t gunCameraArray = 0;
         std::atomic<void*> eyeView{nullptr};
         alignas(16) unsigned char eyeCompactCamera[0x90]{};
@@ -289,7 +295,11 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[12]{}; // 7 core + 2 CHUD phases + target copy + 2 crosshair
+        // 10 camera/weapon/CHUD core hooks + optional HUD height + two
+        // all-or-nothing crosshair hooks. Trampolines are recorded alongside
+        // targets so optional-hook absence can never shift lifecycle mapping.
+        void* hookTargets[13]{};
+        void* hookTrampolines[13]{};
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
@@ -591,6 +601,79 @@ namespace
         return g_realHudCrosshairVisible(userIndex);
     }
 
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    __declspec(noinline) bool __fastcall OdstHudAnchorBasisHook(
+        int userIndex, void* drawWidgetData, int anchorType, void* basis)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(
+            1, std::memory_order_acq_rel);
+        HudAnchorBasisFn original = reinterpret_cast<HudAnchorBasisFn>(
+            g_odstCamera.originalHudAnchorBasis);
+        const bool result = original &&
+            original(userIndex, drawWidgetData, anchorType, basis);
+        if (result && basis && !g_authoredReticleCaptureStarted &&
+            g_odstCamera.armed.load(std::memory_order_acquire) &&
+            !g_odstCamera.teardownRequested.load(
+                std::memory_order_acquire) &&
+            g_enabled.load(std::memory_order_relaxed) &&
+            VR_IsStereoEnabled())
+        {
+            const float height = g_config.hud_vertical_offset;
+            if (isfinite(height) &&
+                height >= kHudHeightMin && height <= kHudHeightMax)
+                reinterpret_cast<float*>(basis)[0x2C / sizeof(float)] -=
+                    height;
+        }
+        g_odstCamera.activeCallbacks.fetch_sub(
+            1, std::memory_order_acq_rel);
+        return result;
+    }
+
+    static bool OdstOwnsHudStereo()
+    {
+        return g_odstCamera.armed.load(std::memory_order_acquire) &&
+            !g_odstCamera.teardownRequested.load(
+                std::memory_order_acquire) &&
+            g_enabled.load(std::memory_order_relaxed) &&
+            VR_IsStereoEnabled();
+    }
+
+    // ODST uses the shared Halo 3 crosshair behavior only while its own stereo
+    // lifecycle is armed. The wrappers retain title-module/trampoline ownership
+    // until callbacks return and fail open to stock rendering at every edge.
+    __declspec(noinline) bool __fastcall OdstHudCrosshairVisibleHook(
+        int userIndex)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(
+            1, std::memory_order_acq_rel);
+        bool result = true;
+        if (OdstOwnsHudStereo())
+            result = HudCrosshairVisibleHook(userIndex);
+        else if (g_gameIsPlayback && g_gameIsPlayback())
+            result = g_realHudCrosshairVisible(userIndex);
+        g_odstCamera.activeCallbacks.fetch_sub(
+            1, std::memory_order_acq_rel);
+        return result;
+    }
+
+    __declspec(noinline) void __fastcall OdstHudDrawWidgetHook(
+        int userIndex, void* descriptor, unsigned short widgetIndex,
+        unsigned char useAlternatePath, void* drawState)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(
+            1, std::memory_order_acq_rel);
+        if (OdstOwnsHudStereo())
+            HudDrawWidgetHook(
+                userIndex, descriptor, widgetIndex,
+                useAlternatePath, drawState);
+        else
+            g_realHudDrawWidget(
+                userIndex, descriptor, widgetIndex,
+                useAlternatePath, drawState);
+        g_odstCamera.activeCallbacks.fetch_sub(
+            1, std::memory_order_acq_rel);
+    }
+#endif
     // (HudPlaceHook removed 2026-07-19: the 0x2EEFC8 out-struct was MEASURED —
     // user sliders + log dump — to hold colors/alpha/animation state only, no
     // screen coordinates. Halo's HUD has no per-element position to edit; the
@@ -944,63 +1027,174 @@ namespace
         LOG("HUD-VARS: %d resolvable HUD-related var(s) logged", dumped);
     }
 
-    // HUD SAFE-FRAME LOCATOR (2026-07-19 probe). Halo 3 lays the whole HUD out
-    // inside a "global safe frame" fraction stored in the chud_globals tag
-    // (skins -> curvature infos): 0.87 x 0.87 of the screen. DESKTOP-PROVEN in
-    // H3EK tag_test: writing 0.5 into the tag pulls every element toward the
-    // screen center — exactly the VR shrink we want. At runtime those floats
-    // live in loaded tag data (heap, not the module image), so we find them by
-    // their immutable neighborhood, byte-verified against the shipped tag:
-    //   [int32 1280][int32 720][55.f][661.f][58.f][4.f]
-    //   (virtual canvas w/h, sensor origin x/y, sensor radius, blip radius)
-    // with destination_offset_z immediately before the anchor (-4) and the two
-    // safe-frame floats at +24/+28. Exactly 3 such blocks exist
-    // in ui\chud\globals (one per skin: default/dervish/monitor, 720p
-    // fullscreen). A hit only counts when the immutable anchor, plausible
-    // destination-Z value, plausible safe-frame pair, and private read-write
-    // region all agree before we ever write (no-guessing rule).
-    // User-triggered from the F1 menu; the scan runs on its own thread, never
-    // the render thread. The poke buttons are the decisive MCC experiment:
-    // does the live game re-layout the HUD when these floats change?
+    // HUD SAFE-FRAME LOCATOR. Halo 3 and ODST use the same
+    // s_chud_curvature_info field order and the same shared slider math, but
+    // their immutable tag payloads differ. The adapter anchors below are
+    // title-proven; cached heap addresses and scan publications are tagged with
+    // a title generation so one resident MCC module can never satisfy another.
     constexpr int kMaxSafeFrameHits = 16;
-    static const unsigned char kSafeFrameAnchor[24] = {
-        0x00,0x05,0x00,0x00, 0xD0,0x02,0x00,0x00,   // int32 1280, int32 720
-        0x00,0x00,0x5C,0x42, 0x00,0x40,0x25,0x44,   // 55.0f, 661.0f
-        0x00,0x00,0x68,0x42, 0x00,0x00,0x80,0x40 }; // 58.0f, 4.0f
     std::atomic<uintptr_t> g_safeFrameSlots[kMaxSafeFrameHits]{};
     std::atomic<uint32_t> g_safeFrameBaseCurvatureBits[kMaxSafeFrameHits]{};
-    std::atomic<int> g_safeFrameHitCount{-1}; // -1 never/none, -2 scanning, >0 found
-    std::atomic<uint32_t> g_hudAppliedBits{0}; // last value confirmed in live slots
+    std::atomic<int> g_safeFrameHitCount{-1}; // -1 none, -2 scanning, >0 verified
+    std::atomic<uint32_t> g_hudAppliedBits{0};
     std::atomic<uint32_t> g_hudAppliedAspectBits{0};
     std::atomic<uint32_t> g_hudAppliedCurvatureBits{0};
-    // Freshness beacon shared with auto-VR: CamCopyHook updates it only while a
-    // level camera is running. HUD discovery reads it from Present.
+    std::atomic<HudLayoutProfile> g_hudLayoutOwner{HudLayoutProfile::None};
+    std::atomic<uint32_t> g_hudLayoutGeneration{1};
+    std::atomic<HudLayoutProfile> g_safeFramePublishedOwner{
+        HudLayoutProfile::None};
+    std::atomic<uint32_t> g_safeFramePublishedGeneration{0};
+    std::atomic<bool> g_safeFrameScanInFlight{false};
+    SRWLOCK g_hudLayoutWriteLock = SRWLOCK_INIT;
+
+    // Freshness beacon shared with auto-VR. Each title's proven camera-copy
+    // hook updates it only while a level camera is running.
     std::atomic<uint64_t> g_lastCamCopyMs{0};
     std::atomic<uintptr_t> g_nativePauseFlag{0};
     std::atomic<bool> g_enginePauseValidated{false};
-    // Addresses that verified in a previous locate this session. The tag
-    // allocator tends to reuse the same block on map reload, so re-checking
-    // these (anchor + payload, same certainty as the scan) usually re-acquires
-    // instantly instead of costing a full rescan.
-    std::atomic<uintptr_t> g_safeFrameLastGood[kMaxSafeFrameHits]{};
-    std::atomic<uint32_t> g_safeFrameLastGoodBaseCurvatureBits[kMaxSafeFrameHits]{};
-    std::atomic<int> g_safeFrameLastGoodCount{0};
+
+    // Previous addresses and authored baselines are retained in separate
+    // per-title caches across generations. The tag allocator often reuses its
+    // block across map reloads, so an exact title-anchor/payload re-check can
+    // avoid a full scan without ever crossing titles or compounding curvature.
+    struct HudLayoutRememberedCache
+    {
+        std::atomic<uintptr_t> slots[kMaxSafeFrameHits]{};
+        std::atomic<uint32_t> baseCurvatureBits[kMaxSafeFrameHits]{};
+        std::atomic<int> count{0};
+    };
+    // Keep each title's authored curvature baseline across teardown and title
+    // switches. The adjusted tag can remain resident; discarding the baseline
+    // would make the next scan treat an already-adjusted Z as authored and
+    // compound curvature. Reuse still requires exact title-anchor verification.
+    HudLayoutRememberedCache g_halo3HudRemembered{};
+    HudLayoutRememberedCache g_odstHudRemembered{};
+
+    static HudLayoutRememberedCache* HudLayoutRememberedFor(
+        HudLayoutProfile profile)
+    {
+        switch (profile)
+        {
+        case HudLayoutProfile::Halo3:
+            return &g_halo3HudRemembered;
+        case HudLayoutProfile::Halo3ODST:
+            return &g_odstHudRemembered;
+        default:
+            return nullptr;
+        }
+    }
+
+    // These timers used to be function statics shared by every title. Keeping
+    // them in the generation-owned runtime prevents a Halo 3 attempt from
+    // delaying ODST's first locate by up to fifteen seconds.
+    std::atomic<uint64_t> g_hudLayoutLastVerifyMs{0};
+    std::atomic<uint64_t> g_hudLayoutLastReacquireMs{0};
+    std::atomic<uint64_t> g_hudLayoutLastAttemptMs{0};
+
+    static void ClearHudLayoutSlots()
+    {
+        for (int i = 0; i < kMaxSafeFrameHits; ++i)
+        {
+            g_safeFrameSlots[i].store(0, std::memory_order_relaxed);
+            g_safeFrameBaseCurvatureBits[i].store(0, std::memory_order_relaxed);
+        }
+        g_safeFramePublishedOwner.store(
+            HudLayoutProfile::None, std::memory_order_relaxed);
+        g_safeFramePublishedGeneration.store(0, std::memory_order_relaxed);
+        g_safeFrameHitCount.store(-1, std::memory_order_release);
+        g_hudAppliedBits.store(0, std::memory_order_relaxed);
+        g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
+        g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
+    }
+
+    static bool HudLayoutContextMatches(
+        HudLayoutProfile profile, uint32_t generation)
+    {
+        return HudLayoutPublicationMatches(
+            g_hudLayoutOwner.load(std::memory_order_acquire),
+            g_hudLayoutGeneration.load(std::memory_order_acquire),
+            profile, generation);
+    }
+
+    static bool HudLayoutResultsMatch(
+        HudLayoutProfile profile, uint32_t generation)
+    {
+        return HudLayoutPublicationMatches(
+            profile, generation,
+            g_safeFramePublishedOwner.load(std::memory_order_acquire),
+            g_safeFramePublishedGeneration.load(std::memory_order_acquire));
+    }
+
+    static uint32_t EnsureHudLayoutProfile(HudLayoutProfile profile)
+    {
+        const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+        if (!adapter)
+            return 0;
+        if (g_hudLayoutOwner.load(std::memory_order_acquire) == profile)
+            return g_hudLayoutGeneration.load(std::memory_order_acquire);
+
+        AcquireSRWLockExclusive(&g_hudLayoutWriteLock);
+        if (g_hudLayoutOwner.load(std::memory_order_acquire) == profile)
+        {
+            const uint32_t generation =
+                g_hudLayoutGeneration.load(std::memory_order_acquire);
+            ReleaseSRWLockExclusive(&g_hudLayoutWriteLock);
+            return generation;
+        }
+        const uint32_t generation =
+            g_hudLayoutGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+        // Publishing the new owner after the generation bump invalidates any
+        // old scan. The exclusive lock also drains the only foreign-memory
+        // writer before active slots can change title ownership.
+        g_hudLayoutOwner.store(profile, std::memory_order_release);
+        ClearHudLayoutSlots();
+        g_hudLayoutLastVerifyMs.store(0, std::memory_order_relaxed);
+        g_hudLayoutLastReacquireMs.store(0, std::memory_order_relaxed);
+        g_hudLayoutLastAttemptMs.store(0, std::memory_order_relaxed);
+        ReleaseSRWLockExclusive(&g_hudLayoutWriteLock);
+        LOG("SAFEFRAME: layout owner is %s (generation %u); active "
+            "publication and timers reset", adapter->name, generation);
+        return generation;
+    }
+
+    static void InvalidateHudLayoutProfile(HudLayoutProfile profile)
+    {
+        if (g_hudLayoutOwner.load(std::memory_order_acquire) != profile)
+            return;
+        AcquireSRWLockExclusive(&g_hudLayoutWriteLock);
+        if (g_hudLayoutOwner.load(std::memory_order_acquire) == profile)
+        {
+            g_hudLayoutGeneration.fetch_add(1, std::memory_order_acq_rel);
+            g_hudLayoutOwner.store(
+                HudLayoutProfile::None, std::memory_order_release);
+            ClearHudLayoutSlots();
+            g_hudLayoutLastVerifyMs.store(0, std::memory_order_relaxed);
+            g_hudLayoutLastReacquireMs.store(0, std::memory_order_relaxed);
+            g_hudLayoutLastAttemptMs.store(0, std::memory_order_relaxed);
+        }
+        ReleaseSRWLockExclusive(&g_hudLayoutWriteLock);
+    }
 
     // Plain helpers: SEH frames must stay free of C++ unwinding (C2712), and a
     // region can decommit between VirtualQuery and the read, so every touch of
     // foreign memory is guarded.
-    static int SafeFrameScanRegion(uintptr_t regionBase, size_t len,
-                                   uintptr_t* out, int maxOut)
+    static int SafeFrameScanRegion(
+        uintptr_t regionBase, size_t len, const unsigned char* anchor,
+        uintptr_t* out, int maxOut)
     {
         int found = 0;
-        const unsigned char* p = reinterpret_cast<const unsigned char*>(regionBase);
+        const unsigned char* p =
+            reinterpret_cast<const unsigned char*>(regionBase);
         __try
         {
-            const uint64_t prefix = 0x000002D000000500ULL; // [1280][720] LE
+            uint64_t prefix = 0;
+            memcpy(&prefix, anchor, sizeof(prefix));
             for (size_t i = 0; i + 32 <= len && found < maxOut; ++i)
             {
-                if (*reinterpret_cast<const uint64_t*>(p + i) != prefix) continue;
-                if (memcmp(p + i + 8, kSafeFrameAnchor + 8, 16) != 0) continue;
+                if (*reinterpret_cast<const uint64_t*>(p + i) != prefix)
+                    continue;
+                if (memcmp(p + i + 8, anchor + 8, 16) != 0)
+                    continue;
                 out[found++] = regionBase + i + 24;
                 i += 23;
             }
@@ -1009,12 +1203,13 @@ namespace
         return found;
     }
 
-    static int SafeFrameReadLayout(uintptr_t slot, uint32_t* destinationZ,
-                                   uint32_t* h, uint32_t* v)
+    static int SafeFrameReadLayout(
+        uintptr_t slot, uint32_t* destinationZ, uint32_t* h, uint32_t* v)
     {
         __try
         {
-            *destinationZ = *reinterpret_cast<const volatile uint32_t*>(slot - 28);
+            *destinationZ =
+                *reinterpret_cast<const volatile uint32_t*>(slot - 28);
             *h = *reinterpret_cast<const volatile uint32_t*>(slot);
             *v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
         }
@@ -1022,8 +1217,8 @@ namespace
         return 1;
     }
 
-    static int SafeFrameWriteLayout(uintptr_t slot, float destinationZ,
-                                    float horizontal, float vertical)
+    static int SafeFrameWriteLayout(
+        uintptr_t slot, float destinationZ, float horizontal, float vertical)
     {
         __try
         {
@@ -1035,16 +1230,17 @@ namespace
         return 1;
     }
 
-    // Full verification of an address: the 24-byte anchor must sit at slot-24;
-    // on success the payload pair is read out under the same guard.
-    static int SafeFrameVerifySlot(uintptr_t slot, uint32_t* destinationZ,
-                                   uint32_t* h, uint32_t* v)
+    static int SafeFrameVerifySlot(
+        uintptr_t slot, const HudLayoutAdapter& adapter,
+        uint32_t* destinationZ, uint32_t* h, uint32_t* v)
     {
         __try
         {
             if (memcmp(reinterpret_cast<const void*>(slot - 24),
-                       kSafeFrameAnchor, 24) != 0) return 0;
-            *destinationZ = *reinterpret_cast<const volatile uint32_t*>(slot - 28);
+                       adapter.anchor.data(), adapter.anchor.size()) != 0)
+                return 0;
+            *destinationZ =
+                *reinterpret_cast<const volatile uint32_t*>(slot - 28);
             *h = *reinterpret_cast<const volatile uint32_t*>(slot);
             *v = *reinterpret_cast<const volatile uint32_t*>(slot + 4);
             return 1;
@@ -1052,16 +1248,11 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
     }
 
-    // Payload plausibility: both safe-frame axes must remain in a sane fraction
-    // range. The shipped pair is 0.87/0.87; headset aspect correction can make
-    // our applied pair anisotropic. (The first
-    // release accepted ONLY the shipped bits, which deadlocked: after our own
-    // apply, every rescan rejected our own value — 2026-07-19 15:00 log.)
     static bool SafeFramePairPlausible(uint32_t h, uint32_t v)
     {
-        float hf = 0, vf = 0;
-        memcpy(&hf, &h, 4);
-        memcpy(&vf, &v, 4);
+        float hf = 0.0f, vf = 0.0f;
+        memcpy(&hf, &h, sizeof(hf));
+        memcpy(&vf, &v, sizeof(vf));
         return hf >= 0.15f && hf <= 1.05f &&
                vf >= 0.15f && vf <= 1.05f;
     }
@@ -1073,30 +1264,29 @@ namespace
         return isfinite(value) && value >= -10.0f && value <= 10.0f;
     }
 
-    // A manual rescan can run while our offset is already live. Reuse the
-    // authored baseline remembered for that exact address so the configured
-    // delta never compounds across rescans or map transitions.
-    static uint32_t RememberedHudCurvatureBaseline(uintptr_t slot, uint32_t fallback)
+    static uint32_t RememberedHudCurvatureBaseline(
+        HudLayoutProfile profile, uintptr_t slot, uint32_t fallback)
     {
-        const int count = g_safeFrameLastGoodCount.load(std::memory_order_acquire);
+        HudLayoutRememberedCache* remembered =
+            HudLayoutRememberedFor(profile);
+        if (!remembered)
+            return fallback;
+        const int count = remembered->count.load(std::memory_order_acquire);
         for (int i = 0; i < count && i < kMaxSafeFrameHits; ++i)
         {
-            if (g_safeFrameLastGood[i].load(std::memory_order_relaxed) == slot)
-                return g_safeFrameLastGoodBaseCurvatureBits[i].load(
+            if (remembered->slots[i].load(
+                    std::memory_order_relaxed) == slot)
+                return remembered->baseCurvatureBits[i].load(
                     std::memory_order_relaxed);
         }
         return fallback;
     }
 
     // Halo builds its native HUD for the game render surface's pixel aspect.
-    // In VR that image is submitted across the headset's tangent-space FOV.
-    // Those happened to agree on the PSVR2 setup the launcher was designed
-    // around. Quest 3 without OpenXR Toolkit measured 1.386 game pixels versus
-    // ~0.964 tangent-space, making the HUD geometry visibly too narrow. Keep
-    // hud_size as the larger safe-frame axis and reduce the other axis so the
-    // HUD's perceived X:Y geometry remains square on any runtime/headset.
-    static void ComputeHudSafeFramePair(float size, float aspect,
-                                        float& horizontal, float& vertical)
+    // Match Halo 3's headset-confirmed correction and user-facing aspect trim
+    // identically for every title adapter.
+    static void ComputeHudSafeFramePair(
+        float size, float aspect, float& horizontal, float& vertical)
     {
         horizontal = vertical = size;
         float gameAspect = 0.0f;
@@ -1106,10 +1296,12 @@ namespace
             const float halfX = fmaxf(-eyeFov[0], eyeFov[1]);
             const float halfY = fmaxf(eyeFov[2], -eyeFov[3]);
             const float tanX = tanf(halfX), tanY = tanf(halfY);
-            if (isfinite(tanX) && isfinite(tanY) && tanX > 0.01f && tanY > 0.01f)
+            if (isfinite(tanX) && isfinite(tanY) &&
+                tanX > 0.01f && tanY > 0.01f)
             {
                 const float correction = gameAspect / (tanX / tanY);
-                if (isfinite(correction) && correction >= 0.25f && correction <= 4.0f)
+                if (isfinite(correction) &&
+                    correction >= 0.25f && correction <= 4.0f)
                 {
                     if (correction > 1.0f)
                         vertical = size / correction;
@@ -1123,255 +1315,517 @@ namespace
         vertical = fmaxf(0.15f, fminf(vertical, 1.0f));
     }
 
-    DWORD WINAPI SafeFrameScanThread(LPVOID)
+    static uintptr_t EncodeHudLayoutScanToken(
+        HudLayoutProfile profile, uint32_t generation)
     {
+        static_assert(sizeof(uintptr_t) >= sizeof(uint64_t));
+        return (static_cast<uintptr_t>(generation) << 32) |
+            static_cast<uint32_t>(profile);
+    }
+
+    DWORD WINAPI SafeFrameScanThread(LPVOID parameter)
+    {
+        const uintptr_t token = reinterpret_cast<uintptr_t>(parameter);
+        const auto profile =
+            static_cast<HudLayoutProfile>(static_cast<uint32_t>(token));
+        const uint32_t generation = static_cast<uint32_t>(token >> 32);
+        const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+        if (!adapter)
+        {
+            g_safeFrameScanInFlight.store(false, std::memory_order_release);
+            return 0;
+        }
+
         const uint64_t t0 = GetTickCount64();
-        // Exclude our own image: kSafeFrameAnchor itself lives in it.
-        uintptr_t selfBase = 0; size_t selfSize = 0;
+        uintptr_t selfBase = 0;
+        size_t selfSize = 0;
         sig::ModuleRange(L"halo3xr.dll", selfBase, selfSize);
 
-        int accepted = 0, rawHits = 0;
-        SYSTEM_INFO si; GetSystemInfo(&si);
-        uintptr_t addr = reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
-        const uintptr_t addrMax = reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
+        uintptr_t acceptedSlots[kMaxSafeFrameHits]{};
+        uint32_t acceptedBaselines[kMaxSafeFrameHits]{};
+        int accepted = 0;
+        int rawHits = 0;
+        bool cancelled = false;
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        uintptr_t addr =
+            reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
+        const uintptr_t addrMax =
+            reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
         MEMORY_BASIC_INFORMATION mbi{};
         while (addr < addrMax && accepted < kMaxSafeFrameHits &&
-               VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)) == sizeof(mbi))
+               VirtualQuery(
+                   reinterpret_cast<void*>(addr), &mbi, sizeof(mbi)) ==
+                   sizeof(mbi))
         {
-            const uintptr_t regionBase = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            if (!HudLayoutContextMatches(profile, generation))
+            {
+                cancelled = true;
+                break;
+            }
+            const uintptr_t regionBase =
+                reinterpret_cast<uintptr_t>(mbi.BaseAddress);
             const uintptr_t next = regionBase + mbi.RegionSize;
-            // Only private read-write regions can ever be ACCEPTED (that is
-            // where loaded tag data lives — probe-verified), so only those are
-            // scanned at all. This skips every module image and mapped file
-            // view and cuts the scan from ~20s to a few seconds.
             const bool candidate =
                 mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                 mbi.Protect == PAGE_READWRITE && mbi.Type == MEM_PRIVATE;
-            const bool self =
-                selfBase && regionBase >= selfBase && regionBase < selfBase + selfSize;
+            const bool self = selfBase && regionBase >= selfBase &&
+                regionBase < selfBase + selfSize;
             if (candidate && !self)
             {
-                uintptr_t hits[kMaxSafeFrameHits];
-                const int n = SafeFrameScanRegion(regionBase, mbi.RegionSize,
-                                                  hits, kMaxSafeFrameHits);
+                uintptr_t hits[kMaxSafeFrameHits]{};
+                const int n = SafeFrameScanRegion(
+                    regionBase, mbi.RegionSize, adapter->anchor.data(),
+                    hits, kMaxSafeFrameHits);
                 for (int k = 0; k < n; ++k)
                 {
                     ++rawHits;
                     uint32_t destinationZ = 0, h = 0, v = 0;
-                    if (!SafeFrameReadLayout(hits[k], &destinationZ, &h, &v)) continue;
-                    const bool payloadOk = SafeFramePairPlausible(h, v) &&
-                                           HudDestinationPlausible(destinationZ);
-                    LOG("SAFEFRAME: anchor at %p (type 0x%X protect 0x%X) "
-                        "destination-Z %08X, safe frame %08X/%08X -> %s",
-                        reinterpret_cast<void*>(hits[k]),
-                        (unsigned)mbi.Type, (unsigned)mbi.Protect,
+                    if (!SafeFrameReadLayout(
+                            hits[k], &destinationZ, &h, &v))
+                        continue;
+                    const bool payloadOk =
+                        SafeFramePairPlausible(h, v) &&
+                        HudDestinationPlausible(destinationZ);
+                    LOG("SAFEFRAME [%s]: anchor at %p (type 0x%X protect "
+                        "0x%X) destination-Z %08X, safe frame %08X/%08X -> %s",
+                        adapter->name, reinterpret_cast<void*>(hits[k]),
+                        static_cast<unsigned>(mbi.Type),
+                        static_cast<unsigned>(mbi.Protect),
                         destinationZ, h, v,
-                        payloadOk ? "VERIFIED" : "payload implausible, REJECTED");
+                        payloadOk ? "VERIFIED" :
+                            "payload implausible, REJECTED");
                     if (payloadOk && accepted < kMaxSafeFrameHits)
                     {
-                        g_safeFrameSlots[accepted].store(hits[k]);
-                        g_safeFrameBaseCurvatureBits[accepted].store(
-                            RememberedHudCurvatureBaseline(hits[k], destinationZ));
+                        acceptedSlots[accepted] = hits[k];
+                        acceptedBaselines[accepted] =
+                            RememberedHudCurvatureBaseline(profile, hits[k], destinationZ);
                         ++accepted;
                     }
                 }
             }
             addr = next;
         }
-        LOG("SAFEFRAME: scan done in %llu ms (private-RW only) — %d raw anchor "
-            "hit(s), %d verified pair(s)%s",
-            (unsigned long long)(GetTickCount64() - t0), rawHits, accepted,
-            accepted ? "; HUD layout settings apply from the next frame" : "");
-        if (accepted > 0) // remember for instant reacquire after map changes
+
+        if (cancelled)
         {
-            for (int i = 0; i < accepted; ++i)
-            {
-                g_safeFrameLastGood[i].store(g_safeFrameSlots[i].load());
-                g_safeFrameLastGoodBaseCurvatureBits[i].store(
-                    g_safeFrameBaseCurvatureBits[i].load());
-            }
-            g_safeFrameLastGoodCount.store(accepted, std::memory_order_release);
+            LOG("SAFEFRAME [%s]: title generation changed during scan; "
+                "cancelling before the next memory region", adapter->name);
+            g_safeFrameScanInFlight.store(false, std::memory_order_release);
+            return 0;
         }
-        g_safeFrameHitCount.store(accepted, std::memory_order_release);
+
+        const int observedAccepted = accepted;
+        if (accepted != adapter->expectedBlocks)
+        {
+            LOG("SAFEFRAME [%s]: expected exactly %d title-proven layout "
+                "block(s), observed %d; all candidates rejected",
+                adapter->name, adapter->expectedBlocks, accepted);
+            accepted = 0;
+        }
+        LOG("SAFEFRAME [%s]: scan done in %llu ms (private-RW only) - "
+            "%d raw anchor hit(s), %d plausible pair(s), %d accepted",
+            adapter->name,
+            static_cast<unsigned long long>(GetTickCount64() - t0),
+            rawHits, observedAccepted, accepted);
+
+        if (HudLayoutContextMatches(profile, generation))
+        {
+            HudLayoutRememberedCache* remembered =
+                HudLayoutRememberedFor(profile);
+            for (int i = 0; i < kMaxSafeFrameHits; ++i)
+            {
+                const uintptr_t slot =
+                    i < accepted ? acceptedSlots[i] : 0;
+                const uint32_t baseline =
+                    i < accepted ? acceptedBaselines[i] : 0;
+                g_safeFrameSlots[i].store(
+                    slot, std::memory_order_relaxed);
+                g_safeFrameBaseCurvatureBits[i].store(
+                    baseline, std::memory_order_relaxed);
+            }
+            // A failed or ambiguous rescan must not erase the only retained
+            // authored baseline: the resident tag may still contain our prior
+            // curvature adjustment. Replace remembered data only with a full,
+            // exact-cardinality title proof.
+            if (accepted == adapter->expectedBlocks)
+            {
+                for (int i = 0; i < kMaxSafeFrameHits; ++i)
+                {
+                    remembered->slots[i].store(
+                        i < accepted ? acceptedSlots[i] : 0,
+                        std::memory_order_relaxed);
+                    remembered->baseCurvatureBits[i].store(
+                        i < accepted ? acceptedBaselines[i] : 0,
+                        std::memory_order_relaxed);
+                }
+                remembered->count.store(
+                    accepted, std::memory_order_release);
+            }
+            g_safeFramePublishedOwner.store(
+                profile, std::memory_order_relaxed);
+            g_safeFramePublishedGeneration.store(
+                generation, std::memory_order_release);
+            g_safeFrameHitCount.store(
+                accepted, std::memory_order_release);
+            if (accepted)
+                LOG("SAFEFRAME [%s]: title-owned layout ready; shared HUD "
+                    "sliders apply from the next frame", adapter->name);
+        }
+        else
+        {
+            LOG("SAFEFRAME [%s]: title generation changed during scan; "
+                "discarding every result", adapter->name);
+        }
+        g_safeFrameScanInFlight.store(false, std::memory_order_release);
         return 0;
     }
 
-    void LaunchSafeFrameScan(const char* why)
+    void LaunchSafeFrameScan(HudLayoutProfile profile, const char* why)
     {
-        if (g_safeFrameHitCount.load(std::memory_order_acquire) == -2) return;
-        for (int i = 0; i < kMaxSafeFrameHits; ++i)
+        const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+        const uint32_t generation = EnsureHudLayoutProfile(profile);
+        if (!adapter || !generation)
+            return;
+        if (g_safeFrameScanInFlight.exchange(
+                true, std::memory_order_acq_rel))
+            return;
+
+        AcquireSRWLockExclusive(&g_hudLayoutWriteLock);
+        if (!HudLayoutContextMatches(profile, generation))
         {
-            g_safeFrameSlots[i].store(0);
-            g_safeFrameBaseCurvatureBits[i].store(0);
+            ReleaseSRWLockExclusive(&g_hudLayoutWriteLock);
+            g_safeFrameScanInFlight.store(false, std::memory_order_release);
+            return;
         }
-        g_hudAppliedBits.store(0, std::memory_order_relaxed);
-        g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
-        g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
+        ClearHudLayoutSlots();
         g_safeFrameHitCount.store(-2, std::memory_order_release);
-        HANDLE th = CreateThread(nullptr, 0, SafeFrameScanThread, nullptr, 0, nullptr);
-        if (th) { CloseHandle(th); LOG("SAFEFRAME: scan started (%s)", why); }
-        else { g_safeFrameHitCount.store(-1); LOG("SAFEFRAME: scan thread create FAILED"); }
+        ReleaseSRWLockExclusive(&g_hudLayoutWriteLock);
+        const uintptr_t token =
+            EncodeHudLayoutScanToken(profile, generation);
+        HANDLE thread = CreateThread(
+            nullptr, 0, SafeFrameScanThread,
+            reinterpret_cast<LPVOID>(token), 0, nullptr);
+        if (thread)
+        {
+            CloseHandle(thread);
+            LOG("SAFEFRAME [%s]: scan started (%s)",
+                adapter->name, why);
+        }
+        else
+        {
+            if (HudLayoutContextMatches(profile, generation))
+                g_safeFrameHitCount.store(-1, std::memory_order_release);
+            g_safeFrameScanInFlight.store(
+                false, std::memory_order_release);
+            LOG("SAFEFRAME [%s]: scan thread create FAILED",
+                adapter->name);
+        }
     }
 
-    // Present-thread, change/validation only. This used to run from every
-    // camera-copy hot-hook call; there is no need to reapply persistent tag
-    // floats hundreds of times per second. HudLayoutAutoTick invokes it when a
-    // slider changes and once per second to catch a map reload.
-    void ApplyHudLayoutOnce()
+    // Present-thread, change/validation only. Slider changes apply on the next
+    // Present and verified slots are rechecked once per second for map reloads.
+    void ApplyHudLayoutOnce(HudLayoutProfile profile)
     {
-        const int n = g_safeFrameHitCount.load(std::memory_order_acquire);
-        if (n <= 0) return;
+        const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+        const uint32_t generation =
+            g_hudLayoutGeneration.load(std::memory_order_acquire);
+        if (!adapter || !HudLayoutContextMatches(profile, generation) ||
+            !HudLayoutResultsMatch(profile, generation))
+            return;
+        const int n =
+            g_safeFrameHitCount.load(std::memory_order_acquire);
+        if (n <= 0)
+            return;
+
         const float wantSize = g_config.hud_size;
         const float wantAspect = g_config.hud_aspect;
         const float wantCurvature = g_config.hud_curvature;
         if (!(wantSize >= 0.30f && wantSize <= 1.00f) ||
-            !(wantAspect >= kHudAspectMin && wantAspect <= kHudAspectMax) ||
-            !(wantCurvature >= kHudCurvatureMin && wantCurvature <= kHudCurvatureMax))
-            return; // bad cfg: leave the verified tag data untouched
+            !(wantAspect >= kHudAspectMin &&
+              wantAspect <= kHudAspectMax) ||
+            !(wantCurvature >= kHudCurvatureMin &&
+              wantCurvature <= kHudCurvatureMax))
+            return;
+
         float wantH = wantSize, wantV = wantSize;
-        ComputeHudSafeFramePair(wantSize, wantAspect, wantH, wantV);
-        uint32_t wantBits = 0, wantAspectBits = 0, wantCurvatureBits = 0;
+        ComputeHudSafeFramePair(
+            wantSize, wantAspect, wantH, wantV);
+        uint32_t wantBits = 0, wantAspectBits = 0;
+        uint32_t wantCurvatureBits = 0;
         uint32_t wantHBits = 0, wantVBits = 0;
-        memcpy(&wantBits, &wantSize, 4);
-        memcpy(&wantAspectBits, &wantAspect, 4);
-        memcpy(&wantCurvatureBits, &wantCurvature, 4);
-        memcpy(&wantHBits, &wantH, 4);
-        memcpy(&wantVBits, &wantV, 4);
+        memcpy(&wantBits, &wantSize, sizeof(wantBits));
+        memcpy(&wantAspectBits, &wantAspect, sizeof(wantAspectBits));
+        memcpy(
+            &wantCurvatureBits, &wantCurvature,
+            sizeof(wantCurvatureBits));
+        memcpy(&wantHBits, &wantH, sizeof(wantHBits));
+        memcpy(&wantVBits, &wantV, sizeof(wantVBits));
+
         int live = 0;
         for (int i = 0; i < n && i < kMaxSafeFrameHits; ++i)
         {
-            const uintptr_t slot = g_safeFrameSlots[i].load(std::memory_order_relaxed);
-            if (!slot) continue;
+            if (!HudLayoutContextMatches(profile, generation))
+                return;
+            const uintptr_t slot =
+                g_safeFrameSlots[i].load(std::memory_order_relaxed);
+            if (!slot)
+                continue;
             uint32_t destinationZ = 0, h = 0, v = 0;
-            if (!SafeFrameVerifySlot(slot, &destinationZ, &h, &v)) continue;
+            if (!SafeFrameVerifySlot(
+                    slot, *adapter, &destinationZ, &h, &v))
+                continue;
             if (!SafeFramePairPlausible(h, v) ||
-                !HudDestinationPlausible(destinationZ)) continue;
+                !HudDestinationPlausible(destinationZ))
+                continue;
             const uint32_t baseBits =
-                g_safeFrameBaseCurvatureBits[i].load(std::memory_order_relaxed);
-            if (!HudDestinationPlausible(baseBits)) continue;
+                g_safeFrameBaseCurvatureBits[i].load(
+                    std::memory_order_relaxed);
+            if (!HudDestinationPlausible(baseBits))
+                continue;
             float authoredDestinationZ = 0.0f;
-            memcpy(&authoredDestinationZ, &baseBits, sizeof(authoredDestinationZ));
-            // User scale runs in the intuitive direction: 0 is flat and 1 is
-            // curved. Map it linearly onto the headset-proven +0.30..-0.30
-            // destination-Z delta; 0.5 therefore restores the authored value.
-            const float curvatureDelta = 0.30f - 0.60f * wantCurvature;
-            const float targetDestinationZ = authoredDestinationZ + curvatureDelta;
+            memcpy(
+                &authoredDestinationZ, &baseBits,
+                sizeof(authoredDestinationZ));
+            // Identical Halo 3 user semantics: 0 is flat, 1 is fully curved,
+            // and 0.5 restores this title's retained authored baseline.
+            const float curvatureDelta =
+                0.30f - 0.60f * wantCurvature;
+            const float targetDestinationZ =
+                authoredDestinationZ + curvatureDelta;
             uint32_t targetDestinationBits = 0;
-            memcpy(&targetDestinationBits, &targetDestinationZ, sizeof(targetDestinationBits));
-            if (!HudDestinationPlausible(targetDestinationBits)) continue;
-            if (destinationZ == targetDestinationBits && h == wantHBits && v == wantVBits)
+            memcpy(
+                &targetDestinationBits, &targetDestinationZ,
+                sizeof(targetDestinationBits));
+            if (!HudDestinationPlausible(targetDestinationBits))
+                continue;
+            if (destinationZ == targetDestinationBits &&
+                h == wantHBits && v == wantVBits)
             {
                 ++live;
                 continue;
             }
-            if (SafeFrameWriteLayout(slot, targetDestinationZ, wantH, wantV)) ++live;
+            // Serialize the only foreign writes against title invalidation.
+            // A writer already inside this shared section finishes before ODST
+            // teardown can release ownership; a writer arriving later observes
+            // the bumped generation and performs no store.
+            AcquireSRWLockShared(&g_hudLayoutWriteLock);
+            const bool stillOwned =
+                HudLayoutContextMatches(profile, generation) &&
+                HudLayoutResultsMatch(profile, generation);
+            const bool wrote = stillOwned &&
+                SafeFrameWriteLayout(
+                    slot, targetDestinationZ, wantH, wantV);
+            ReleaseSRWLockShared(&g_hudLayoutWriteLock);
+            if (!stillOwned)
+                return;
+            if (wrote)
+                ++live;
         }
-        if (live > 0)
+
+        if (live == adapter->expectedBlocks)
         {
-            g_hudAppliedBits.store(wantBits, std::memory_order_relaxed);
-            g_hudAppliedAspectBits.store(wantAspectBits, std::memory_order_relaxed);
-            g_hudAppliedCurvatureBits.store(wantCurvatureBits, std::memory_order_relaxed);
-            // Pair is re-evaluated once per second as runtime FOV becomes valid.
+            g_hudAppliedBits.store(
+                wantBits, std::memory_order_relaxed);
+            g_hudAppliedAspectBits.store(
+                wantAspectBits, std::memory_order_relaxed);
+            g_hudAppliedCurvatureBits.store(
+                wantCurvatureBits, std::memory_order_relaxed);
         }
         else
         {
             g_hudAppliedBits.store(0, std::memory_order_relaxed);
             g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
-            g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
-            g_safeFrameHitCount.store(-1, std::memory_order_release); // relocate
+            g_hudAppliedCurvatureBits.store(
+                0, std::memory_order_relaxed);
+            g_safeFramePublishedOwner.store(
+                HudLayoutProfile::None, std::memory_order_relaxed);
+            g_safeFramePublishedGeneration.store(
+                0, std::memory_order_relaxed);
+            g_safeFrameHitCount.store(-1, std::memory_order_release);
         }
     }
 
-    // Instant re-acquire: after a map change the tag allocator usually puts
-    // chud_globals back at the same addresses. Re-verify the remembered ones
-    // (anchor + plausible pair — the scan's own acceptance rule); on any
-    // success, skip the full rescan entirely.
-    bool TryReacquireSafeFrames()
+    bool TryReacquireSafeFrames(HudLayoutProfile profile)
     {
-        const int m = g_safeFrameLastGoodCount.load(std::memory_order_acquire);
-        if (m <= 0) return false;
+        const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+        HudLayoutRememberedCache* remembered =
+            HudLayoutRememberedFor(profile);
+        const uint32_t generation =
+            g_hudLayoutGeneration.load(std::memory_order_acquire);
+        if (!adapter || !remembered ||
+            !HudLayoutContextMatches(profile, generation))
+            return false;
+
+        const int count = remembered->count.load(std::memory_order_acquire);
+        if (!HudLayoutCanReacquireFromRemembered(
+                count, adapter->expectedBlocks))
+            return false;
+        uintptr_t slots[kMaxSafeFrameHits]{};
+        uint32_t baselines[kMaxSafeFrameHits]{};
         int accepted = 0;
-        for (int i = 0; i < m && i < kMaxSafeFrameHits; ++i)
+        for (int i = 0; i < count && i < kMaxSafeFrameHits; ++i)
         {
-            const uintptr_t slot = g_safeFrameLastGood[i].load(std::memory_order_relaxed);
+            const uintptr_t slot =
+                remembered->slots[i].load(std::memory_order_relaxed);
+            const uint32_t baseline =
+                remembered->baseCurvatureBits[i].load(
+                    std::memory_order_relaxed);
             uint32_t destinationZ = 0, h = 0, v = 0;
-            const uint32_t baseCurvature =
-                g_safeFrameLastGoodBaseCurvatureBits[i].load(std::memory_order_relaxed);
-            if (slot && SafeFrameVerifySlot(slot, &destinationZ, &h, &v) &&
+            if (slot &&
+                SafeFrameVerifySlot(
+                    slot, *adapter, &destinationZ, &h, &v) &&
                 SafeFramePairPlausible(h, v) &&
                 HudDestinationPlausible(destinationZ) &&
-                HudDestinationPlausible(baseCurvature))
+                HudDestinationPlausible(baseline))
             {
-                g_safeFrameSlots[accepted].store(slot);
-                g_safeFrameBaseCurvatureBits[accepted].store(baseCurvature);
+                slots[accepted] = slot;
+                baselines[accepted] = baseline;
                 ++accepted;
             }
         }
-        if (!accepted) return false;
-        for (int i = accepted; i < kMaxSafeFrameHits; ++i)
+        if (accepted != adapter->expectedBlocks ||
+            !HudLayoutContextMatches(profile, generation))
+            return false;
+
+        for (int i = 0; i < kMaxSafeFrameHits; ++i)
         {
-            g_safeFrameSlots[i].store(0);
-            g_safeFrameBaseCurvatureBits[i].store(0);
+            g_safeFrameSlots[i].store(
+                i < accepted ? slots[i] : 0,
+                std::memory_order_relaxed);
+            g_safeFrameBaseCurvatureBits[i].store(
+                i < accepted ? baselines[i] : 0,
+                std::memory_order_relaxed);
         }
-        g_hudAppliedBits.store(0, std::memory_order_relaxed); // force one apply
+        g_hudAppliedBits.store(0, std::memory_order_relaxed);
         g_hudAppliedAspectBits.store(0, std::memory_order_relaxed);
-        g_hudAppliedCurvatureBits.store(0, std::memory_order_relaxed);
-        g_safeFrameHitCount.store(accepted, std::memory_order_release);
-        LOG("SAFEFRAME: reacquired %d layout block(s) at previous address(es); scan skipped",
-            accepted);
+        g_hudAppliedCurvatureBits.store(
+            0, std::memory_order_relaxed);
+        g_safeFramePublishedOwner.store(
+            profile, std::memory_order_relaxed);
+        g_safeFramePublishedGeneration.store(
+            generation, std::memory_order_release);
+        g_safeFrameHitCount.store(
+            accepted, std::memory_order_release);
+        LOG("SAFEFRAME [%s]: reacquired %d title-owned layout block(s); "
+            "scan skipped", adapter->name, accepted);
         return true;
     }
 
-    // Called every frame from Game_AutoVrTick (Present thread — logging and
-    // thread creation are fine here). While either HUD layout setting is
-    // non-stock and no
-    // verified slots exist: first try the instant reacquire (once a second),
-    // then fall back to the full background scan (at most every 15 seconds).
-    // Both only while a level is actually rendering (CamCopyHook heartbeat).
-    void HudLayoutAutoTick()
+    void HudLayoutAutoTick(HudLayoutProfile profile)
     {
+        const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+        const uint32_t generation = EnsureHudLayoutProfile(profile);
+        if (!adapter || !generation)
+            return;
+
         const float wantSize = g_config.hud_size;
         const float wantAspect = g_config.hud_aspect;
         const float wantCurvature = g_config.hud_curvature;
-        uint32_t wantBits = 0, wantAspectBits = 0, wantCurvatureBits = 0;
+        uint32_t wantBits = 0, wantAspectBits = 0;
+        uint32_t wantCurvatureBits = 0;
         memcpy(&wantBits, &wantSize, sizeof(wantBits));
         memcpy(&wantAspectBits, &wantAspect, sizeof(wantAspectBits));
-        memcpy(&wantCurvatureBits, &wantCurvature, sizeof(wantCurvatureBits));
-        const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
-        const uint64_t now = GetTickCount64();
-        if (c > 0)
+        memcpy(
+            &wantCurvatureBits, &wantCurvature,
+            sizeof(wantCurvatureBits));
+
+        int count =
+            g_safeFrameHitCount.load(std::memory_order_acquire);
+        if (count > 0 &&
+            !HudLayoutResultsMatch(profile, generation))
         {
-            static uint64_t lastVerifyMs = 0;
-            if (g_hudAppliedBits.load(std::memory_order_relaxed) != wantBits ||
-                g_hudAppliedAspectBits.load(std::memory_order_relaxed) != wantAspectBits ||
-                g_hudAppliedCurvatureBits.load(std::memory_order_relaxed) != wantCurvatureBits ||
-                now - lastVerifyMs >= 1000)
+            g_safeFrameHitCount.store(-1, std::memory_order_release);
+            count = -1;
+        }
+
+        const uint64_t now = GetTickCount64();
+        if (count > 0)
+        {
+            const uint64_t lastVerify =
+                g_hudLayoutLastVerifyMs.load(
+                    std::memory_order_relaxed);
+            if (g_hudAppliedBits.load(
+                    std::memory_order_relaxed) != wantBits ||
+                g_hudAppliedAspectBits.load(
+                    std::memory_order_relaxed) != wantAspectBits ||
+                g_hudAppliedCurvatureBits.load(
+                    std::memory_order_relaxed) !=
+                    wantCurvatureBits ||
+                now - lastVerify >= 1000)
             {
-                lastVerifyMs = now;
-                ApplyHudLayoutOnce();
+                g_hudLayoutLastVerifyMs.store(
+                    now, std::memory_order_relaxed);
+                ApplyHudLayoutOnce(profile);
             }
             return;
         }
-        if (c == -2) return; // scan already running
-        const bool stockSize = wantSize >= 0.8695f && wantSize <= 0.8705f;
-        const bool stockAspect = wantAspect >= 0.9995f && wantAspect <= 1.0005f;
-        const bool stockCurvature =
-            wantCurvature >= 0.4995f && wantCurvature <= 0.5005f;
-        if (stockSize && stockAspect && stockCurvature) return; // stock needs no locate
-        const uint64_t lastCam = g_lastCamCopyMs.load(std::memory_order_relaxed);
-        if (!lastCam || now - lastCam > 1000) return; // not rendering a level
-        static uint64_t lastReacquireMs = 0;
-        if (now - lastReacquireMs >= 1000)
-        {
-            lastReacquireMs = now;
-            if (TryReacquireSafeFrames()) return;
-        }
-        static uint64_t lastAttemptMs = 0;
-        if (now - lastAttemptMs < 15000) return;
-        lastAttemptMs = now;
-        LaunchSafeFrameScan("auto: HUD layout is customized and no slots are located");
-    }
+        if (count == -2 ||
+            g_safeFrameScanInFlight.load(std::memory_order_acquire))
+            return;
 
+        const uint64_t lastCam =
+            g_lastCamCopyMs.load(std::memory_order_relaxed);
+        if (!lastCam || now < lastCam || now - lastCam > 1000)
+            return;
+
+        const bool stockSize =
+            wantSize >= 0.8695f && wantSize <= 0.8705f;
+        const bool stockAspect =
+            wantAspect >= 0.9995f && wantAspect <= 1.0005f;
+        const bool stockCurvature =
+            wantCurvature >= 0.4995f &&
+            wantCurvature <= 0.5005f;
+        const bool settingsAreStock =
+            stockSize && stockAspect && stockCurvature;
+        if (settingsAreStock)
+        {
+            HudLayoutRememberedCache* remembered =
+                HudLayoutRememberedFor(profile);
+            const int rememberedCount = remembered
+                ? remembered->count.load(std::memory_order_acquire)
+                : 0;
+            if (!HudLayoutCanReacquireFromRemembered(
+                    rememberedCount, adapter->expectedBlocks))
+                return;
+
+            const uint64_t lastReacquire =
+                g_hudLayoutLastReacquireMs.load(
+                    std::memory_order_relaxed);
+            if (now - lastReacquire >= 1000)
+            {
+                g_hudLayoutLastReacquireMs.store(
+                    now, std::memory_order_relaxed);
+                if (TryReacquireSafeFrames(profile))
+                    ApplyHudLayoutOnce(profile);
+            }
+            // A stock config never triggers a process-wide scan. Remembered
+            // title-owned slots are enough to restore a resident adjusted tag.
+            return;
+        }
+
+        const uint64_t lastReacquire =
+            g_hudLayoutLastReacquireMs.load(
+                std::memory_order_relaxed);
+        if (now - lastReacquire >= 1000)
+        {
+            g_hudLayoutLastReacquireMs.store(
+                now, std::memory_order_relaxed);
+            if (TryReacquireSafeFrames(profile))
+                return;
+        }
+
+        const uint64_t lastAttempt =
+            g_hudLayoutLastAttemptMs.load(
+                std::memory_order_relaxed);
+        if (now - lastAttempt < 15000)
+            return;
+        g_hudLayoutLastAttemptMs.store(
+            now, std::memory_order_relaxed);
+        LaunchSafeFrameScan(
+            profile,
+            "auto: HUD layout is customized and no title-owned slots are located");
+    }
     void ResolveBodyVars(uintptr_t base, size_t size)
     {
         struct { const char* name; int32_t on; } wanted[3] = {
@@ -7141,46 +7595,144 @@ namespace
         uint8_t* gate = g_odstCamera.crosshairClassGate;
         if (!gate)
             return !g_odstCamera.crosshairClassGatePatched;
-        if (gate[0] == 0x74 && gate[1] == 0x17) // already stock
-        {
-            g_odstCamera.crosshairClassGate = nullptr;
-            g_odstCamera.crosshairClassGatePatched = false;
-            return true;
-        }
-        if (gate[0] != 0x90 || gate[1] != 0x90)
+        const bool alreadyStock = gate[0] == 0x74 && gate[1] == 0x17;
+        if (!alreadyStock && (gate[0] != 0x90 || gate[1] != 0x90))
         {
             LOG("ODST crosshair cleanup: class-gate has unknown bytes");
             return false;
         }
-        DWORD oldProtect = 0;
-        if (!VirtualProtect(gate, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+
+        DWORD currentProtect = 0;
+        if (!VirtualProtect(
+                gate, 2, PAGE_EXECUTE_READWRITE, &currentProtect))
         {
             LOG("ODST crosshair cleanup: class-gate protection failed");
             return false;
         }
-        gate[0] = 0x74;
-        gate[1] = 0x17;
-        FlushInstructionCache(GetCurrentProcess(), gate, 2);
+        if (!alreadyStock)
+        {
+            gate[0] = 0x74;
+            gate[1] = 0x17;
+            FlushInstructionCache(GetCurrentProcess(), gate, 2);
+        }
+
+        // If install patched the bytes but failed to restore their protection,
+        // currentProtect is RWX. Retain the original protection explicitly so
+        // cleanup still restores the page to its pre-install state.
+        const DWORD targetProtect =
+            g_odstCamera.crosshairClassGateOriginalProtect
+                ? g_odstCamera.crosshairClassGateOriginalProtect
+                : currentProtect;
         DWORD ignored = 0;
-        if (!VirtualProtect(gate, 2, oldProtect, &ignored))
+        if (!VirtualProtect(gate, 2, targetProtect, &ignored))
         {
             LOG("ODST crosshair cleanup: could not restore class-gate protection");
             return false;
         }
         g_odstCamera.crosshairClassGate = nullptr;
         g_odstCamera.crosshairClassGatePatched = false;
+        g_odstCamera.crosshairClassGateOriginalProtect = 0;
         return true;
+    }
+
+    enum class OdstOptionalHookResult
+    {
+        StockFallback,
+        Installed,
+        CleanupRequired,
+    };
+
+    // ODST HUD height. Retail ODST and H3ODSTEK independently prove this as
+    // chud_compute_anchor_basis: the ABI matches Halo 3 and its final
+    // real_matrix4x3 translation writes Y at basis+0x2C. The long entry AOB
+    // captures all four arguments; the unique tail AOB independently guards
+    // the exact +0x932 output sequence in the supported retail function.
+    OdstOptionalHookResult InstallOdstHudHeight(uintptr_t base, size_t size)
+    {
+        const char* kOdstHudAnchorBasisSig =
+            "48 8B C4 48 89 58 08 48 89 70 10 48 89 78 20 55 "
+            "41 54 41 55 41 56 41 57 48 8D 68 98 48 81 EC 40 01 00 00 "
+            "4C 8B 2D ?? ?? ?? ?? 49 8B F9 0F 29 70 C8 41 8B D8 "
+            "0F 29 78 B8 48 8B F2 44 0F 29 40 A8 44 0F 29 48 98 "
+            "48 8B 05 ?? ?? ?? ?? 4C 63 E1";
+        const char* kOdstHudAnchorBasisTailSig =
+            "F2 0F 10 44 24 38 8B 54 24 54 F2 0F 11 7F 1C "
+            "89 4F 24 8B 4C 24 40 F2 0F 11 47 28 "
+            "F2 44 0F 11 4F 04 F2 44 0F 11 47 10 "
+            "89 4F 30 C7 07 00 00 80 3F";
+
+        const uintptr_t anchorBasis =
+            sig::Find(base, size, kOdstHudAnchorBasisSig);
+        const bool uniqueEntry = anchorBasis &&
+            !sig::Find(
+                anchorBasis + 1, base + size - anchorBasis - 1,
+                kOdstHudAnchorBasisSig);
+        const uintptr_t outputTail =
+            sig::Find(base, size, kOdstHudAnchorBasisTailSig);
+        const bool uniqueTail = outputTail &&
+            !sig::Find(
+                outputTail + 1, base + size - outputTail - 1,
+                kOdstHudAnchorBasisTailSig);
+        const bool exactSupportedLayout =
+            uniqueEntry && uniqueTail && outputTail > anchorBasis &&
+            outputTail - anchorBasis == 0x932;
+        if (!uniqueEntry || !exactSupportedLayout)
+        {
+            LOG("ODST HUD height: anchor-basis entry/output proof missing or "
+                "ambiguous; height remains stock");
+            return OdstOptionalHookResult::StockFallback;
+        }
+        if (g_odstCamera.hookTargetCount >=
+            _countof(g_odstCamera.hookTargets))
+        {
+            LOG("ODST HUD height: lifecycle hook capacity exhausted; "
+                "height remains stock");
+            return OdstOptionalHookResult::StockFallback;
+        }
+
+        const MH_STATUS createStatus = MH_CreateHook(
+            reinterpret_cast<void*>(anchorBasis),
+            reinterpret_cast<void*>(&OdstHudAnchorBasisHook),
+            &g_odstCamera.originalHudAnchorBasis);
+        if (createStatus != MH_OK)
+        {
+            g_odstCamera.originalHudAnchorBasis = nullptr;
+            LOG("ODST HUD height: hook create failed; height remains stock");
+            return OdstOptionalHookResult::StockFallback;
+        }
+
+        const size_t slot = g_odstCamera.hookTargetCount++;
+        g_odstCamera.hookTargets[slot] =
+            reinterpret_cast<void*>(anchorBasis);
+        g_odstCamera.hookTrampolines[slot] =
+            g_odstCamera.originalHudAnchorBasis;
+        const MH_STATUS enableStatus =
+            MH_EnableHook(reinterpret_cast<void*>(anchorBasis));
+        if (enableStatus != MH_OK)
+        {
+            // Retain the registered target, trampoline, and title module.
+            // Whole-transaction cleanup provides one verified teardown path
+            // even if a future MinHook implementation partially enables here.
+            LOG("ODST HUD height: hook enable failed (%d); requesting verified "
+                "transaction cleanup", static_cast<int>(enableStatus));
+            return OdstOptionalHookResult::CleanupRequired;
+        }
+
+        LOG("ODST HUD height: title-native anchor hook active at "
+            "halo3odst.dll+0x%llX (basis Y +0x2C)",
+            static_cast<unsigned long long>(anchorBasis - base));
+        return OdstOptionalHookResult::Installed;
     }
 
     // ODST class-2 CHUD crosshair hider + authored-widget capture. Full parity
     // with Halo 3's InstallHook crosshair path, but every location is ODST-proven
     // (docs/ODST-SIGNATURE-EVIDENCE.md kHudElemSig candidate; disassembly at
     // halo3odst.dll+0x329488). The class-gate block is byte-identical to Halo 3
-    // yet shifted -3 bytes inside the recompiled function: playback call E8 @
-    // +0x7A, playback short-circuit je (74 17) @ +0x81, class-2 predicate call
-    // E8 @ +0x91. Best-effort and fail-open: on any mismatch the native ODST
-    // crosshair simply stays visible and the camera transaction is unaffected.
-    void InstallOdstCrosshairHider(uintptr_t base, size_t size)
+    // yet shifted -3 bytes inside the recompiled function: playback call E8 at
+    // +0x7A, playback short-circuit je (74 17) at +0x81, class-2 predicate call
+    // E8 at +0x91. Missing proof fails open to ODST's stock native crosshair.
+    OdstOptionalHookResult InstallOdstCrosshairHider(
+        uintptr_t base, size_t size)
     {
         const char* kHudElemSigOdst =
             "44 88 4C 24 20 53 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 8B D9 45 0F B7 "
@@ -7192,11 +7744,9 @@ namespace
         {
             LOG("ODST crosshair: chud_draw_widget signature missing/ambiguous; "
                 "native crosshair stays visible");
-            return;
+            return OdstOptionalHookResult::StockFallback;
         }
 
-        // Verify the ODST class-gate against proven bytes before patching. The
-        // 17-byte block is identical to Halo 3's expectedClassGate.
         const unsigned char expectedClassGate[] = {
             0x74, 0x17, 0xB8, 0x02, 0x00, 0x00, 0x00,
             0x66, 0x41, 0x3B, 0x42, 0x04, 0x75, 0x0B,
@@ -7209,7 +7759,7 @@ namespace
         {
             LOG("ODST crosshair: class-gate layout mismatch; native crosshair "
                 "stays visible");
-            return;
+            return OdstOptionalHookResult::StockFallback;
         }
 
         const uintptr_t playbackTarget =
@@ -7221,79 +7771,144 @@ namespace
         {
             LOG("ODST crosshair: class targets outside halo3odst.dll; native "
                 "crosshair stays visible");
-            return;
+            return OdstOptionalHookResult::StockFallback;
+        }
+        if (g_odstCamera.hookTargetCount + 2 >
+            _countof(g_odstCamera.hookTargets))
+        {
+            LOG("ODST crosshair: lifecycle hook capacity exhausted; native "
+                "crosshair stays visible");
+            return OdstOptionalHookResult::StockFallback;
         }
 
-        // Hook the class-gated visibility predicate and the widget-draw wrapper,
-        // exactly as Halo 3 does. The hook bodies are shared and already key off
-        // g_enabled + VR_IsStereoEnabled(), which the ODST arm path sets.
+        const size_t firstHookSlot = g_odstCamera.hookTargetCount;
         const MH_STATUS visibleCreate = MH_CreateHook(
             reinterpret_cast<void*>(visibleTarget),
-            reinterpret_cast<void*>(&HudCrosshairVisibleHook),
+            reinterpret_cast<void*>(&OdstHudCrosshairVisibleHook),
             reinterpret_cast<void**>(&g_realHudCrosshairVisible));
-        if (visibleCreate != MH_OK ||
-            MH_EnableHook(reinterpret_cast<void*>(visibleTarget)) != MH_OK)
+        if (visibleCreate != MH_OK)
         {
-            if (visibleCreate == MH_OK)
-                MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
             g_realHudCrosshairVisible = nullptr;
-            LOG("ODST crosshair: visibility predicate hook failed; native "
-                "crosshair stays visible");
-            return;
+            LOG("ODST crosshair: visibility predicate hook create failed; "
+                "native crosshair stays visible");
+            return OdstOptionalHookResult::StockFallback;
         }
+        size_t hookSlot = g_odstCamera.hookTargetCount++;
+        g_odstCamera.hookTargets[hookSlot] =
+            reinterpret_cast<void*>(visibleTarget);
+        g_odstCamera.hookTrampolines[hookSlot] =
+            reinterpret_cast<void*>(g_realHudCrosshairVisible);
+
         const MH_STATUS drawCreate = MH_CreateHook(
             reinterpret_cast<void*>(hudElem),
-            reinterpret_cast<void*>(&HudDrawWidgetHook),
+            reinterpret_cast<void*>(&OdstHudDrawWidgetHook),
             reinterpret_cast<void**>(&g_realHudDrawWidget));
-        if (drawCreate != MH_OK ||
-            MH_EnableHook(reinterpret_cast<void*>(hudElem)) != MH_OK)
+        if (drawCreate != MH_OK)
         {
-            if (drawCreate == MH_OK)
-                MH_RemoveHook(reinterpret_cast<void*>(hudElem));
-            g_realHudDrawWidget = nullptr;
-            // Without the draw wrapper the authored capture cannot start, so do
-            // not hide the crosshair with no replacement: roll the predicate
-            // hook back too.
-            MH_DisableHook(reinterpret_cast<void*>(visibleTarget));
-            MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
-            g_realHudCrosshairVisible = nullptr;
-            LOG("ODST crosshair: widget-draw wrapper hook failed; native "
-                "crosshair stays visible");
-            return;
+            const MH_STATUS removeStatus =
+                MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+            if (removeStatus == MH_OK ||
+                removeStatus == MH_ERROR_NOT_CREATED)
+            {
+                g_odstCamera.hookTargetCount = firstHookSlot;
+                g_odstCamera.hookTargets[firstHookSlot] = nullptr;
+                g_odstCamera.hookTrampolines[firstHookSlot] = nullptr;
+                g_realHudCrosshairVisible = nullptr;
+                g_realHudDrawWidget = nullptr;
+                LOG("ODST crosshair: widget hook create failed; native "
+                    "crosshair stays visible");
+                return OdstOptionalHookResult::StockFallback;
+            }
+            LOG("ODST crosshair: widget hook create failed and visibility "
+                "cleanup failed (%d); requesting verified transaction cleanup",
+                static_cast<int>(removeStatus));
+            return OdstOptionalHookResult::CleanupRequired;
         }
+        hookSlot = g_odstCamera.hookTargetCount++;
+        g_odstCamera.hookTargets[hookSlot] =
+            reinterpret_cast<void*>(hudElem);
+        g_odstCamera.hookTrampolines[hookSlot] =
+            reinterpret_cast<void*>(g_realHudDrawWidget);
 
         DWORD oldProtect = 0;
-        if (!VirtualProtect(classGate, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+        if (!VirtualProtect(
+                classGate, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
         {
-            MH_DisableHook(reinterpret_cast<void*>(hudElem));
-            MH_RemoveHook(reinterpret_cast<void*>(hudElem));
-            g_realHudDrawWidget = nullptr;
-            MH_DisableHook(reinterpret_cast<void*>(visibleTarget));
-            MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
-            g_realHudCrosshairVisible = nullptr;
-            LOG("ODST crosshair: class-gate protection failed; native crosshair "
-                "stays visible");
-            return;
+            const MH_STATUS drawRemove =
+                MH_RemoveHook(reinterpret_cast<void*>(hudElem));
+            const MH_STATUS visibleRemove =
+                MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+            const bool removed =
+                (drawRemove == MH_OK ||
+                 drawRemove == MH_ERROR_NOT_CREATED) &&
+                (visibleRemove == MH_OK ||
+                 visibleRemove == MH_ERROR_NOT_CREATED);
+            if (removed)
+            {
+                g_odstCamera.hookTargetCount = firstHookSlot;
+                g_odstCamera.hookTargets[firstHookSlot] = nullptr;
+                g_odstCamera.hookTargets[firstHookSlot + 1] = nullptr;
+                g_odstCamera.hookTrampolines[firstHookSlot] = nullptr;
+                g_odstCamera.hookTrampolines[firstHookSlot + 1] = nullptr;
+                g_realHudDrawWidget = nullptr;
+                g_realHudCrosshairVisible = nullptr;
+                LOG("ODST crosshair: class-gate protection failed; native "
+                    "crosshair stays visible");
+                return OdstOptionalHookResult::StockFallback;
+            }
+            LOG("ODST crosshair: class-gate protection and hook cleanup failed "
+                "(%d/%d); requesting verified transaction cleanup",
+                static_cast<int>(drawRemove),
+                static_cast<int>(visibleRemove));
+            return OdstOptionalHookResult::CleanupRequired;
         }
+
         classGate[0] = 0x90;
         classGate[1] = 0x90;
         FlushInstructionCache(GetCurrentProcess(), classGate, 2);
-        DWORD ignored = 0;
-        VirtualProtect(classGate, 2, oldProtect, &ignored);
-
-        g_gameIsPlayback = reinterpret_cast<GameIsPlaybackFn>(playbackTarget);
         g_odstCamera.crosshairClassGate = classGate;
         g_odstCamera.crosshairClassGatePatched = true;
-        // Register both hooks so ODST teardown disables/removes them with the
-        // camera set (hookTargets has room: 10 core + these 2).
-        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
-            reinterpret_cast<void*>(visibleTarget);
-        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
-            reinterpret_cast<void*>(hudElem);
+        g_odstCamera.crosshairClassGateOriginalProtect = oldProtect;
+        DWORD ignored = 0;
+        if (!VirtualProtect(classGate, 2, oldProtect, &ignored))
+        {
+            LOG("ODST crosshair: class-gate page protection restore failed; "
+                "requesting verified transaction cleanup");
+            return OdstOptionalHookResult::CleanupRequired;
+        }
+
+        g_gameIsPlayback =
+            reinterpret_cast<GameIsPlaybackFn>(playbackTarget);
+        const MH_STATUS visibleQueue =
+            MH_QueueEnableHook(
+                reinterpret_cast<void*>(visibleTarget));
+        const MH_STATUS drawQueue =
+            visibleQueue == MH_OK
+                ? MH_QueueEnableHook(reinterpret_cast<void*>(hudElem))
+                : MH_UNKNOWN;
+        const MH_STATUS applyStatus =
+            visibleQueue == MH_OK && drawQueue == MH_OK
+                ? MH_ApplyQueued()
+                : MH_UNKNOWN;
+        if (visibleQueue != MH_OK || drawQueue != MH_OK ||
+            applyStatus != MH_OK)
+        {
+            // MH_ApplyQueued can enable its first target and then fail its
+            // second. Preserve every target/trampoline/patch and use the same
+            // verified quiesce path as normal title teardown.
+            LOG("ODST crosshair: atomic hook enable failed (%d/%d/%d); "
+                "requesting verified transaction cleanup",
+                static_cast<int>(visibleQueue),
+                static_cast<int>(drawQueue),
+                static_cast<int>(applyStatus));
+            return OdstOptionalHookResult::CleanupRequired;
+        }
+
         LOG("ODST crosshair: authored CHUD crosshair redirect active at "
             "halo3odst.dll+0x%llX (class-2 predicate +0x%llX)",
             static_cast<unsigned long long>(hudElem - base),
             static_cast<unsigned long long>(visibleTarget - base));
+        return OdstOptionalHookResult::Installed;
     }
 
     void ClearOdstCameraPointers()
@@ -7313,12 +7928,14 @@ namespace
         g_odstCamera.originalHudPhasePrimary = nullptr;
         g_odstCamera.originalHudPhaseSecondary = nullptr;
         g_odstCamera.originalHudTargetCopy = nullptr;
+        g_odstCamera.originalHudAnchorBasis = nullptr;
         g_odstCamera.originalFpInterpolate = nullptr;
         g_odstCamera.originalFpVisiblePalette = nullptr;
         g_odstCamera.nativeWeaponIkBranch = nullptr;
         g_odstCamera.nativeWeaponIkPatched = false;
         g_odstCamera.crosshairClassGate = nullptr;
         g_odstCamera.crosshairClassGatePatched = false;
+        g_odstCamera.crosshairClassGateOriginalProtect = 0;
         // Drop the shared CHUD trampoline pointers so a later title change can
         // never call into an unloaded halo3odst.dll (stale-pointer crash class).
         g_realHudCrosshairVisible = nullptr;
@@ -7336,6 +7953,8 @@ namespace
         g_odstCamera.motionBlurZeroed = false;
         for (void*& target : g_odstCamera.hookTargets)
             target = nullptr;
+        for (void*& trampoline : g_odstCamera.hookTrampolines)
+            trampoline = nullptr;
         g_odstCamera.hookTargetCount = 0;
         g_odstCamera.renderHookTarget = nullptr;
         g_odstCamera.installedAtMs.store(0, std::memory_order_release);
@@ -7914,43 +8533,17 @@ namespace
 
     void* OdstTrampolineForHook(size_t index)
     {
-        switch (index)
-        {
-        case 0:
-            return reinterpret_cast<void*>(g_odstCamera.originalCamCopy);
-        case 1:
-            return reinterpret_cast<void*>(g_odstCamera.originalRenderView);
-        case 2:
-            return reinterpret_cast<void*>(g_odstCamera.originalFpCameraRebuild);
-        case 3:
-            return reinterpret_cast<void*>(g_odstCamera.originalFpDriver);
-        case 4:
-            return reinterpret_cast<void*>(
-                g_odstCamera.originalObserverCameraEffect);
-        case 5:
-            return g_odstCamera.originalFpInterpolate;
-        case 6:
-            return g_odstCamera.originalFpVisiblePalette;
-        case 7:
-            return reinterpret_cast<void*>(g_odstCamera.originalHudPhasePrimary);
-        case 8:
-            return reinterpret_cast<void*>(g_odstCamera.originalHudPhaseSecondary);
-        case 9:
-            return reinterpret_cast<void*>(g_odstCamera.originalHudTargetCopy);
-        case 10:
-            return reinterpret_cast<void*>(g_realHudCrosshairVisible);
-        case 11:
-            return reinterpret_cast<void*>(g_realHudDrawWidget);
-        default:
+        if (index >= g_odstCamera.hookTargetCount ||
+            index >= _countof(g_odstCamera.hookTrampolines))
             return nullptr;
-        }
+        return g_odstCamera.hookTrampolines[index];
     }
 
     bool ScanForOdstDetourIngress(std::atomic<int>& counter,
                                   bool renderOnly, bool& busy)
     {
         static bool rangesResolved = false;
-        static OdstCodeRange ranges[12]{};
+        static OdstCodeRange ranges[13]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -7964,9 +8557,11 @@ namespace
                 reinterpret_cast<const void*>(&OdstHudPhasePrimaryHook),
                 reinterpret_cast<const void*>(&OdstHudPhaseSecondaryHook),
                 reinterpret_cast<const void*>(&OdstHudTargetCopyHook),
-                reinterpret_cast<const void*>(&HudCrosshairVisibleHook),
-                reinterpret_cast<const void*>(&HudDrawWidgetHook),
+                reinterpret_cast<const void*>(&OdstHudAnchorBasisHook),
+                reinterpret_cast<const void*>(&OdstHudCrosshairVisibleHook),
+                reinterpret_cast<const void*>(&OdstHudDrawWidgetHook),
             };
+            static_assert(_countof(functions) == _countof(ranges));
             bool resolved = true;
             for (size_t i = 0; i < _countof(functions); ++i)
                 resolved &= ResolveOdstCodeRange(functions[i], ranges[i]);
@@ -8261,6 +8856,7 @@ namespace
              reinterpret_cast<void*>(&OdstHudTargetCopyHook),
              reinterpret_cast<void**>(&g_odstCamera.originalHudTargetCopy)},
         };
+        static_assert(_countof(hooks) == 10);
 
         for (const HookSpec& hook : hooks)
         {
@@ -8274,7 +8870,9 @@ namespace
                     ? OdstInstallResult::Failed
                     : OdstInstallResult::CleanupPending;
             }
-            g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] = hook.target;
+            const size_t slot = g_odstCamera.hookTargetCount++;
+            g_odstCamera.hookTargets[slot] = hook.target;
+            g_odstCamera.hookTrampolines[slot] = *hook.original;
             if (hook.target == reinterpret_cast<void*>(resolved.renderView))
                 g_odstCamera.renderHookTarget = hook.target;
         }
@@ -8312,11 +8910,27 @@ namespace
                 : OdstInstallResult::CleanupPending;
         }
 
-        // Best-effort HUD parity: hide ODST's native class-2 crosshair and paint
+        // Best-effort HUD parity: hook ODST's proven anchor-basis output for the
+        // shared vertical slider, hide its native class-2 crosshair, and paint
         // the weapon's authored widget as the floating VR reticle, exactly like
-        // Halo 3. Never fails the camera transaction; on any mismatch the native
-        // crosshair simply stays visible.
-        InstallOdstCrosshairHider(base, size);
+        // Halo 3. Missing or ambiguous title proof leaves native behavior stock;
+        // a hook-manager failure after ownership begins rolls back everything.
+        const OdstOptionalHookResult heightHook =
+            InstallOdstHudHeight(base, size);
+        if (heightHook == OdstOptionalHookResult::CleanupRequired)
+        {
+            return DiscardCreatedOdstHooks()
+                ? OdstInstallResult::Failed
+                : OdstInstallResult::CleanupPending;
+        }
+        const OdstOptionalHookResult crosshairHooks =
+            InstallOdstCrosshairHider(base, size);
+        if (crosshairHooks == OdstOptionalHookResult::CleanupRequired)
+        {
+            return DiscardCreatedOdstHooks()
+                ? OdstInstallResult::Failed
+                : OdstInstallResult::CleanupPending;
+        }
 
         g_odstCamera.captureFailures.store(0, std::memory_order_release);
         g_odstCamera.sawValidCamera.store(false, std::memory_order_release);
@@ -8345,10 +8959,11 @@ namespace
         // is title-agnostic; the shot-state TLS offset is read from ODST's own
         // instruction (0xA0). Failure logs and leaves shot-facing disabled.
         LocateCinematicState(base, size);
-        LOG("ODST camera install: ten-hook camera/weapon/CHUD transaction retained "
-            "and disarmed; "
+        LOG("ODST camera install: ten-hook camera/weapon/CHUD core plus %zu "
+            "verified optional HUD hook(s) retained and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
-            "Halo 3 weapon, arm IK, two-hand, and dual-wield config path ready");
+            "Halo 3 weapon, arm IK, two-hand, and dual-wield config path ready",
+            g_odstCamera.hookTargetCount - _countof(hooks));
         return OdstInstallResult::Installed;
     }
 
@@ -8356,6 +8971,7 @@ namespace
     {
         g_odstCamera.cameraArrayReady.store(
             false, std::memory_order_release);
+        InvalidateHudLayoutProfile(HudLayoutProfile::Halo3ODST);
         OdstRequestPresentationDetach();
         if (!DisableAndRemoveOdstHooks())
         {
@@ -8877,13 +9493,28 @@ bool Game_HasAuthoritativePauseState()
 // whenever size, aspect, or curvature is non-stock and no slots are located.
 void Game_LocateHudSafeFrames()
 {
-    LaunchSafeFrameScan("manual rescan from the menu");
+    HudLayoutProfile profile = HudLayoutProfile::None;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (Game_IsCameraOnlyBringup())
+        profile = HudLayoutProfile::Halo3ODST;
+#endif
+    if (profile == HudLayoutProfile::None &&
+        Game_AllowsSharedGameplayFeatures())
+        profile = HudLayoutProfile::Halo3;
+    const HudLayoutAdapter* adapter = HudLayoutAdapterFor(profile);
+    if (!adapter)
+    {
+        LOG("SAFEFRAME: manual rescan skipped; no title-owned HUD layout adapter");
+        return;
+    }
+    LaunchSafeFrameScan(profile, "manual rescan from the menu");
 }
 
 void Game_GetHudSafeFrameStatus(int& matches, bool& scanning)
 {
     const int c = g_safeFrameHitCount.load(std::memory_order_acquire);
-    scanning = (c == -2);
+    scanning = (c == -2) ||
+        g_safeFrameScanInFlight.load(std::memory_order_acquire);
     matches = (c > 0) ? c : 0;
 }
 
@@ -8988,6 +9619,19 @@ void Game_AutoVrTick()
             LOG("ODST pause presentation: native pause exited, restoring stereo target");
         }
 
+        // Match Halo 3's live HUD-config timing: begin title-owned layout
+        // discovery from the first eligible fresh camera heartbeat, without
+        // waiting for the one-second stereo arm. The shared writer still
+        // verifies ODST's exact adapter anchor before every foreign write.
+        if (OdstHudLayoutEligible(
+                true, odstCameraContext,
+                g_odstCamera.installed.load(std::memory_order_acquire),
+                cameraFresh,
+                g_odstCamera.teardownRequested.load(
+                    std::memory_order_acquire),
+                nativePauseKnown && nativePaused))
+            HudLayoutAutoTick(HudLayoutProfile::Halo3ODST);
+
         const bool detachedNow = Game_ProcessPresentationDetachRequest();
         const uint64_t detachCompleted =
             g_odstCamera.presentationDetachCompleted.load(
@@ -9006,7 +9650,8 @@ void Game_AutoVrTick()
 
         if (nativePauseKnown && nativePaused)
         {
-            // The worker removes all five hooks at this boundary. Disarm on the
+            // The worker removes every registered ODST hook at this boundary.
+            // Disarm on the
             // render thread immediately so no stereo transaction can begin
             // while pause or Save & Quit advances title teardown.
             g_odstCamera.armed.store(false, std::memory_order_release);
@@ -9087,11 +9732,13 @@ void Game_AutoVrTick()
             VR_RequestPausePresentation(false);
         }
         odstFreshDebounce.Reset();
+        InvalidateHudLayoutProfile(HudLayoutProfile::Halo3ODST);
     }
 #endif
 
     if (!Game_AllowsSharedGameplayFeatures())
     {
+        InvalidateHudLayoutProfile(HudLayoutProfile::Halo3);
         const TitleDescriptor* activeTitle = TitleAdapter_GetActive();
         if (activeTitle)
             TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
@@ -9107,7 +9754,7 @@ void Game_AutoVrTick()
     }
 
     UpdateCinematicFovPolicy();
-    HudLayoutAutoTick(); // HUD size/aspect/curvature: locate tag slots when needed
+    HudLayoutAutoTick(HudLayoutProfile::Halo3); // shared behavior, H3 tag adapter
     {
         static uint32_t loggedSerial = 0;
         const uint32_t serial =

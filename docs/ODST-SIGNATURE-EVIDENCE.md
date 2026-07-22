@@ -5,12 +5,13 @@ The eight byte-identical signatures were verified 2026-07-21 on
 verified after documentation checkpoint `0144982`; runtime source remained
 unchanged from `4dddbc1`.
 
-This is an evidence manifest, not an ODST runtime-support manifest. It covers
-the eight production signatures that match `halo3odst.dll` byte-for-byte and
-the twelve ODST-specific candidate signatures derived for production patterns
-that do not. It does not validate any consumed structure layout or authorize an
-ODST hook. ODST must remain stock when selected: `runtimeSupported=false`, with
-game-hook dispatch still restricted to `GameTitle::Halo3`.
+This began as an evidence manifest, not an ODST runtime-support manifest. The
+original survey covers the eight production signatures that match
+`halo3odst.dll` byte-for-byte and the twelve ODST-specific candidates derived
+for production patterns that do not. At that checkpoint it did not validate a
+consumed structure layout or authorize an ODST hook: public ODST remained stock
+with `runtimeSupported=false`. Later private, option-ON evidence and results are
+recorded explicitly in dated addenda below; they do not change the public gate.
 
 ## Evidence inputs
 
@@ -524,6 +525,93 @@ equivalent, but not yet sufficient by itself to authorize a runtime patch.
 The later title-specific H3ODSTEK graph comparison, exact retail-byte
 verification, reversible lifecycle design, and current authorization are
 recorded in `ODST-WEAPON-IK-EVIDENCE.md`.
+
+## ODST native-HUD and slider evidence addendum (2026-07-22)
+
+This addendum records later title-specific evidence and headset results. It does
+not retroactively broaden the original survey's authorization, and it does not
+claim slider acceptance before the required ODST headset test and Halo 3
+regression.
+
+### Native CHUD phase routing result
+
+Retail call-graph reconstruction places ODST's target setup at `0x2E481C`,
+secondary CHUD phase at `0x2FD88C`, and primary CHUD phase at `0x2FD694` inside
+the prepared-view callback reached synchronously from `prepareView` `0x1B4694`.
+The supported retail image remains SHA-256
+`5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`.
+The two CHUD phases are the title-proven native-HUD boundaries; they are not a
+per-widget substitute or a desktop-panel capture.
+
+Commit `fa37870b8cddf9e3ef9687f664aa876fdd787108`, deployed as DLL SHA-256
+`C123703E2789AD8DC6672FA9B2E174CED9DCCC96D39CCD90E67DFAE7768C03F3`
+(recovery `pre-odst-private-backup-38`), is headset-confirmed to show the native
+ODST HUD. Its live route report was `completedScopes=136`,
+`provenOmMatches=0`, `exactCopyScopes=0`, `copySubstitutions=0`. Therefore the
+accepted mechanism is the scoped phase-output bind: inside a proven per-eye CHUD
+phase, a non-null slot-0 phase output is bound to the active eye cache and the
+saved OM/depth/viewports/scissors are restored before return. The separately
+retained world target and exact-copy substitution did not produce this accepted
+result.
+
+### ODST `chud_globals` safe-frame anchor
+
+The ODST editing-kit archive contains
+`tags/ui/chud/globals.chud_globals_definition` (extracted-file SHA-256
+`EB12F4A66FDCC663CBC738EAAC61A9E5DCCFBFE0D0D73E415F0A3A0E40103C44`). Its
+ODST-specific 24-byte anchor is:
+
+```text
+[int32 1280][int32 720][float 2000][float 2000][float 58][float 4]
+```
+
+This anchor occurs once in every inspected ODST campaign map and produced
+exactly one private read/write hit in the live level. At that hit, the authored
+`destination_offset_z` immediately before the anchor (`anchor-4`) is `0.17`,
+and the two safe-frame scale floats immediately after it (`anchor+24` and
+`anchor+28`) are `0.87` and `0.87`. The Halo 3 anchor instead contains
+`55/661` in the corresponding middle pair and must not be used to locate ODST
+state.
+
+The candidate selects this title-specific anchor but applies Halo 3's existing
+shared user-setting math for `hud_size`, `hud_aspect`, and `hud_curvature`.
+Public option-OFF and private option-ON Release builds and both CTest suites
+pass. Actual slider response, F1/config persistence, and especially the exact
+useful ODST curvature range remain headset-pending.
+
+### ODST CHUD anchor-basis function
+
+ODST's retail anchor-basis function is `halo3odst.dll+0x329824`, bounded by
+exception metadata at `0x329824-0x32A1D5`. Its title-specific entry AOB has one
+ODST match and zero Halo 3 matches:
+
+```text
+48 8B C4 48 89 58 08 48 89 70 10 48 89 78 20 55 41 54 41 55 41 56 41 57 48 8D 68 98 48 81 EC 40 01 00 00 4C 8B 2D ?? ?? ?? ?? 49 8B F9 0F 29 70 C8 41 8B D8 0F 29 78 B8 48 8B F2 44 0F 29 40 A8 44 0F 29 48 98 48 8B 05 ?? ?? ?? ?? 4C 63 E1
+```
+
+A second semantic tail is independently unique at entry `+0x932`:
+
+```text
+F2 0F 10 44 24 38 8B 54 24 54 F2 0F 11 7F 1C 89 4F 24 8B 4C 24 40 F2 0F 11 47 28 F2 44 0F 11 4F 04 F2 44 0F 11 47 10 89 4F 30 C7 07 00 00 80 3F
+```
+
+The function retains the Halo 3-compatible calling convention
+`(int user, void* drawData, int anchorType, void* basis) -> bool`. The tail
+stores a qword at `basis+0x28`, proving that the vertical component consumed by
+the shared height adjustment is `basis+0x2C`. The hook does not reinterpret the
+anchor type, preserving ODST's additional observed type `0x26`, and excludes
+the separately captured authored class-2 reticle from the vertical shift.
+The candidate applies the shared `hud_vertical_offset` convention at this
+proven Y field; positive-raises direction and useful range remain
+headset-pending.
+
+### Brightness exclusion
+
+ODST brightness is intentionally outside this slider candidate. Although
+`kHudXformSig` remains static evidence for the screen color/gamma uploader,
+headset testing proved that scaling `halo3odst.dll+0x2A6308` makes the entire
+native ODST HUD disappear. That experiment was reverted. No current ODST HUD
+layout path installs or applies the Halo 3 brightness hook.
 
 ## Halo 3 comfort-parity addendum
 
