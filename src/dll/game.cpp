@@ -4572,7 +4572,19 @@ namespace
 
     bool OdstCameraArraySupportsBringup(uintptr_t cameraArray)
     {
-        return OdstCameraArraySupportsMode(cameraArray, true);
+        // Parity fix (cutscene 3D): VR arms on ANY active, plain-perspective,
+        // slot-0 single-user camera -- not only a first-person one. Levels that
+        // OPEN with a cinematic (ODST's drop-pod intro) present a blend-0
+        // cutscene camera before any first-person gameplay camera exists.
+        // Gating arm on first person left those whole cutscenes flat 2D with
+        // stereo off (confirmed in the headset log: never armed during the
+        // intro). The stereo redirect (Build G) and OdstApplyHeadLook already
+        // drive any active redirectable camera once armed -- that is why the
+        // blend-0 vehicle works -- so arming on the same redirect predicate
+        // makes the opening cutscene render stereo + head-tracked like Halo 3.
+        // First-person blend still gates CONTROLS (aim/head-look ownership)
+        // separately in OdstCamCopyBody; it never gated whether stereo is on.
+        return OdstCameraArraySupportsMode(cameraArray, false);
     }
 
     bool OdstCameraArraySupportsStereoRedirect(uintptr_t cameraArray)
@@ -4622,6 +4634,44 @@ namespace
             reinterpret_cast<void*>(cameraArray + layout.rootCurrentCompact),
             inactive[0] ? 1 : 0, inactive[1] ? 1 : 0,
             inactive[2] ? 1 : 0);
+    }
+
+    // Diagnostic (worker-only): while the core is installed but NOT yet armed,
+    // log the live camera-array readiness whenever it materially changes
+    // (rate-limited). If a cutscene keeps the view flat, this shows the actual
+    // cutscene-camera state -- active, and whether it satisfies the stereo
+    // redirect gate that now also drives arming -- so we can tell an arm that
+    // reached the camera from a genuinely different (custom-projection) camera.
+    void LogOdstWaitingReadinessIfChanged(uintptr_t cameraArray)
+    {
+        static uint32_t lastSig = 0xFFFFFFFFu;
+        static uint64_t lastLogMs = 0;
+        if (!cameraArray)
+            return;
+        const auto& layout = kOdstCameraProfile.layout;
+        const char* compact =
+            reinterpret_cast<const char*>(cameraArray) + layout.rootCurrentCompact;
+        const uint32_t mode =
+            *reinterpret_cast<const uint32_t*>(compact + layout.compactModeFlags);
+        const bool active = OdstCompactCameraIsActive(compact);
+        const bool redirectable =
+            OdstCompactCameraIsStereoRedirectable(compact);
+        const bool tailValid = OdstSingleUserTailIsValid(
+            reinterpret_cast<const void*>(cameraArray));
+        const uint32_t sig = (mode & 0x3FFFu) |
+            (static_cast<uint32_t>(active) << 16) |
+            (static_cast<uint32_t>(redirectable) << 17) |
+            (static_cast<uint32_t>(tailValid) << 18);
+        const uint64_t now = GetTickCount64();
+        if (sig == lastSig && now - lastLogMs < 2000)
+            return;
+        lastSig = sig;
+        lastLogMs = now;
+        LOG("ODST camera WAIT: active=%d tailValid=%d redirectable=%d "
+            "(arm-eligible=%s) -- core installed, not yet armed",
+            active ? 1 : 0, tailValid ? 1 : 0, redirectable ? 1 : 0,
+            (active && tailValid && redirectable) ? "YES" : "NO");
+        LogOdstCameraReadiness(cameraArray);
     }
 
     void ApplyOdstMotionBlurSetting()
@@ -8085,6 +8135,9 @@ namespace
                     g_odstCamera.gunCameraArray);
                 g_odstCamera.cameraArrayReady.store(
                     cameraReady, std::memory_order_release);
+                if (!g_odstCamera.armed.load(std::memory_order_acquire))
+                    LogOdstWaitingReadinessIfChanged(
+                        g_odstCamera.gunCameraArray);
                 const OdstHeartbeatAction heartbeat = EvaluateOdstHeartbeat(
                     now, installedAt, last, sawCamera, cameraReady);
                 if (heartbeat == OdstHeartbeatAction::LevelUnloaded)
