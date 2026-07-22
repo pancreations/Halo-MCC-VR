@@ -18,6 +18,37 @@ check whenever shared behavior or cross-title lifecycle state could change.
 
 ## Recovery points
 
+- ODST HUD CROSSHAIR PARITY — DEPLOYED, PENDING HEADSET CONFIRMATION
+  (2026-07-22): ODST now installs Halo 3's class-2 CHUD crosshair path — it
+  hides ODST's native reticle and captures the active weapon's authored widget
+  as the floating VR crosshair, at Halo 3's exact shared size
+  (`crosshair_size_deg`). Root cause: the ODST installer wired only the 7
+  camera/FP/weapon hooks and none of the four HUD hooks, so ODST showed its
+  native crosshair plus the mod's procedural fallback (wrong art/size). Fix
+  `92d8dfd` on `feature/odst-bringup` (checkpoint
+  `recovery/pre-odst-crosshair-20260722`): new `InstallOdstCrosshairHider` uses
+  ODST-proven locations only — `kHudElemSig` candidate at
+  `halo3odst.dll+0x329488` (docs/ODST-SIGNATURE-EVIDENCE.md), class-gate block
+  byte-identical to Halo 3 but shifted -3 bytes inside the recompiled function
+  (playback call E8 @ +0x7A → `0x10B0A8`, short-circuit je `74 17` @ +0x81
+  NOP'd, class-2 predicate call E8 @ +0x91 → `0x32939C`). It hooks the shared
+  `HudCrosshairVisibleHook` + `HudDrawWidgetHook`, which already key off
+  `g_enabled` + `VR_IsStereoEnabled()` (both set by the ODST arm path). It is
+  best-effort/fail-open (any signature or byte mismatch leaves the native
+  crosshair visible and never affects the camera transaction); teardown removes
+  both hooks (registered in `hookTargets`), restores the je
+  (`RestoreOdstCrosshairClassGate`), and nulls the shared trampoline pointers
+  to prevent a stale cross-title call. All changes are inside
+  `#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP`, so the public Halo 3 build is
+  byte-unaffected. OFF and ON Release builds pass; both CTest runs pass.
+  Deployed private DLL build `2026-07-22 07:01:08 UTC`, SHA-256
+  `B1A215C85B7871C0B4CFF80580E1128D65DB200D43C9BECAAF75452AA91470E0`, recovery
+  record `pre-odst-private-backup-30` (sealed baseline `DFF8A406`). Built on the
+  cutscene-parity tip (`6beace3`) so ODST cutscene 3D/head-look/shot-facing are
+  retained. NEXT (per user plan, after headset confirmation): brightness
+  (`kHudXformSig` ODST `0x2A6308`, already proven), then HUD size/curvature/
+  aspect (safe-frame tag scan — needs ODST chud_globals layout proof), then HUD
+  height (`kHudAnchorBasisSig` ODST signature not yet derived).
 - ODST CUTSCENE PARITY COMPLETE — BEST-WORKING VERSION (user-designated
   2026-07-22): ODST cinematics now match Halo 3 end to end -- stereo 3D depth,
   head tracking, AND the view re-orients to the authored shot at every cut.
