@@ -198,6 +198,21 @@ namespace
     // plus a 128-entry linear scan on nearly every RTV bind and could collapse
     // stereo from 90 fps into the 20s.
     ID3D11RenderTargetView* g_sceneColorRtv = nullptr;
+    struct NativeHudEyeRouteState
+    {
+        ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+        ID3D11DepthStencilView* dsv = nullptr;
+        ID3D11RenderTargetView* sourceRtv = nullptr;
+        D3D11_VIEWPORT viewports[
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        D3D11_RECT scissors[
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+        UINT viewportCount = 0;
+        UINT scissorCount = 0;
+        int eye = -1;
+        bool active = false;
+    };
+    thread_local NativeHudEyeRouteState g_nativeHudEyeRoute{};
     D3D11_TEXTURE2D_DESC g_gameBackbufferDesc{};
     bool g_gameBackbufferDescValid = false;
     // Retained immediately after Present using the flip chain's current buffer
@@ -3306,6 +3321,77 @@ void VR_EndRasterEye()
     g_rasterEye = -1;
 }
 
+bool VR_BeginNativeHudEyeDraw(int eye)
+{
+    auto& route = g_nativeHudEyeRoute;
+    if (!g_context || eye < 0 || eye > 1 || !g_eyeCacheRtvs[eye] || route.active)
+        return false;
+
+    g_context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  route.rtvs, &route.dsv);
+    route.viewportCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    g_context->RSGetViewports(&route.viewportCount, route.viewports);
+    route.scissorCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    g_context->RSGetScissorRects(&route.scissorCount, route.scissors);
+    if (!route.rtvs[0])
+    {
+        for (auto*& rtv : route.rtvs)
+        {
+            if (rtv) rtv->Release();
+            rtv = nullptr;
+        }
+        if (route.dsv)
+        {
+            route.dsv->Release();
+            route.dsv = nullptr;
+        }
+        route.viewportCount = 0;
+        route.scissorCount = 0;
+        return false;
+    }
+
+    route.sourceRtv = route.rtvs[0];
+    route.eye = eye;
+    route.active = true;
+    ID3D11RenderTargetView* routed[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+        routed[i] = route.rtvs[i];
+    routed[0] = g_eyeCacheRtvs[eye];
+    g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  routed, route.dsv);
+    return true;
+}
+
+void VR_EndNativeHudEyeDraw()
+{
+    auto& route = g_nativeHudEyeRoute;
+    if (!route.active || !g_context)
+        return;
+
+    route.active = false;
+    g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
+                                  route.rtvs, route.dsv);
+    if (route.viewportCount)
+        g_context->RSSetViewports(route.viewportCount, route.viewports);
+    if (route.scissorCount)
+        g_context->RSSetScissorRects(route.scissorCount, route.scissors);
+    for (auto*& rtv : route.rtvs)
+    {
+        if (rtv) rtv->Release();
+        rtv = nullptr;
+    }
+    if (route.dsv)
+    {
+        route.dsv->Release();
+        route.dsv = nullptr;
+    }
+    route.sourceRtv = nullptr;
+    route.viewportCount = 0;
+    route.scissorCount = 0;
+    route.eye = -1;
+}
 
 bool VR_ScopeShouldRenderThisFrame()
 {
@@ -3376,15 +3462,32 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
 {
     const int eye = g_rasterEye.load();
     const bool scope=g_rasterScope.load(std::memory_order_acquire);
-    if ((!scope && (eye < 0 || eye > 1)) || !input || !output || !g_gameSwapchain)
+    auto& hudRoute = g_nativeHudEyeRoute;
+    const bool nativeHud = hudRoute.active && hudRoute.eye >= 0 &&
+        hudRoute.eye <= 1;
+    if ((!scope && !nativeHud && (eye < 0 || eye > 1)) || !input || !output ||
+        !g_gameSwapchain)
         return false;
-    ID3D11RenderTargetView* target=scope?g_scopeCacheRtv:g_eyeCacheRtvs[eye];
+    ID3D11RenderTargetView* target = scope ? g_scopeCacheRtv :
+        g_eyeCacheRtvs[nativeHud ? hudRoute.eye : eye];
     bool changed = false;      // any slot rewritten (scene color or sun shaft)
     bool sceneChanged = false; // scene-color redirect only: marks the eye image valid
     for (UINT i = 0; i < count; ++i)
     {
         output[i] = input[i];
         if (!input[i]) continue;
+
+        // ODST's CHUD phase is logically inside this eye render just like Halo
+        // 3, but its recompiled phase can bind the flat output RTV. Redirect
+        // only the exact target saved at the proven CHUD phase boundary. This
+        // is a pointer comparison in the OM hot hook; all COM work occurs once
+        // at phase entry/exit.
+        if (nativeHud && input[i] == hudRoute.sourceRtv && target)
+        {
+            output[i] = target;
+            changed = true;
+            continue;
+        }
 
         // Normal steady-state path: two pointer comparisons and no COM calls.
         if (g_sceneColorRtv)

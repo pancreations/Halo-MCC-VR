@@ -143,6 +143,9 @@ namespace
     using FpCameraRebuildFn = void(__fastcall*)(void* view, unsigned char flag);
     using FpCameraUploadFn = void(__fastcall*)(void* compactCamera, void* derivedBlock);
     using FpDriverFn = void(__fastcall*)(void* view, unsigned char flag);
+    // ODST's two post-world native-CHUD phases both take the local user index.
+    // Their target functions are separately proven by unique ODST signatures.
+    using OdstHudPhaseFn = void(__fastcall*)(int userIndex);
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     struct CameraRuntimeLayout
@@ -261,6 +264,8 @@ namespace
         FpCameraRebuildFn originalFpCameraRebuild = nullptr;
         FpCameraUploadFn fpCameraUpload = nullptr;
         FpDriverFn originalFpDriver = nullptr;
+        OdstHudPhaseFn originalHudPhasePrimary = nullptr;
+        OdstHudPhaseFn originalHudPhaseSecondary = nullptr;
         // ODST FP weapon/arm hook originals. Stored as void* because the typed
         // aliases are declared after this lifecycle state.
         void* originalFpInterpolate = nullptr;
@@ -279,12 +284,13 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[9]{}; // 5 camera + interpolation/palette + crosshair predicate/draw
+        void* hookTargets[11]{}; // 7 core + 2 native-CHUD phases + crosshair predicate/draw
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
 
     OdstCameraRuntimeState g_odstCamera;
+    thread_local bool g_odstNativeHudPhaseReplay = false;
     std::atomic<uintptr_t> g_odstNativePauseFlag{0};
     std::atomic<float> g_odstRenderHalfFovX[2] = {{1.07338f}, {1.07338f}};
     std::atomic<float> g_odstRenderHalfFovY[2] = {{0.92502f}, {0.92502f}};
@@ -6004,6 +6010,64 @@ namespace
             1, std::memory_order_acq_rel);
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
+
+    // ODST emits these native CHUD phases after the inner view renderer has
+    // completed its two eye draws. Halo 3 reaches the equivalent authored HUD
+    // work inside each eye transaction. Replaying the title-proven ODST phase
+    // once per eye supplies the same player-visible ordering without guessing
+    // individual widget layouts or turning the HUD into a separate panel.
+    void OdstRenderNativeHudPhase(OdstHudPhaseFn original, int userIndex)
+    {
+        if (!original)
+            return;
+        const bool replay = !g_odstNativeHudPhaseReplay &&
+            g_enabled.load(std::memory_order_relaxed) && VR_IsStereoEnabled() &&
+            g_odstCamera.armed.load(std::memory_order_acquire) &&
+            !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
+            g_stereoEye.load(std::memory_order_acquire) < 0 &&
+            VR_ShouldRenderPreparedFrame();
+        if (!replay)
+        {
+            original(userIndex);
+            return;
+        }
+
+        g_odstNativeHudPhaseReplay = true;
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            const int eye = pass == 0
+                ? (g_config.right_eye_first ? 1 : 0)
+                : (g_config.right_eye_first ? 0 : 1);
+            const int previousEye = g_stereoEye.exchange(
+                eye, std::memory_order_acq_rel);
+            if (VR_BeginNativeHudEyeDraw(eye))
+            {
+                original(userIndex);
+                VR_EndNativeHudEyeDraw();
+            }
+            else
+            {
+                // A missing eye target must retain ODST's original behavior.
+                original(userIndex);
+            }
+            g_stereoEye.store(previousEye, std::memory_order_release);
+        }
+        g_odstNativeHudPhaseReplay = false;
+    }
+
+    __declspec(noinline) void __fastcall OdstHudPhasePrimaryHook(int userIndex)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        OdstRenderNativeHudPhase(g_odstCamera.originalHudPhasePrimary, userIndex);
+        g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    __declspec(noinline) void __fastcall OdstHudPhaseSecondaryHook(int userIndex)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        OdstRenderNativeHudPhase(g_odstCamera.originalHudPhaseSecondary, userIndex);
+        g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
 #endif
 
     // Byte pattern of the camera-copy function's prologue, with the RIP
@@ -6080,6 +6144,13 @@ namespace
     const char* kOdstNativeWeaponIkDecisionSig =
         "40 84 ED 74 05 45 84 FF 75 04 84 DB 74 0F BA 03 00 00 00 "
         "41 0F 28 D9 44 8D 42 FF EB 11";
+    // Unique ODST-native wrappers that directly invoke chud_draw_widget.
+    const char* kOdstHudPhasePrimarySig =
+        "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 "
+        "41 54 41 56 41 57 48 83 EC 40 48 63 F9";
+    const char* kOdstHudPhaseSecondarySig =
+        "48 89 5C 24 08 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 "
+        "48 63 D9 8B CB 0F 29 74 24 40";
 
     const CameraRuntimeProfile kOdstCameraProfile = {
         L"halo3odst.dll",
@@ -6936,6 +7007,8 @@ namespace
         uintptr_t fpDriverGuard = 0;
         uintptr_t gunCameraConstructor = 0;
         uintptr_t nativePauseOwner = 0;
+        uintptr_t hudPhasePrimary = 0;
+        uintptr_t hudPhaseSecondary = 0;
         uint8_t* nativePauseFlag = nullptr;
         float* motionBlurScale = nullptr;
         float* motionBlurMax = nullptr;
@@ -7174,7 +7247,7 @@ namespace
         g_odstCamera.crosshairClassGate = classGate;
         g_odstCamera.crosshairClassGatePatched = true;
         // Register both hooks so ODST teardown disables/removes them with the
-        // camera set (hookTargets has room: 7 core + these 2).
+        // camera set (hookTargets has room: 9 core + these 2).
         g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
             reinterpret_cast<void*>(visibleTarget);
         g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
@@ -7199,6 +7272,8 @@ namespace
         g_odstCamera.originalFpCameraRebuild = nullptr;
         g_odstCamera.fpCameraUpload = nullptr;
         g_odstCamera.originalFpDriver = nullptr;
+        g_odstCamera.originalHudPhasePrimary = nullptr;
+        g_odstCamera.originalHudPhaseSecondary = nullptr;
         g_odstCamera.originalFpInterpolate = nullptr;
         g_odstCamera.originalFpVisiblePalette = nullptr;
         g_odstCamera.nativeWeaponIkBranch = nullptr;
@@ -7447,6 +7522,12 @@ namespace
                 "native pause owner",
                 kOdstCameraProfile.nativePauseOwnerPattern,
                 resolved.nativePauseOwner);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd, "native CHUD phase primary",
+                kOdstHudPhasePrimarySig, resolved.hudPhasePrimary);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd, "native CHUD phase secondary",
+                kOdstHudPhaseSecondarySig, resolved.hudPhaseSecondary);
             resolved.motionBlurScale = FindDebugVarFloat(
                 base, size, "motion_blur_scale");
             resolved.motionBlurMax = FindDebugVarFloat(
@@ -7807,6 +7888,14 @@ namespace
             return g_odstCamera.originalFpInterpolate;
         case 6:
             return g_odstCamera.originalFpVisiblePalette;
+        case 7:
+            return reinterpret_cast<void*>(g_odstCamera.originalHudPhasePrimary);
+        case 8:
+            return reinterpret_cast<void*>(g_odstCamera.originalHudPhaseSecondary);
+        case 9:
+            return reinterpret_cast<void*>(g_realHudCrosshairVisible);
+        case 10:
+            return reinterpret_cast<void*>(g_realHudDrawWidget);
         default:
             return nullptr;
         }
@@ -7816,7 +7905,7 @@ namespace
                                   bool renderOnly, bool& busy)
     {
         static bool rangesResolved = false;
-        static OdstCodeRange ranges[7]{};
+        static OdstCodeRange ranges[11]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -7827,13 +7916,17 @@ namespace
                 reinterpret_cast<const void*>(&OdstObserverCameraEffectHook),
                 reinterpret_cast<const void*>(&OdstFpInterpolateWeaponHook),
                 reinterpret_cast<const void*>(&OdstFpVisiblePaletteWeaponHook),
+                reinterpret_cast<const void*>(&OdstHudPhasePrimaryHook),
+                reinterpret_cast<const void*>(&OdstHudPhaseSecondaryHook),
+                reinterpret_cast<const void*>(&HudCrosshairVisibleHook),
+                reinterpret_cast<const void*>(&HudDrawWidgetHook),
             };
             bool resolved = true;
             for (size_t i = 0; i < _countof(functions); ++i)
                 resolved &= ResolveOdstCodeRange(functions[i], ranges[i]);
             if (!resolved)
             {
-                LOG("ODST camera cleanup: could not resolve the seven detour unwind ranges");
+                LOG("ODST camera cleanup: could not resolve the complete ODST detour unwind ranges");
                 return false;
             }
             rangesResolved = true;
@@ -8109,6 +8202,14 @@ namespace
              reinterpret_cast<void*>(resolved.fpVisiblePalette),
              reinterpret_cast<void*>(&OdstFpVisiblePaletteWeaponHook),
              &g_odstCamera.originalFpVisiblePalette},
+            {"native CHUD phase primary",
+             reinterpret_cast<void*>(resolved.hudPhasePrimary),
+             reinterpret_cast<void*>(&OdstHudPhasePrimaryHook),
+             reinterpret_cast<void**>(&g_odstCamera.originalHudPhasePrimary)},
+            {"native CHUD phase secondary",
+             reinterpret_cast<void*>(resolved.hudPhaseSecondary),
+             reinterpret_cast<void*>(&OdstHudPhaseSecondaryHook),
+             reinterpret_cast<void**>(&g_odstCamera.originalHudPhaseSecondary)},
         };
 
         for (const HookSpec& hook : hooks)
@@ -8155,7 +8256,7 @@ namespace
                 resolved.nativeWeaponIkDecision))
         {
             LOG("ODST camera install: weapon-IK bypass failed; rolling back "
-                "the complete seven-hook parity transaction");
+                "the complete nine-hook parity transaction");
             return DiscardCreatedOdstHooks()
                 ? OdstInstallResult::Failed
                 : OdstInstallResult::CleanupPending;
@@ -8194,7 +8295,7 @@ namespace
         // is title-agnostic; the shot-state TLS offset is read from ODST's own
         // instruction (0xA0). Failure logs and leaves shot-facing disabled.
         LocateCinematicState(base, size);
-        LOG("ODST camera install: seven-hook camera/weapon transaction retained "
+        LOG("ODST camera install: nine-hook camera/weapon/CHUD transaction retained "
             "and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
             "Halo 3 weapon, arm IK, two-hand, and dual-wield config path ready");

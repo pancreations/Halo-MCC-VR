@@ -16,33 +16,32 @@ recorded honestly and approved by the user; an approximation is not parity.
 Completion requires target-title headset confirmation and a Halo 3 regression
 check whenever shared behavior or cross-title lifecycle state could change.
 
+## Render-pipeline parity rule (user decision 2026-07-22)
+
+For every MCC title, Halo 3's player-visible frame lifecycle is mandatory:
+first eligible fresh camera heartbeat, the same one-second continuous-camera
+safety interval, then each eye's world, first-person/weapon, native CHUD, and
+capture work as one transaction. A title adapter may use its own verified
+signatures and engine stages to reach that lifecycle, but may not add a later
+2D-to-3D gate, substitute a HUD panel/copy workaround, or change the ordering
+without explicit user approval. This rule applies to every feature,
+troubleshoot, and bug fix.
 ## Recovery points
 
-- ODST NATIVE HUD NOT IN VR — ROOT CAUSE FOUND, NOT YET FIXED (2026-07-22):
-  the real user request is "make ODST's HUD work like Halo 3." Symptom (headset):
-  ODST's native CHUD (health/ammo/motion-tracker) does NOT render into either VR
-  eye — only the 3D world, the gun, and the separately-captured crosshair quad
-  do. Brightness and the HUD size/height sliders were RED HERRINGS; this is a
-  render-ORDER problem. Root cause (code-traced, not guessed): `OdstRenderViewBody`
-  (game.cpp ~5955-5962) renders the two eye passes by calling the INNER
-  prepared-view renderer per eye (`original(view)`, ODST render RVA `0x2AFB10`)
-  and capturing its scene-color into each eye cache — but ODST's
-  `chud_draw_widget` (`0x329488`) runs ONCE, OUTSIDE that per-eye loop (indirect
-  proof: the crosshair capture fires with `g_stereoEye = -1`), so the HUD is
-  drawn into the flat backbuffer that VR never shows. Halo 3's structurally
-  identical `RenderViewHook` gets its HUD into both eyes because Halo 3 draws the
-  CHUD inside the per-eye render window (the "gun/HUD layer", game.cpp:452). FIX
-  DIRECTIONS (need offline proof + headset iteration; do NOT use a HUD
-  capture-panel — headset-DISPROVEN on Halo 3, see [[chud-hud-control]]):
-  (a) make the ODST CHUD draw per-eye inside the captured window, or (b) redirect
-  ODST's HUD draw target into both eye caches. NEXT STEP: a read-only diagnostic
-  (log `g_stereoEye` + bound RTV inside `HudDrawWidgetHook`) to confirm exactly
-  when/where ODST draws the CHUD before any fix. The crosshair build was
-  redeployed as the working recovery: DLL
-  `8C85D22DD1348E80D66EED43D2A7A6446200B443875FB619A2A9D0A4E387115F`, build
-  `Jul 22 2026 08:19:55 UTC`, recovery record `pre-odst-private-backup-32`
-  (sealed baseline `DFF8A406`).
-- ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
+- ODST NATIVE HUD PIPELINE PARITY â€” IMPLEMENTED, HEADSET TEST PENDING
+  (2026-07-22): the native CHUD is now replayed at the two ODST-proven phase
+  boundaries (`halo3odst.dll+0x2FD694` and `+0x2FD88C`) once per completed eye,
+  matching Halo 3's end-user world â†’ weapon â†’ native-CHUD â†’ eye-capture
+  lifecycle. Each phase uses a scoped D3D state guard which restores output
+  targets, depth, viewports, and scissors; the OM hook uses only pointer
+  comparisons and never marks CHUD as a scene capture. Both AOBs statically
+  resolve exactly once in the supported retail DLL. The ODST lifecycle
+  transaction now has nine core hooks (plus the two existing optional crosshair
+  hooks), and teardown scans their detours and trampolines. The established
+  one-second fresh-camera boundary is unchanged and covered at 1000/1001 ms.
+  OFF/ON Release builds and both CTest suites pass. This is NOT headset
+  confirmed: test native health, ammo, motion tracker, and reticle in both eyes;
+  confirm no hitch and ODST's opening 2Dâ†’3D timing matches Halo 3.- ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
   you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget
   as the floating VR crosshair, at Halo 3's exact shared size

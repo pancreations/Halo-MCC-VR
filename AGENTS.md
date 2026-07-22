@@ -29,3 +29,12 @@ comfort, configuration, and lifecycle recovery.
 
 This contract is non-negotiable unless the user explicitly changes the product
 direction.
+## Render-pipeline parity
+
+Halo 3's frame lifecycle is the project-wide implementation assumption: arm at
+the first eligible fresh camera boundary after the same one-second safety
+interval, then render world, first-person/weapon, native CHUD, and capture for
+each eye as one transaction. Target adapters may locate equivalent engine
+stages with title-specific evidence, but must not add latency or replace native
+CHUD with a panel/copy path without explicit user approval. Apply this rule to
+every feature, investigation, and fix.

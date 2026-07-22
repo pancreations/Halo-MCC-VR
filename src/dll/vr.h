@@ -67,6 +67,13 @@ bool VR_CaptureRenderedEye(int eye);
 bool VR_CaptureBackbufferEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
+// ODST's native CHUD phases are part of the same logical per-eye render as
+// Halo 3, but ODST can rebind the flat output target while those phases run.
+// Keep that title-specific phase on the active eye cache and restore every
+// output-merger reference afterward. Called at CHUD-phase granularity, never
+// per widget.
+bool VR_BeginNativeHudEyeDraw(int eye);
+void VR_EndNativeHudEyeDraw();
 
 // Universal scope: a refresh-limited third world render redirected into a
 // private cache. The physical OpenXR quad continues tracking every frame.

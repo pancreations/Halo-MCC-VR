@@ -290,9 +290,9 @@ int main()
         Check(!debounce.Update(100, true),
             "ODST camera does not arm on its first fresh frame");
         Check(!debounce.Update(1100, true),
-            "ODST camera requires more than the full stability interval");
+            "ODST camera remains flat at the exact Halo 3 one-second boundary");
         Check(debounce.Update(1101, true),
-            "ODST camera arms only after a continuous stability interval");
+            "ODST camera arms on the first millisecond after Halo 3 stability");
         debounce.Reset();
         Check(!debounce.Update(5000, true),
             "ODST session re-entry resets the stability debounce");
