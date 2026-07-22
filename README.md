@@ -1,9 +1,7 @@
 # Halo MCC VR
-⚠️ Heads up: Windows may warn about the files — it's a false alarm.
+⚠️ Heads up: 
 
-Windows or your antivirus might flag the mod or move a file to quarantine. The files are safe. This happens to nearly every VR mod, because the mod has to load itself into the game to turn on VR. If it gets blocked, just click Allow (or restore the file) — you don't need to turn your antivirus off. Because each release is a new file, the warning can come back after every update; that's normal.
-
-"VIRUSES ARE DETECTED BY MULTIPLE ANTI-MALWARE SYSTEMS.  USE AT YOUR OWN RISK!"
+Windows or your antivirus might flag the mod or move a file to quarantine. The Files are not verified so please use at your own risk. More knowledgeable people are yelling at me so I gotta disclose that to you all.  Hopefully we can take care of this issue soon with some human review of the code itself. it's all there take a gander.
 
 A native OpenXR VR mod for Halo 3 in Halo: The Master Chief Collection (Steam).
 
