@@ -18,6 +18,29 @@ check whenever shared behavior or cross-title lifecycle state could change.
 
 ## Recovery points
 
+- ODST CUTSCENE PARITY COMPLETE — BEST-WORKING VERSION (user-designated
+  2026-07-22): ODST cinematics now match Halo 3 end to end -- stereo 3D depth,
+  head tracking, AND the view re-orients to the authored shot at every cut.
+  User result on the opening drop-pod cutscene: "works perfectly. This is the
+  best working version that we have so far." This is Stage 1 (arm on cinematic
+  cameras) + Stage 2 (per-cut yaw rebasing) together. Stage 2 commit `3ddb5c0`
+  on `feature/odst-bringup`; deployed private DLL build `Jul 22 2026 01:25:32`,
+  SHA-256 `A282356A41A55AC17E5EA069E6EDD39906086E124B7DE3E604443D3FD3B2455C`,
+  recovery record `pre-odst-private-backup-29` (sealed baseline `DFF8A406`).
+  Stage 2 evidence + implementation: ODST's `cinematic_in_progress` getter is
+  byte-identical to Halo 3 (TLS+0xA8, byte+5); `cinematic_set_shot` is identical
+  except the shot-state TLS offset (`mov edx, 0xA0` ODST vs `0x90` Halo 3),
+  scene(+4)/shot(+8) unchanged, both resolving the same TLS-index global. The
+  shared `kCinematicSetShotSig` wildcards that offset byte (unique in both DLLs)
+  and `LocateCinematicState` reads the exact per-title value into
+  `g_cinematicShotStateOffset`; `ReadCinematicShot` consumes it (Halo 3 stays
+  0x90 = unchanged). ODST install calls `LocateCinematicState`, and
+  `OdstApplyHeadLook` rebases `g_gameYawRef`/`g_headYawRef` at each scene/shot
+  boundary like Halo 3's `ApplyHeadLook`. Log confirms `cutscene facing: exact
+  scene/shot state resolved (shot-state TLS offset 0xA0)`. OFF and ON Release
+  build; CTest passes both; Halo 3 shot-facing is backward-compatible. STILL
+  OPEN and important to the user: the intermittent cross-title kicked-to-menu
+  bug (see the next entry) -- unfixed, diagnostic is in this build.
 - ODST CUTSCENE 3D — HEADSET-CONFIRMED 2026-07-22 (Stage 1 of cutscene parity):
   ODST cinematic cameras now render in stereo 3D with head tracking. Root cause
   (log-proven): ODST auto-arm required a first-person camera
