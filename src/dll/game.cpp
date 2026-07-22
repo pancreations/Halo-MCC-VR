@@ -9575,8 +9575,8 @@ void Game_AutoVrTick()
             odstFreshDebounce.Update(now, cameraFresh);
 
         const TitleDescriptor* activeTitle = TitleAdapter_GetActive();
-        if (activeTitle && activeTitle->title == GameTitle::Halo3ODST)
-            TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
+        const bool odstTitleActive =
+            activeTitle && activeTitle->title == GameTitle::Halo3ODST;
         VR_SetScopeActive(false);
         // Cutscene-facing confirmation for ODST: OdstApplyHeadLook bumps the
         // shared rebase serial at each authored cut. Log the transition here (a
@@ -9618,6 +9618,20 @@ void Game_AutoVrTick()
             VR_RequestPausePresentation(false);
             LOG("ODST pause presentation: native pause exited, restoring stereo target");
         }
+
+        // Report ODST's live play state through the same shared runtime-mode
+        // channel Halo 3 uses, so systems gated on the mode behave identically.
+        // Controller vibration is delivered during stable gameplay (matching
+        // Halo 3's headset-confirmed rumble) and stops during native pause or
+        // while the level is still loading. This mirrors the Halo 3 setter
+        // (RuntimeMode::Paused / Gameplay / Loading); ApplyControllerHaptics
+        // still multiplies by the universal haptic_intensity, so the shared
+        // config/F1 slider tunes ODST rumble strength with no per-title profile.
+        if (odstTitleActive)
+            TitleAdapter_SetRuntimeMode(
+                (nativePauseKnown && nativePaused) ? RuntimeMode::Paused
+                : (inLevelStable ? RuntimeMode::Gameplay
+                                 : RuntimeMode::Loading));
 
         // Match Halo 3's live HUD-config timing: begin title-owned layout
         // discovery from the first eligible fresh camera heartbeat, without
