@@ -83,6 +83,25 @@ launch is needed and the mod does not crash when MCC video settings change.
   recursively delete the folder containing it when package files had been
   extracted directly into the MCC root.
 
+## If Windows warns about the files, it's a false alarm
+
+Windows or your antivirus may show a warning about `halo3xr_launcher.exe` or
+`halo3xr.dll`, or move one to quarantine. **The files are safe.** This happens to
+almost every VR mod, because the mod has to load itself into the game to turn on
+VR, and Windows plays it safe with anything it hasn't seen before. Because each
+release is a new file, the warning can come back after an update — that's normal
+and doesn't mean anything is wrong.
+
+If it gets blocked, just choose **Allow** (or **Run anyway**, or restore the file
+from Windows Security → Protection history) and you're good. **You don't need to
+turn your antivirus off** — allow only these two files, or your `Halo_MCC_VR`
+folder.
+
+Just get your download from the official page —
+[github.com/pancreations/Halo-MCC-VR](https://github.com/pancreations/Halo-MCC-VR) —
+where the full source is public too. (For the extra-cautious: each release's
+`BUILD-INFO.txt` lists a SHA-256 fingerprint you can check the files against.)
+
 ## Credits
 
 Inspired by HaloCEVR by LivingFray and the proof of concept ReclaimerVR by Nibre. Halo is a Microsoft trademark; this project is not affiliated with Microsoft or Halo Studios.

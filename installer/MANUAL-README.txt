@@ -88,6 +88,15 @@ MCC SETTINGS
 - Halo 3 > Settings > Field of View: 120
 - Do not enable FSR in MCC's video menu.
 
+IF WINDOWS WARNS ABOUT THE FILES (FALSE ALARM)
+----------------------------------------------
+Windows or your antivirus may warn about the two files, or quarantine one. They
+are safe - almost every VR mod gets this, because the mod loads itself into the
+game to turn on VR. If it is blocked, choose Allow (or restore it), and you are
+set. You do not need to turn your antivirus off. Because each release is a new
+file, the warning may come back after an update; that is normal. Just get your
+download from the official page, https://github.com/pancreations/Halo-MCC-VR.
+
 REMOVE MANUALLY
 ---------------
 Close MCC completely, then delete only this folder:

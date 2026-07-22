@@ -152,10 +152,27 @@ The shortcut launches MCC without Easy Anti-Cheat and loads the VR DLL. Do not
 use this build for anti-cheat-enabled matchmaking. Normal MCC launches made
 through Steam remain unmodded.
 
-Because this alpha launcher loads a DLL into the anti-cheat-disabled game
-process, Windows or antivirus software may scrutinize the unsigned files. Do
-not disable security software globally. Only allow the files if you trust the
-person who supplied this exact build.
+IF WINDOWS WARNS ABOUT THE FILES (FALSE ALARM)
+----------------------------------------------
+Windows or your antivirus may warn about halo3xr_launcher.exe or halo3xr.dll, or
+move one to quarantine. The files are safe. This happens to almost every VR mod,
+because the mod has to load itself into the game to turn on VR, and Windows plays
+it safe with anything it has not seen before. Because each release is a new file,
+the warning can come back after an update - that is normal and does not mean
+anything is wrong.
+
+What to do:
+
+  - If it is blocked, choose Allow (or Run anyway), or restore it from Windows
+    Security > Virus & threat protection > Protection history. You are then set.
+  - You do NOT need to turn your antivirus off. Just allow these two files, or
+    add your Halo_MCC_VR folder as an exclusion.
+  - As always, only run a build you got from someone you trust.
+
+That is all most people need to do. Get your download from the official page,
+https://github.com/pancreations/Halo-MCC-VR, where the full source is public
+too. (Extra-cautious? Each release's BUILD-INFO.txt lists a SHA-256 fingerprint
+you can check the files against.)
 
 UNINSTALL
 ---------
