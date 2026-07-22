@@ -85,6 +85,15 @@ Set these in MCC before playing in VR. The mod does not change them for you.
 | Settings > Video > Max Frame Rate | 120 |
 | Settings > Video > V-Sync | Off |
 | Halo 3 > Settings > Field of View | 120 |
+| Halo 3: ODST > Settings > Controls > Look Sensitivity | Maximum |
+| Halo 3: ODST > Settings > Controls > Look Acceleration | Off |
+
+### ODST motion-aim check
+
+ODST's look settings control how quickly the game's bullet direction catches up
+to the motion-controller crosshair. Set **Look Sensitivity to maximum** and turn
+**Look Acceleration off**. Then point left and fire: the bullets should snap to
+the crosshair instead of trailing behind it.
 
 Do **not** enable FSR in MCC's video menu; it breaks the VR image scale. Use the mod's
 picture quality presets instead.
