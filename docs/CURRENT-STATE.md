@@ -1099,6 +1099,32 @@ and title exit already clear it at real ownership boundaries. This supplies the
 vehicle with Halo 3's continuous right-controller -> injected right stick ->
 native camera/vehicle steering chain without a vehicle-specific engine patch.
 
+### Build J headset acceptance and third-person coverage audit
+
+Build J deployed from commit `75804f40795b1866ecb3729f31776b3c1bdb58e5`
+as DLL `DFF8A406BA78808F2F308CD7FA063E9D9047385A07BC4BD6959B835B1D08F7EB`
+(backup-23). The user confirmed the tested car now works great. The matching
+run logged one `VR aim override active` at camera activation and none of the
+former repeated `aim steering blocked: camera hook not running` dropouts.
+Promote this exact DLL as the private ODST rollback baseline.
+
+The control path is camera-wide, not car- or weapon-specific. Every active
+camera in the proven slot-0/single-user layout publishes its pre-head-look aim
+forward, notifies the aim/reticle path, and feeds the same shared closed-loop
+right-stick injection used by Halo 3. There is no vehicle, turret, seat, or
+weapon allowlist. This structurally covers drivable vehicles, vehicle weapons,
+mounted/passenger guns, turrets, and other third-person weapon cameras that use
+the proven active slot-0 layout. The stereo path likewise accepts every active
+plain-perspective slot-0 camera, with direct-backbuffer capture available when
+ODST bypasses the internal scene target.
+
+Only the car is headset-confirmed so far. Do not claim all third-person weapons
+and vehicles tested until the focused matrix passes: driver weapon (if present),
+passenger-mounted gun, stationary turret, and each distinct campaign vehicle,
+including entry/exit and a death/respawn afterward. Any camera outside the
+proven slot-0/plain-perspective layout must render safely but needs separate
+evidence before it can be called full parity.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
