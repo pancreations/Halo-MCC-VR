@@ -5283,12 +5283,65 @@ namespace
         OdstNonFpActive = 1u << 2,
         OdstNonFpPlainPerspective = 1u << 3,  // no oblique/custom projection,
                                               // ordered bounds, valid clips
+        // Granular breakdown of the exact OdstCompactCameraIsStereoRedirectable
+        // sub-checks, so a flat cutscene camera tells us precisely which field
+        // disqualifies it rather than a single YES/NO.
+        OdstNonFpModeZero = 1u << 4,          // +0x24 mode flags == 0
+        OdstNonFpVoffZero = 1u << 5,          // +0x34 vertical offset == 0
+        OdstNonFpFovInRange = 1u << 6,        // vertical/reference FOV in range
+        OdstNonFpObliqueZero = 1u << 7,       // +0x6C..+0x7B oblique plane zero
+        OdstNonFpCustomProjZero = 1u << 8,    // +0x7C enable + data zero
+        OdstNonFpBoundsOrdered = 1u << 9,     // window/render/active bounds
+        OdstNonFpClipsValid = 1u << 10,       // near>0, far>near, finite
     };
     OdstNonFpCameraCapture g_odstNonFpCameraCapture;
     std::atomic<uint32_t> g_odstNonFpCameraLoggedSeq{0};
     // Sentinel modeFlags so a fresh non-FP camera re-captures after any FP frame.
     constexpr uint32_t kOdstNonFpNoCapture = 0xFFFFFFFFu;
     std::atomic<uint32_t> g_odstNonFpCameraLastMode{kOdstNonFpNoCapture};
+
+    // ---- Cutscene diagnostic: why a slot-0 render did NOT stereo-redirect -----
+    // The non-FP capture above only fires for an active slot-0 camera whose
+    // redirect gate failed. It never sees the cases most likely to make the
+    // opening ODST cutscene flat: the private core still disarmed (arming
+    // timing), OpenXR withholding presentation, an unresolved camera array, or a
+    // cutscene rendered on a foreign (non-slot-0) camera. This lightweight
+    // read-only publisher records that reason. Published atomically from the hot
+    // render hook; the 50 ms worker emits one line per distinct reason.
+    enum class OdstRenderSkipReason : uint32_t
+    {
+        None = 0,             // last frame was stereo-redirected
+        NotArmed = 1,         // core installed but not yet armed (debounce)
+        TeardownRequested = 2,
+        Unfocused = 3,        // VR_ShouldRenderPreparedFrame() == false
+        ArrayUnavailable = 4, // gunCameraArray unresolved / view below array
+        NotStrideAligned = 5, // view offset is not a clean slot boundary
+        ForeignSlot = 6,      // active render on a slot other than 0
+    };
+    struct OdstRenderSkipDiag
+    {
+        std::atomic<uint32_t> seq{0};       // even = stable, odd = mid-write
+        std::atomic<uint32_t> reason{0};
+        std::atomic<uint32_t> arrayOffset{0};
+    };
+    OdstRenderSkipDiag g_odstRenderSkipDiag;
+    std::atomic<uint32_t> g_odstRenderSkipLoggedSeq{0};
+    constexpr uint32_t kOdstRenderSkipNone =
+        static_cast<uint32_t>(OdstRenderSkipReason::None);
+    std::atomic<uint32_t> g_odstRenderSkipLastReason{kOdstRenderSkipNone};
+
+    void PublishOdstRenderSkip(OdstRenderSkipReason reason, uint32_t arrayOffset)
+    {
+        const uint32_t r = static_cast<uint32_t>(reason);
+        if (g_odstRenderSkipLastReason.load(std::memory_order_relaxed) == r)
+            return;  // steady state does not burst; a new reason re-publishes
+        OdstRenderSkipDiag& d = g_odstRenderSkipDiag;
+        d.seq.fetch_add(1, std::memory_order_acq_rel);  // -> odd (writing)
+        d.reason.store(r, std::memory_order_relaxed);
+        d.arrayOffset.store(arrayOffset, std::memory_order_relaxed);
+        d.seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
+        g_odstRenderSkipLastReason.store(r, std::memory_order_relaxed);
+    }
 
     // Called from the hot render hook on a non-FP slot-0 frame. Reads only the
     // already-bounds-checked view object (slot < 4, offsets < viewStride) and
@@ -5321,15 +5374,28 @@ namespace
         };
         const float nearClip = readFloat(layout.nearClip);
         const float farClip = readFloat(layout.farClip);
-        const bool plainPerspective =
-            oblique[0] == 0.0f && oblique[1] == 0.0f && oblique[2] == 0.0f &&
-            oblique[3] == 0.0f && customProjection == 0 &&
+        // Break the redirect gate into its individual sub-checks so a flat
+        // cutscene camera reveals the exact disqualifying field, not a lone NO.
+        const float verticalFov = readFloat(layout.verticalFov);
+        const float referenceFov = readFloat(layout.referenceFov);
+        const float verticalOffset = readFloat(layout.verticalOffset);
+        const bool modeZero = modeFlags == 0;
+        const bool voffZero = verticalOffset == 0.0f;
+        const bool fovInRange = isfinite(verticalFov) && verticalFov > 0.0001f &&
+            verticalFov < 3.1415f && isfinite(referenceFov) &&
+            referenceFov > 0.0001f && referenceFov < 3.1415f;
+        const bool obliqueZero = oblique[0] == 0.0f && oblique[1] == 0.0f &&
+            oblique[2] == 0.0f && oblique[3] == 0.0f;
+        const bool customProjZero = customProjection == 0 &&
             customData[0] == 0.0f && customData[1] == 0.0f &&
-            customData[2] == 0.0f && customData[3] == 0.0f &&
-            boundsOrdered(layout.windowBounds) &&
+            customData[2] == 0.0f && customData[3] == 0.0f;
+        const bool boundsOrderedAll = boundsOrdered(layout.windowBounds) &&
             boundsOrdered(layout.renderBounds) &&
-            boundsOrdered(layout.activeBounds) && isfinite(nearClip) &&
-            isfinite(farClip) && nearClip > 0.0f && farClip > nearClip;
+            boundsOrdered(layout.activeBounds);
+        const bool clipsValid = isfinite(nearClip) && isfinite(farClip) &&
+            nearClip > 0.0f && farClip > nearClip;
+        const bool plainPerspective = obliqueZero && customProjZero &&
+            boundsOrderedAll && clipsValid;
 
         const uintptr_t nestedSource = *reinterpret_cast<const uintptr_t*>(
             bytes + layout.nestedSourceCamera);
@@ -5340,6 +5406,13 @@ namespace
             flags |= OdstNonFpNestedMatch;
         if (OdstCompactCameraIsActive(compact)) flags |= OdstNonFpActive;
         if (plainPerspective) flags |= OdstNonFpPlainPerspective;
+        if (modeZero) flags |= OdstNonFpModeZero;
+        if (voffZero) flags |= OdstNonFpVoffZero;
+        if (fovInRange) flags |= OdstNonFpFovInRange;
+        if (obliqueZero) flags |= OdstNonFpObliqueZero;
+        if (customProjZero) flags |= OdstNonFpCustomProjZero;
+        if (boundsOrderedAll) flags |= OdstNonFpBoundsOrdered;
+        if (clipsValid) flags |= OdstNonFpClipsValid;
 
         OdstNonFpCameraCapture& cap = g_odstNonFpCameraCapture;
         cap.seq.fetch_add(1, std::memory_order_acq_rel);  // -> odd (writing)
@@ -5386,13 +5459,84 @@ namespace
         const bool nested = (flags & OdstNonFpNestedMatch) != 0;
         const bool active = (flags & OdstNonFpActive) != 0;
         const bool plain = (flags & OdstNonFpPlainPerspective) != 0;
+        // Decode the exact gate sub-checks. The redirect actually requires ALL
+        // of: tail, nested, active, mode==0, FOV in range, vertical offset 0,
+        // oblique zero, custom projection zero, bounds ordered, clips valid.
+        // List only the ones that FAILED so a flat cutscene names its cause.
+        char why[192];
+        why[0] = '\0';
+        const auto appendIfFailed = [&](bool passed, const char* label) {
+            if (passed)
+                return;
+            const size_t used = strlen(why);
+            _snprintf_s(why + used, sizeof(why) - used, _TRUNCATE, "%s%s",
+                        used ? "," : "", label);
+        };
+        appendIfFailed(tail, "tail");
+        appendIfFailed(nested, "nested");
+        appendIfFailed(active, "active");
+        appendIfFailed((flags & OdstNonFpModeZero) != 0, "mode");
+        appendIfFailed((flags & OdstNonFpFovInRange) != 0, "fov");
+        appendIfFailed((flags & OdstNonFpVoffZero) != 0, "voff");
+        appendIfFailed((flags & OdstNonFpObliqueZero) != 0, "oblique");
+        appendIfFailed((flags & OdstNonFpCustomProjZero) != 0, "customProj");
+        appendIfFailed((flags & OdstNonFpBoundsOrdered) != 0, "bounds");
+        appendIfFailed((flags & OdstNonFpClipsValid) != 0, "clips");
+        const bool redirectable = why[0] == '\0';
+        char verdict[224];
+        if (redirectable)
+            _snprintf_s(verdict, sizeof(verdict), _TRUNCATE,
+                        "YES (plain slot-0 -- redirect candidate)");
+        else
+            _snprintf_s(verdict, sizeof(verdict), _TRUNCATE,
+                        "NO (render stock; fails: %s)", why);
         LOG("ODST NON-FP CAMERA: mode=0x%08X slot=%u tail=%d nested=%d "
             "active=%d plainPersp=%d blend=%.4f voff=%.4f vfov=%.4f rfov=%.4f "
-            "near=%.4f far=%.1f -- stereo-redirectable next build = %s",
+            "near=%.4f far=%.1f -- stereo-redirectable = %s",
             modeFlags, arrayOffset, tail, nested, active, plain, fpBlend, voff,
-            vfov, rfov, nearClip, farClip,
-            (tail && nested && active && plain) ? "YES" : "NO (render stock)");
+            vfov, rfov, nearClip, farClip, verdict);
         g_odstNonFpCameraLoggedSeq.store(seq, std::memory_order_relaxed);
+    }
+
+    // Called from the 50 ms worker (NOT a hot hook), so logging is safe here.
+    // Emits why a slot-0 render frame was not stereo-redirected in the cases the
+    // non-FP capture above cannot see: the core not yet armed, teardown pending,
+    // OpenXR unfocused, an unresolved array, or a foreign-slot camera. This is
+    // the primary signal for whether the opening ODST cutscene is flat because
+    // of arming timing versus a genuinely different camera object.
+    void LogOdstRenderSkipIfNew()
+    {
+        OdstRenderSkipDiag& d = g_odstRenderSkipDiag;
+        const uint32_t seq = d.seq.load(std::memory_order_acquire);
+        if ((seq & 1u) || seq == 0)
+            return; // mid-write or nothing captured yet
+        if (seq == g_odstRenderSkipLoggedSeq.load(std::memory_order_relaxed))
+            return; // already logged this reason
+        const uint32_t reason = d.reason.load(std::memory_order_relaxed);
+        const uint32_t arrayOffset =
+            d.arrayOffset.load(std::memory_order_relaxed);
+        if (d.seq.load(std::memory_order_acquire) != seq)
+            return; // a newer publish started; re-read next tick
+        const char* name = "unknown";
+        switch (static_cast<OdstRenderSkipReason>(reason))
+        {
+        case OdstRenderSkipReason::None: name = "none(redirected)"; break;
+        case OdstRenderSkipReason::NotArmed:
+            name = "core not armed (fresh-camera debounce)"; break;
+        case OdstRenderSkipReason::TeardownRequested:
+            name = "teardown requested"; break;
+        case OdstRenderSkipReason::Unfocused:
+            name = "OpenXR unfocused (no prepared frame)"; break;
+        case OdstRenderSkipReason::ArrayUnavailable:
+            name = "camera array unresolved / view below array"; break;
+        case OdstRenderSkipReason::NotStrideAligned:
+            name = "view offset not slot-aligned"; break;
+        case OdstRenderSkipReason::ForeignSlot:
+            name = "active camera on a foreign slot (not slot 0)"; break;
+        }
+        LOG("ODST RENDER SKIP: reason=%s arrayOffset=0x%X -- this frame renders "
+            "stock 2D, not stereo", name, arrayOffset);
+        g_odstRenderSkipLoggedSeq.store(seq, std::memory_order_relaxed);
     }
 
     // Called from the 50 ms worker (NOT a hot hook), so logging is safe here.
@@ -5428,10 +5572,26 @@ namespace
         RenderViewFn original = g_odstCamera.originalRenderView;
         if (!original)
             return;
-        if (!view || !g_odstCamera.armed.load(std::memory_order_acquire) ||
-            g_odstCamera.teardownRequested.load(std::memory_order_acquire) ||
-            !g_enabled.load(std::memory_order_relaxed) || !VR_IsStereoEnabled())
+        // VR not engaged for this title at all (view null, mod disabled, or the
+        // user toggled stereo off): pass through silently, no cutscene evidence.
+        if (!view || !g_enabled.load(std::memory_order_relaxed) ||
+            !VR_IsStereoEnabled())
         {
+            original(view);
+            return;
+        }
+        // VR IS engaged but the private core is not presenting. This is the
+        // arming-timing signal: if the opening cutscene is flat and one of these
+        // fires, the intro renders before the fresh-camera debounce arms the core
+        // (NotArmed) or during a teardown.
+        const bool teardownRequested =
+            g_odstCamera.teardownRequested.load(std::memory_order_acquire);
+        if (teardownRequested ||
+            !g_odstCamera.armed.load(std::memory_order_acquire))
+        {
+            PublishOdstRenderSkip(teardownRequested
+                    ? OdstRenderSkipReason::TeardownRequested
+                    : OdstRenderSkipReason::NotArmed, 0);
             original(view);
             return;
         }
@@ -5442,6 +5602,7 @@ namespace
             // OpenXR deliberately suppresses presentation while the headset is
             // unfocused. Preserve the installed hooks, render the desktop's
             // ordinary view once, and collect no eye-redirect failure evidence.
+            PublishOdstRenderSkip(OdstRenderSkipReason::Unfocused, 0);
             original(view);
             return;
         }
@@ -5450,6 +5611,7 @@ namespace
         const uintptr_t arrayAddress = g_odstCamera.gunCameraArray;
         if (!arrayAddress || viewAddress < arrayAddress)
         {
+            PublishOdstRenderSkip(OdstRenderSkipReason::ArrayUnavailable, 0);
             original(view);
             return;
         }
@@ -5457,6 +5619,8 @@ namespace
         if (arrayOffset % layout.viewStride != 0 ||
             arrayOffset / layout.viewStride >= 4)
         {
+            PublishOdstRenderSkip(OdstRenderSkipReason::NotStrideAligned,
+                                  static_cast<uint32_t>(arrayOffset));
             original(view);
             return;
         }
@@ -5481,15 +5645,24 @@ namespace
         {
             // Record the non-first-person camera's field layout (log-only) so a
             // future build can extend the redirect to it with ODST evidence.
+            // A foreign (non-slot-0) active camera cannot be captured by that
+            // slot-0 dump, so note it distinctly -- a cutscene rendered there is
+            // why it would be flat.
             if (ownsPrimarySlot)
                 OdstCaptureNonFpCamera(view, arrayOffset);
+            else
+                PublishOdstRenderSkip(OdstRenderSkipReason::ForeignSlot,
+                                      static_cast<uint32_t>(arrayOffset));
             original(view);
             return;
         }
         // A redirected frame: allow a later unsupported/custom camera to
-        // re-capture fresh diagnostics the next time.
+        // re-capture fresh diagnostics the next time, and let a later skip
+        // reason re-log after a stretch of successful stereo frames.
         g_odstNonFpCameraLastMode.store(kOdstNonFpNoCapture,
                                         std::memory_order_relaxed);
+        g_odstRenderSkipLastReason.store(kOdstRenderSkipNone,
+                                         std::memory_order_relaxed);
         struct EyeRenderInput
         {
             float position[3]{};
@@ -8069,6 +8242,7 @@ namespace
             }
             g_hooked.store(gameHooked || odstHooked, std::memory_order_release);
             LogOdstNonFpCameraIfNew();     // emit any non-FP (death/vehicle) cam
+            LogOdstRenderSkipIfNew();      // emit why a frame stayed flat 2D
             LogOdstFpLayoutSelfCheckIfNew(); // emit FP weapon-layout self-check
             Sleep(50);
 #else
