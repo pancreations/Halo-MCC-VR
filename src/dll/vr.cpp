@@ -3482,7 +3482,8 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         // only the exact target saved at the proven CHUD phase boundary. This
         // is a pointer comparison in the OM hot hook; all COM work occurs once
         // at phase entry/exit.
-        if (nativeHud && input[i] == hudRoute.sourceRtv && target)
+        if (nativeHud && target &&
+            (input[i] == hudRoute.sourceRtv || input[i] == g_sceneColorRtv))
         {
             output[i] = target;
             changed = true;
