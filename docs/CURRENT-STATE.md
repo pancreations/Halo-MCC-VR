@@ -1125,6 +1125,53 @@ including entry/exit and a death/respawn afterward. Any camera outside the
 proven slot-0/plain-perspective layout must render safely but needs separate
 evidence before it can be called full parity.
 
+### ODST weapon/arm-IK parity candidate: desk-side only (2026-07-21)
+
+Work is on `feature/odst-weapons-ik`, starting from the clean post-Build-J
+tree. The accepted Build J DLL/hash above remains the private rollback baseline;
+this candidate has not been deployed or headset-tested.
+
+The candidate replaces the earlier two log-only ODST skeleton probes with
+functional ODST interpolation and final visible-palette hooks inside the same
+atomic transaction as the five proven camera hooks. H3ODSTEK proves the ODST
+FP body's own 37-node arm hierarchy and the combined-graph rule (weapon subtree
+starts at 37; `camera_control` is final). The ODST adapter builds only that
+title-specific context, then calls the accepted shared Halo 3 arm/gun solver.
+No Halo 3 TLS/tag offset, bone lookup, or sway patch is used.
+
+The title's unique native weapon-IK decision is now independently authorized by
+official shotgun/SMG graph evidence plus exact ODST retail bytes. The
+seven-hook install verifies and enables as one transaction, changes ODST's
+`74 05` branch to its existing no-weapon-IK path `EB 18`, and restores the
+original bytes only after verified detour quiescence. The ODST camera publishes
+the same center-origin/post-head-look atoms consumed by Halo 3, marker/muzzle
+bones receive the same hand transform as the visible gun, and the stereo render
+owns one shared articulated solve per eye pair.
+
+There are no ODST-only weapon settings. The candidate consumes the existing
+universal F1/config values and defaults for arm IK, gun/left-hand scale and
+trims, support-hand placement, two-hand hold/toggle and zone calibration,
+shoulder controls, and floating hands.
+
+The runtime slot-1 path is wired exactly like Halo 3, and official ODST automag
+and SMG graphs retain full dual animation sets. ODST campaign gameplay normally
+does not produce a dual-wield slot, however. No safe retail gameplay-enablement
+gate has yet been proved, so this candidate may claim slot-1 render support but
+not campaign dual-wield availability. If headset testing cannot produce slot 1,
+that gate is a separate evidence task.
+
+Desk-side validation passed:
+
+- private option-ON Release build and `halomccvr_core_tests`; candidate DLL
+  SHA-256 `1DB633B20B640020472CF3C8521F7CD426B9486BBF15A5AB54FF91ECEA23FF09`;
+- public/default option-OFF Release build and `halomccvr_core_tests`;
+- `git diff --check`.
+
+Full evidence and the required ODST headset plus Halo 3 regression matrix are
+in `docs/ODST-WEAPON-IK-EVIDENCE.md`. Do not deploy this private candidate
+without the user's explicit approval of the reviewed checkpoint, and do not
+call it parity until that headset matrix passes.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

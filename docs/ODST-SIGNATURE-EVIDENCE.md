@@ -519,9 +519,11 @@ callsite in the first-person bone transform loop.
 - H3ODSTEK independently exposes native `weapon_ik`, disable/force weapon-IK
   controls, first-person weapon source identity, and weapon-slot/node limits.
 
-Verdict: unique and semantically equivalent as the native first-person
-weapon-IK mode decision. This does not authorize the Halo 3 branch patch in
-ODST.
+Verdict at the time of this broad signature pass: unique and semantically
+equivalent, but not yet sufficient by itself to authorize a runtime patch.
+The later title-specific H3ODSTEK graph comparison, exact retail-byte
+verification, reversible lifecycle design, and current authorization are
+recorded in `ODST-WEAPON-IK-EVIDENCE.md`.
 
 ## Halo 3 comfort-parity addendum
 

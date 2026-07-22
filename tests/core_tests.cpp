@@ -148,6 +148,35 @@ int main()
         Check(!ComputeOdstHalo3FovMatch(0.0f, 0.9f, matchedFov),
             "ODST rejects an invalid headset FOV pair");
 
+        for (int count : {41, 42, 43, 45, 46})
+        {
+            OdstFpSkeletonLayout fp{};
+            Check(ComputeOdstFpSkeletonLayout(count, fp),
+                "official ODST FP combined-skeleton counts are accepted");
+            Check(fp.rightShoulder == 2 && fp.rightElbow == 4 &&
+                      fp.rightWrist == 6 && fp.leftShoulder == 1 &&
+                      fp.leftElbow == 3 && fp.leftWrist == 5,
+                "ODST uses its editing-kit-proven arm chains");
+            Check(fp.cameraControl == count - 1,
+                "ODST camera_control is the final combined node");
+            Check((fp.leftHandDescendants & (uint64_t{1} << 5)) != 0 &&
+                      (fp.leftHandDescendants & (uint64_t{1} << 6)) == 0,
+                "ODST left-hand mask owns only the authored left subtree");
+            Check((fp.rightHandAndWeaponDescendants &
+                       (uint64_t{1} << 6)) != 0 &&
+                      (fp.rightHandAndWeaponDescendants &
+                       (uint64_t{1} << 37)) != 0 &&
+                      (fp.rightHandAndWeaponDescendants &
+                       (uint64_t{1} << (fp.cameraControl - 1))) != 0 &&
+                      (fp.rightHandAndWeaponDescendants &
+                       (uint64_t{1} << fp.cameraControl)) == 0,
+                "ODST right carrier owns weapon nodes but excludes camera_control");
+        }
+        OdstFpSkeletonLayout invalidFp{};
+        Check(!ComputeOdstFpSkeletonLayout(38, invalidFp) &&
+                  !ComputeOdstFpSkeletonLayout(65, invalidFp),
+            "ODST rejects unsafe or structurally incomplete FP skeletons");
+
         Check(TitleRegistry_AllowsSharedGameplayFeatures(
                   GameTitle::None, false, false),
             "the MCC shell retains shared controller behavior");

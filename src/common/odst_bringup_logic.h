@@ -9,6 +9,46 @@ constexpr uint64_t kOdstCameraHardTimeoutMs = 5000;
 constexpr uint64_t kOdstCameraStableMs = 1000;
 constexpr float kOdstFirstPersonBlendMin = 0.95f;
 
+struct OdstFpSkeletonLayout
+{
+    int rightShoulder = 2;
+    int rightElbow = 4;
+    int rightWrist = 6;
+    int leftShoulder = 1;
+    int leftElbow = 3;
+    int leftWrist = 5;
+    int cameraControl = -1;
+    uint64_t rightHandAndWeaponDescendants = 0;
+    uint64_t leftHandDescendants = 0;
+};
+
+// H3ODSTEK proves that the ODST FP body occupies nodes 0..36. Sampled
+// first-person animation graphs append the held weapon at node 37 and leave
+// camera_control as the final root child.
+inline bool ComputeOdstFpSkeletonLayout(
+    int combinedNodeCount, OdstFpSkeletonLayout& out)
+{
+    // At least one weapon node (37) must precede camera_control. The shared
+    // visible-palette solver is intentionally bounded to its 64-record banks.
+    if (combinedNodeCount < 39 || combinedNodeCount > 64)
+        return false;
+
+    OdstFpSkeletonLayout layout{};
+    layout.cameraControl = combinedNodeCount - 1;
+    const int leftNodes[] = {
+        5, 7, 8, 9, 10, 11, 17, 18, 19, 20, 21, 27, 28, 29, 30, 31};
+    const int rightNodes[] = {
+        6, 12, 13, 14, 15, 16, 22, 23, 24, 25, 26, 32, 33, 34, 35, 36};
+    for (int node : leftNodes)
+        layout.leftHandDescendants |= uint64_t{1} << node;
+    for (int node : rightNodes)
+        layout.rightHandAndWeaponDescendants |= uint64_t{1} << node;
+    for (int node = 37; node < layout.cameraControl; ++node)
+        layout.rightHandAndWeaponDescendants |= uint64_t{1} << node;
+    out = layout;
+    return true;
+}
+
 struct OdstHalo3FovMatch
 {
     float compactVerticalInput = 0.0f;

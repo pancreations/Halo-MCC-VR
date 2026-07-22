@@ -261,11 +261,12 @@ namespace
         FpCameraRebuildFn originalFpCameraRebuild = nullptr;
         FpCameraUploadFn fpCameraUpload = nullptr;
         FpDriverFn originalFpDriver = nullptr;
-        // Build A skeleton probe originals (log-only). Stored as void* because
-        // FpInterpolateFn/FpVisiblePaletteFn are declared after this struct;
-        // the probe hooks cast them back at their call sites.
+        // ODST FP weapon/arm hook originals. Stored as void* because the typed
+        // aliases are declared after this lifecycle state.
         void* originalFpInterpolate = nullptr;
         void* originalFpVisiblePalette = nullptr;
+        uint8_t* nativeWeaponIkBranch = nullptr;
+        bool nativeWeaponIkPatched = false;
         uintptr_t gunCameraArray = 0;
         std::atomic<void*> eyeView{nullptr};
         alignas(16) unsigned char eyeCompactCamera[0x90]{};
@@ -273,7 +274,7 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[7]{}; // 5 camera-core hooks + up to 2 log-only probes
+        void* hookTargets[7]{}; // 5 camera hooks + interpolation/palette
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
@@ -2319,13 +2320,11 @@ namespace
     // Same single same-frame rigid transform as the visible palette (wrist ->
     // controller), applied to the live interpolation buffer that feeds
     // markers/muzzle effects, so the flash and the gun cannot diverge.
-    bool ApplyControllerToMarkerBones(int player, BoneMatrix* bones, int count,
-                                      int wrist, int cameraControl, bool dual)
+    bool ApplyControllerToMarkerBonesFromRoot(
+        BoneMatrix root, BoneMatrix* bones, int count, int wrist,
+        int leftWrist, bool dual)
     {
-        (void)cameraControl;
         if (!bones || count<=0 || count>64 || wrist<0 || wrist>=count) return false;
-        BoneMatrix root{};
-        if (!LoadCachedRenderRoot(player,root)) return false;
         // Root POSE from the LIVE center camera, not the TLS cache: the cache
         // can hold a stale or per-eye root, and the transform baked against it
         // put an IPD-sized static offset on the flash and made it follow head
@@ -2347,9 +2346,7 @@ namespace
         // muzzle flash and weapon can never diverge. A dual-wield secondary is
         // carried by the slot's LEFT hand; the hand follows the controller and
         // the weapon/marker assembly inherits that same rigid hand delta.
-        const int transformAnchor=dual
-            ? g_fpLWristIndex[1].load(std::memory_order_acquire)
-            : wrist;
+        const int transformAnchor=dual ? leftWrist : wrist;
         if (transformAnchor<0 || transformAnchor>=count) return false;
         float meshScale=1.0f;
         BoneMatrix desiredWristWorld{};
@@ -2384,6 +2381,18 @@ namespace
         if (!logged.exchange(true))
             LOG("M3: marker/muzzle bones rigid-parented with the same transform as the gun");
         return true;
+    }
+
+    bool ApplyControllerToMarkerBones(int player, BoneMatrix* bones, int count,
+                                      int wrist, int cameraControl, bool dual)
+    {
+        (void)cameraControl;
+        BoneMatrix root{};
+        if (!LoadCachedRenderRoot(player,root)) return false;
+        const int leftWrist =
+            g_fpLWristIndex[1].load(std::memory_order_acquire);
+        return ApplyControllerToMarkerBonesFromRoot(
+            root,bones,count,wrist,leftWrist,dual);
     }
 
     bool __fastcall FpInterpolateHook(int view,int id,int slot,
@@ -4818,7 +4827,77 @@ namespace
             memcpy(savedForward, bytes + layout.sourceForward,
                    sizeof(savedForward));
             memcpy(savedUp, bytes + layout.sourceUp, sizeof(savedUp));
+            g_baseCamX.store(savedPosition[0]);
+            g_baseCamY.store(savedPosition[1]);
+            g_baseCamZ.store(savedPosition[2]);
+            g_baseCamValid.store(true, std::memory_order_release);
             OdstApplyHeadLook(source);
+            const char* transformedBytes = static_cast<const char*>(source);
+            const float* transformedPosition =
+                reinterpret_cast<const float*>(
+                    transformedBytes + layout.sourcePosition);
+            const float* transformedForward =
+                reinterpret_cast<const float*>(
+                    transformedBytes + layout.sourceForward);
+            const float* transformedUp =
+                reinterpret_cast<const float*>(
+                    transformedBytes + layout.sourceUp);
+            g_camX.store(transformedPosition[0]);
+            g_camY.store(transformedPosition[1]);
+            g_camZ.store(transformedPosition[2]);
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                g_camFwd[axis].store(transformedForward[axis]);
+                g_camUp[axis].store(transformedUp[axis]);
+            }
+            g_camValid.store(true, std::memory_order_release);
+            if (!g_worldUpInit.load(std::memory_order_acquire))
+            {
+                const float length = sqrtf(
+                    transformedUp[0] * transformedUp[0] +
+                    transformedUp[1] * transformedUp[1] +
+                    transformedUp[2] * transformedUp[2]);
+                if (length > 1e-4f)
+                {
+                    for (int axis = 0; axis < 3; ++axis)
+                        g_worldUp[axis].store(
+                            transformedUp[axis] / length,
+                            std::memory_order_relaxed);
+                    g_worldUpInit.store(true, std::memory_order_release);
+                }
+            }
+            else
+            {
+                float worldUp[3] = {
+                    g_worldUp[0].load(std::memory_order_relaxed),
+                    g_worldUp[1].load(std::memory_order_relaxed),
+                    g_worldUp[2].load(std::memory_order_relaxed)};
+                const float lookLevel = fabsf(
+                    transformedForward[0] * worldUp[0] +
+                    transformedForward[1] * worldUp[1] +
+                    transformedForward[2] * worldUp[2]);
+                if (lookLevel < 0.42f)
+                {
+                    constexpr float kBlend = 0.01f;
+                    for (int axis = 0; axis < 3; ++axis)
+                        worldUp[axis] +=
+                            (transformedUp[axis] - worldUp[axis]) * kBlend;
+                    const float length = sqrtf(
+                        worldUp[0] * worldUp[0] +
+                        worldUp[1] * worldUp[1] +
+                        worldUp[2] * worldUp[2]);
+                    if (length > 1e-4f)
+                        for (int axis = 0; axis < 3; ++axis)
+                            g_worldUp[axis].store(
+                                worldUp[axis] / length,
+                                std::memory_order_relaxed);
+                }
+            }
+        }
+        else if (ownsActiveCamera)
+        {
+            g_camValid.store(false, std::memory_order_release);
+            g_baseCamValid.store(false, std::memory_order_release);
         }
         else if (OdstCamCopyRequestsTeardown(
                      g_odstCamera.armed.load(std::memory_order_acquire),
@@ -4960,78 +5039,62 @@ namespace
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
-    // ---- Build A: ODST first-person skeleton probe (log-only) --------------
-    // Two pass-through hooks capture the ODST FP skeleton so Build B can drive
-    // the weapon/hands to the controller using PROVEN ODST bone indices (never a
-    // reused Halo 3 index). Both hook points are ODST-verified: the palette
-    // function is byte-identical to Halo 3's, and the interpolation function has
-    // the same five-argument shape. Per the palette-hook safety invariant these
-    // hot hooks do NO logging/allocation/locks: they publish the skeleton
-    // atomically and the 50 ms worker emits it once per newly seen weapon tag.
-    // The ODST palette clamps to 150 nodes; the buffer holds up to 160.
-    constexpr int kOdstProbeMaxNodes = 160;
-    struct OdstSkeletonCapture
-    {
-        std::atomic<uint32_t> seq{0};   // even = stable, odd = mid-write
-        std::atomic<uint16_t> tag{0};
-        std::atomic<int> count{0};
-        std::atomic<int32_t> map[kOdstProbeMaxNodes]{};
-    };
-    OdstSkeletonCapture g_odstSkeletonCapture;
-    std::atomic<int> g_odstProbeInterpCount{0};
-    std::atomic<uint32_t> g_odstProbeLoggedSeq{0};
+    // ODST weapon/arm adapter. The shared Halo 3 solver owns all player-facing
+    // behavior and configuration; only this title-proven skeleton topology and
+    // these ODST-resolved hook originals live in the adapter.
+    thread_local float g_odstFpRootScale[2] = {1.0f, 1.0f};
 
-    // SEH-guarded so a count/boneMap length mismatch can never fault the hook.
-    // No C++ unwind objects live here, so __try is legal in this function.
-    static bool SafeCopyOdstBoneMap(const int32_t* boneMap, int count)
+    bool BuildOdstCenterFpRoot(int slot, BoneMatrix& root)
     {
-        __try
-        {
-            for (int i = 0; i < count; ++i)
-                g_odstSkeletonCapture.map[i].store(
-                    boneMap[i], std::memory_order_relaxed);
-            return true;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
+        if (slot < 0 || slot > 1 || !g_camValid.load())
             return false;
-        }
+        float basis[9];
+        if (!LoadCameraBasis(basis))
+            return false;
+        root = {};
+        const float scale = g_odstFpRootScale[slot];
+        root.scale = isfinite(scale) && fabsf(scale) > 0.001f ? scale : 1.0f;
+        memcpy(root.rotation, basis, sizeof(basis));
+        root.translation[0] = g_camX.load();
+        root.translation[1] = g_camY.load();
+        root.translation[2] = g_camZ.load();
+        return true;
     }
 
-    // Called from the 50 ms worker (NOT a hot hook), so logging is safe here.
-    void LogOdstSkeletonCaptureIfNew()
+    void MeasureOdstAuthoredBarrel(
+        int slot, const BoneMatrix* bones, int wrist)
     {
-        OdstSkeletonCapture& cap = g_odstSkeletonCapture;
-        const uint32_t seq = cap.seq.load(std::memory_order_acquire);
-        if ((seq & 1u) || seq == 0)
-            return; // mid-write or nothing captured yet
-        if (seq == g_odstProbeLoggedSeq.load(std::memory_order_relaxed))
-            return; // already logged this capture
-        const uint16_t tag = cap.tag.load(std::memory_order_relaxed);
-        int count = cap.count.load(std::memory_order_relaxed);
-        if (count < 0) count = 0;
-        if (count > kOdstProbeMaxNodes) count = kOdstProbeMaxNodes;
-        int32_t map[kOdstProbeMaxNodes];
-        for (int i = 0; i < count; ++i)
-            map[i] = cap.map[i].load(std::memory_order_relaxed);
-        if (cap.seq.load(std::memory_order_acquire) != seq)
-            return; // a newer capture started; re-read next tick
-        LOG("ODST FP SKELETON: tag 0x%04X count=%d "
-            "(map[dest] = source render-node index; palette node clamp 150)",
-            tag, count);
-        for (int from = 0; from < count; from += 16)
+        const float* wr = bones[wrist].rotation;
+        float barrel[3] = {wr[0], wr[3], wr[6]};
+        float length = sqrtf(barrel[0] * barrel[0] +
+                             barrel[1] * barrel[1] +
+                             barrel[2] * barrel[2]);
+        if (length <= 1e-4f || !isfinite(length))
+            return;
+        for (float& component : barrel)
+            component /= length;
+        if (g_barrelInWristValid[slot].load(std::memory_order_relaxed))
         {
-            char line[512]; int pos = 0;
-            const int to = (from + 16 < count) ? from + 16 : count;
-            for (int i = from; i < to && pos < (int)sizeof(line) - 24; ++i)
-                pos += snprintf(line + pos, sizeof(line) - pos,
-                                "%d=%d ", i, map[i]);
-            LOG("ODST FP SKELETON MAP[%d..%d]: %s", from, to - 1, line);
+            constexpr float kBlend = 0.02f;
+            for (int axis = 0; axis < 3; ++axis)
+                barrel[axis] =
+                    g_barrelInWrist[slot][axis].load(std::memory_order_relaxed) *
+                        (1.0f - kBlend) +
+                    barrel[axis] * kBlend;
+            length = sqrtf(barrel[0] * barrel[0] +
+                           barrel[1] * barrel[1] +
+                           barrel[2] * barrel[2]);
+            if (length > 1e-4f)
+                for (float& component : barrel)
+                    component /= length;
         }
-        g_odstProbeLoggedSeq.store(seq, std::memory_order_relaxed);
+        for (int axis = 0; axis < 3; ++axis)
+            g_barrelInWrist[slot][axis].store(
+                barrel[axis], std::memory_order_relaxed);
+        g_barrelInWristValid[slot].store(true, std::memory_order_release);
     }
 
-    __declspec(noinline) bool __fastcall OdstFpInterpolateProbeHook(
+    __declspec(noinline) bool __fastcall OdstFpInterpolateWeaponHook(
         int view, int id, int slot, BoneMatrix** outBones, int* outCount)
     {
         g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
@@ -5040,110 +5103,105 @@ namespace
             reinterpret_cast<FpInterpolateFn>(g_odstCamera.originalFpInterpolate);
         if (original)
             result = original(view, id, slot, outBones, outCount);
-        if (outCount)
+        const bool ownsWeapons =
+            g_odstCamera.armed.load(std::memory_order_acquire) &&
+            !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
+            g_enabled.load(std::memory_order_relaxed);
+        if ((slot == 0 || slot == 1) && ownsWeapons)
         {
-            const int c = *outCount;
-            if (c > 0 && c <= kOdstProbeMaxNodes)
-                g_odstProbeInterpCount.store(c, std::memory_order_relaxed);
+            g_fpInterpolationContexts[slot] = {};
+            OdstFpSkeletonLayout layout{};
+            if (result && outBones && outCount && *outBones &&
+                ComputeOdstFpSkeletonLayout(*outCount, layout))
+            {
+                const int count = *outCount;
+                FpInterpolationContext& context =
+                    g_fpInterpolationContexts[slot];
+                context.source = *outBones;
+                context.count = count;
+                context.player = view;
+                context.slot = slot;
+                context.wrist = layout.rightWrist;
+                context.cameraControl = layout.cameraControl;
+                context.elbow = layout.rightElbow;
+                context.shoulder = layout.rightShoulder;
+                context.wristDescendants =
+                    layout.rightHandAndWeaponDescendants;
+                context.lWrist = layout.leftWrist;
+                context.lElbow = layout.leftElbow;
+                context.lShoulder = layout.leftShoulder;
+                context.lWristDescendants = layout.leftHandDescendants;
+                context.valid = true;
+                memcpy(g_fpUnmodifiedInterpolations[slot], *outBones,
+                       static_cast<size_t>(count) * sizeof(BoneMatrix));
+                MeasureOdstAuthoredBarrel(
+                    slot, g_fpUnmodifiedInterpolations[slot],
+                    layout.rightWrist);
+                BoneMatrix root{};
+                if (BuildOdstCenterFpRoot(slot, root))
+                    ApplyControllerToMarkerBonesFromRoot(
+                        root, *outBones, count, layout.rightWrist,
+                        layout.leftWrist, slot == 1);
+            }
         }
+        else if (slot == 0 || slot == 1)
+            g_fpInterpolationContexts[slot] = {};
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
         return result;
     }
 
-    __declspec(noinline) void __fastcall OdstFpVisiblePaletteProbeHook(
+    __declspec(noinline) void __fastcall OdstFpVisiblePaletteWeaponHook(
         uint16_t tag, const BoneMatrix* root, BoneMatrix* destination,
         uintptr_t unused, const BoneMatrix* source, const int32_t* boneMap)
     {
         g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        FpInterpolationContext context{};
+        for (FpInterpolationContext& candidate : g_fpInterpolationContexts)
+            if (candidate.valid && source && candidate.source == source)
+            {
+                context = candidate;
+                candidate.valid = false;
+                break;
+            }
+
+        const BoneMatrix* selectedSource = source;
+        if (context.valid && source == context.source)
+            selectedSource = g_fpUnmodifiedInterpolations[context.slot];
+        bool reconstructed = false;
+        if (root && source)
+        {
+            if (context.valid && isfinite(root->scale) &&
+                fabsf(root->scale) > 0.001f)
+                g_odstFpRootScale[context.slot] = root->scale;
+            reconstructed = ReconstructVisiblePaletteSource(
+                tag, context, *root, source, selectedSource);
+        }
+        if (g_config.floating_hands && reconstructed && context.valid &&
+            selectedSource == g_fpPaletteScratch &&
+            context.count > 0 && context.count <= 64)
+        {
+            const uint64_t keep =
+                context.wristDescendants | context.lWristDescendants;
+            for (int i = 0; i < context.count; ++i)
+                if (!(keep & (uint64_t{1} << i)))
+                    g_fpPaletteScratch[i].scale = 0.0001f;
+        }
+        if (g_scopeRenderActive.load(std::memory_order_acquire) &&
+            context.valid && selectedSource &&
+            context.count > 0 && context.count <= 64)
+        {
+            memcpy(g_scopeHiddenPalette, selectedSource,
+                   static_cast<size_t>(context.count) * sizeof(BoneMatrix));
+            for (int i = 0; i < context.count; ++i)
+                g_scopeHiddenPalette[i].scale = 0.0001f;
+            selectedSource = g_scopeHiddenPalette;
+        }
         FpVisiblePaletteFn original = reinterpret_cast<FpVisiblePaletteFn>(
             g_odstCamera.originalFpVisiblePalette);
         if (original)
-            original(tag, root, destination, unused, source, boneMap);
-        // Publish the skeleton once per newly seen weapon tag. Atomic store only
-        // -- no logging, allocation, or locks in this hot palette hook.
-        static thread_local uint16_t seen[16]{};
-        static thread_local int seenCount = 0;
-        bool known = false;
-        for (int i = 0; i < seenCount; ++i)
-            if (seen[i] == tag) { known = true; break; }
-        const int count = g_odstProbeInterpCount.load(std::memory_order_relaxed);
-        if (!known && boneMap && count > 0 && count <= kOdstProbeMaxNodes &&
-            seenCount < 16)
-        {
-            seen[seenCount++] = tag;
-            OdstSkeletonCapture& cap = g_odstSkeletonCapture;
-            cap.seq.fetch_add(1, std::memory_order_acq_rel);  // -> odd (writing)
-            cap.tag.store(tag, std::memory_order_relaxed);
-            cap.count.store(count, std::memory_order_relaxed);
-            SafeCopyOdstBoneMap(boneMap, count);
-            cap.seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
-        }
+            original(
+                tag, root, destination, unused, selectedSource, boneMap);
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
-    }
-
-    // Best-effort, non-fatal appendix to the camera-core transaction: a failure
-    // here NEVER rolls back the proven five-hook camera core. Both hooks are
-    // tracked in hookTargets and torn down uniformly, and their bodies
-    // participate in the activeCallbacks drain like every other ODST detour.
-    bool InstallOdstSkeletonProbe(uintptr_t base, size_t size)
-    {
-        // ODST-verified patterns: palette byte-identical to Halo 3 (ODST
-        // 0x2EDD10); interpolation re-derived for ODST (0x1B3CB8, same shape).
-        const char* interpSig =
-            "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 "
-            "41 57 48 83 EC 30 33 DB 49 63 E8 38 1D ?? ?? ?? ?? 4D 8B E1 44 8B FA";
-        const char* paletteSig =
-            "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 "
-            "EC 20 48 8B 05 ?? ?? ?? ?? 49 8B F0 0F B7 C9 4C 8B F2";
-        const uintptr_t interpHit = sig::Find(base, size, interpSig);
-        if (!interpHit ||
-            sig::Find(interpHit + 1, base + size - interpHit - 1, interpSig))
-        {
-            LOG("ODST skeleton probe: interpolate signature not unique; "
-                "FP skeleton capture disabled");
-            return false;
-        }
-        const uintptr_t paletteHit = sig::Find(base, size, paletteSig);
-        if (!paletteHit ||
-            sig::Find(paletteHit + 1, base + size - paletteHit - 1, paletteSig))
-        {
-            LOG("ODST skeleton probe: palette signature not unique; "
-                "FP skeleton capture disabled");
-            return false;
-        }
-        const size_t capacity = sizeof(g_odstCamera.hookTargets) /
-                                sizeof(g_odstCamera.hookTargets[0]);
-        if (g_odstCamera.hookTargetCount + 2 > capacity)
-            return false;
-        const bool interpOk =
-            MH_CreateHook(reinterpret_cast<void*>(interpHit),
-                          reinterpret_cast<void*>(&OdstFpInterpolateProbeHook),
-                          &g_odstCamera.originalFpInterpolate) == MH_OK;
-        const bool paletteOk =
-            MH_CreateHook(reinterpret_cast<void*>(paletteHit),
-                          reinterpret_cast<void*>(&OdstFpVisiblePaletteProbeHook),
-                          &g_odstCamera.originalFpVisiblePalette) == MH_OK;
-        if (!interpOk || !paletteOk ||
-            MH_EnableHook(reinterpret_cast<void*>(interpHit)) != MH_OK ||
-            MH_EnableHook(reinterpret_cast<void*>(paletteHit)) != MH_OK)
-        {
-            if (interpOk) MH_RemoveHook(reinterpret_cast<void*>(interpHit));
-            if (paletteOk) MH_RemoveHook(reinterpret_cast<void*>(paletteHit));
-            g_odstCamera.originalFpInterpolate = nullptr;
-            g_odstCamera.originalFpVisiblePalette = nullptr;
-            LOG("ODST skeleton probe: hook create/enable failed; "
-                "FP skeleton capture disabled");
-            return false;
-        }
-        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
-            reinterpret_cast<void*>(interpHit);
-        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
-            reinterpret_cast<void*>(paletteHit);
-        LOG("ODST skeleton probe installed (interpolate +0x%llX, palette +0x%llX, "
-            "log-only). Spawn with a weapon to capture the FP skeleton.",
-            static_cast<unsigned long long>(interpHit - base),
-            static_cast<unsigned long long>(paletteHit - base));
-        return true;
     }
 
     // ---- Full-parity diagnostics: non-first-person camera capture ----------
@@ -5436,6 +5494,10 @@ namespace
         };
 
         bool capturesOk = true;
+        // Exactly one articulated pose per stereo pair, matching Halo 3. The
+        // second eye reprojects the cached center-root solve into its own root.
+        g_fpStereoSolveScope = {};
+        g_fpStereoSolveScope.armed = true;
         const int firstEye = g_config.right_eye_first ? 1 : 0;
         for (int pass = 0; pass < 2; ++pass)
         {
@@ -5550,6 +5612,7 @@ namespace
             VR_EndRasterEye();
         }
 
+        g_fpStereoSolveScope.armed = false;
         g_stereoEye.store(-1, std::memory_order_release);
         g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
         memcpy(camera, savedCompact, layout.compactSize);
@@ -5658,6 +5721,16 @@ namespace
         "48 8B C4 48 89 58 08 48 89 70 10 48 89 78 18 55 48 8D 68 A1 48 81 EC C0 00 00 00 0F 29 70 E8 48 8B FA F3 0F 10 35 ?? ?? ?? ?? 48 8D 55 B7";
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    const char* kOdstFpInterpolateSig =
+        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 "
+        "41 57 48 83 EC 30 33 DB 49 63 E8 38 1D ?? ?? ?? ?? 4D 8B E1 44 8B FA";
+    const char* kOdstFpVisiblePaletteSig =
+        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 "
+        "EC 20 48 8B 05 ?? ?? ?? ?? 49 8B F0 0F B7 C9 4C 8B F2";
+    const char* kOdstNativeWeaponIkDecisionSig =
+        "40 84 ED 74 05 45 84 FF 75 04 84 DB 74 0F BA 03 00 00 00 "
+        "41 0F 28 D9 44 8D 42 FF EB 11";
+
     const CameraRuntimeProfile kOdstCameraProfile = {
         L"halo3odst.dll",
         "Halo 3: ODST private camera core",
@@ -6488,6 +6561,9 @@ namespace
         uintptr_t fpCameraRebuild = 0;
         uintptr_t fpCameraUpload = 0;
         uintptr_t fpDriver = 0;
+        uintptr_t fpInterpolate = 0;
+        uintptr_t fpVisiblePalette = 0;
+        uintptr_t nativeWeaponIkDecision = 0;
         uintptr_t fpDriverGuard = 0;
         uintptr_t gunCameraConstructor = 0;
         uintptr_t nativePauseOwner = 0;
@@ -6512,6 +6588,74 @@ namespace
         g_odstPreflightCache = {};
     }
 
+    bool ApplyOdstNativeWeaponIkBypass(uintptr_t decision)
+    {
+        uint8_t* branch = reinterpret_cast<uint8_t*>(decision + 3);
+        if (!decision || branch[0] != 0x74 || branch[1] != 0x05)
+        {
+            LOG("ODST VRIK: native weapon-IK branch verification failed");
+            return false;
+        }
+        g_odstCamera.nativeWeaponIkBranch = branch;
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(branch, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+        {
+            LOG("ODST VRIK: native weapon-IK branch protection failed");
+            return false;
+        }
+        branch[0] = 0xEB;
+        branch[1] = 0x18;
+        g_odstCamera.nativeWeaponIkPatched = true;
+        FlushInstructionCache(GetCurrentProcess(), branch, 2);
+        DWORD ignored = 0;
+        if (!VirtualProtect(branch, 2, oldProtect, &ignored))
+        {
+            LOG("ODST VRIK: could not restore weapon-IK page protection");
+            return false;
+        }
+        LOG("ODST VRIK: native support-hand IK bypassed at "
+            "halo3odst.dll+0x%llX; shared controller solver owns both arms",
+            static_cast<unsigned long long>(
+                decision - g_odstCamera.moduleBase));
+        return true;
+    }
+
+    bool RestoreOdstNativeWeaponIkBypass()
+    {
+        uint8_t* branch = g_odstCamera.nativeWeaponIkBranch;
+        if (!branch)
+            return !g_odstCamera.nativeWeaponIkPatched;
+        if (branch[0] == 0x74 && branch[1] == 0x05)
+        {
+            g_odstCamera.nativeWeaponIkBranch = nullptr;
+            g_odstCamera.nativeWeaponIkPatched = false;
+            return true;
+        }
+        if (branch[0] != 0xEB || branch[1] != 0x18)
+        {
+            LOG("ODST VRIK cleanup: weapon-IK branch has unknown bytes");
+            return false;
+        }
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(branch, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+        {
+            LOG("ODST VRIK cleanup: branch protection failed");
+            return false;
+        }
+        branch[0] = 0x74;
+        branch[1] = 0x05;
+        FlushInstructionCache(GetCurrentProcess(), branch, 2);
+        DWORD ignored = 0;
+        if (!VirtualProtect(branch, 2, oldProtect, &ignored))
+        {
+            LOG("ODST VRIK cleanup: page protection restore failed");
+            return false;
+        }
+        g_odstCamera.nativeWeaponIkBranch = nullptr;
+        g_odstCamera.nativeWeaponIkPatched = false;
+        return true;
+    }
+
     void ClearOdstCameraPointers()
     {
         g_odstCamera.moduleBase = 0;
@@ -6528,6 +6672,8 @@ namespace
         g_odstCamera.originalFpDriver = nullptr;
         g_odstCamera.originalFpInterpolate = nullptr;
         g_odstCamera.originalFpVisiblePalette = nullptr;
+        g_odstCamera.nativeWeaponIkBranch = nullptr;
+        g_odstCamera.nativeWeaponIkPatched = false;
         g_odstCamera.gunCameraArray = 0;
         g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
         memset(g_odstCamera.eyeCompactCamera, 0,
@@ -6740,6 +6886,17 @@ namespace
             signaturesOk &= FindUniqueOdstRole(
                 base, size, textBegin, textEnd, "FP driver",
                 kOdstCameraProfile.fpDriverPattern, resolved.fpDriver);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd, "FP interpolation",
+                kOdstFpInterpolateSig, resolved.fpInterpolate);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd, "FP visible palette",
+                kOdstFpVisiblePaletteSig, resolved.fpVisiblePalette);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd,
+                "native FP weapon-IK decision",
+                kOdstNativeWeaponIkDecisionSig,
+                resolved.nativeWeaponIkDecision);
             signaturesOk &= FindUniqueOdstRole(
                 base, size, textBegin, textEnd, "FP driver guard",
                 kOdstCameraProfile.fpDriverGuardPattern,
@@ -7110,6 +7267,10 @@ namespace
         case 4:
             return reinterpret_cast<void*>(
                 g_odstCamera.originalObserverCameraEffect);
+        case 5:
+            return g_odstCamera.originalFpInterpolate;
+        case 6:
+            return g_odstCamera.originalFpVisiblePalette;
         default:
             return nullptr;
         }
@@ -7119,7 +7280,7 @@ namespace
                                   bool renderOnly, bool& busy)
     {
         static bool rangesResolved = false;
-        static OdstCodeRange ranges[5]{};
+        static OdstCodeRange ranges[7]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -7128,13 +7289,15 @@ namespace
                 reinterpret_cast<const void*>(&OdstFpCameraRebuildHook),
                 reinterpret_cast<const void*>(&OdstFpDriverHook),
                 reinterpret_cast<const void*>(&OdstObserverCameraEffectHook),
+                reinterpret_cast<const void*>(&OdstFpInterpolateWeaponHook),
+                reinterpret_cast<const void*>(&OdstFpVisiblePaletteWeaponHook),
             };
             bool resolved = true;
             for (size_t i = 0; i < _countof(functions); ++i)
                 resolved &= ResolveOdstCodeRange(functions[i], ranges[i]);
             if (!resolved)
             {
-                LOG("ODST camera cleanup: could not resolve the five detour unwind ranges");
+                LOG("ODST camera cleanup: could not resolve the seven detour unwind ranges");
                 return false;
             }
             rangesResolved = true;
@@ -7304,6 +7467,13 @@ namespace
             g_odstCamera.installed.store(true, std::memory_order_release);
             return false;
         }
+        if (!RestoreOdstNativeWeaponIkBypass())
+        {
+            g_odstCamera.installed.store(true, std::memory_order_release);
+            LOG("ODST camera rollback: retaining title module until the "
+                "native weapon-IK branch is restored");
+            return false;
+        }
         RestoreOdstMotionBlurVars();
         g_odstCamera.installed.store(false, std::memory_order_release);
         ReleaseOdstModuleReferenceAndClearPointers();
@@ -7389,6 +7559,13 @@ namespace
              reinterpret_cast<void*>(&OdstObserverCameraEffectHook),
              reinterpret_cast<void**>(
                  &g_odstCamera.originalObserverCameraEffect)},
+            {"FP interpolation", reinterpret_cast<void*>(resolved.fpInterpolate),
+             reinterpret_cast<void*>(&OdstFpInterpolateWeaponHook),
+             &g_odstCamera.originalFpInterpolate},
+            {"FP visible palette",
+             reinterpret_cast<void*>(resolved.fpVisiblePalette),
+             reinterpret_cast<void*>(&OdstFpVisiblePaletteWeaponHook),
+             &g_odstCamera.originalFpVisiblePalette},
         };
 
         for (const HookSpec& hook : hooks)
@@ -7431,6 +7608,15 @@ namespace
                 ? OdstInstallResult::Failed
                 : OdstInstallResult::CleanupPending;
         }
+        if (!ApplyOdstNativeWeaponIkBypass(
+                resolved.nativeWeaponIkDecision))
+        {
+            LOG("ODST camera install: weapon-IK bypass failed; rolling back "
+                "the complete seven-hook parity transaction");
+            return DiscardCreatedOdstHooks()
+                ? OdstInstallResult::Failed
+                : OdstInstallResult::CleanupPending;
+        }
 
         g_odstCamera.captureFailures.store(0, std::memory_order_release);
         g_odstCamera.sawValidCamera.store(false, std::memory_order_release);
@@ -7445,6 +7631,8 @@ namespace
         g_lastCamCopyMs.store(0, std::memory_order_release);
         g_stereoEye.store(-1, std::memory_order_release);
         g_aimSeen.store(false, std::memory_order_release);
+        for (auto& valid : g_barrelInWristValid)
+            valid.store(false, std::memory_order_release);
         g_camValid.store(false, std::memory_order_release);
         g_baseCamValid.store(false, std::memory_order_release);
         g_zoomFactor.store(1.0f, std::memory_order_release);
@@ -7452,12 +7640,10 @@ namespace
         g_positional.store(true, std::memory_order_release);
         g_needRecenter.store(true, std::memory_order_release);
         VR_SetScopeActive(false);
-        // Best-effort log-only FP skeleton probe (Build A). Non-fatal: the
-        // camera core is already installed and armed independently of this.
-        InstallOdstSkeletonProbe(base, size);
-        LOG("ODST camera install: five-hook transaction retained and disarmed; "
+        LOG("ODST camera install: seven-hook camera/weapon transaction retained "
+            "and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
-            "controls, aim, reticle, HUD, scope, weapons, arms, and gameplay patches remain off");
+            "Halo 3 weapon, arm IK, two-hand, and dual-wield config path ready");
         return OdstInstallResult::Installed;
     }
 
@@ -7470,6 +7656,12 @@ namespace
         {
             LOG("ODST camera teardown: verified cleanup incomplete; retaining "
                 "module, targets, and trampolines for retry");
+            return false;
+        }
+        if (!RestoreOdstNativeWeaponIkBypass())
+        {
+            LOG("ODST camera teardown: native weapon-IK restore incomplete; "
+                "retaining the exact title module for retry");
             return false;
         }
         RestoreOdstMotionBlurVars();
@@ -7496,6 +7688,8 @@ namespace
         g_lastCamCopyMs.store(0, std::memory_order_release);
         g_stereoEye.store(-1, std::memory_order_release);
         g_aimSeen.store(false, std::memory_order_release);
+        for (auto& valid : g_barrelInWristValid)
+            valid.store(false, std::memory_order_release);
         g_camValid.store(false, std::memory_order_release);
         g_baseCamValid.store(false, std::memory_order_release);
         g_zoomFactor.store(1.0f, std::memory_order_release);
@@ -7794,7 +7988,6 @@ namespace
                 }
             }
             g_hooked.store(gameHooked || odstHooked, std::memory_order_release);
-            LogOdstSkeletonCaptureIfNew(); // emit any newly captured FP skeleton
             LogOdstNonFpCameraIfNew();     // emit any non-FP (death/vehicle) cam
             Sleep(50);
 #else
@@ -7909,11 +8102,10 @@ bool Game_AllowsSharedControllerInput()
 }
 bool Game_AllowsOdstMotionAim()
 {
-    // Narrow first ODST gameplay capability: closed-loop weapon aim + the
-    // floating reticle only. Distinct from Game_AllowsSharedGameplayFeatures(),
-    // which stays false for ODST so movement mapping, scope, HUD, bones, and
-    // every other shared transform remain stock. Fail-closed in the public
-    // OFF build (no camera-only context ever exists there).
+    // ODST's explicitly gated controller-aim capability. The private title
+    // adapter also feeds the shared weapon/arm solver from its own hooks, while
+    // broad shared gameplay remains closed so unrelated Halo 3 patches cannot
+    // leak into ODST. Fail-closed in the public OFF build.
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     return OdstMotionAimEligible(
         OdstCameraOnlyContext(),
