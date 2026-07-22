@@ -87,9 +87,9 @@ int main()
         Check(!OdstMotionAimEligible(true, true, true, true),
             "teardown always vetoes ODST motion aim");
         Check(OdstShouldStereoRedirect(true, true, true, true),
-            "proven first-person camera in slot 0 is stereo-redirected");
+            "a stereo-redirectable slot-0 camera (first-person OR death/vehicle) redirects");
         Check(!OdstShouldStereoRedirect(true, true, true, false),
-            "an active non-FP slot-0 camera (death/vehicle) renders stock, not stereo");
+            "a non-redirectable camera (custom-projection cutscene) renders stock");
         Check(!OdstShouldStereoRedirect(false, true, true, true),
             "a foreign camera slot is never stereo-redirected");
         Check(!OdstShouldStereoRedirect(true, false, true, true),

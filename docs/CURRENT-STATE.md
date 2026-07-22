@@ -868,9 +868,41 @@ flat 2D that stays, (2) 3D returns on its own, (3) grep the log for
 `ODST NON-FP CAMERA` lines for each (death, vehicle, turret) and read the
 `stereo-redirectable` verdict. Quick Halo 3 sanity pass (same DLL) unchanged.
 
-Not yet deployed. Current install remains Build A (`36E565E0`, backup-15,
-baseline `c0a6a90d`); deploy Build C via `deploy-odst-private.bat` (RESTORE
-baseline first) only on the user's go.
+Build C deployed (DLL `8A758104`, commit `1bc19e2`, backup-16) and headset-
+tested. Result: no crash, no stuck-2D -- the core survived death and vehicles
+and recovered. The headset **froze on the last 3D frame** for the whole
+death/vehicle duration (expected: compositor holds the last stereo frame while
+non-FP frames render stock). The capture delivered the decisive evidence: every
+`ODST NON-FP CAMERA` line (death `blend=0.0`, vehicle `blend~0.998`) reported
+`mode=0 slot=0 tail=1 nested=1 active=1 plainPersp=1 voff=0 -- stereo-
+redirectable = YES`. The third-person cameras share the FP view-object layout
+exactly and differ only in fpBlend.
+
+### Build D: full-parity stereo redirect for third-person cameras (2026-07-21)
+
+Evidence-backed flip enabled by the Build C capture. Splits the camera-mode
+check: `OdstCompactCameraIsStereoRedirectable` = the proven-mode checks MINUS
+the fpBlend gate (active, mode 0, vertical offset 0, plain perspective, ordered
+bounds, valid clips); `OdstCompactCameraUsesProvenMode` = redirectable +
+fpBlend~=1 (unchanged behavior). The render hook now redirects any
+stereo-redirectable slot-0 camera, so the death-cam and vehicle/turret cameras
+render in **live stereo 3D** instead of a frozen frame. Auto-arm, the heartbeat
+(`OdstCameraArraySupportsBringup`), and head-look/aim injection stay first-person
+-only (`OdstCameraArraySupportsRedirect` is the render-only broadened recheck);
+a third-person camera therefore follows the game exactly while rendering in 3D.
+The eye redirect never reads fpBlend -- it offsets each eye from the camera's own
+basis and drives the headset FOV -- so this is not a guess about the death-cam's
+layout; it is the same proven per-eye path applied to a camera proven identical.
+
+Non-redirectable cameras (a custom-projection cutscene, foreign slot, transition)
+still render stock and are captured -- a live frame is never a teardown.
+
+Known follow-up (NOT in this build, one change at a time): during a vehicle the
+move-stick head-relative mapping and motion-aim are still active
+(`Game_AllowsOdstMotionAim`); if driving/aiming feels rotated, gate those on a
+first-person-active flag next. Not yet observed -- await the headset report.
+
+Both trees build Release clean; CTest green; public OFF and Halo 3 unchanged.
 
 ## 2026-07-19 session closeout
 

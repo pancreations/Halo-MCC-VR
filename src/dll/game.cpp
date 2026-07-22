@@ -4452,7 +4452,16 @@ namespace
             layout.compactPosition, layout.compactForward, layout.compactUp);
     }
 
-    bool OdstCompactCameraUsesProvenMode(const void* compact)
+    // Everything the per-eye stereo redirect requires: an ACTIVE, plain-
+    // perspective camera in a fully ordered, finite state (mode 0, vertical
+    // offset 0, ordered bounds, valid clips, no oblique/custom projection).
+    // Deliberately does NOT check fpBlend, so it accepts the third-person
+    // death-cam (fpBlend 0) and vehicle/turret cameras (fpBlend ~0.998) whose
+    // fields are otherwise identical to the proven first-person camera (headset
+    // capture 2026-07-21). The redirect offsets each eye from the camera's OWN
+    // basis and overrides the FOV with the headset's, so fpBlend is never read
+    // by the render math -- only by the first-person injection gate below.
+    bool OdstCompactCameraIsStereoRedirectable(const void* compact)
     {
         if (!OdstCompactCameraIsActive(compact))
             return false;
@@ -4460,8 +4469,6 @@ namespace
         const char* bytes = static_cast<const char*>(compact);
         const uint32_t modeFlags = *reinterpret_cast<const uint32_t*>(
             bytes + layout.compactModeFlags);
-        const float fpBlend = *reinterpret_cast<const float*>(
-            bytes + layout.compactFpBlend);
         const float verticalFov = *reinterpret_cast<const float*>(
             bytes + layout.verticalFov);
         const float referenceFov = *reinterpret_cast<const float*>(
@@ -4483,8 +4490,7 @@ namespace
                 bytes + offset);
             return bounds[0] < bounds[2] && bounds[1] < bounds[3];
         };
-        return modeFlags == 0 && isfinite(fpBlend) &&
-            fabsf(fpBlend - 1.0f) <= 0.001f && isfinite(verticalFov) &&
+        return modeFlags == 0 && isfinite(verticalFov) &&
             verticalFov > 0.0001f && verticalFov < 3.1415f &&
             isfinite(referenceFov) && referenceFov > 0.0001f &&
             referenceFov < 3.1415f && verticalOffset == 0.0f &&
@@ -4497,6 +4503,20 @@ namespace
             customProjection == 0 && customData[0] == 0.0f &&
             customData[1] == 0.0f && customData[2] == 0.0f &&
             customData[3] == 0.0f;
+    }
+
+    // The proven first-person camera: stereo-redirectable AND fully blended into
+    // first person (fpBlend ~= 1). Auto-arm and the first-person head-look/aim
+    // injection stay gated on this; the render redirect uses the broader
+    // stereo-redirectable check so third-person cameras render in 3D too.
+    bool OdstCompactCameraUsesProvenMode(const void* compact)
+    {
+        if (!OdstCompactCameraIsStereoRedirectable(compact))
+            return false;
+        const auto& layout = kOdstCameraProfile.layout;
+        const float fpBlend = *reinterpret_cast<const float*>(
+            static_cast<const char*>(compact) + layout.compactFpBlend);
+        return isfinite(fpBlend) && fabsf(fpBlend - 1.0f) <= 0.001f;
     }
 
     bool OdstSingleUserTailIsValid(const void* view)
@@ -4522,20 +4542,27 @@ namespace
                 bytes + layout.finalTailBoolean) == 0;
     }
 
-    bool OdstCameraArraySupportsBringup(uintptr_t cameraArray)
+    // requireProvenFp=true: the full auto-arm gate (proven first-person camera).
+    // requireProvenFp=false: the render-redirect gate, which also accepts an
+    // active third-person camera (death/vehicle/turret) in the same proven
+    // single-user slot-0 object; every other slot-safety invariant is identical.
+    bool OdstCameraArraySupportsMode(uintptr_t cameraArray, bool requireProvenFp)
     {
         if (!cameraArray)
             return false;
         const auto& layout = kOdstCameraProfile.layout;
         const char* view = reinterpret_cast<const char*>(cameraArray);
-        if (!OdstSingleUserTailIsValid(view) ||
-            !OdstCompactCameraUsesProvenMode(view + layout.rootCurrentCompact))
+        const void* compact = view + layout.rootCurrentCompact;
+        const bool modeOk = requireProvenFp
+            ? OdstCompactCameraUsesProvenMode(compact)
+            : OdstCompactCameraIsStereoRedirectable(compact);
+        if (!OdstSingleUserTailIsValid(view) || !modeOk)
             return false;
 
         // The nested FP driver publishes its source pointer after the root
         // camera becomes usable. A null pointer is therefore a valid pre-hook
         // installation state; any non-null pointer must still own slot 0's
-        // proven compact camera exactly.
+        // compact camera exactly.
         const uintptr_t nestedSource = *reinterpret_cast<const uintptr_t*>(
             view + layout.nestedSourceCamera);
         if (!OdstNestedSourceIsCompatible(
@@ -4554,6 +4581,19 @@ namespace
         }
         return OdstInactiveCameraSlotsAreSafe(
             inactive[0], inactive[1], inactive[2]);
+    }
+
+    bool OdstCameraArraySupportsBringup(uintptr_t cameraArray)
+    {
+        return OdstCameraArraySupportsMode(cameraArray, true);
+    }
+
+    // The live-frame recheck for the eye redirect: same slot-safety invariants
+    // as auto-arm, but accepts an active third-person camera so death/vehicle
+    // frames render in stereo instead of falling back to a frozen last frame.
+    bool OdstCameraArraySupportsRedirect(uintptr_t cameraArray)
+    {
+        return OdstCameraArraySupportsMode(cameraArray, false);
     }
 
     void LogOdstCameraReadiness(uintptr_t cameraArray)
@@ -5323,14 +5363,21 @@ namespace
         }
         char* bytes = static_cast<char*>(view);
         char* camera = bytes + layout.rootCurrentCompact;
-        // Full-parity camera policy: stereo-redirect ONLY the proven
-        // first-person camera in slot 0. Any other live camera -- the
-        // third-person death-cam, vehicles, turrets, cutscenes, a foreign slot,
-        // or a mode transition -- renders stock (the compositor holds the last
-        // stereo frame, so death shows a frozen 3D view, not a 2D drop) with
-        // the core left armed, so 3D resumes the instant first-person returns.
-        // A live render frame is NEVER a teardown trigger; true level unloads
-        // are detected by the worker heartbeat and the camera-copy tail check.
+        // Full-parity camera policy: stereo-redirect any active, plain-
+        // perspective camera in slot 0 -- the proven first-person camera AND
+        // the third-person death-cam (fpBlend 0) and vehicle/turret cameras
+        // (fpBlend ~0.998), which the 2026-07-21 headset capture proved share
+        // the first-person view-object layout exactly (same slot, single-user
+        // tail, nested-source identity, mode 0, vertical offset 0, plain
+        // perspective) and differ only in fpBlend -- a field the eye redirect
+        // never reads. The redirect offsets each eye from the camera's OWN basis
+        // and drives the headset FOV, so it renders whatever the game camera is
+        // in stereo. Head-look/aim injection stays first-person-only (in the
+        // camera-copy hook), so a third-person camera follows the game exactly.
+        // Anything else -- a custom-projection cutscene, a foreign slot, or a
+        // transition -- renders stock and is captured for the next build; a live
+        // render frame is NEVER a teardown trigger (true level unloads are
+        // caught by the worker heartbeat and the camera-copy tail check).
         const bool ownsPrimarySlot = arrayOffset == 0;
         const bool tailValid =
             ownsPrimarySlot && OdstSingleUserTailIsValid(view);
@@ -5338,20 +5385,20 @@ namespace
             *reinterpret_cast<const uintptr_t*>(
                 bytes + layout.nestedSourceCamera) ==
                 viewAddress + layout.rootCurrentCompact;
-        const bool provenMode =
-            ownsPrimarySlot && OdstCompactCameraUsesProvenMode(camera);
+        const bool redirectable =
+            ownsPrimarySlot && OdstCompactCameraIsStereoRedirectable(camera);
         if (!OdstShouldStereoRedirect(ownsPrimarySlot, tailValid, nestedMatch,
-                                      provenMode))
+                                      redirectable))
         {
-            // Record the non-FP camera's field layout (log-only) so the next
-            // build can enable a stereo redirect for it with ODST evidence.
+            // Record the non-redirectable camera's field layout (log-only) so
+            // the next build can extend the redirect to it with ODST evidence.
             if (ownsPrimarySlot)
                 OdstCaptureNonFpCamera(view, arrayOffset);
             original(view);
             return;
         }
-        // A proven first-person frame: allow a fresh non-FP camera to re-capture
-        // the next time slot 0 leaves first-person (death, vehicle, turret).
+        // A redirected frame: allow a later non-redirectable camera (e.g. a
+        // custom-projection cutscene) to re-capture fresh the next time.
         g_odstNonFpCameraLastMode.store(kOdstNonFpNoCapture,
                                         std::memory_order_relaxed);
         struct EyeRenderInput
@@ -5396,13 +5443,14 @@ namespace
             original(view);
             return;
         }
-        if (!OdstCameraArraySupportsBringup(arrayAddress))
+        if (!OdstCameraArraySupportsRedirect(arrayAddress))
         {
             // Eye-location calls above are outside the game camera owner. Check
-            // the complete four-slot/single-user invariant again immediately
-            // before the first camera byte is saved or mutated. A late failure
-            // here is a race with a mode transition, not a fault: render stock
-            // and keep the core armed rather than tearing down a live frame.
+            // the complete four-slot/single-user invariant again (accepting a
+            // third-person camera) immediately before the first camera byte is
+            // saved or mutated. A late failure here is a race with a mode
+            // transition, not a fault: render stock and keep the core armed
+            // rather than tearing down a live frame.
             original(view);
             return;
         }
