@@ -1,6 +1,8 @@
 #include "title_adapter.h"
 
 #include <atomic>
+#include <cstdio>
+#include <cstring>
 #include <windows.h>
 
 #include "../common/log.h"
@@ -69,8 +71,23 @@ const TitleDescriptor* TitleAdapter_PollLoaded()
 
     if (ambiguous)
     {
-        LOG("Title adapter: ambiguous MCC state (%zu game modules loaded); disabling game hooks",
-            detectedCount);
+        // Name the resident modules so the log shows exactly which titles MCC
+        // kept loaded (e.g. halo3.dll left resident after switching to ODST).
+        // This is the evidence for a heartbeat-based retention fix so a
+        // resident-but-idle second module cannot disable the active title.
+        char names[256];
+        names[0] = '\0';
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (GetModuleHandleW(titles[i].moduleName))
+            {
+                const size_t used = strlen(names);
+                _snprintf_s(names + used, sizeof(names) - used, _TRUNCATE,
+                            "%s%ls", used ? "," : "", titles[i].moduleName);
+            }
+        }
+        LOG("Title adapter: ambiguous MCC state (%zu game modules loaded: %s); "
+            "disabling game hooks", detectedCount, names);
         TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
         return nullptr;
     }

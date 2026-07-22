@@ -8156,6 +8156,29 @@ namespace
                     OdstRequestFallback(OdstFallbackReason::TitleLeft);
                     reason = OdstFallbackReason::TitleLeft;
                 }
+                // Cross-title diagnostic (read-only): when ODST is torn down
+                // because the title poll went ambiguous/Unknown (another Halo
+                // module is merely resident) rather than an explicit pause/unload,
+                // record whether ODST's OWN camera was still rendering at that
+                // instant. A fresh heartbeat proves the teardown is premature --
+                // ODST owns the frame and its hooks should be retained instead.
+                if (!odstActive)
+                {
+                    const uint64_t lastCam =
+                        g_lastCamCopyMs.load(std::memory_order_acquire);
+                    const uint64_t age = (lastCam && pollNow >= lastCam)
+                        ? pollNow - lastCam
+                        : UINT64_MAX;
+                    LOG("ODST cross-title diag: title poll ambiguous/Unknown, "
+                        "tearing down (reason=%d) armed=%d; ODST camera heartbeat "
+                        "age=%llu ms -- retention candidate = %s",
+                        static_cast<int>(reason),
+                        g_odstCamera.armed.load(std::memory_order_acquire) ? 1 : 0,
+                        static_cast<unsigned long long>(age),
+                        (age <= 300)
+                            ? "YES (ODST still rendering -- premature teardown)"
+                            : "NO (ODST heartbeat stale -- genuine title exit)");
+                }
                 const bool cameraReadyBeforeRemoval =
                     g_odstCamera.gunCameraArray &&
                     OdstCameraArraySupportsBringup(
