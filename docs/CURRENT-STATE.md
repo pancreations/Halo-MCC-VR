@@ -44,27 +44,28 @@ troubleshoot, and bug fix.
   surfaces remain stock. The earlier deployed candidates `ecdfd94`, `f6c6c52`,
   and `3ef2dd4` remain headset-disproven history: their stricter pointer identity
   test rejected ODST's legitimate distinct CHUD output view even though the HUD
-  remained visible on the desktop. Native-HUD visibility is accepted for this
-  exact DLL; slider behavior and the required Halo 3 regression remain separate
-  gates below.
-- ODST HUD CONFIG SLIDER PARITY - BUILD/TEST PASSED, HEADSET-PENDING
-  (2026-07-22): the private candidate now feeds ODST through Halo 3's shared,
-  live `halomccvr.cfg`/F1 math for `hud_size`, `hud_aspect`, `hud_curvature`, and
-  `hud_vertical_offset`, while selecting only ODST-proven integration evidence.
-  The exact ODST `chud_globals` tag anchor is
-  `[int32 1280][int32 720][float 2000][float 2000][float 58][float 4]`; it has
-  one private read/write hit in the live level, authored destination Z `0.17`,
-  and safe-frame scale fields `0.87/0.87`. ODST's retail anchor-basis function
-  begins at `halo3odst.dll+0x329824`; its independently unique semantic tail at
-  entry `+0x932` writes the basis qword at `+0x28`, proving vertical Y at
-  `basis+0x2C`. Title-owned scan generations prevent a stale Halo 3 pointer or
-  timer from crossing into ODST. Public option-OFF and private option-ON Release
-  builds pass, as do both CTest suites. Do not call the sliders accepted yet:
-  size, aspect, height direction/range, live F1/config persistence, and the
-  exact useful curvature range still require headset testing, followed by a
-  Halo 3 regression. ODST brightness remains explicitly excluded; the prior
-  `0x2A6308` scaling experiment made the whole native HUD disappear and was
-  reverted.
+  remained visible on the desktop. Native-HUD visibility is accepted and
+  retained by the superseding slider baseline below; only its required Halo 3 regression remains unconfirmed.
+- ODST HUD CONFIG SLIDER PARITY - HEADSET-CONFIRMED 2026-07-22: deployed
+  source commit `cac61f3f13dc9da90ec7683a3ee6167084247994`, installed DLL
+  SHA-256 `9693A175EB674DCAEB8806AE80AB68B6AD98646C58D990081CEBBA9A29BB87D8`,
+  recovery record `pre-odst-private-backup-39`. After exercising the F1/config
+  HUD controls in ODST, the user accepted this as "the best version" and
+  "working perfectly." The exact deployed log corroborates the title adapter:
+  the ODST height hook installed at `halo3odst.dll+0x329824`, the two authored
+  crosshair hooks installed, and the one exact private-RW ODST safe-frame block
+  resolved and published (`1` raw, `1` plausible, `1` accepted) in `2922 ms` on
+  a background thread. Stereo armed independently on Halo 3's one-second
+  fresh-camera lifecycle and then held about `100 fps`; native CHUD routing
+  remained active in both eyes. Exit reached verified teardown, restored stock
+  motion-blur values, and logged `stock renderer owns the title`.
+  `hud_size`, `hud_aspect`, `hud_curvature`, and `hud_vertical_offset` now use
+  Halo 3's shared live config/F1 behavior while retaining ODST-only anchor and
+  basis evidence. ODST brightness remains explicitly excluded because its prior
+  experiment hid the entire HUD. Public option-OFF and private option-ON Release
+  builds and both CTest suites passed before guarded deployment. ODST slider
+  acceptance is complete for this exact DLL; the shared-code Halo 3 headset
+  regression is still required before declaring project-wide regression closure.
 - ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
   you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget

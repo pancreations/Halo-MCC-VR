@@ -573,11 +573,16 @@ and the two safe-frame scale floats immediately after it (`anchor+24` and
 `55/661` in the corresponding middle pair and must not be used to locate ODST
 state.
 
-The candidate selects this title-specific anchor but applies Halo 3's existing
-shared user-setting math for `hud_size`, `hud_aspect`, and `hud_curvature`.
-Public option-OFF and private option-ON Release builds and both CTest suites
-pass. Actual slider response, F1/config persistence, and especially the exact
-useful ODST curvature range remain headset-pending.
+The accepted implementation selects this title-specific anchor but applies Halo
+3's existing shared user-setting math for `hud_size`, `hud_aspect`, and
+`hud_curvature`. Source commit
+`cac61f3f13dc9da90ec7683a3ee6167084247994`, deployed as DLL SHA-256
+`9693A175EB674DCAEB8806AE80AB68B6AD98646C58D990081CEBBA9A29BB87D8`
+(recovery `pre-odst-private-backup-39`), is headset-confirmed for live F1/config
+slider behavior. Its background scan logged one raw anchor, one plausible pair,
+and one accepted title-owned block in `2922 ms`; this discovery did not delay
+the independent one-second stereo arm. Public option-OFF and private option-ON
+Release builds and both CTest suites passed before deployment.
 
 ### ODST CHUD anchor-basis function
 
@@ -601,9 +606,9 @@ stores a qword at `basis+0x28`, proving that the vertical component consumed by
 the shared height adjustment is `basis+0x2C`. The hook does not reinterpret the
 anchor type, preserving ODST's additional observed type `0x26`, and excludes
 the separately captured authored class-2 reticle from the vertical shift.
-The candidate applies the shared `hud_vertical_offset` convention at this
-proven Y field; positive-raises direction and useful range remain
-headset-pending.
+The accepted build applies the shared `hud_vertical_offset` convention at this
+proven Y field; the deployed headset test accepted its direction, range, and
+live F1/config response.
 
 ### Brightness exclusion
 
