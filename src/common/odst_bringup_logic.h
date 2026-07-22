@@ -133,22 +133,21 @@ inline bool OdstMustClearForeignPause(
     return cameraOnlyContext && (pauseTarget || pausePresentation);
 }
 
-// Full-parity camera policy. A live render frame is NEVER a teardown by itself.
-// The core stereo-redirects any active, plain-perspective camera in slot 0 --
-// the proven first-person camera AND the third-person death-cam / vehicle /
-// turret cameras, which share the first-person view-object layout and differ
-// only in fpBlend (a field the eye redirect never reads). Anything else -- a
-// custom-projection cutscene, a foreign slot, or a mode transition -- renders
-// stock while the core stays armed, so 3D resumes automatically. Returns true
-// only when the camera should be stereo-redirected. Head-look/aim injection is
-// gated separately (first-person only), so a third-person camera follows the
-// game exactly while still rendering in stereo.
+// Camera policy. A live render frame is NEVER a teardown by itself. The core
+// stereo-redirects the proven first-person camera in slot 0 -- which includes
+// vehicles (fpBlend ~0.998, treated as first person, so they get head-look, a
+// stable world, and native controls exactly like Halo 3). Any other live camera
+// -- the truly third-person death-cam (fpBlend 0, which the game does not expose
+// to the eye capture), a foreign slot, or a mode transition -- renders stock
+// while the core stays armed, so 3D resumes automatically the instant the
+// first-person camera returns. Returns true only when the camera should be
+// stereo-redirected.
 inline bool OdstShouldStereoRedirect(
     bool ownsPrimarySlot, bool singleUserTailValid,
-    bool nestedSourceMatches, bool compactIsStereoRedirectable)
+    bool nestedSourceMatches, bool compactUsesProvenFpMode)
 {
     return ownsPrimarySlot && singleUserTailValid &&
-        nestedSourceMatches && compactIsStereoRedirectable;
+        nestedSourceMatches && compactUsesProvenFpMode;
 }
 
 // The camera-copy path tears down only when our slot-0 view object no longer

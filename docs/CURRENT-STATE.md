@@ -897,10 +897,44 @@ layout; it is the same proven per-eye path applied to a camera proven identical.
 Non-redirectable cameras (a custom-projection cutscene, foreign slot, transition)
 still render stock and are captured -- a live frame is never a teardown.
 
-Known follow-up (NOT in this build, one change at a time): during a vehicle the
-move-stick head-relative mapping and motion-aim are still active
-(`Game_AllowsOdstMotionAim`); if driving/aiming feels rotated, gate those on a
-first-person-active flag next. Not yet observed -- await the headset report.
+Both trees build Release clean; CTest green; public OFF and Halo 3 unchanged.
+
+### Build D headset result: reclassify -- vehicles are first-person, death is not (2026-07-21)
+
+Build D deployed (DLL `F8FA7BEF`, commit `fe247a6`, backup-17). Headset result
+disproved the "death-cam in stereo" assumption and reframed the vehicle:
+- **Vehicle** (`blend~0.998`): the redirect captured fine (no teardown) but
+  looked wrong -- "the floor followed my head" -- because it was treated as
+  third-person with **no head-look injected**, so the rendered image was locked
+  to the vehicle camera while submitted at the head pose (compositor reprojects
+  it onto the head). The mod's FP input remapping was also half-applied: right
+  stick did not move the camera, crosshair did not steer. The vehicle is really
+  **first person** (99.8% blended in) and belongs on the full FP path.
+- **Death-cam** (`blend=0.0`): log line `ODST camera teardown complete (eye
+  redirect unavailable)`. The truly third-person death-cam does NOT render
+  through the scene-color path the eye capture needs -> `VR_CaptureRenderedEye`
+  fails -> `EyeRedirectUnavailable` -> teardown, which never re-arms in-session
+  -> "keeps me kicked out" on respawn. It cannot be redirected with this
+  mechanism ("turns into a screen").
+
+### Build E: near-1 blend is first-person; death-cam renders stock + recovers (2026-07-21)
+
+Fix: introduce `kOdstFirstPersonBlendMin = 0.95f` and treat any camera with
+`fpBlend >= 0.95` as first person in BOTH gates (`OdstSourceCameraIsFirstPerson`
+for head-look/heartbeat/aim, `OdstCompactCameraUsesProvenMode` for the render
+redirect + auto-arm). Vehicles (0.998) now take the full first-person path --
+head-look, stable world, native right-stick/crosshair controls -- matching Halo
+3, so behavior is consistent across titles. The Build D third-person redirect
+broadening is reverted (the split `IsStereoRedirectable` and
+`OdstCameraArraySupportsRedirect` are gone): the death-cam (blend 0) is not
+redirected, renders stock (frozen last stereo frame, no capture attempt, no
+`EyeRedirectUnavailable` teardown) and **recovers on respawn**. Net delta vs
+Build C is only the blend threshold (`<=0.001` -> `>=0.95`) in the two FP checks.
+
+Limitation recorded honestly: the ODST death-cam cannot render in live stereo via
+the current eye-capture path (the game doesn't expose it); frozen-3D-that-recovers
+is the best available without a separate death-cam capture path. Vehicles ARE the
+third-person 3D win, delivered via the FP path.
 
 Both trees build Release clean; CTest green; public OFF and Halo 3 unchanged.
 
