@@ -4804,12 +4804,6 @@ namespace
             OdstSourceCameraIsActive(source);
         const bool monitoring =
             ownsActiveCamera && OdstSourceCameraIsFirstPerson(source);
-        const bool cursorGuidedVehicle = monitoring &&
-            OdstCursorGuidedVehicleBlend(*reinterpret_cast<const float*>(
-                static_cast<const char*>(source) + layout.sourceFpBlend));
-        if (ownsPrimaryCamera)
-            g_odstCamera.cursorGuidedVehicle.store(
-                cursorGuidedVehicle, std::memory_order_release);
         // Halo 3 applies headset ownership to every active observer camera,
         // including death/cinematics. Do the same for ODST; aim publication
         // remains first-person-only, but a blend-0 death camera must not become
@@ -4869,6 +4863,18 @@ namespace
                 : OdstFallbackReason::LevelUnloaded);
         }
         void* result = original(destination, source);
+        if (ownsPrimaryCamera)
+        {
+            // Vehicle evidence was captured from the completed compact camera,
+            // not this function's pre-interpolation source. ODST can report 1.0
+            // in source while the camera it actually renders is ~0.998. Publish
+            // control mode only after the native copy has produced destination.
+            const float renderedBlend = *reinterpret_cast<const float*>(
+                static_cast<const char*>(destination) + layout.compactFpBlend);
+            g_odstCamera.cursorGuidedVehicle.store(
+                monitoring && OdstCursorGuidedVehicleBlend(renderedBlend),
+                std::memory_order_release);
+        }
         if (transform)
         {
             char* bytes = static_cast<char*>(source);

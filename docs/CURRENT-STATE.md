@@ -1044,6 +1044,31 @@ through unrotated to ODST's native vehicle input. On foot remains head-relative;
 death receives neither gameplay-control classification; Halo 3 and public-OFF
 builds are unchanged. The mode is cleared on camera teardown/reinstall.
 
+### Build H headset result: no change; vehicle branch never activated
+
+Build H deployed from commit `69ac63445cfd6235bb01ab83e516a27b28ad216b`
+as DLL `FC6BC98E454A2D9209A0446C0019BF4832593CFBEC9372E9E99278FA84300E4D`
+(backup-21). The user reported no change. The deployed hash and launch stamp
+matched, but the log contained no `ODST vehicle controls` activation during the
+test. Build H therefore did not exercise its intended behavior and is failed.
+The exact accepted Build G DLL `36E74C...C0EE` was restored and byte-verified.
+
+Root cause: Build H classified the pre-copy source `sourceFpBlend`. The decisive
+vehicle evidence (`blend~0.998`) was captured from the completed compact camera
+used by the renderer. ODST's native copy/interpolation may leave source at 1.0
+while producing the rendered vehicle blend in destination.
+
+### Build I candidate: publish vehicle controls from the rendered compact camera
+
+Keep Build H's isolated control behavior, but remove its incorrect pre-copy
+classification. After the native camera-copy function finishes, read the proven
+destination compact `fpBlend` field and publish cursor-guided vehicle ownership
+from that value. This is the same completed camera field that produced the
+headset evidence. The right-controller aim path remains active; only the ODST
+vehicle's head-relative movement rotation is bypassed. The input hook logs
+`ODST vehicle controls: ...` on first activation, making deployment and mode
+entry independently visible in the next test log.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
