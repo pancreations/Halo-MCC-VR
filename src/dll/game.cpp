@@ -10134,6 +10134,19 @@ void Game_MapMoveStick(float& mx, float& my)
     my = ny;
 }
 
+bool Game_MoveStickIsLocomotion()
+{
+    // Only these runtime modes drive the character with the left stick. Every
+    // other mode (Paused/settings, Shell, Loading, Cutscene, Dead, Unsupported)
+    // means the game is reading the stick for menu navigation, so the input
+    // hook must not rotate it head-relative or floor its axes past the deadzone.
+    // Halo 3 and ODST both drive RuntimeMode, so this is one shared behavior.
+    const RuntimeMode mode = TitleAdapter_GetRuntimeMode();
+    return mode == RuntimeMode::Gameplay ||
+           mode == RuntimeMode::Vehicle ||
+           mode == RuntimeMode::Turret;
+}
+
 void Game_GunScale(int dir)
 {
     // Uniform mesh scale of the hand-anchored arms+gun assembly around the

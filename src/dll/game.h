@@ -44,6 +44,11 @@ bool Game_ComputeAimStick(float& outRx, float& outRy);
 // Rotates a move-stick vector so pushing forward walks toward the gaze
 // instead of the hand-steered aim heading. No-op when VR aim is inactive.
 void Game_MapMoveStick(float& mx, float& my);
+// True only while the game is actually consuming the left stick to move the
+// player (gameplay/vehicle/turret). False in menus, pause, loading, cutscene,
+// death and the shell, where the same stick navigates the game's own menus and
+// must pass through as a plain analog stick (see input.cpp / GitHub #9).
+bool Game_MoveStickIsLocomotion();
 // Hooks XInputGetState in every loaded xinput DLL; returns how many are
 // hooked. Safe to call repeatedly until it succeeds.
 int Input_InstallXInputHook();

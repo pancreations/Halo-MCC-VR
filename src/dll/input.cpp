@@ -53,6 +53,18 @@ namespace
         return (SHORT)(v < 0 ? -raw : raw);
     }
 
+    // Plain analog mapping for the game's OWN menus (pause/settings/shell): map
+    // |v| in 0..1 straight to the full stick range with NO deadzone floor, so
+    // MCC's own menu deadzone rejects a small off-axis component. Without this a
+    // near-vertical push like (0.15, 0.98) had its 0.15 minor axis floored past
+    // the deadzone by ToRawStick, so up/down leaked into left/right (GitHub #9).
+    SHORT ToRawMenuStick(float v)
+    {
+        if (v > 1.0f) v = 1.0f;
+        else if (v < -1.0f) v = -1.0f;
+        return (SHORT)(v * 32767.0f);
+    }
+
     void MergeVrPad(XINPUT_STATE* state)
     {
         VrPadState pad;
@@ -164,9 +176,13 @@ namespace
             if (!gestureLogged.exchange(true))
                 LOG("M3: D-pad gesture active (right controller held at head)");
         }
-        else
+        else if (Game_MoveStickIsLocomotion())
         {
-            // Left stick: movement, rotated head-relative so forward = gaze.
+            // Gameplay locomotion (UNCHANGED, headset-confirmed): the left stick
+            // walks the player, rotated head-relative so forward = gaze, and
+            // each axis floored past MCC's inner deadzone so small corrections
+            // still move. This path runs only while the game is actually using
+            // the stick to move the character.
             float mx = pad.moveX, my = pad.moveY;
             Game_MapMoveStick(mx, my);
             if (mx * mx + my * my > 0.02f)
@@ -174,6 +190,18 @@ namespace
                 state->Gamepad.sThumbLX = ToRawStick(mx);
                 state->Gamepad.sThumbLY = ToRawStick(my);
             }
+        }
+        else
+        {
+            // In-game menus (pause/settings) and any other non-locomotion state:
+            // the game reads the left stick as MENU NAVIGATION, not movement.
+            // Pass it through like a plain gamepad — no head-relative rotation
+            // and no per-axis deadzone floor — so a near-vertical push stays
+            // vertical and MCC's own menu deadzone rejects the minor axis.
+            // Fixes GitHub #9 (up/down registering as left/right). Character
+            // movement is untouched; that path is the locomotion branch above.
+            state->Gamepad.sThumbLX = ToRawMenuStick(pad.moveX);
+            state->Gamepad.sThumbLY = ToRawMenuStick(pad.moveY);
         }
 
         // Right stick: hand-steered aim when active; otherwise pass the raw
