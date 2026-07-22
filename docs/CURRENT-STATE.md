@@ -18,6 +18,36 @@ check whenever shared behavior or cross-title lifecycle state could change.
 
 ## Recovery points
 
+- ODST CUTSCENE 3D — HEADSET-CONFIRMED 2026-07-22 (Stage 1 of cutscene parity):
+  ODST cinematic cameras now render in stereo 3D with head tracking. Root cause
+  (log-proven): ODST auto-arm required a first-person camera
+  (`OdstCameraArraySupportsBringup` -> `requireFirstPerson`, blend >= 0.95), so a
+  level that OPENS on a cinematic (the drop-pod intro, a blend-0 camera) never
+  armed -- the whole cutscene was flat with "stereo off". Fix `7a4d9e1` on
+  `feature/odst-bringup`: arm on any active plain-perspective slot-0 single-user
+  camera (the same stereo-redirect predicate the render path already uses since
+  Build G). Once armed, `OdstApplyHeadLook` + the per-eye redirect already drive
+  any active camera regardless of blend, so the cutscene renders 3D + head-
+  tracked like Halo 3. Also adds the read-only diagnostics `ODST RENDER SKIP`,
+  granular `ODST NON-FP CAMERA`, and `ODST camera WAIT`. Deployed private DLL
+  build `Jul 22 2026 00:29:07`, SHA-256
+  `2314023A38DD1D2154E6F90CB5BF3628EA90D835EC7EC77B459E88045EE2CF8D`, recovery
+  record `pre-odst-private-backup-27` (sealed baseline `DFF8A406`). Log confirms
+  the opening armed on a blend-0 camera (`WAIT ... blend=0.000000 arm-eligible=YES`
+  -> `stereo ON` at 00:46:36). User result: "3D depth now working and I can look
+  around." Remaining for full cutscene parity: per-cut yaw rebasing so each
+  authored shot faces forward (Stage 2, the Halo 3 `dd1abc5` behavior).
+- SEPARATE PRE-EXISTING ISSUE (not caused by the cutscene fix, confirmed
+  2026-07-22): within one MCC session, loading/quitting/switching titles leaves
+  multiple Halo game modules resident; `TitleAdapter_PollLoaded`
+  (`title_adapter.cpp:58`) treats any >1-module state as "ambiguous MCC state"
+  and disables all hooks, and MCC then kicks the level load back to the menu.
+  Symptom: "levels won't load". Workaround: fully restart MCC (unloads the extra
+  modules); the first fresh load then works. The first ODST level of the session
+  loaded and played perfectly on the fix build (stereo/6DOF/VRIK/weapon), and no
+  crash occurred. Proper fix (backlog): disambiguate by the actively-rendering
+  title (camera heartbeat) instead of disabling hooks -- a delicate title-adapter
+  change with cross-title-crash history; do it on its own branch with evidence.
 - CURRENT DEFINITIVE BUILD (user-approved 2026-07-21, not released): ODST
   first-person weapon/arm motion controls now work like Halo 3 — hands and gun
   are off the head, controller-driven aim and the base VR cursor function.
