@@ -267,6 +267,11 @@ namespace
         void* originalFpVisiblePalette = nullptr;
         uint8_t* nativeWeaponIkBranch = nullptr;
         bool nativeWeaponIkPatched = false;
+        // ODST class-2 CHUD crosshair hider (parity with Halo 3). The playback
+        // short-circuit inside chud_draw_widget is NOP'd here and restored on
+        // teardown, exactly like nativeWeaponIkBranch above.
+        uint8_t* crosshairClassGate = nullptr;
+        bool crosshairClassGatePatched = false;
         uintptr_t gunCameraArray = 0;
         std::atomic<void*> eyeView{nullptr};
         alignas(16) unsigned char eyeCompactCamera[0x90]{};
@@ -274,7 +279,7 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[7]{}; // 5 camera hooks + interpolation/palette
+        void* hookTargets[9]{}; // 5 camera + interpolation/palette + crosshair predicate/draw
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
@@ -7020,6 +7025,166 @@ namespace
         return true;
     }
 
+    bool RestoreOdstCrosshairClassGate()
+    {
+        uint8_t* gate = g_odstCamera.crosshairClassGate;
+        if (!gate)
+            return !g_odstCamera.crosshairClassGatePatched;
+        if (gate[0] == 0x74 && gate[1] == 0x17) // already stock
+        {
+            g_odstCamera.crosshairClassGate = nullptr;
+            g_odstCamera.crosshairClassGatePatched = false;
+            return true;
+        }
+        if (gate[0] != 0x90 || gate[1] != 0x90)
+        {
+            LOG("ODST crosshair cleanup: class-gate has unknown bytes");
+            return false;
+        }
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(gate, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+        {
+            LOG("ODST crosshair cleanup: class-gate protection failed");
+            return false;
+        }
+        gate[0] = 0x74;
+        gate[1] = 0x17;
+        FlushInstructionCache(GetCurrentProcess(), gate, 2);
+        DWORD ignored = 0;
+        if (!VirtualProtect(gate, 2, oldProtect, &ignored))
+        {
+            LOG("ODST crosshair cleanup: could not restore class-gate protection");
+            return false;
+        }
+        g_odstCamera.crosshairClassGate = nullptr;
+        g_odstCamera.crosshairClassGatePatched = false;
+        return true;
+    }
+
+    // ODST class-2 CHUD crosshair hider + authored-widget capture. Full parity
+    // with Halo 3's InstallHook crosshair path, but every location is ODST-proven
+    // (docs/ODST-SIGNATURE-EVIDENCE.md kHudElemSig candidate; disassembly at
+    // halo3odst.dll+0x329488). The class-gate block is byte-identical to Halo 3
+    // yet shifted -3 bytes inside the recompiled function: playback call E8 @
+    // +0x7A, playback short-circuit je (74 17) @ +0x81, class-2 predicate call
+    // E8 @ +0x91. Best-effort and fail-open: on any mismatch the native ODST
+    // crosshair simply stays visible and the camera transaction is unaffected.
+    void InstallOdstCrosshairHider(uintptr_t base, size_t size)
+    {
+        const char* kHudElemSigOdst =
+            "44 88 4C 24 20 53 48 83 EC 50 48 8B 05 ?? ?? ?? ?? 8B D9 45 0F B7 "
+            "C0 89 4C 24 20 48 8B 0D ?? ?? ?? ?? 48 89 54 24 28 46 8B 4C C0 04 "
+            "45 85 C9 75 ?? 33 C0 EB ??";
+        uintptr_t hudElem = sig::Find(base, size, kHudElemSigOdst);
+        if (!hudElem ||
+            sig::Find(hudElem + 1, base + size - hudElem - 1, kHudElemSigOdst))
+        {
+            LOG("ODST crosshair: chud_draw_widget signature missing/ambiguous; "
+                "native crosshair stays visible");
+            return;
+        }
+
+        // Verify the ODST class-gate against proven bytes before patching. The
+        // 17-byte block is identical to Halo 3's expectedClassGate.
+        const unsigned char expectedClassGate[] = {
+            0x74, 0x17, 0xB8, 0x02, 0x00, 0x00, 0x00,
+            0x66, 0x41, 0x3B, 0x42, 0x04, 0x75, 0x0B,
+            0x8B, 0xCB, 0xE8
+        };
+        unsigned char* fn = reinterpret_cast<unsigned char*>(hudElem);
+        unsigned char* classGate = fn + 0x81;
+        if (fn[0x7A] != 0xE8 ||
+            memcmp(classGate, expectedClassGate, sizeof(expectedClassGate)) != 0)
+        {
+            LOG("ODST crosshair: class-gate layout mismatch; native crosshair "
+                "stays visible");
+            return;
+        }
+
+        const uintptr_t playbackTarget =
+            sig::RipTarget(hudElem + 0x7B, hudElem + 0x7F);
+        const uintptr_t visibleTarget =
+            sig::RipTarget(hudElem + 0x92, hudElem + 0x96);
+        if (playbackTarget < base || playbackTarget >= base + size ||
+            visibleTarget < base || visibleTarget >= base + size)
+        {
+            LOG("ODST crosshair: class targets outside halo3odst.dll; native "
+                "crosshair stays visible");
+            return;
+        }
+
+        // Hook the class-gated visibility predicate and the widget-draw wrapper,
+        // exactly as Halo 3 does. The hook bodies are shared and already key off
+        // g_enabled + VR_IsStereoEnabled(), which the ODST arm path sets.
+        const MH_STATUS visibleCreate = MH_CreateHook(
+            reinterpret_cast<void*>(visibleTarget),
+            reinterpret_cast<void*>(&HudCrosshairVisibleHook),
+            reinterpret_cast<void**>(&g_realHudCrosshairVisible));
+        if (visibleCreate != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(visibleTarget)) != MH_OK)
+        {
+            if (visibleCreate == MH_OK)
+                MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+            g_realHudCrosshairVisible = nullptr;
+            LOG("ODST crosshair: visibility predicate hook failed; native "
+                "crosshair stays visible");
+            return;
+        }
+        const MH_STATUS drawCreate = MH_CreateHook(
+            reinterpret_cast<void*>(hudElem),
+            reinterpret_cast<void*>(&HudDrawWidgetHook),
+            reinterpret_cast<void**>(&g_realHudDrawWidget));
+        if (drawCreate != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(hudElem)) != MH_OK)
+        {
+            if (drawCreate == MH_OK)
+                MH_RemoveHook(reinterpret_cast<void*>(hudElem));
+            g_realHudDrawWidget = nullptr;
+            // Without the draw wrapper the authored capture cannot start, so do
+            // not hide the crosshair with no replacement: roll the predicate
+            // hook back too.
+            MH_DisableHook(reinterpret_cast<void*>(visibleTarget));
+            MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+            g_realHudCrosshairVisible = nullptr;
+            LOG("ODST crosshair: widget-draw wrapper hook failed; native "
+                "crosshair stays visible");
+            return;
+        }
+
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(classGate, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+        {
+            MH_DisableHook(reinterpret_cast<void*>(hudElem));
+            MH_RemoveHook(reinterpret_cast<void*>(hudElem));
+            g_realHudDrawWidget = nullptr;
+            MH_DisableHook(reinterpret_cast<void*>(visibleTarget));
+            MH_RemoveHook(reinterpret_cast<void*>(visibleTarget));
+            g_realHudCrosshairVisible = nullptr;
+            LOG("ODST crosshair: class-gate protection failed; native crosshair "
+                "stays visible");
+            return;
+        }
+        classGate[0] = 0x90;
+        classGate[1] = 0x90;
+        FlushInstructionCache(GetCurrentProcess(), classGate, 2);
+        DWORD ignored = 0;
+        VirtualProtect(classGate, 2, oldProtect, &ignored);
+
+        g_gameIsPlayback = reinterpret_cast<GameIsPlaybackFn>(playbackTarget);
+        g_odstCamera.crosshairClassGate = classGate;
+        g_odstCamera.crosshairClassGatePatched = true;
+        // Register both hooks so ODST teardown disables/removes them with the
+        // camera set (hookTargets has room: 7 core + these 2).
+        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
+            reinterpret_cast<void*>(visibleTarget);
+        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
+            reinterpret_cast<void*>(hudElem);
+        LOG("ODST crosshair: authored CHUD crosshair redirect active at "
+            "halo3odst.dll+0x%llX (class-2 predicate +0x%llX)",
+            static_cast<unsigned long long>(hudElem - base),
+            static_cast<unsigned long long>(visibleTarget - base));
+    }
+
     void ClearOdstCameraPointers()
     {
         g_odstCamera.moduleBase = 0;
@@ -7038,6 +7203,13 @@ namespace
         g_odstCamera.originalFpVisiblePalette = nullptr;
         g_odstCamera.nativeWeaponIkBranch = nullptr;
         g_odstCamera.nativeWeaponIkPatched = false;
+        g_odstCamera.crosshairClassGate = nullptr;
+        g_odstCamera.crosshairClassGatePatched = false;
+        // Drop the shared CHUD trampoline pointers so a later title change can
+        // never call into an unloaded halo3odst.dll (stale-pointer crash class).
+        g_realHudCrosshairVisible = nullptr;
+        g_realHudDrawWidget = nullptr;
+        g_gameIsPlayback = nullptr;
         g_odstCamera.gunCameraArray = 0;
         g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
         memset(g_odstCamera.eyeCompactCamera, 0,
@@ -7838,6 +8010,13 @@ namespace
                 "native weapon-IK branch is restored");
             return false;
         }
+        if (!RestoreOdstCrosshairClassGate())
+        {
+            g_odstCamera.installed.store(true, std::memory_order_release);
+            LOG("ODST camera rollback: retaining title module until the "
+                "crosshair class-gate is restored");
+            return false;
+        }
         RestoreOdstMotionBlurVars();
         g_odstCamera.installed.store(false, std::memory_order_release);
         ReleaseOdstModuleReferenceAndClearPointers();
@@ -7982,6 +8161,12 @@ namespace
                 : OdstInstallResult::CleanupPending;
         }
 
+        // Best-effort HUD parity: hide ODST's native class-2 crosshair and paint
+        // the weapon's authored widget as the floating VR reticle, exactly like
+        // Halo 3. Never fails the camera transaction; on any mismatch the native
+        // crosshair simply stays visible.
+        InstallOdstCrosshairHider(base, size);
+
         g_odstCamera.captureFailures.store(0, std::memory_order_release);
         g_odstCamera.sawValidCamera.store(false, std::memory_order_release);
         g_odstCamera.fallbackReason.store(
@@ -8030,6 +8215,12 @@ namespace
         if (!RestoreOdstNativeWeaponIkBypass())
         {
             LOG("ODST camera teardown: native weapon-IK restore incomplete; "
+                "retaining the exact title module for retry");
+            return false;
+        }
+        if (!RestoreOdstCrosshairClassGate())
+        {
+            LOG("ODST camera teardown: crosshair class-gate restore incomplete; "
                 "retaining the exact title module for retry");
             return false;
         }
