@@ -143,9 +143,13 @@ namespace
     using FpCameraRebuildFn = void(__fastcall*)(void* view, unsigned char flag);
     using FpCameraUploadFn = void(__fastcall*)(void* compactCamera, void* derivedBlock);
     using FpDriverFn = void(__fastcall*)(void* view, unsigned char flag);
-    // ODST's two post-world native-CHUD phases both take the local user index.
+    // ODST's two prepare-view native-CHUD phases both take the local user index.
     // Their target functions are separately proven by unique ODST signatures.
     using OdstHudPhaseFn = void(__fastcall*)(int userIndex);
+    // Engine target copy used by the secondary phase: source ID 1 into ODST's
+    // title-specific temporary ID 0x35. The caller ignores the COM release count.
+    using OdstHudTargetCopyFn = uint32_t(__fastcall*)(
+        int sourceTargetId, int destinationTargetId);
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     struct CameraRuntimeLayout
@@ -266,6 +270,7 @@ namespace
         FpDriverFn originalFpDriver = nullptr;
         OdstHudPhaseFn originalHudPhasePrimary = nullptr;
         OdstHudPhaseFn originalHudPhaseSecondary = nullptr;
+        OdstHudTargetCopyFn originalHudTargetCopy = nullptr;
         // ODST FP weapon/arm hook originals. Stored as void* because the typed
         // aliases are declared after this lifecycle state.
         void* originalFpInterpolate = nullptr;
@@ -284,13 +289,13 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[11]{}; // 7 core + 2 native-CHUD phases + crosshair predicate/draw
+        void* hookTargets[12]{}; // 7 core + 2 CHUD phases + target copy + 2 crosshair
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
 
     OdstCameraRuntimeState g_odstCamera;
-    thread_local bool g_odstNativeHudPhaseReplay = false;
+    thread_local bool g_odstPreparingEyeHud = false;
     std::atomic<uintptr_t> g_odstNativePauseFlag{0};
     std::atomic<float> g_odstRenderHalfFovX[2] = {{1.07338f}, {1.07338f}};
     std::atomic<float> g_odstRenderHalfFovY[2] = {{0.92502f}, {0.92502f}};
@@ -5670,6 +5675,30 @@ namespace
         g_odstFpLayoutLoggedKey.store(key, std::memory_order_relaxed);
     }
 
+    // Cold-worker report for the bounded phase-level route check. Hot hooks only
+    // increment atomics; no logging, COM discovery, allocation, or file I/O.
+    void LogOdstNativeHudRouteOnce()
+    {
+        static bool logged = false;
+        if (logged)
+            return;
+        unsigned completedPhaseScopes = 0, id1OmMatches = 0;
+        unsigned exactCopyScopes = 0, copySubstitutions = 0;
+        VR_GetNativeHudRouteStats(completedPhaseScopes, id1OmMatches,
+                                  exactCopyScopes, copySubstitutions);
+        if (completedPhaseScopes < 120)
+            return;
+        logged = true;
+        LOG("ODST NATIVE HUD ROUTE: completedScopes=%u id1OmMatches=%u "
+            "exactCopyScopes=%u copySubstitutions=%u -- %s",
+            completedPhaseScopes, id1OmMatches, exactCopyScopes,
+            copySubstitutions,
+            copySubstitutions
+                ? "target-1 snapshot sourced from the active eye cache"
+                : exactCopyScopes
+                    ? "target-1 source identity did not match; stock copy retained"
+                    : "exact target-1 copy was not observed; stock path retained");
+    }
     __declspec(noinline) void __fastcall OdstRenderViewBody(void* view)
     {
         RenderViewFn original = g_odstCamera.originalRenderView;
@@ -5958,7 +5987,9 @@ namespace
             memcpy(g_odstCamera.eyeDerivedBlock,
                    bytes + layout.rootCurrentDerived, layout.derivedSize);
             g_odstCamera.eyeView.store(view, std::memory_order_release);
+            g_odstPreparingEyeHud = true;
             g_odstCamera.prepareView(view, 0);
+            g_odstPreparingEyeHud = false;
             original(view);
             g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
             bool captured = VR_CaptureRenderedEye(eye);
@@ -6011,50 +6042,29 @@ namespace
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
-    // ODST emits these native CHUD phases after the inner view renderer has
-    // completed its two eye draws. Halo 3 reaches the equivalent authored HUD
-    // work inside each eye transaction. Replaying the title-proven ODST phase
-    // once per eye supplies the same player-visible ordering without guessing
-    // individual widget layouts or turning the HUD into a separate panel.
+    // Both titles schedule native CHUD during prepareView. Keep ODST's calls in
+    // that exact engine-owned scope and order, but bind their active eye cache
+    // while the title submits the phase. Flat/shell and unrelated callers remain
+    // stock because only this render thread sets g_odstPreparingEyeHud.
     void OdstRenderNativeHudPhase(OdstHudPhaseFn original, int userIndex)
     {
         if (!original)
             return;
-        const bool replay = !g_odstNativeHudPhaseReplay &&
+        const int eye = g_stereoEye.load(std::memory_order_acquire);
+        const bool route = g_odstPreparingEyeHud && eye >= 0 && eye <= 1 &&
+            g_odstCamera.eyeView.load(std::memory_order_acquire) != nullptr &&
             g_enabled.load(std::memory_order_relaxed) && VR_IsStereoEnabled() &&
             g_odstCamera.armed.load(std::memory_order_acquire) &&
             !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
-            g_stereoEye.load(std::memory_order_acquire) < 0 &&
             VR_ShouldRenderPreparedFrame();
-        if (!replay)
+        if (!route || !VR_BeginNativeHudEyeDraw(eye))
         {
             original(userIndex);
             return;
         }
-
-        g_odstNativeHudPhaseReplay = true;
-        for (int pass = 0; pass < 2; ++pass)
-        {
-            const int eye = pass == 0
-                ? (g_config.right_eye_first ? 1 : 0)
-                : (g_config.right_eye_first ? 0 : 1);
-            const int previousEye = g_stereoEye.exchange(
-                eye, std::memory_order_acq_rel);
-            if (VR_BeginNativeHudEyeDraw(eye))
-            {
-                original(userIndex);
-                VR_EndNativeHudEyeDraw();
-            }
-            else
-            {
-                // A missing eye target must retain ODST's original behavior.
-                original(userIndex);
-            }
-            g_stereoEye.store(previousEye, std::memory_order_release);
-        }
-        g_odstNativeHudPhaseReplay = false;
+        original(userIndex);
+        VR_EndNativeHudEyeDraw();
     }
-
     __declspec(noinline) void __fastcall OdstHudPhasePrimaryHook(int userIndex)
     {
         g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
@@ -6067,6 +6077,28 @@ namespace
         g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
         OdstRenderNativeHudPhase(g_odstCamera.originalHudPhaseSecondary, userIndex);
         g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    __declspec(noinline) uint32_t __fastcall OdstHudTargetCopyHook(
+        int sourceTargetId, int destinationTargetId)
+    {
+        g_odstCamera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        OdstHudTargetCopyFn original = g_odstCamera.originalHudTargetCopy;
+        uint32_t result = 0;
+        if (original)
+        {
+            // Static ODST evidence: secondary CHUD snapshots engine target 1
+            // into its title-specific target 0x35 before later target-1 work.
+            const bool expectedCopy =
+                sourceTargetId == 1 && destinationTargetId == 0x35;
+            if (expectedCopy)
+                VR_BeginNativeHudTargetCopy();
+            result = original(sourceTargetId, destinationTargetId);
+            if (expectedCopy)
+                VR_EndNativeHudTargetCopy();
+        }
+        g_odstCamera.activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        return result;
     }
 #endif
 
@@ -6151,6 +6183,11 @@ namespace
     const char* kOdstHudPhaseSecondarySig =
         "48 89 5C 24 08 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 50 "
         "48 63 D9 8B CB 0F 29 74 24 40";
+    // ODST's engine target copy. The secondary phase calls it only after
+    // selecting temporary target ID 0x35, with source ID 1.
+    const char* kOdstHudTargetCopySig =
+        "48 63 C1 4C 8D 1D ?? ?? ?? ?? 33 C9 4C 63 D2 4C 8D 04 40 "
+        "8B C1 49 C1 E0 05 43 F7 04 18 00 04 00 00 74 05 43 8B 44 18 58";
 
     const CameraRuntimeProfile kOdstCameraProfile = {
         L"halo3odst.dll",
@@ -7009,6 +7046,7 @@ namespace
         uintptr_t nativePauseOwner = 0;
         uintptr_t hudPhasePrimary = 0;
         uintptr_t hudPhaseSecondary = 0;
+        uintptr_t hudTargetCopy = 0;
         uint8_t* nativePauseFlag = nullptr;
         float* motionBlurScale = nullptr;
         float* motionBlurMax = nullptr;
@@ -7247,7 +7285,7 @@ namespace
         g_odstCamera.crosshairClassGate = classGate;
         g_odstCamera.crosshairClassGatePatched = true;
         // Register both hooks so ODST teardown disables/removes them with the
-        // camera set (hookTargets has room: 9 core + these 2).
+        // camera set (hookTargets has room: 10 core + these 2).
         g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
             reinterpret_cast<void*>(visibleTarget);
         g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
@@ -7274,6 +7312,7 @@ namespace
         g_odstCamera.originalFpDriver = nullptr;
         g_odstCamera.originalHudPhasePrimary = nullptr;
         g_odstCamera.originalHudPhaseSecondary = nullptr;
+        g_odstCamera.originalHudTargetCopy = nullptr;
         g_odstCamera.originalFpInterpolate = nullptr;
         g_odstCamera.originalFpVisiblePalette = nullptr;
         g_odstCamera.nativeWeaponIkBranch = nullptr;
@@ -7528,6 +7567,10 @@ namespace
             signaturesOk &= FindUniqueOdstRole(
                 base, size, textBegin, textEnd, "native CHUD phase secondary",
                 kOdstHudPhaseSecondarySig, resolved.hudPhaseSecondary);
+            signaturesOk &= FindUniqueOdstRole(
+                base, size, textBegin, textEnd,
+                "native CHUD target copy", kOdstHudTargetCopySig,
+                resolved.hudTargetCopy);
             resolved.motionBlurScale = FindDebugVarFloat(
                 base, size, "motion_blur_scale");
             resolved.motionBlurMax = FindDebugVarFloat(
@@ -7893,8 +7936,10 @@ namespace
         case 8:
             return reinterpret_cast<void*>(g_odstCamera.originalHudPhaseSecondary);
         case 9:
-            return reinterpret_cast<void*>(g_realHudCrosshairVisible);
+            return reinterpret_cast<void*>(g_odstCamera.originalHudTargetCopy);
         case 10:
+            return reinterpret_cast<void*>(g_realHudCrosshairVisible);
+        case 11:
             return reinterpret_cast<void*>(g_realHudDrawWidget);
         default:
             return nullptr;
@@ -7905,7 +7950,7 @@ namespace
                                   bool renderOnly, bool& busy)
     {
         static bool rangesResolved = false;
-        static OdstCodeRange ranges[11]{};
+        static OdstCodeRange ranges[12]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -7918,6 +7963,7 @@ namespace
                 reinterpret_cast<const void*>(&OdstFpVisiblePaletteWeaponHook),
                 reinterpret_cast<const void*>(&OdstHudPhasePrimaryHook),
                 reinterpret_cast<const void*>(&OdstHudPhaseSecondaryHook),
+                reinterpret_cast<const void*>(&OdstHudTargetCopyHook),
                 reinterpret_cast<const void*>(&HudCrosshairVisibleHook),
                 reinterpret_cast<const void*>(&HudDrawWidgetHook),
             };
@@ -8210,6 +8256,10 @@ namespace
              reinterpret_cast<void*>(resolved.hudPhaseSecondary),
              reinterpret_cast<void*>(&OdstHudPhaseSecondaryHook),
              reinterpret_cast<void**>(&g_odstCamera.originalHudPhaseSecondary)},
+            {"native CHUD target copy",
+             reinterpret_cast<void*>(resolved.hudTargetCopy),
+             reinterpret_cast<void*>(&OdstHudTargetCopyHook),
+             reinterpret_cast<void**>(&g_odstCamera.originalHudTargetCopy)},
         };
 
         for (const HookSpec& hook : hooks)
@@ -8256,7 +8306,7 @@ namespace
                 resolved.nativeWeaponIkDecision))
         {
             LOG("ODST camera install: weapon-IK bypass failed; rolling back "
-                "the complete nine-hook parity transaction");
+                "the complete ten-hook parity transaction");
             return DiscardCreatedOdstHooks()
                 ? OdstInstallResult::Failed
                 : OdstInstallResult::CleanupPending;
@@ -8295,7 +8345,7 @@ namespace
         // is title-agnostic; the shot-state TLS offset is read from ODST's own
         // instruction (0xA0). Failure logs and leaves shot-facing disabled.
         LocateCinematicState(base, size);
-        LOG("ODST camera install: nine-hook camera/weapon/CHUD transaction retained "
+        LOG("ODST camera install: ten-hook camera/weapon/CHUD transaction retained "
             "and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
             "Halo 3 weapon, arm IK, two-hand, and dual-wield config path ready");
@@ -8678,6 +8728,7 @@ namespace
             LogOdstNonFpCameraIfNew();     // emit any non-FP (death/vehicle) cam
             LogOdstRenderSkipIfNew();      // emit why a frame stayed flat 2D
             LogOdstFpLayoutSelfCheckIfNew(); // emit FP weapon-layout self-check
+            LogOdstNativeHudRouteOnce();    // bounded in-place CHUD route result
             Sleep(50);
 #else
             Sleep(50);

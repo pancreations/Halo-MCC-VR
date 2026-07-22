@@ -26,22 +26,40 @@ signatures and engine stages to reach that lifecycle, but may not add a later
 2D-to-3D gate, substitute a HUD panel/copy workaround, or change the ordering
 without explicit user approval. This rule applies to every feature,
 troubleshoot, and bug fix.
+
 ## Recovery points
 
-- ODST NATIVE HUD PIPELINE PARITY â€” IMPLEMENTED, HEADSET TEST PENDING
-  (2026-07-22): the native CHUD is now replayed at the two ODST-proven phase
-  boundaries (`halo3odst.dll+0x2FD694` and `+0x2FD88C`) once per completed eye,
-  matching Halo 3's end-user world â†’ weapon â†’ native-CHUD â†’ eye-capture
-  lifecycle. Each phase uses a scoped D3D state guard which restores output
-  targets, depth, viewports, and scissors; the OM hook uses only pointer
-  comparisons and never marks CHUD as a scene capture. Both AOBs statically
-  resolve exactly once in the supported retail DLL. The ODST lifecycle
-  transaction now has nine core hooks (plus the two existing optional crosshair
-  hooks), and teardown scans their detours and trampolines. The established
-  one-second fresh-camera boundary is unchanged and covered at 1000/1001 ms.
-  OFF/ON Release builds and both CTest suites pass. This is NOT headset
-  confirmed: test native health, ammo, motion tracker, and reticle in both eyes;
-  confirm no hitch and ODST's opening 2Dâ†’3D timing matches Halo 3.- ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
+- ODST NATIVE HUD PIPELINE PARITY - TWO DEPLOYED BUILDS HEADSET-DISPROVEN;
+  THIRD PIPELINE CANDIDATE TESTED, HEADSET TEST PENDING (2026-07-22): headset
+  tests of `ecdfd94` and `f6c6c52` still showed no health, ammo, or
+  motion-tracker HUD. Both DLLs were confirmed deployed. Static parity tracing
+  proves Halo 3 and ODST both submit native CHUD during `prepareView`, after
+  engine target setup and in exact order secondary then primary: H3
+  `0x2D289C`/`0x2D2670`; ODST `0x2FD88C`/`0x2FD694`. Their inner renderers
+  run afterward. Both secondaries snapshot engine target ID 1 into a
+  title-specific stock intermediate before later target-1 work: Halo 3 uses
+  target `0x3C`; ODST uses target `0x35` through copy function `0x2A3BF8`.
+  The failed replay gate required `g_stereoEye < 0`, so it never scoped the
+  natural per-eye calls. The corrected source marks only each active ODST
+  eye's `prepareView`, runs each original phase once in place, and uses a full
+  output/depth/viewport/scissor guard. Its own bind/restore calls bypass the
+  global OM redirect so they restore exact state and never count as a world
+  capture. During exact ODST copy arguments `(1, 0x35)`, a TLS marker permits
+  the D3D `CopyResource` hook to substitute only a retained, pointer-matched
+  target-1 scene source with the active eye cache; destination `0x35` remains
+  stock. Later pointer-proven target-1 binds route to the same eye. Any unknown
+  target or source identity fails open. The copy detour, TLS route, counters,
+  and retained resource compile only into private ODST builds; even there the
+  copy hook is inert outside that exact marker. Hot paths perform no discovery,
+  allocation, file I/O, or logging. The ODST lifecycle now accounts for ten
+  core hooks plus the two optional crosshair hooks across install, quiesce, unwind scan, and teardown.
+  Primary, secondary, and target-copy AOBs each match the supported retail
+  ODST DLL exactly once (SHA-256 `5BB20976EFDFD9E1CE59C589339804725FEC239021027C8D65B2733EAB94829A`).
+  One cold-worker line reports completed phase scopes, target-1 OM matches,
+  exact copy scopes, and source substitutions. OFF/ON Release builds and both
+  CTest suites pass. Headset confirmation and the Halo 3 regression check
+  remain pending; no source-only result is recorded as parity.
+- ODST HUD CROSSHAIR PARITY — HEADSET-CONFIRMED 2026-07-22 ("working great...
   you got that solid"): ODST now installs Halo 3's class-2 CHUD crosshair path — it
   hides ODST's native reticle and captures the active weapon's authored widget
   as the floating VR crosshair, at Halo 3's exact shared size

@@ -72,8 +72,17 @@ void VR_EndRasterEye();
 // Keep that title-specific phase on the active eye cache and restore every
 // output-merger reference afterward. Called at CHUD-phase granularity, never
 // per widget.
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
 bool VR_BeginNativeHudEyeDraw(int eye);
 void VR_EndNativeHudEyeDraw();
+void VR_BeginNativeHudTargetCopy();
+void VR_EndNativeHudTargetCopy();
+ID3D11Resource* VR_RedirectNativeHudCopySource(ID3D11Resource* source);
+void VR_GetNativeHudRouteStats(unsigned& completedPhaseScopes,
+                               unsigned& id1OmMatches,
+                               unsigned& exactCopyScopes,
+                               unsigned& copySubstitutions);
+#endif
 
 // Universal scope: a refresh-limited third world render redirected into a
 // private cache. The physical OpenXR quad continues tracking every frame.

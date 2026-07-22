@@ -198,6 +198,8 @@ namespace
     // plus a 128-entry linear scan on nearly every RTV bind and could collapse
     // stereo from 90 fps into the 20s.
     ID3D11RenderTargetView* g_sceneColorRtv = nullptr;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    ID3D11Resource* g_sceneColorResource = nullptr;
     struct NativeHudEyeRouteState
     {
         ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
@@ -211,8 +213,15 @@ namespace
         UINT scissorCount = 0;
         int eye = -1;
         bool active = false;
+        bool bypassOmRedirect = false;
+        bool targetCopy = false;
     };
     thread_local NativeHudEyeRouteState g_nativeHudEyeRoute{};
+    std::atomic<unsigned> g_nativeHudPhaseScopes{0};
+    std::atomic<unsigned> g_nativeHudId1OmMatches{0};
+    std::atomic<unsigned> g_nativeHudExactCopyScopes{0};
+    std::atomic<unsigned> g_nativeHudCopySubstitutions{0};
+#endif
     D3D11_TEXTURE2D_DESC g_gameBackbufferDesc{};
     bool g_gameBackbufferDescValid = false;
     // Retained immediately after Present using the flip chain's current buffer
@@ -3147,6 +3156,13 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
         g_sceneColorRtv->Release();
         g_sceneColorRtv = nullptr;
     }
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (g_sceneColorResource)
+    {
+        g_sceneColorResource->Release();
+        g_sceneColorResource = nullptr;
+    }
+#endif
     g_gameBackbufferDesc = {};
     g_gameBackbufferDescValid = false;
     if (ID3D11Texture2D* retained =
@@ -3233,6 +3249,13 @@ void VR_DetachGamePresentation()
         g_sceneColorRtv->Release();
         g_sceneColorRtv = nullptr;
     }
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (g_sceneColorResource)
+    {
+        g_sceneColorResource->Release();
+        g_sceneColorResource = nullptr;
+    }
+#endif
 }
 
 bool VR_CaptureRenderedEye(int eye)
@@ -3321,6 +3344,7 @@ void VR_EndRasterEye()
     g_rasterEye = -1;
 }
 
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
 bool VR_BeginNativeHudEyeDraw(int eye)
 {
     auto& route = g_nativeHudEyeRoute;
@@ -3335,7 +3359,13 @@ bool VR_BeginNativeHudEyeDraw(int eye)
     route.scissorCount =
         D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
     g_context->RSGetScissorRects(&route.scissorCount, route.scissors);
-    if (!route.rtvs[0])
+    // Engine target 1 can already have passed through the normal eye redirect
+    // before this phase boundary, so exactly two slot-0 pointers are proven:
+    // the retained scene RTV and this eye's cache. Anything else stays stock.
+    const bool expectedSource = route.rtvs[0] &&
+        (route.rtvs[0] == g_sceneColorRtv ||
+         route.rtvs[0] == g_eyeCacheRtvs[eye]);
+    if (!expectedSource)
     {
         for (auto*& rtv : route.rtvs)
         {
@@ -3354,13 +3384,16 @@ bool VR_BeginNativeHudEyeDraw(int eye)
 
     route.sourceRtv = route.rtvs[0];
     route.eye = eye;
-    route.active = true;
     ID3D11RenderTargetView* routed[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
     for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
         routed[i] = route.rtvs[i];
     routed[0] = g_eyeCacheRtvs[eye];
+    route.bypassOmRedirect = true;
     g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
                                   routed, route.dsv);
+    route.bypassOmRedirect = false;
+    route.targetCopy = false;
+    route.active = true;
     return true;
 }
 
@@ -3371,12 +3404,15 @@ void VR_EndNativeHudEyeDraw()
         return;
 
     route.active = false;
+    route.targetCopy = false;
+    route.bypassOmRedirect = true;
     g_context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,
                                   route.rtvs, route.dsv);
-    if (route.viewportCount)
-        g_context->RSSetViewports(route.viewportCount, route.viewports);
-    if (route.scissorCount)
-        g_context->RSSetScissorRects(route.scissorCount, route.scissors);
+    route.bypassOmRedirect = false;
+    g_context->RSSetViewports(route.viewportCount,
+                              route.viewportCount ? route.viewports : nullptr);
+    g_context->RSSetScissorRects(route.scissorCount,
+                                 route.scissorCount ? route.scissors : nullptr);
     for (auto*& rtv : route.rtvs)
     {
         if (rtv) rtv->Release();
@@ -3391,7 +3427,51 @@ void VR_EndNativeHudEyeDraw()
     route.viewportCount = 0;
     route.scissorCount = 0;
     route.eye = -1;
+    g_nativeHudPhaseScopes.fetch_add(1, std::memory_order_release);
 }
+
+void VR_BeginNativeHudTargetCopy()
+{
+    auto& route = g_nativeHudEyeRoute;
+    route.targetCopy = route.active;
+}
+
+void VR_EndNativeHudTargetCopy()
+{
+    auto& route = g_nativeHudEyeRoute;
+    if (!route.targetCopy)
+        return;
+    route.targetCopy = false;
+    g_nativeHudExactCopyScopes.fetch_add(1, std::memory_order_relaxed);
+}
+
+ID3D11Resource* VR_RedirectNativeHudCopySource(ID3D11Resource* source)
+{
+    const auto& route = g_nativeHudEyeRoute;
+    if (!route.active || !route.targetCopy || route.eye < 0 || route.eye > 1 ||
+        !g_eyeCache[route.eye] || !g_sceneColorResource ||
+        source != g_sceneColorResource)
+        return source;
+
+    g_nativeHudCopySubstitutions.fetch_add(1, std::memory_order_relaxed);
+    return g_eyeCache[route.eye];
+}
+
+void VR_GetNativeHudRouteStats(unsigned& completedPhaseScopes,
+                               unsigned& id1OmMatches,
+                               unsigned& exactCopyScopes,
+                               unsigned& copySubstitutions)
+{
+    completedPhaseScopes =
+        g_nativeHudPhaseScopes.load(std::memory_order_acquire);
+    id1OmMatches = g_nativeHudId1OmMatches.load(std::memory_order_relaxed);
+    exactCopyScopes =
+        g_nativeHudExactCopyScopes.load(std::memory_order_relaxed);
+    copySubstitutions =
+        g_nativeHudCopySubstitutions.load(std::memory_order_relaxed);
+}
+
+#endif
 
 bool VR_ScopeShouldRenderThisFrame()
 {
@@ -3460,16 +3540,29 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                               ID3D11RenderTargetView* const* input,
                               ID3D11RenderTargetView** output)
 {
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    auto& hudRoute = g_nativeHudEyeRoute;
+    if (hudRoute.bypassOmRedirect)
+        return false;
+#endif
     const int eye = g_rasterEye.load();
     const bool scope=g_rasterScope.load(std::memory_order_acquire);
-    auto& hudRoute = g_nativeHudEyeRoute;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     const bool nativeHud = hudRoute.active && hudRoute.eye >= 0 &&
         hudRoute.eye <= 1;
+#else
+    constexpr bool nativeHud = false;
+#endif
     if ((!scope && !nativeHud && (eye < 0 || eye > 1)) || !input || !output ||
         !g_gameSwapchain)
         return false;
+    int targetEye = eye;
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    if (nativeHud)
+        targetEye = hudRoute.eye;
+#endif
     ID3D11RenderTargetView* target = scope ? g_scopeCacheRtv :
-        g_eyeCacheRtvs[nativeHud ? hudRoute.eye : eye];
+        g_eyeCacheRtvs[targetEye];
     bool changed = false;      // any slot rewritten (scene color or sun shaft)
     bool sceneChanged = false; // scene-color redirect only: marks the eye image valid
     for (UINT i = 0; i < count; ++i)
@@ -3482,13 +3575,22 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         // only the exact target saved at the proven CHUD phase boundary. This
         // is a pointer comparison in the OM hot hook; all COM work occurs once
         // at phase entry/exit.
-        if (nativeHud && target &&
-            (input[i] == hudRoute.sourceRtv || input[i] == g_sceneColorRtv))
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+        if (nativeHud)
         {
-            output[i] = target;
-            changed = true;
+            if (target && (input[i] == hudRoute.sourceRtv ||
+                           input[i] == g_sceneColorRtv))
+            {
+                output[i] = target;
+                g_nativeHudId1OmMatches.fetch_add(1, std::memory_order_relaxed);
+                changed = true;
+            }
+            // A phase-local target which is not one of the two proven pointers
+            // stays stock. In particular, never enter scene-target discovery
+            // while a CHUD phase is active.
             continue;
         }
+#endif
 
         // Normal steady-state path: two pointer comparisons and no COM calls.
         if (g_sceneColorRtv)
@@ -3539,6 +3641,10 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         {
             input[i]->AddRef();
             g_sceneColorRtv = input[i];
+#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+            g_sceneColorResource = resource;
+            resource = nullptr;
+#endif
             output[i] = g_eyeCacheRtvs[eye];
             changed = true;
             sceneChanged = true;
