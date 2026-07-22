@@ -26,19 +26,19 @@ struct Config
     int config_version = 4;
 
     // Portable OpenXR feedback and pose stabilization. Headset smoothing is a
-    // deliberately tiny previous-frame blend (raw by default, 10% hard maximum)
+    // deliberately tiny previous-frame blend (0.03 shipped default, 10% hard maximum)
     // so users may remove micro-jitter without turning head motion into a laggy camera.
     // Aim stabilization affects only the floating VR crosshair; weapon aim and
     // bullets continue to use the current raw controller pose.
-    float haptic_intensity = 0.70f;
-    float headset_smoothing = 0.0f;
-    float aim_stabilization = 0.35f;
+    float haptic_intensity = 0.86f;
+    float headset_smoothing = 0.03f;
+    float aim_stabilization = 0.48f;
 
     float screen_width_m = 4.0f;    // width of the virtual screen, in meters
     float screen_distance_m = 2.4f; // how far away the screen floats, in meters
 
     // M3 VR controller turning (right Sense stick).
-    bool turn_smooth = false;          // false = snap turn, true = smooth turn
+    bool turn_smooth = true;           // false = snap turn, true = smooth turn
     float turn_snap_deg = 30.0f;       // degrees per snap
     float turn_smooth_deg_s = 120.0f;  // smooth turn speed, degrees/second
 
@@ -51,8 +51,8 @@ struct Config
     // rendering. The game's own HUD reticle sits at head-center and is wrong
     // whenever hand aim is on; this one is the truth.
     bool crosshair = true;
-    float crosshair_distance_m = 10.0f; // how far along the aim ray it floats
-    float crosshair_size_deg = 2.25f;   // apparent (angular) size
+    float crosshair_distance_m = 41.0f; // how far along the aim ray it floats
+    float crosshair_size_deg = 10.10f;  // apparent (angular) size
 
     // Crosshair color (0-1 per channel). Default approximates Halo 3's own
     // light CHUD blue. File-only: there is no F1 widget for these.
@@ -62,9 +62,9 @@ struct Config
 
     // Hand-anchored first-person weapon: uniform size multiplier applied to
     // the RIGHT wrist subtree (hand + weapon) around the wrist. Under the true
-    // world projection the authored viewmodels read oversized. 0.97 is the
-    // headset-tuned value (2026-07-20). Home/End adjust live.
-    float gun_scale = 0.97f;
+    // world projection the authored viewmodels read oversized. 0.96 is the
+    // headset-tuned release default. Home/End adjust live.
+    float gun_scale = 0.96f;
 
     // Same trim for the LEFT wrist subtree: the support hand, and the second
     // gun when dual-wielding. Independent of gun_scale because the left hand
@@ -72,7 +72,7 @@ struct Config
     // the left hand has always rendered at — until 2026-07-20 the trim loop
     // used the RIGHT wrist's bone mask for both sides, so no left-hand scale
     // value ever reached a bone.
-    float left_hand_scale = 1.00f;
+    float left_hand_scale = 0.96f;
 
     // (gun_length_scale removed 2026-07-19: a barrel-only squash is not
     // expressible in the engine's uniform-scale bone format; moving bone
@@ -83,7 +83,7 @@ struct Config
     // the cursor/bullet ray stays fixed on the controller, so tune these
     // until the barrel lies on the cursor line. Tune LIVE in the F1 menu;
     // save keeps your calibration.
-    float gun_pitch_deg = 0.0f;
+    float gun_pitch_deg = -3.0f;
     float gun_yaw_deg = 0.0f;
     float gun_roll_deg = 0.0f;
 
@@ -91,18 +91,18 @@ struct Config
     // in meters. 0 = anchored at the controller; negative seats the gun back
     // into/behind your fist (the practical "gun feels too long" trim);
     // positive moves it out of your face. Never touches aim.
-    float gun_forward_m = 0.0f;
+    float gun_forward_m = -0.14f;
 
     // Experimental gun-mounted VR zoom screen. R3 is isolated from Halo's
     // native zoom so the full VR gun/body remain visible; scope_zoom is the
     // fixed 4:3 lens restored on every activation before right-stick adjustment.
     bool scope_enabled = true;
-    float scope_zoom = 12.0f;
-    float scope_screen_width_m = 0.182f;
-    float scope_screen_right_m = -0.081f;
-    float scope_screen_up_m = 0.207f;
-    float scope_screen_forward_m = 0.222f;
-    int scope_refresh_divisor = 2;
+    float scope_zoom = 24.0f;
+    float scope_screen_width_m = 0.159f;
+    float scope_screen_right_m = -0.058f;
+    float scope_screen_up_m = 0.216f;
+    float scope_screen_forward_m = 0.050f;
+    int scope_refresh_divisor = 3;
 
     // (show_hud / hud_ammo / hud_health / hud_motion / hud_grenades retired
     // 2026-07-19 evening: their chud+0x144..0x14A byte writes used a
@@ -117,7 +117,7 @@ struct Config
     // Game brightness / gamma (0x278EE0's screen color constant). 1.0 = the game's
     // own brightness; higher = brighter, lower = darker. NOT a HUD control — the
     // function once thought to size the HUD actually adjusts brightness.
-    float game_brightness = 1.0f;
+    float game_brightness = 1.11f;
 
     // Halo's internal raster scale, applied by the launcher on the next game
     // start. ANY value from kResolutionScaleMin to kResolutionScaleMax is
@@ -142,20 +142,20 @@ struct Config
     // re-lays the HUD out the same frame the floats change). 0.87 = the game's
     // stock value (mod applies nothing); smaller pulls shields/radar/ammo
     // toward the screen center where both VR eyes can see them.
-    float hud_size = 0.87f;
+    float hud_size = 0.38f;
 
     // Extra horizontal trim after the runtime headset-aspect correction.
     // 1 = automatic shape, lower = narrower, higher = wider.
-    float hud_aspect = 1.0f;
+    float hud_aspect = 1.22f;
 
     // Normalized curvature: 0 = flat (+0.30 destination-Z delta), 1 = fully
     // curved (-0.30 delta), and 0.5 retains each HUD skin's authored value.
-    float hud_curvature = 0.5f;
+    float hud_curvature = 0.48f;
 
     // Vertical HUD translation in Halo virtual-screen pixels. Positive raises
     // the complete HUD and negative lowers it; the authored reticle is excluded
     // because VR renders it separately on the controller aim ray.
-    float hud_vertical_offset = 0.0f;
+    float hud_vertical_offset = 16.0f;
 
     // Automatically enter VR (head tracking + stereo) when a level loads, and
     // drop back to the flat menu screen when you leave — no F2/F11 needed.
@@ -172,9 +172,9 @@ struct Config
     bool two_hand_toggle = true;
     // Wrist-to-palm correction for the left controller. This same point drives
     // the rendered support hand and the two-hand aiming line so they stay
-    // aligned. Negative seats the hand back toward the wrist; -0.093 is the
-    // headset-tuned value (2026-07-20).
-    float left_hand_forward_m = -0.093f;
+    // aligned. Negative seats the hand back toward the wrist; -0.063 is the
+    // headset-tuned release default.
+    float left_hand_forward_m = -0.063f;
     // Sideways nudge of the two-hand grab zone along the right controller's +X
     // (positive = toward the player's right) so the grab line sits on the
     // visible barrel. Headset request 2026-07-19: the AR's barrel sat right of
@@ -184,7 +184,7 @@ struct Config
     // controller forward. Extends the two-hand grab line/zone sample out to
     // the VISIBLE palm (the hand target anchors the wrist bone). Headset-
     // confirmed 2026-07-19: two-hand grab described as perfect with this.
-    float left_grip_forward_m = 0.10f;
+    float left_grip_forward_m = 0.097f;
 
     // VRIK stage A1: show the player's real body (game-animated) by flipping
     // the engine's director/viewmodel switches. Experimental gate for the
@@ -196,13 +196,13 @@ struct Config
     // assembly. ON = articulated arm; OFF = the previous rigid parent.
     bool arm_ik = true;
 
-    // Floating-hands presentation (OFF by default). Shows only the hands and the
+    // Floating-hands presentation (ON by default). Shows only the hands and the
     // guns they hold; the upper arms and forearms are hidden. This is a pure
     // render filter layered ON TOP of the untouched VRIK solve: the hands are
     // still tracked to the controllers exactly as before, and every arm/aim/
     // dual-wield calculation is unchanged. It only collapses the non-hand,
     // non-gun bones in the final visible palette so their geometry disappears.
-    bool floating_hands = false;
+    bool floating_hands = true;
 
     // Lower the RIGHT (weapon) shoulder so Master Chief's arm doesn't clip up
     // into your face — drops the shoulder anchor along your view-down axis.

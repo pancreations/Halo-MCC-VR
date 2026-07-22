@@ -59,6 +59,27 @@ troubleshoot, and bug fix.
   DLL (user: "halo 3 is working"), so the vibration change is fully closed. Only
   the private baseline restore remains, to return the ODST test folder to its
   frozen baseline when ODST testing pauses.
+- RELEASE DEFAULTS SET FROM USER CALIBRATION 2026-07-22: the built-in
+  `halomccvr.cfg` defaults in `src/common/config.h` were updated to the user's
+  headset-tuned values so a fresh install / F1 "Reset to defaults" ships their
+  dialed-in experience for the upcoming ODST-inclusive release. Changed:
+  `haptic_intensity` 0.86, `headset_smoothing` 0.03, `aim_stabilization` 0.48,
+  `turn_smooth` on, `crosshair_distance_m` 41.0, `crosshair_size_deg` 10.10,
+  `gun_scale` 0.96, `left_hand_scale` 0.96, `gun_pitch_deg` -3, `gun_forward_m`
+  -0.14, `scope_zoom` 24.0, `scope_screen_width_m` 0.159, scope offsets
+  -0.058/0.216/0.050, `scope_refresh_divisor` 3, `game_brightness` 1.11,
+  `hud_size` 0.38, `hud_aspect` 1.22, `hud_curvature` 0.48,
+  `hud_vertical_offset` +16, `left_hand_forward_m` -0.063, `left_grip_forward_m`
+  0.097, `floating_hands` on. Deliberately KEPT Halo-3-safe (user-approved):
+  `shoulder_back_m` 0.0 and `right_shoulder_drop` 0.06 — the user's ODST values
+  (0.10 / 0.30) would move Halo 3's shoulders if a player re-enables arms, and
+  are invisible under the shipped floating-hands default anyway. The generated
+  cfg's "(default ...)" comment lines read from a default-constructed `Config`,
+  so every annotation updates automatically; `config.cpp` needed no edit and
+  `core_tests.cpp` default assertions were updated to match. OFF and ON Release
+  builds and both CTest suites pass. Existing user cfg files are unaffected —
+  their saved values still override the defaults on load; only fresh installs
+  and an explicit reset pick up the new defaults.
 - ODST NATIVE HUD PIPELINE PARITY - HEADSET-CONFIRMED 2026-07-22: commit
   `fa37870b8cddf9e3ef9687f664aa876fdd787108` was deployed through the guarded
   private path as DLL SHA-256

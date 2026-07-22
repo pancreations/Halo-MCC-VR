@@ -444,7 +444,7 @@ int main()
     Check(std::filesystem::exists(primary), "Legacy config migration creates halomccvr.cfg");
     Check(std::filesystem::exists(legacy), "Legacy config migration retains halo3xr.cfg");
     Check(g_config.screen_width_m == 6.25f, "Legacy values survive migration");
-    Check(g_config.haptic_intensity == 0.70f,
+    Check(g_config.haptic_intensity == 0.86f,
         "Malformed new values retain their individual default");
     const std::string organizedConfig = ReadTextFile(primary);
     const size_t openXrSection = organizedConfig.find("#  OPENXR & COMFORT");
@@ -633,12 +633,12 @@ int main()
           g_config.hud_curvature == defaults.hud_curvature &&
           g_config.hud_vertical_offset == defaults.hud_vertical_offset &&
           g_config.scope_enabled &&
-          g_config.scope_zoom == 12.0f &&
-          g_config.scope_screen_width_m == 0.182f &&
-          g_config.scope_screen_right_m == -0.081f &&
-          g_config.scope_screen_up_m == 0.207f &&
-          g_config.scope_screen_forward_m == 0.222f &&
-          g_config.scope_refresh_divisor == 2,
+          g_config.scope_zoom == defaults.scope_zoom &&
+          g_config.scope_screen_width_m == defaults.scope_screen_width_m &&
+          g_config.scope_screen_right_m == defaults.scope_screen_right_m &&
+          g_config.scope_screen_up_m == defaults.scope_screen_up_m &&
+          g_config.scope_screen_forward_m == defaults.scope_screen_forward_m &&
+          g_config.scope_refresh_divisor == defaults.scope_refresh_divisor,
         "The recreated config file carries the struct defaults");
     std::filesystem::remove_all(configDir);
 
