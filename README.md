@@ -1,4 +1,7 @@
 # Halo MCC VR
+⚠️ Heads up: 
+
+Windows or your antivirus might flag the mod or move a file to quarantine. The Files are not verified so please use at your own risk. More knowledgeable people are yelling at me so I gotta disclose that to you all.  Hopefully we can take care of this issue soon with some human review of the code itself. it's all there take a gander.
 
 A native OpenXR VR mod for Halo 3 and Halo 3: ODST in Halo: The Master Chief
 Collection (Steam).
