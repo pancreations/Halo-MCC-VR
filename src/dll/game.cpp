@@ -279,7 +279,7 @@ namespace
         OdstMotionBlurVar motionBlurVars[2]{};
         bool motionBlurResolved = false;
         bool motionBlurZeroed = false;
-        void* hookTargets[9]{}; // 5 camera + interpolation/palette + crosshair predicate/draw
+        void* hookTargets[10]{}; // 5 camera + interp/palette + crosshair predicate/draw + brightness
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
@@ -7185,6 +7185,44 @@ namespace
             static_cast<unsigned long long>(visibleTarget - base));
     }
 
+    // ODST game-brightness parity. The screen color/gamma constant uploader is
+    // byte-identical to Halo 3 (docs/ODST-SIGNATURE-EVIDENCE.md kHudXformSig,
+    // unique ODST match at halo3odst.dll+0x2A6308). Best-effort/fail-open: on any
+    // miss, brightness is simply fixed at 1.0 and the camera transaction is
+    // unaffected. No byte patch — a plain removable hook. Inert at the default
+    // game_brightness of 1.0 (HudXformHook only scales when brightness != 1.0).
+    void InstallOdstBrightnessHook(uintptr_t base, size_t size)
+    {
+        const char* kHudXformSig =
+            "40 55 48 8B EC 48 83 EC 50 0F 29 74 24 40 0F 28 F1 0F 29 7C 24 30 "
+            "0F 28 CA 0F 28 F8";
+        uintptr_t hudXform = sig::Find(base, size, kHudXformSig);
+        if (!hudXform ||
+            sig::Find(hudXform + 1, base + size - hudXform - 1, kHudXformSig))
+        {
+            LOG("ODST brightness: signature missing/ambiguous; brightness fixed "
+                "at 1.0");
+            return;
+        }
+        const MH_STATUS createStatus = MH_CreateHook(
+            reinterpret_cast<void*>(hudXform),
+            reinterpret_cast<void*>(&HudXformHook),
+            reinterpret_cast<void**>(&g_realHudXform));
+        if (createStatus != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(hudXform)) != MH_OK)
+        {
+            if (createStatus == MH_OK)
+                MH_RemoveHook(reinterpret_cast<void*>(hudXform));
+            g_realHudXform = nullptr;
+            LOG("ODST brightness: hook failed; brightness fixed at 1.0");
+            return;
+        }
+        g_odstCamera.hookTargets[g_odstCamera.hookTargetCount++] =
+            reinterpret_cast<void*>(hudXform);
+        LOG("ODST brightness: game-brightness hook active at halo3odst.dll+0x%llX",
+            static_cast<unsigned long long>(hudXform - base));
+    }
+
     void ClearOdstCameraPointers()
     {
         g_odstCamera.moduleBase = 0;
@@ -7210,6 +7248,7 @@ namespace
         g_realHudCrosshairVisible = nullptr;
         g_realHudDrawWidget = nullptr;
         g_gameIsPlayback = nullptr;
+        g_realHudXform = nullptr;
         g_odstCamera.gunCameraArray = 0;
         g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
         memset(g_odstCamera.eyeCompactCamera, 0,
@@ -8166,6 +8205,8 @@ namespace
         // Halo 3. Never fails the camera transaction; on any mismatch the native
         // crosshair simply stays visible.
         InstallOdstCrosshairHider(base, size);
+        // Best-effort game-brightness parity (proven byte-identical uploader).
+        InstallOdstBrightnessHook(base, size);
 
         g_odstCamera.captureFailures.store(0, std::memory_order_release);
         g_odstCamera.sawValidCamera.store(false, std::memory_order_release);
