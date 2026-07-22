@@ -1003,6 +1003,17 @@ native pause, install failure, and heartbeat loss remain the teardown boundaries
 This specifically removes the path that produced both headset failures while
 retaining the direct death-render capture introduced in Build F.
 
+### Build G headset acceptance: death/respawn and cross-title re-entry pass
+
+Build G deployed from commit `5a66ed456bb0e567e1e43757fd81a3f18ba5dbc0`
+as private DLL
+`36E74C018415B1000C75E13793678904BF1494B19912F70AD231A7F8E014C0EE`
+(backup-20). Headset testing confirmed that death no longer exits VR, respawn
+returns correctly, and an ODST -> Halo 3 -> ODST title round trip also works.
+The user reported that the cameras worked throughout. Promote this exact DLL as
+the private ODST rollback baseline before vehicle-control work; do not restore
+the older pre-Build-G DLL.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
