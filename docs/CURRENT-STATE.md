@@ -1069,6 +1069,36 @@ vehicle's head-relative movement rotation is bypassed. The input hook logs
 `ODST vehicle controls: ...` on first activation, making deployment and mode
 entry independently visible in the next test log.
 
+### Build I live headset result: branch activates, behavior unchanged
+
+Build I deployed as DLL
+`0928D5812308C984487E5F6AF584FFBB1519DE0DBE67E15C0123C36A43A36E92`.
+While the user remained in the car, the log proved the post-copy classifier did
+activate at `21:28:30`, but the user again observed no control change. A
+simultaneous read-only live camera capture then showed the settled vehicle state:
+both root and nested compact cameras had `fpBlend=0.0`; the near-1 value exists
+only during vehicle entry. Build I's raw-left-stick theory is therefore disproven
+and the Build H/I movement bypass must be removed.
+
+The live log exposed the real divergence: `Game_ComputeAimStick` repeatedly
+reported `camera hook not running` throughout the ride. Halo 3's `CamCopyHook`
+publishes the pre-head-look aim forward and sets `g_aimSeen` on every live camera
+copy, with no first-person-blend gate, and keeps that ownership latched until a
+real lifecycle boundary. ODST instead published aim only above the FP blend
+threshold and cleared `g_aimSeen` every update. A settled blend-0 vehicle
+therefore lost the right-controller/right-stick path entirely.
+
+### Build J candidate: copy Halo 3's continuous camera-aim ownership
+
+Remove the failed Build H/I movement override. Keep the shared Halo 3
+head-relative movement mapping unchanged. In ODST's proven active slot-0 camera
+copy, publish the source's pre-head-look forward and notify the aim/reticle path
+for every active camera exactly as Halo 3 does, including the blend-0 vehicle.
+Stop clearing `g_aimSeen` every ODST update; install, heartbeat teardown, pause,
+and title exit already clear it at real ownership boundaries. This supplies the
+vehicle with Halo 3's continuous right-controller -> injected right stick ->
+native camera/vehicle steering chain without a vehicle-specific engine patch.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

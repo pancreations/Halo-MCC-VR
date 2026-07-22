@@ -8,7 +8,6 @@ constexpr uint64_t kOdstCameraSoftTimeoutMs = 750;
 constexpr uint64_t kOdstCameraHardTimeoutMs = 5000;
 constexpr uint64_t kOdstCameraStableMs = 1000;
 constexpr float kOdstFirstPersonBlendMin = 0.95f;
-constexpr float kOdstOnFootBlendMin = 0.9995f;
 
 struct OdstHalo3FovMatch
 {
@@ -129,26 +128,12 @@ inline bool OdstMotionAimEligible(
     return cameraOnlyContext && armed && headTracking && !teardownRequested;
 }
 
-// Live ODST evidence separates the two gameplay cameras inside the otherwise
-// shared first-person path: on foot reports blend 1.0, while the vehicle driver
-// camera reports about 0.998. Halo 3 lets the right-hand aim/cursor guide the
-// vehicle, so ODST must keep motion aim active but must not rotate the left stick
-// into the headset-relative on-foot frame while this camera owns slot 0.
+// First-person render classification only. On foot reports 1.0 and camera
+// transitions can pass near 0.998; the settled vehicle camera is blend 0 and
+// receives aim through the separate Halo 3 active-camera ownership rule.
 inline bool OdstFirstPersonControlBlend(float fpBlend)
 {
     return std::isfinite(fpBlend) && fpBlend >= kOdstFirstPersonBlendMin;
-}
-
-inline bool OdstCursorGuidedVehicleBlend(float fpBlend)
-{
-    return OdstFirstPersonControlBlend(fpBlend) &&
-        fpBlend < kOdstOnFootBlendMin;
-}
-
-inline bool OdstShouldMapMoveHeadRelative(
-    bool cameraOnlyContext, bool cursorGuidedVehicle)
-{
-    return !cameraOnlyContext || !cursorGuidedVehicle;
 }
 
 inline bool OdstMustClearForeignPause(

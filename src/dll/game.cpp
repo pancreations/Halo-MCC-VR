@@ -241,7 +241,6 @@ namespace
         std::atomic<bool> teardownRequested{false};
         std::atomic<bool> sawValidCamera{false};
         std::atomic<bool> waitingLogged{false};
-        std::atomic<bool> cursorGuidedVehicle{false};
         std::atomic<int> fallbackReason{static_cast<int>(OdstFallbackReason::None)};
         std::atomic<int> activeCallbacks{0};
         std::atomic<int> activeRenderCallbacks{0};
@@ -4431,26 +4430,6 @@ namespace
             layout.sourcePosition, layout.sourceForward, layout.sourceUp);
     }
 
-    bool OdstSourceCameraIsFirstPerson(const void* source)
-    {
-        if (!OdstSourceCameraIsActive(source))
-            return false;
-        const auto& layout = kOdstCameraProfile.layout;
-        const float blend = *reinterpret_cast<const float*>(
-            static_cast<const char*>(source) + layout.sourceFpBlend);
-        const float verticalOffset = *reinterpret_cast<const float*>(
-            static_cast<const char*>(source) + layout.sourceVerticalOffset);
-        const float verticalFov = *reinterpret_cast<const float*>(
-            static_cast<const char*>(source) + layout.sourceVerticalFov);
-        const float referenceFov = *reinterpret_cast<const float*>(
-            static_cast<const char*>(source) + layout.sourceReferenceFov);
-        return OdstFirstPersonControlBlend(blend) &&
-            verticalOffset == 0.0f && isfinite(verticalFov) &&
-            verticalFov > 0.0001f && verticalFov < 3.1415f &&
-            isfinite(referenceFov) && referenceFov > 0.0001f &&
-            referenceFov < 3.1415f;
-    }
-
     bool OdstCompactCameraIsActive(const void* compact)
     {
         const auto& layout = kOdstCameraProfile.layout;
@@ -4793,21 +4772,17 @@ namespace
             OdstSingleUserTailIsValid(
                 reinterpret_cast<const void*>(g_odstCamera.gunCameraArray));
         // Any active camera in our proven slot-0 view keeps the core alive and
-        // its heartbeat fed -- the first-person camera OR a third-person
-        // death/vehicle/turret/cutscene camera. Head-look and aim publishing
-        // still apply ONLY to the proven first-person camera; a non-FP camera
-        // is left exactly as the engine produced it and simply renders stock,
-        // so 3D resumes automatically the instant first-person returns.
+        // receives Halo 3's camera ownership. Halo 3 publishes the pre-head-look
+        // aim forward on EVERY live camera copy; it does not gate vehicle aim on
+        // a first-person blend. ODST's settled vehicle camera is blend 0, so the
+        // old blend gate disabled the right-controller path for the entire ride.
         const bool ownsActiveCamera =
             g_odstCamera.installed.load(std::memory_order_acquire) &&
             singleUserPath &&
             OdstSourceCameraIsActive(source);
-        const bool monitoring =
-            ownsActiveCamera && OdstSourceCameraIsFirstPerson(source);
         // Halo 3 applies headset ownership to every active observer camera,
-        // including death/cinematics. Do the same for ODST; aim publication
-        // remains first-person-only, but a blend-0 death camera must not become
-        // a head-locked projection submitted at a moving OpenXR pose.
+        // including vehicles, death, and cinematics. Do the same for ODST: a
+        // blend-0 active camera still owns both head look and continuous aim.
         const bool transform = ownsActiveCamera &&
             g_odstCamera.armed.load(std::memory_order_acquire) &&
             !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
@@ -4816,27 +4791,22 @@ namespace
         if (ownsActiveCamera)
         {
             ApplyOdstMotionBlurSetting();
-            if (monitoring)
+            // Exact Halo 3 control ownership: publish the source camera's
+            // pre-head-look forward for every active camera copy. Vehicles
+            // then consume the same continuous closed-loop right-stick aim
+            // that guides Halo 3 vehicles. Reads only the proven source
+            // layout; no new offset or vehicle-specific patch.
+            const char* srcBytes = static_cast<const char*>(source);
+            float aimForward[3];
+            memcpy(aimForward, srcBytes + layout.sourceForward,
+                   sizeof(aimForward));
+            if (isfinite(aimForward[0]) && isfinite(aimForward[1]) &&
+                isfinite(aimForward[2]))
             {
-                // Publish the ODST weapon aim direction from the source
-                // camera's pre-head-look forward, mirroring Halo 3's
-                // CamCopyHook. The engine recomputes this forward from aim
-                // state every frame, so before OdstApplyHeadLook rewrites it
-                // below it equals the true aim ray that the closed-loop aim
-                // stick and the floating reticle consume. Reads only the
-                // already-proven source layout; no new offset.
-                const char* srcBytes = static_cast<const char*>(source);
-                float aimForward[3];
-                memcpy(aimForward, srcBytes + layout.sourceForward,
-                       sizeof(aimForward));
-                if (isfinite(aimForward[0]) && isfinite(aimForward[1]) &&
-                    isfinite(aimForward[2]))
-                {
-                    g_aimFwdX.store(aimForward[0]);
-                    g_aimFwdY.store(aimForward[1]);
-                    g_aimFwdZ.store(aimForward[2]);
-                    g_aimSeen = true;
-                }
+                g_aimFwdX.store(aimForward[0]);
+                g_aimFwdY.store(aimForward[1]);
+                g_aimFwdZ.store(aimForward[2]);
+                g_aimSeen = true;
             }
         }
         if (transform)
@@ -4863,18 +4833,6 @@ namespace
                 : OdstFallbackReason::LevelUnloaded);
         }
         void* result = original(destination, source);
-        if (ownsPrimaryCamera)
-        {
-            // Vehicle evidence was captured from the completed compact camera,
-            // not this function's pre-interpolation source. ODST can report 1.0
-            // in source while the camera it actually renders is ~0.998. Publish
-            // control mode only after the native copy has produced destination.
-            const float renderedBlend = *reinterpret_cast<const float*>(
-                static_cast<const char*>(destination) + layout.compactFpBlend);
-            g_odstCamera.cursorGuidedVehicle.store(
-                monitoring && OdstCursorGuidedVehicleBlend(renderedBlend),
-                std::memory_order_release);
-        }
         if (transform)
         {
             char* bytes = static_cast<char*>(source);
@@ -4886,13 +4844,9 @@ namespace
         }
         if (ownsActiveCamera)
         {
-            // The camera-transform notify is an aim/reticle timing signal, so
-            // it stays first-person-only; the heartbeat, however, must be fed
-            // by any active camera (including a non-FP death/vehicle cam) so
-            // the worker and Present-side never read a heartbeat loss and drop
-            // stereo during death.
-            if (monitoring &&
-                g_odstCamera.armed.load(std::memory_order_acquire))
+            // Match Halo 3: every active camera copy is an aim/reticle timing
+            // signal as well as a heartbeat, including the blend-0 vehicle.
+            if (g_odstCamera.armed.load(std::memory_order_acquire))
                 VR_NotifyCameraTransform();
             g_lastCamCopyMs.store(GetTickCount64(), std::memory_order_release);
             g_odstCamera.sawValidCamera.store(true, std::memory_order_release);
@@ -6591,8 +6545,6 @@ namespace
         g_odstCamera.installedAtMs.store(0, std::memory_order_release);
         g_odstCamera.cameraArrayReady.store(
             false, std::memory_order_release);
-        g_odstCamera.cursorGuidedVehicle.store(
-            false, std::memory_order_release);
     }
 
     bool ValidateOdstCameraLayout()
@@ -7482,8 +7434,6 @@ namespace
 
         g_odstCamera.captureFailures.store(0, std::memory_order_release);
         g_odstCamera.sawValidCamera.store(false, std::memory_order_release);
-        g_odstCamera.cursorGuidedVehicle.store(
-            false, std::memory_order_release);
         g_odstCamera.fallbackReason.store(
             static_cast<int>(OdstFallbackReason::None), std::memory_order_release);
         g_odstCamera.teardownRequested.store(false, std::memory_order_release);
@@ -7551,8 +7501,6 @@ namespace
         g_zoomFactor.store(1.0f, std::memory_order_release);
         g_odstCamera.sawValidCamera.store(false, std::memory_order_release);
         g_odstCamera.captureFailures.store(0, std::memory_order_release);
-        g_odstCamera.cursorGuidedVehicle.store(
-            false, std::memory_order_release);
         ReleaseOdstModuleReferenceAndClearPointers();
         g_odstCamera.teardownRequested.store(false, std::memory_order_release);
         g_odstCamera.fallbackReason.store(
@@ -8067,7 +8015,10 @@ void Game_AutoVrTick()
         if (activeTitle && activeTitle->title == GameTitle::Halo3ODST)
             TitleAdapter_SetRuntimeMode(RuntimeMode::Unsupported);
         VR_SetScopeActive(false);
-        g_aimSeen.store(false, std::memory_order_release);
+        // Halo 3 latches aimSeen once its live camera hook publishes. Keep the
+        // same ownership here; camera heartbeat teardown and title transitions
+        // already clear it. Per-update clearing caused XInput aim to drop out
+        // between ODST camera copies, especially throughout vehicle cameras.
 
         bool nativePaused = false;
         const bool nativePauseKnown = ReadOdstEnginePaused(nativePaused);
@@ -8547,22 +8498,6 @@ void Game_MapMoveStick(float& mx, float& my)
 {
     if (!Game_AllowsSharedGameplayFeatures() && !Game_AllowsOdstMotionAim())
         return;
-#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
-    const bool odstCursorGuidedVehicle =
-        g_odstCamera.cursorGuidedVehicle.load(std::memory_order_acquire);
-    if (!OdstShouldMapMoveHeadRelative(
-            OdstCameraOnlyContext(), odstCursorGuidedVehicle))
-    {
-        // Match Halo 3 vehicles: the closed-loop right-controller aim remains
-        // active, while the unrotated left stick reaches the game's native
-        // vehicle input so the right-hand cursor/aim direction guides travel.
-        static std::atomic<bool> logged{false};
-        if (!logged.exchange(true))
-            LOG("ODST vehicle controls: right-controller cursor guides vehicle; "
-                "left stick uses native vehicle input");
-        return;
-    }
-#endif
     // The game moves relative to its aim heading, which VR aim points at the
     // hand. Rotate the move vector by (head - aim) yaw so pushing forward
     // walks where you look instead of where the gun points.
