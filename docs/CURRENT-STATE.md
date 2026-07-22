@@ -2,6 +2,20 @@
 
 Authoritative as of 2026-07-21. If another note conflicts with this file, this file wins. Historical experiments remain available in Git history; they are not implementation instructions.
 
+## Non-negotiable Halo 3 parity contract (user decision 2026-07-21)
+
+Halo 3's headset-confirmed behavior is the player-facing foundation for ODST
+and every later MCC title. All agents must implement each target-title feature
+to behave the same as Halo 3 for the end user: input/control semantics, camera
+ownership, stereo and transitions, HUD, weapons, comfort, universal settings,
+and recovery across death, pause, unload, and title changes. Prefer the same
+shared behavior path with a per-title evidence adapter. Engine addresses,
+layouts, skeleton data, and tag meanings still require target-title proof and
+must never be copied blindly. Any unavoidable player-visible difference must be
+recorded honestly and approved by the user; an approximation is not parity.
+Completion requires target-title headset confirmation and a Halo 3 regression
+check whenever shared behavior or cross-title lifecycle state could change.
+
 ## Recovery points
 
 - Headset-proven baseline: 330a568

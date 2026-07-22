@@ -6,6 +6,11 @@ code, read docs/CURRENT-STATE.md. It is the only authoritative status and
 failure ledger. docs/RE-notes.md contains only verified reverse-engineering
 facts, and docs/EDITING-KIT-EVIDENCE.md governs per-title evidence.
 
+Read and obey `AGENTS.md`. Its Halo 3 player-facing parity contract applies to
+every agent and every title adapter. Halo 3's headset-confirmed behavior is the
+foundation; title-specific engine evidence changes how that behavior is reached,
+not what the end user receives.
+
 ## User and testing
 
 The user is a game modder, not a programmer. Explain test steps in plain language. Headset results outrank theories, logs, and desktop appearance. Do not claim a fix until the user has tested the exact deployed DLL.
