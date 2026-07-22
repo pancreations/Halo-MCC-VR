@@ -87,15 +87,23 @@ int main()
         Check(!OdstMotionAimEligible(true, true, true, true),
             "teardown always vetoes ODST motion aim");
         Check(OdstShouldStereoRedirect(true, true, true, true),
-            "a proven first-person slot-0 camera (incl. vehicles) is stereo-redirected");
+            "a proven slot-0 camera is stereo-redirected");
         Check(!OdstShouldStereoRedirect(true, true, true, false),
-            "a truly third-person camera (death-cam) renders stock, not stereo");
+            "a non-redirectable custom camera renders stock");
         Check(!OdstShouldStereoRedirect(false, true, true, true),
             "a foreign camera slot is never stereo-redirected");
         Check(!OdstShouldStereoRedirect(true, false, true, true),
             "a broken single-user tail is never stereo-redirected");
         Check(!OdstShouldStereoRedirect(true, true, false, true),
             "a mismatched nested FP source is never stereo-redirected");
+        Check(!OdstCaptureFailureRequestsFallback(true, 1),
+            "one missing first-person capture is a tolerated mode transition");
+        Check(!OdstCaptureFailureRequestsFallback(
+                  false, kOdstConsecutiveFpCaptureFailureLimit),
+            "a direct third-person miss never dismantles the VR session");
+        Check(OdstCaptureFailureRequestsFallback(
+                  true, kOdstConsecutiveFpCaptureFailureLimit),
+            "persistent first-person capture failure still fails closed");
         Check(OdstCamCopyRequestsTeardown(true, true, false),
             "a broken slot-0 single-user tail tears down (level unload/transition)");
         Check(!OdstCamCopyRequestsTeardown(true, true, true),

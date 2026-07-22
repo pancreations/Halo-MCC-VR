@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <d3dcompiler.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -199,6 +200,12 @@ namespace
     ID3D11RenderTargetView* g_sceneColorRtv = nullptr;
     D3D11_TEXTURE2D_DESC g_gameBackbufferDesc{};
     bool g_gameBackbufferDescValid = false;
+    // Retained immediately after Present using the flip chain's current buffer
+    // index. ODST can copy it after each death-camera eye draw without COM
+    // discovery in the hot render path.
+    std::atomic<ID3D11Texture2D*> g_nextGameBackbuffer{nullptr};
+    IDXGISwapChain* g_flipIndexOwner = nullptr;
+    IDXGISwapChain3* g_flipIndexChain = nullptr;
 
     // Where the virtual screen sits: yaw-only orientation + head position,
     // captured once at start (and again on "re-center").
@@ -3046,7 +3053,7 @@ void VR_BeforePresent(IDXGISwapChain* sc)
     QueryPerformanceCounter(&g_dxgiPresentStartQpc);
 }
 
-void VR_AfterPresent(IDXGISwapChain*)
+void VR_AfterPresent(IDXGISwapChain* sc)
 {
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
@@ -3054,6 +3061,33 @@ void VR_AfterPresent(IDXGISwapChain*)
         g_presentDurationsMs.Add(
             QpcMs(now.QuadPart - g_dxgiPresentStartQpc.QuadPart));
     g_dxgiPresentStartQpc = {};
+
+    // Present has advanced the flip-model chain. Retain its reported current
+    // buffer outside all camera/render hooks for ODST's direct death capture.
+    if (sc)
+    {
+        UINT currentIndex = 0;
+        if (g_flipIndexOwner != sc)
+        {
+            if (g_flipIndexChain)
+                g_flipIndexChain->Release();
+            g_flipIndexChain = nullptr;
+            g_flipIndexOwner = sc;
+            sc->QueryInterface(__uuidof(IDXGISwapChain3),
+                reinterpret_cast<void**>(&g_flipIndexChain));
+        }
+        if (g_flipIndexChain)
+            currentIndex = g_flipIndexChain->GetCurrentBackBufferIndex();
+        ID3D11Texture2D* next = nullptr;
+        if (SUCCEEDED(sc->GetBuffer(currentIndex, __uuidof(ID3D11Texture2D),
+                                    reinterpret_cast<void**>(&next))) && next)
+        {
+            ID3D11Texture2D* previous =
+                g_nextGameBackbuffer.exchange(next, std::memory_order_acq_rel);
+            if (previous)
+                previous->Release();
+        }
+    }
 
     if (g_state != State::Ready || !g_sessionRunning)
         return;
@@ -3100,6 +3134,9 @@ void VR_OnResizeBuffers(IDXGISwapChain*)
     }
     g_gameBackbufferDesc = {};
     g_gameBackbufferDescValid = false;
+    if (ID3D11Texture2D* retained =
+            g_nextGameBackbuffer.exchange(nullptr, std::memory_order_acq_rel))
+        retained->Release();
 }
 
 void VR_RequestRecenter()
@@ -3199,6 +3236,28 @@ bool VR_CaptureRenderedEye(int eye)
         loggedMissing = true;
     }
     return false;
+}
+
+bool VR_CaptureBackbufferEye(int eye)
+{
+    if (eye < 0 || eye > 1 || !g_context || !g_gameBackbufferDescValid ||
+        !g_eyeCache[eye] || !g_eyeCacheRtvs[eye])
+        return false;
+    ID3D11Texture2D* backbuffer =
+        g_nextGameBackbuffer.load(std::memory_order_acquire);
+    if (!backbuffer ||
+        g_eyeCacheDesc.Width != g_gameBackbufferDesc.Width ||
+        g_eyeCacheDesc.Height != g_gameBackbufferDesc.Height)
+        return false;
+    if (!Blit(backbuffer, g_gameBackbufferDesc, g_eyeCache[eye],
+              g_eyeCacheDesc.Width, g_eyeCacheDesc.Height,
+              g_eyeCacheRtvs[eye]))
+        return false;
+    g_eyeHasImage[eye] = true;
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true, std::memory_order_relaxed))
+        LOG("M2 RASTER: ODST direct backbuffer death-camera capture active");
+    return true;
 }
 
 void VR_TraceEvent(const char* tag, int a, int b)

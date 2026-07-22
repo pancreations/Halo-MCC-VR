@@ -938,6 +938,44 @@ third-person 3D win, delivered via the FP path.
 
 Both trees build Release clean; CTest green; public OFF and Halo 3 unchanged.
 
+### Build E headset result: death still dismantles VR (2026-07-21)
+
+Build E was deployed as private DLL
+`67C668D1FA245B18BF39B6A519B0D9D5F2990291369297AE297607DDBC63944E`
+from commit `1a20ecc` (backup-18). The first actual death test failed. The log
+proved the mode switch occurred inside one render call: entry still passed the
+first-person gate, then ODST selected its direct death renderer and never bound
+the learned internal scene-color RTV. At `20:32:00.648` capture reported no
+redirect; the old one-strike policy disabled stereo and completed an
+`eye redirect unavailable` teardown at `20:32:01.342`. Respawn could not recover
+because that fallback removes the camera hooks for the title session.
+
+This disproves Build E's claimed recovery. Treat its frozen-frame policy as a
+failed experiment, not a working checkpoint.
+
+### Build F candidate: live third-person death through direct backbuffer capture
+
+ODST's death renderer bypasses the internal scene-color target but completes a
+real camera draw in the game swapchain buffer. The new candidate retains the
+next flip-model buffer immediately after Present (outside camera/render hooks),
+then copies that completed buffer into the appropriate eye cache after each
+death-camera render. No GetBuffer, QI, allocation, lock, or file operation is
+added to the render hook.
+
+The proven plain-perspective slot-0 layout is again stereo-rendered regardless
+of first-person blend. Blend remains the ownership split: on-foot and vehicle
+views keep first-person aim/controls and internal scene-color capture; the
+blend-0 death camera receives headset camera orientation like Halo 3, does not
+publish weapon aim, and uses direct backbuffer eye capture. A camera transition
+may miss up to seven consecutive first-person captures without dismantling VR;
+the eighth persistent first-person miss still fails closed. A third-person
+capture miss never tears down the session, preserving the last valid stereo pair
+until the direct capture or first-person camera returns.
+
+Public-OFF and private-ON Release builds succeed and both CTest runs pass. This
+is a desk-side candidate until death, live death-camera motion, respawn recovery,
+and the normal ODST aim/movement/crosshair path are confirmed in the headset.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.

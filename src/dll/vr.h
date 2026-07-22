@@ -61,6 +61,10 @@ void VR_DetachGamePresentation();
 // Called by the M2 game render hook immediately after each eye's scene pass,
 // before the next eye overwrites the game backbuffer.
 bool VR_CaptureRenderedEye(int eye);
+// ODST's third-person death renderer bypasses the internal scene-color RTV and
+// draws directly into the current swapchain buffer. Copy that completed draw
+// into the eye cache without doing COM discovery in the game render hook.
+bool VR_CaptureBackbufferEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
 

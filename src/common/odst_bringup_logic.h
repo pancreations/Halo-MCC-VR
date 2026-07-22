@@ -133,21 +133,30 @@ inline bool OdstMustClearForeignPause(
     return cameraOnlyContext && (pauseTarget || pausePresentation);
 }
 
-// Camera policy. A live render frame is NEVER a teardown by itself. The core
-// stereo-redirects the proven first-person camera in slot 0 -- which includes
-// vehicles (fpBlend ~0.998, treated as first person, so they get head-look, a
-// stable world, and native controls exactly like Halo 3). Any other live camera
-// -- the truly third-person death-cam (fpBlend 0, which the game does not expose
-// to the eye capture), a foreign slot, or a mode transition -- renders stock
-// while the core stays armed, so 3D resumes automatically the instant the
-// first-person camera returns. Returns true only when the camera should be
-// stereo-redirected.
+// Camera policy. A live render frame is NEVER a teardown by itself. Slot 0 may
+// use either the ordinary internal scene-color path (first person/vehicles) or
+// ODST's direct-to-backbuffer path (the third-person death camera). Both are
+// stereo-redirectable after their camera layout has passed the same single-user
+// and nested-source checks.
 inline bool OdstShouldStereoRedirect(
     bool ownsPrimarySlot, bool singleUserTailValid,
-    bool nestedSourceMatches, bool compactUsesProvenFpMode)
+    bool nestedSourceMatches, bool compactIsStereoRedirectable)
 {
     return ownsPrimarySlot && singleUserTailValid &&
-        nestedSourceMatches && compactUsesProvenFpMode;
+        nestedSourceMatches && compactIsStereoRedirectable;
+}
+
+// ODST can switch to its death renderer inside one render call, after the
+// entry camera was classified as first person. A short missing-capture burst is
+// transition evidence, not a reason to dismantle the VR session. Persistent
+// misses remain fatal while the camera continues to report first person.
+constexpr unsigned kOdstConsecutiveFpCaptureFailureLimit = 8;
+
+inline bool OdstCaptureFailureRequestsFallback(
+    bool firstPersonMode, unsigned consecutiveFailures)
+{
+    return firstPersonMode &&
+        consecutiveFailures >= kOdstConsecutiveFpCaptureFailureLimit;
 }
 
 // The camera-copy path tears down only when our slot-0 view object no longer

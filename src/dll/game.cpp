@@ -4327,15 +4327,11 @@ namespace
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     constexpr float kOdstWorldUnitsPerMeter = 1.0f / 3.048f;
 
-    // A camera is treated as first-person -- head-look injected, stereo eye
-    // redirect, full FP controls -- when its first-person blend is at least
-    // this close to 1. The 2026-07-21 headset capture measured on-foot ~1.0 and
-    // the Warthog/vehicle driver camera at ~0.998 (both render through the FP
-    // scene-color path and capture cleanly), while the truly third-person
-    // death-cam sits at 0.0 and does NOT expose itself to the eye capture
-    // (redirecting it fails and tears down). This threshold puts vehicles on the
-    // proven first-person path -- matching Halo 3 -- and leaves the death-cam to
-    // render stock (a frozen last stereo frame) and recover on respawn.
+    // A camera gets first-person aim/control ownership when its blend is at
+    // least this close to 1. On-foot and vehicle views use that path and the
+    // internal scene-color target. The blend-0 death camera remains a distinct
+    // third-person mode: it gets headset camera ownership but no weapon aim,
+    // and its completed per-eye draws are captured from the direct backbuffer.
     constexpr float kOdstFirstPersonBlendMin = 0.95f;
 
     void OdstRequestPresentationDetach()
@@ -4463,15 +4459,11 @@ namespace
             layout.compactPosition, layout.compactForward, layout.compactUp);
     }
 
-    // The proven first-person camera the eye redirect drives: an ACTIVE,
-    // plain-perspective camera (mode 0, vertical offset 0, ordered bounds, valid
-    // clips, no oblique/custom projection) that is blended into first person
-    // (fpBlend >= kOdstFirstPersonBlendMin). Vehicles (fpBlend ~0.998) qualify
-    // and take the full first-person path -- head-look, stable world, native
-    // controls -- exactly like Halo 3. The truly third-person death-cam (fpBlend
-    // 0) does not: the game never renders it through the scene-color path the
-    // eye capture needs, so redirecting it fails; it renders stock instead.
-    bool OdstCompactCameraUsesProvenMode(const void* compact)
+    // Any active plain-perspective slot-0 camera has a proven layout for the
+    // per-eye camera rewrite. First-person and vehicle renders use the internal
+    // scene-color target; the blend-0 death camera uses a direct backbuffer
+    // capture after the same camera rewrite.
+    bool OdstCompactCameraIsStereoRedirectable(const void* compact)
     {
         if (!OdstCompactCameraIsActive(compact))
             return false;
@@ -4479,8 +4471,6 @@ namespace
         const char* bytes = static_cast<const char*>(compact);
         const uint32_t modeFlags = *reinterpret_cast<const uint32_t*>(
             bytes + layout.compactModeFlags);
-        const float fpBlend = *reinterpret_cast<const float*>(
-            bytes + layout.compactFpBlend);
         const float verticalFov = *reinterpret_cast<const float*>(
             bytes + layout.verticalFov);
         const float referenceFov = *reinterpret_cast<const float*>(
@@ -4502,8 +4492,7 @@ namespace
                 bytes + offset);
             return bounds[0] < bounds[2] && bounds[1] < bounds[3];
         };
-        return modeFlags == 0 && isfinite(fpBlend) &&
-            fpBlend >= kOdstFirstPersonBlendMin && isfinite(verticalFov) &&
+        return modeFlags == 0 && isfinite(verticalFov) &&
             verticalFov > 0.0001f && verticalFov < 3.1415f &&
             isfinite(referenceFov) && referenceFov > 0.0001f &&
             referenceFov < 3.1415f && verticalOffset == 0.0f &&
@@ -4516,6 +4505,16 @@ namespace
             customProjection == 0 && customData[0] == 0.0f &&
             customData[1] == 0.0f && customData[2] == 0.0f &&
             customData[3] == 0.0f;
+    }
+
+    bool OdstCompactCameraUsesProvenMode(const void* compact)
+    {
+        if (!OdstCompactCameraIsStereoRedirectable(compact))
+            return false;
+        const auto& layout = kOdstCameraProfile.layout;
+        const float fpBlend = *reinterpret_cast<const float*>(
+            static_cast<const char*>(compact) + layout.compactFpBlend);
+        return isfinite(fpBlend) && fpBlend >= kOdstFirstPersonBlendMin;
     }
 
     bool OdstSingleUserTailIsValid(const void* view)
@@ -4541,14 +4540,18 @@ namespace
                 bytes + layout.finalTailBoolean) == 0;
     }
 
-    bool OdstCameraArraySupportsBringup(uintptr_t cameraArray)
+    bool OdstCameraArraySupportsMode(
+        uintptr_t cameraArray, bool requireFirstPerson)
     {
         if (!cameraArray)
             return false;
         const auto& layout = kOdstCameraProfile.layout;
         const char* view = reinterpret_cast<const char*>(cameraArray);
-        if (!OdstSingleUserTailIsValid(view) ||
-            !OdstCompactCameraUsesProvenMode(view + layout.rootCurrentCompact))
+        const void* compact = view + layout.rootCurrentCompact;
+        const bool modeValid = requireFirstPerson
+            ? OdstCompactCameraUsesProvenMode(compact)
+            : OdstCompactCameraIsStereoRedirectable(compact);
+        if (!OdstSingleUserTailIsValid(view) || !modeValid)
             return false;
 
         // The nested FP driver publishes its source pointer after the root
@@ -4573,6 +4576,16 @@ namespace
         }
         return OdstInactiveCameraSlotsAreSafe(
             inactive[0], inactive[1], inactive[2]);
+    }
+
+    bool OdstCameraArraySupportsBringup(uintptr_t cameraArray)
+    {
+        return OdstCameraArraySupportsMode(cameraArray, true);
+    }
+
+    bool OdstCameraArraySupportsStereoRedirect(uintptr_t cameraArray)
+    {
+        return OdstCameraArraySupportsMode(cameraArray, false);
     }
 
     void LogOdstCameraReadiness(uintptr_t cameraArray)
@@ -4792,7 +4805,11 @@ namespace
             OdstSourceCameraIsActive(source);
         const bool monitoring =
             ownsActiveCamera && OdstSourceCameraIsFirstPerson(source);
-        const bool transform = monitoring &&
+        // Halo 3 applies headset ownership to every active observer camera,
+        // including death/cinematics. Do the same for ODST; aim publication
+        // remains first-person-only, but a blend-0 death camera must not become
+        // a head-locked projection submitted at a moving OpenXR pose.
+        const bool transform = ownsActiveCamera &&
             g_odstCamera.armed.load(std::memory_order_acquire) &&
             !g_odstCamera.teardownRequested.load(std::memory_order_acquire) &&
             g_enabled.load(std::memory_order_relaxed);
@@ -5342,16 +5359,11 @@ namespace
         }
         char* bytes = static_cast<char*>(view);
         char* camera = bytes + layout.rootCurrentCompact;
-        // Stereo-redirect the proven first-person camera in slot 0 -- which
-        // includes vehicles (fpBlend ~0.998, treated as first person). Any other
-        // live camera -- the truly third-person death-cam (fpBlend 0, which the
-        // game does NOT render through the scene-color path the eye capture
-        // needs, so redirecting it fails and tears down), a foreign slot, or a
-        // mode transition -- renders stock (the compositor holds the last stereo
-        // frame, so it shows a frozen 3D view, not a 2D drop) with the core left
-        // armed, so 3D resumes the instant first-person returns. A live render
-        // frame is NEVER a teardown trigger; true level unloads are detected by
-        // the worker heartbeat and the camera-copy tail check.
+        // Slot 0's active plain-perspective cameras share the proven camera
+        // layout. First-person/vehicles redirect the internal scene color;
+        // blend-0 death renders are copied from ODST's direct backbuffer path.
+        // Foreign slots and custom projections remain stock. A live render
+        // frame is never itself a teardown trigger.
         const bool ownsPrimarySlot = arrayOffset == 0;
         const bool tailValid =
             ownsPrimarySlot && OdstSingleUserTailIsValid(view);
@@ -5359,10 +5371,12 @@ namespace
             *reinterpret_cast<const uintptr_t*>(
                 bytes + layout.nestedSourceCamera) ==
                 viewAddress + layout.rootCurrentCompact;
-        const bool provenMode =
-            ownsPrimarySlot && OdstCompactCameraUsesProvenMode(camera);
+        const bool firstPersonMode = ownsPrimarySlot &&
+            OdstCompactCameraUsesProvenMode(camera);
+        const bool redirectable = ownsPrimarySlot &&
+            OdstCompactCameraIsStereoRedirectable(camera);
         if (!OdstShouldStereoRedirect(ownsPrimarySlot, tailValid, nestedMatch,
-                                      provenMode))
+                                      redirectable))
         {
             // Record the non-first-person camera's field layout (log-only) so a
             // future build can extend the redirect to it with ODST evidence.
@@ -5371,8 +5385,8 @@ namespace
             original(view);
             return;
         }
-        // A proven first-person frame: allow a later non-first-person camera
-        // (death-cam, transition) to re-capture fresh the next time.
+        // A redirected frame: allow a later unsupported/custom camera to
+        // re-capture fresh diagnostics the next time.
         g_odstNonFpCameraLastMode.store(kOdstNonFpNoCapture,
                                         std::memory_order_relaxed);
         struct EyeRenderInput
@@ -5417,13 +5431,11 @@ namespace
             original(view);
             return;
         }
-        if (!OdstCameraArraySupportsBringup(arrayAddress))
+        if (!OdstCameraArraySupportsStereoRedirect(arrayAddress))
         {
             // Eye-location calls above are outside the game camera owner. Check
-            // the complete four-slot/single-user invariant again immediately
-            // before the first camera byte is saved or mutated. A late failure
-            // here is a race with a mode transition, not a fault: render stock
-            // and keep the core armed rather than tearing down a live frame.
+            // the complete four-slot/single-user invariant again, accepting
+            // either proven render path, before any camera byte is mutated.
             original(view);
             return;
         }
@@ -5568,7 +5580,10 @@ namespace
             g_odstCamera.prepareView(view, 0);
             original(view);
             g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
-            capturesOk = VR_CaptureRenderedEye(eye) && capturesOk;
+            bool captured = VR_CaptureRenderedEye(eye);
+            if (!captured && !firstPersonMode)
+                captured = VR_CaptureBackbufferEye(eye);
+            capturesOk = captured && capturesOk;
             VR_EndRasterEye();
         }
 
@@ -5593,8 +5608,12 @@ namespace
             g_odstCamera.captureFailures.store(0, std::memory_order_release);
         else
         {
-            g_odstCamera.captureFailures.fetch_add(1, std::memory_order_acq_rel);
-            OdstRequestFallback(OdstFallbackReason::EyeRedirectUnavailable);
+            const unsigned failures =
+                g_odstCamera.captureFailures.fetch_add(
+                    1, std::memory_order_acq_rel) + 1;
+            if (OdstCaptureFailureRequestsFallback(
+                    firstPersonMode, failures))
+                OdstRequestFallback(OdstFallbackReason::EyeRedirectUnavailable);
         }
     }
 
