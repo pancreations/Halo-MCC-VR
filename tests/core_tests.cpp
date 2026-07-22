@@ -86,6 +86,19 @@ int main()
             "ODST motion aim follows head tracking off");
         Check(!OdstMotionAimEligible(true, true, true, true),
             "teardown always vetoes ODST motion aim");
+        Check(OdstFirstPersonControlBlend(1.0f) &&
+                  OdstFirstPersonControlBlend(0.998f),
+            "on-foot and observed ODST vehicle cameras retain motion-aim ownership");
+        Check(!OdstFirstPersonControlBlend(0.0f),
+            "the ODST death camera never receives gameplay control ownership");
+        Check(OdstCursorGuidedVehicleBlend(0.998f),
+            "the observed ODST vehicle blend selects cursor-guided steering");
+        Check(!OdstCursorGuidedVehicleBlend(1.0f),
+            "the ODST on-foot camera keeps headset-relative movement");
+        Check(!OdstShouldMapMoveHeadRelative(true, true) &&
+                  OdstShouldMapMoveHeadRelative(true, false) &&
+                  OdstShouldMapMoveHeadRelative(false, true),
+            "only a private ODST vehicle bypasses the on-foot movement rotation");
         Check(OdstShouldStereoRedirect(true, true, true, true),
             "a proven slot-0 camera is stereo-redirected");
         Check(!OdstShouldStereoRedirect(true, true, true, false),

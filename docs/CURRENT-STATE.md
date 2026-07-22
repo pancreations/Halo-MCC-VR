@@ -1014,6 +1014,22 @@ The user reported that the cameras worked throughout. Promote this exact DLL as
 the private ODST rollback baseline before vehicle-control work; do not restore
 the older pre-Build-G DLL.
 
+### Build H candidate: Halo 3 cursor-guided vehicle steering in ODST
+
+User clarification corrected the vehicle-control target: in Halo 3 the right
+cursor/aim direction guides the vehicle. The accepted Build G still ran
+`Game_MapMoveStick`'s headset-relative on-foot rotation in the ODST vehicle,
+which cancels that cursor-relative relationship.
+
+The ODST camera evidence provides an isolated mode signal without a new title
+offset: on-foot is `fpBlend=1.0`, while the headset-captured vehicle driver is
+about `0.998` (death is `0.0`). Build H keeps the existing shared Halo 3
+closed-loop right-controller aim active for both on-foot and vehicle cameras,
+but while the observed vehicle blend owns slot 0 it passes the left stick
+through unrotated to ODST's native vehicle input. On foot remains head-relative;
+death receives neither gameplay-control classification; Halo 3 and public-OFF
+builds are unchanged. The mode is cleared on camera teardown/reinstall.
+
 ## 2026-07-19 session closeout
 
 - Confirmed HUD checkpoint: `65113ab` on the history behind `fix/left-hand-wrist-offset`.
