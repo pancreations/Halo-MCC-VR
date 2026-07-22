@@ -49,20 +49,23 @@ check whenever shared behavior or cross-title lifecycle state could change.
   (`kHudXformSig` ODST `0x2A6308`, already proven), then HUD size/curvature/
   aspect (safe-frame tag scan — needs ODST chud_globals layout proof), then HUD
   height (`kHudAnchorBasisSig` ODST signature not yet derived).
-- ODST HUD BRIGHTNESS PARITY — DEPLOYED, PENDING HEADSET CONFIRMATION
-  (2026-07-22): ODST now installs Halo 3's game-brightness hook. Fix `aeb26d7`
-  on `feature/odst-bringup`: `InstallOdstBrightnessHook` hooks the screen
-  color/gamma constant uploader, byte-identical to Halo 3 (`kHudXformSig`,
-  unique ODST match `halo3odst.dll+0x2A6308`). Best-effort/fail-open, no byte
-  patch, registered in `hookTargets`, teardown nulls `g_realHudXform`; inert at
-  the default `game_brightness` 1.0. Same session also exercises HUD
-  size/curvature/aspect, which already tick for ODST via the title-agnostic
-  `HudLayoutAutoTick` safe-frame scan (`Game_AutoVrTick`) — the log will confirm
-  whether ODST's `chud_globals` tag is found. OFF and ON Release builds + both
-  CTests pass; all inside `#if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP`. NEXT: HUD
-  height — `chud_compute_anchor_basis` is recompiled in ODST (22 prologue-shape
-  candidates, asserts stripped), so it needs a Rosetta-stone pin against Halo 3
-  and byte-verified `basis+0x2C` before hooking; its own build.
+- ODST HUD BRIGHTNESS — HEADSET-DISPROVEN AND REVERTED (2026-07-22): hooking
+  ODST's `kHudXformSig` function (`halo3odst.dll+0x2A6308`) with a non-1.0
+  brightness makes the ENTIRE native ODST HUD disappear immediately on level
+  load (only the separate VR crosshair quad survives). Confirmed by headset +
+  log: build `Jul 22 2026 02:16:00` logged `ODST brightness: game-brightness
+  hook active at halo3odst.dll+0x2A6308` and `M3: brightness hook active
+  (game_brightness 1.11)`, and the user saw the HUD gone. The offline evidence
+  had this signature byte-identical to Halo 3 and "semantically equivalent as
+  the screen color/gamma constant uploader," but the ODST runtime disproves that
+  for scaling: on ODST that function's scaled floats are coupled to native HUD
+  visibility, not just screen gamma. Per the failure-ledger rule the experiment
+  was fully reverted (revert of `aeb26d7`) rather than gated behind a flag —
+  `InstallOdstBrightnessHook` removed; ODST brightness stays at engine default.
+  DO NOT re-scale `0x2A6308` on ODST for brightness; if ODST brightness is ever
+  wanted, re-derive the correct ODST function from scratch with headset proof.
+  The reverted build restores the headset-confirmed ODST crosshair + working
+  native HUD.
 - ODST CUTSCENE PARITY COMPLETE — BEST-WORKING VERSION (user-designated
   2026-07-22): ODST cinematics now match Halo 3 end to end -- stereo 3D depth,
   head tracking, AND the view re-orients to the authored shot at every cut.
