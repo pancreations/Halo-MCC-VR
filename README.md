@@ -1,5 +1,4 @@
-NO MORE UPDATES, THANK YOU LIVING FRAY 
-TAKE THIS AND GO FINISH IT I'M DONE. 
+Expect me to quit at any moment 
 https://www.youtube.com/watch?v=GFl3_wPFvdA
 
 
