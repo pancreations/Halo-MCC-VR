@@ -7951,6 +7951,12 @@ namespace
             var = {};
         g_odstCamera.motionBlurResolved = false;
         g_odstCamera.motionBlurZeroed = false;
+        // Drop the cinematic-FOV debug-var pointer for the same stale-pointer
+        // reason as the trampolines above: a later title change must never let
+        // UpdateCinematicFovPolicy write into an unloaded halo3odst.dll. Halo 3
+        // re-resolves its own pointer in InstallHook when it next owns the game.
+        g_reduceCinematicFov.store(nullptr, std::memory_order_release);
+        g_reduceCinematicFovApplied.store(false, std::memory_order_release);
         for (void*& target : g_odstCamera.hookTargets)
             target = nullptr;
         for (void*& trampoline : g_odstCamera.hookTrampolines)
@@ -8959,6 +8965,16 @@ namespace
         // is title-agnostic; the shot-state TLS offset is read from ODST's own
         // instruction (0xA0). Failure logs and leaves shot-facing disabled.
         LocateCinematicState(base, size);
+        // ODST cinematic FOV parity (issue #18): Halo applies a 25% widescreen
+        // FOV reduction while a cinematic is in progress, which also narrows the
+        // visibility projection and pulls the view in during ODST cutscenes.
+        // Halo 3 name-resolves this engine debug var in InstallHook and holds it
+        // at 0 while stereo is active; ODST installs through this separate core,
+        // so resolve it here against halo3odst.dll's own table using the same
+        // proven FindDebugVarFloat path already used for the motion-blur vars.
+        // UpdateCinematicFovPolicy() enforces it from the ODST present tick, and
+        // the pointer is cleared in the hook-state teardown below.
+        ResolveCinematicFovVar(base, size);
         LOG("ODST camera install: ten-hook camera/weapon/CHUD core plus %zu "
             "verified optional HUD hook(s) retained and disarmed; "
             "waiting for presentation detach and a fresh camera heartbeat; "
@@ -9558,6 +9574,12 @@ void Game_AutoVrTick()
             }
         }
         wasOdstCameraContext = true;
+        // Issue #18: hold Halo's widescreen cinematic-FOV reduction at 0 while
+        // ODST stereo is active, exactly as the Halo 3 present path does. The
+        // policy no-ops until the var is resolved and self-restores when stereo
+        // is off; it must run here because the shared call site below is behind
+        // the ODST-false Game_AllowsSharedGameplayFeatures() gate.
+        UpdateCinematicFovPolicy();
         const uint64_t now = GetTickCount64();
         const uint64_t last = g_lastCamCopyMs.load(std::memory_order_acquire);
         const bool cameraReady = g_odstCamera.cameraArrayReady.load(
