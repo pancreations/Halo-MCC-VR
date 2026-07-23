@@ -4,6 +4,8 @@ Human Note:
 Hi I am pancreations, I'm a 3d animator, I really don't like ai art but I also really want to play MCC in VR so I'm taking one for the team. Follow me on insta if you like silly animations made by humans in blender
 https://www.instagram.com/pancreations/
 
+
+Living Fray is starting back up his MCC VR Mod. If you want to run unsigned code made by man instead just wait for his mod.
 # Halo MCC VR
 ⚠️ Heads up: 
 
