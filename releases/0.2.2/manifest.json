@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "release": "MCC_VR_ALPHA_0.2.2",
+  "release_url": "https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.2",
+  "supersedes": "MCC_VR_ALPHA_0.2.1",
+  "tag_commit": "PENDING",
+  "runtime_source_commit": "3a2a11bfc66b36e70f60282e91c9d5436f2e18d1",
+  "build": {
+    "architecture": "x64",
+    "configuration": "Release",
+    "HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP": true
+  },
+  "published_artifacts": {
+    "zip": {
+      "name": "MCC_VR_ALPHA_0.2.2.zip",
+      "download_url": "https://github.com/pancreations/Halo-MCC-VR/releases/download/MCC_VR_ALPHA_0.2.2/MCC_VR_ALPHA_0.2.2.zip",
+      "sha256": "43E52AEF5A2D1647A8F3AE6AEFDB6C22F0C67C7AA06FD70D327FB3E00ACF5DCC"
+    },
+    "halo3xr.dll": {
+      "sha256": "1E3F0F7E1D67DB7F322FF0B2C0236CA8708E4C9EC204EDE83484DBD6BBAF3BD6"
+    },
+    "halo3xr_launcher.exe": {
+      "sha256": "FA95B264630D42594581E4D2F8E1103FE4DB2D0711714DA4F62AA6175155C534"
+    }
+  },
+  "changes": [
+    "ODST movement is head-relative again, not hand-based (GitHub issue #18).",
+    "ODST cutscenes no longer pull in the focal length; they match Halo 3 (#18).",
+    "ODST controller rumble is steady instead of intermittent (#18).",
+    "In-game menu no longer goes dead after Save & Quit: the virtual XInput slot stays reported as connected through the title-teardown window so MCC never latches a false controller disconnect. Title-agnostic."
+  ],
+  "dependencies": {
+    "OpenXR-SDK": "5267613edf3d937e3d77556a106a65c2f82b25c6",
+    "MinHook": "c3fcafdc10146beb5919319d0683e44e3c30d537",
+    "Dear ImGui": "8936b58fe26e8c3da834b8f60b06511d537b4c63"
+  },
+  "rebuild_note": "Source rebuilds are not byte-identical because the DLL embeds compile date/time and toolchain output can differ. The launcher was rebuilt from the accepted source, so its bytes differ from 0.2.1 while its behavior does not."
+}

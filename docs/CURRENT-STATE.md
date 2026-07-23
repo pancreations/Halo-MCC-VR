@@ -7,24 +7,41 @@ are evidence, not instructions.
 ## Accepted cumulative release
 
 The current known-good product is the public
-[`MCC_VR_ALPHA_0.2.1`](https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.1)
-Halo 3 + ODST release.
+[`MCC_VR_ALPHA_0.2.2`](https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.2)
+Halo 3 + ODST release. It supersedes `MCC_VR_ALPHA_0.2.1`.
+
+| Identity | Value |
+| --- | --- |
+| Release tag commit | `PENDING (recorded at tag time; see releases/0.2.2/manifest.json)` |
+| Headset-tested runtime source | `3a2a11bfc66b36e70f60282e91c9d5436f2e18d1` |
+| Build | Release x64, `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` |
+| Release ZIP SHA-256 | `43E52AEF5A2D1647A8F3AE6AEFDB6C22F0C67C7AA06FD70D327FB3E00ACF5DCC` |
+| `halo3xr.dll` SHA-256 | `1E3F0F7E1D67DB7F322FF0B2C0236CA8708E4C9EC204EDE83484DBD6BBAF3BD6` |
+| `halo3xr_launcher.exe` SHA-256 | `FA95B264630D42594581E4D2F8E1103FE4DB2D0711714DA4F62AA6175155C534` |
+
+The 0.2.2 runtime source `3a2a11b` builds directly on the accepted 0.2.1 line
+(`034c4a6`) with three evidence-backed ODST fixes (GitHub issue #18 -
+head-relative movement, cinematic FOV parity, and steady rumble) and one XInput
+connection-stability fix (the in-game menu no longer dies after Save & Quit).
+The tag adds only release documentation and packaging on top of that tested
+runtime; `src/` and `tests/` are otherwise the accepted line. The launcher was
+rebuilt from the same source, so its bytes differ from 0.2.1 while its behavior
+does not.
+
+### Previous accepted release (rollback baseline)
+
+`MCC_VR_ALPHA_0.2.1` remains a protected rollback baseline. Its runtime is
+byte-identical to `034c4a6`; the tag added only documentation and packaging.
 
 | Identity | Value |
 | --- | --- |
 | Release tag commit | `3d7989e1a8e0cb34747a91801c4525ef70b29866` |
 | Headset-tested runtime source | `034c4a68e362b334d7994aa9e694243abf2aade5` |
-| Build | Release x64, `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` |
 | Release ZIP SHA-256 | `C5AE012BC379CBC7A909652D297DC0E8059CDBF41D26260771B385F8F729B124` |
 | `halo3xr.dll` SHA-256 | `B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF` |
 | `halo3xr_launcher.exe` SHA-256 | `BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D` |
 
-The tag changes release documentation and packaging only after `034c4a6`;
-its `src/`, `tests/`, and original CMake runtime definition are byte-identical.
-The cleanup branch starts exactly at that tag. It changes documentation, safe
-build/package mechanics, and build-identity/tooling comments, but no VR behavior.
-
-Protected rollback copies of the accepted ZIP:
+Protected rollback copies of the 0.2.1 ZIP:
 
 - the official GitHub release asset;
 - `dist/HaloMCCVR-odst-menu-fix-034c4a6.zip`;
@@ -33,7 +50,35 @@ Protected rollback copies of the accepted ZIP:
 An artifact is evidence, not an automatic deployment source. Never install it
 unless the user explicitly asks.
 
+### 0.2.2 headset confirmation - 2026-07-23
+
+- Source commit: `3a2a11bfc66b36e70f60282e91c9d5436f2e18d1` (branch
+  `cleanup/release-0.2.1`), built Release x64 with
+  `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON`.
+- Candidate package: `out/candidates/3a2a11b-20260723-142432262Z`.
+- `halo3xr.dll` SHA-256
+  `1E3F0F7E1D67DB7F322FF0B2C0236CA8708E4C9EC204EDE83484DBD6BBAF3BD6`; the
+  installed file's hash was verified separately after the manual copy and
+  matched. The log does not contain the hash.
+- Log source: the first line reported `source 3a2a11b...`, ODST ON, compiled
+  `Jul 23 2026 09:24:22`, from the canonical `Halo_MCC_VR\halo3xr.log`.
+- Title coverage: Halo 3: ODST (stereo, head-relative movement, cutscenes,
+  rumble, Save & Quit to menu, and cross-title re-entry). Halo 3 shares the
+  touched XInput controller path.
+- Result: the user confirmed all three issue #18 fixes still feel right and that
+  the in-game menu no longer goes dead after Save & Quit, from both plain
+  gameplay and a cutscene.
+- Runtime evidence: the retained `M3 DIAG` line held `gateIdle=0` through normal
+  play, then rose to `100` and `106` across a Save & Quit / title-teardown
+  window while `reads`/`padValid`/`merged` kept climbing. The mod answered the
+  slot-0 polls in that brief gated window as connected and idle, so MCC never
+  latched a false controller disconnect and the pad stayed live.
+
 ## Desktop stale-version audit
+
+This audit predates the 0.2.2 hotfix and describes the earlier 0.2.1 install
+(`halo3xr.dll` `B7363F79...`), which was accepted at the time. As of 0.2.2 the
+accepted `halo3xr.dll` is `1E3F0F7E...`.
 
 The 2026-07-23 desktop installation is not running an older binary:
 

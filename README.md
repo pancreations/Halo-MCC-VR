@@ -1,10 +1,19 @@
 # Halo MCC VR
 
+> **Hi, I'm [pancreations](https://www.instagram.com/pancreations/)** — a 3D
+> animator. I really don't like AI art, but I also really want to play MCC in
+> VR, so I'm taking one for the team. Follow me on Instagram if you like silly
+> animations made by humans in Blender. ([Expect me to quit at any
+> moment.](https://www.youtube.com/watch?v=GFl3_wPFvdA))
+>
+> Living Fray is starting his MCC VR mod back up — if you'd rather run unsigned
+> code made by a human, wait for his.
+
 A native OpenXR VR mod for Halo 3 and Halo 3: ODST in the Steam edition of
 Halo: The Master Chief Collection.
 
 The current known-good release is
-[MCC VR Alpha 0.2.1](https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.1).
+[MCC VR Alpha 0.2.2](https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.2).
 It is an alpha: use it at your own risk, launch only without anti-cheat, and
 expect incomplete hardware and gameplay coverage.
 
@@ -38,7 +47,7 @@ The exact accepted source and artifact hashes are in
 There is no installer script.
 
 1. Download the binary asset
-   `MCC_VR_ALPHA_0.2.1.zip` from the official `0.2.1` release page.
+   `MCC_VR_ALPHA_0.2.2.zip` from the official `0.2.2` release page.
 2. In Steam, open MCC's **Manage > Browse local files** folder.
 3. Create a folder named exactly `Halo_MCC_VR` in the main MCC folder.
 4. Copy `halo3xr.dll` and `halo3xr_launcher.exe` into that folder.
@@ -60,12 +69,12 @@ OpenXR runtime, fully close every MCC process before relaunching, compare the
 installed hashes below, and compare `halomccvr.cfg`. Do not use a repository
 build folder as an installation source.
 
-Release `0.2.1` hashes:
+Release `0.2.2` hashes:
 
 ```text
-ZIP      C5AE012BC379CBC7A909652D297DC0E8059CDBF41D26260771B385F8F729B124
-DLL      B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF
-Launcher BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D
+ZIP      43E52AEF5A2D1647A8F3AE6AEFDB6C22F0C67C7AA06FD70D327FB3E00ACF5DCC
+DLL      1E3F0F7E1D67DB7F322FF0B2C0236CA8708E4C9EC204EDE83484DBD6BBAF3BD6
+Launcher FA95B264630D42594581E4D2F8E1103FE4DB2D0711714DA4F62AA6175155C534
 ```
 
 Windows security software may flag or quarantine unsigned injection-based VR
