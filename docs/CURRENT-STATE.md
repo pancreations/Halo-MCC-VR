@@ -55,6 +55,23 @@ title switching and an ODST camera-readiness tail toggling before the user
 paused. Those are runtime observations from the accepted binary, not proof of a
 stale install.
 
+### Desktop ODST headset confirmation - 2026-07-23
+
+- Runtime source: `034c4a68e362b334d7994aa9e694243abf2aade5`.
+- Installed artifact:
+  `N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR\halo3xr.dll`,
+  SHA-256 `B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF`.
+- Result: the user explicitly confirmed that ODST hooked, worked, and remained
+  playable during a brief headset session.
+- Runtime evidence: ODST was detected at `06:27:14.962`, its core hooks finished
+  installing at `06:27:25.848`, and stereo, head tracking, 6DOF, controller aim,
+  VRIK, authored crosshair, and distinct per-eye output armed at `06:27:36.205`.
+  The delay covered title/camera loading, an OpenXR visible-but-unfocused
+  interval, and the required one-second fresh-camera safety interval.
+- A read-only 250-sample layout capture found only slot 0 active; it made no
+  game-memory writes. No new build was installed, and no Halo 3 regression was
+  run in this brief ODST-only session. The accepted-build pointer is unchanged.
+
 ## Headset-confirmed coverage
 
 Halo 3:
