@@ -1,5 +1,9 @@
 # Halo 3: ODST signature evidence
 
+> **Status superseded:** ODST support later passed the recorded headset gates
+> and shipped in public release 0.2.1. Public-gate language below describes its
+> historical checkpoint; `docs/CURRENT-STATE.md` is authoritative.
+
 The eight byte-identical signatures were verified 2026-07-21 on
 `feature/odst-bringup` at `4dddbc1`. The twelve re-derived candidates were
 verified after documentation checkpoint `0144982`; runtime source remained

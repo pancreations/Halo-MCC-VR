@@ -1,40 +1,66 @@
 # Halo MCC VR agent contract
 
-Every coding agent working in this repository must read `CLAUDE.md` and
-`docs/CURRENT-STATE.md` before changing code. `docs/CURRENT-STATE.md` is the
-authoritative evidence and headset-result ledger.
+Before changing code, read `CLAUDE.md` and `docs/CURRENT-STATE.md` completely.
+`docs/CURRENT-STATE.md` is the authoritative accepted-build pointer. Detailed
+reverse-engineering facts live in the evidence documents under `docs/`.
+
+## Baseline discipline
+
+- This is one cumulative multi-title mod. Halo 3 and ODST are not separate
+  development lines.
+- The public `MCC_VR_ALPHA_0.2.1` release is the current known-good baseline.
+  Its runtime source is commit `034c4a68e362b334d7994aa9e694243abf2aade5`.
+- Begin each candidate from the newest headset-accepted source recorded in
+  `docs/CURRENT-STATE.md`. Do not select an old branch, build directory, backup,
+  DLL, or ZIP merely because it exists.
+- Give every candidate a unique commit and artifact hash. Untested or failed
+  candidates do not advance the accepted pointer.
+- Revert a failed behavioral experiment. Do not leave it dormant behind a
+  switch or stack it into the next candidate.
+- Never bulk-remove or consolidate accepted dormant diagnostic/fallback paths.
+  Cleanup commit `42a1276` built and launched, then fatally failed at the first
+  level transition. Isolate one understood path per candidate and headset test.
+- Never install or launch a build unless the user explicitly asks to test that
+  exact candidate. Repository scripts must not write to an MCC installation.
 
 ## Halo 3 parity foundation
 
-Halo 3's headset-confirmed behavior is the player-facing reference for every
-additional MCC title. When the user asks for a feature in ODST or another title,
-"the same as Halo 3" means the end-user behavior must match Halo 3 across input,
-camera ownership, stereo presentation, transitions, controls, HUD, weapons,
-comfort, configuration, and lifecycle recovery.
+Halo 3's headset-confirmed player experience is the reference for every other
+title: controls, camera ownership, stereo presentation, transitions, HUD,
+weapons, comfort, configuration, and lifecycle recovery.
 
-- Reuse the proven shared Halo 3 behavior path whenever possible. Put only the
-  engine-specific evidence, signatures, layouts, and calibration in the title
-  adapter.
-- Do not substitute a merely similar implementation, simplify the behavior, or
-  silently choose a different control model.
-- Never copy a Halo 3 offset, signature, structure member, bone, marker, or tag
-  meaning into another title without title-specific evidence. Player-facing
-  parity does not waive engine-safety proof.
-- Before implementing a title feature, state the exact Halo 3 behavior being
-  matched and compare the target title's current routing against it.
-- Any unavoidable difference must be documented as a limitation and explicitly
-  approved by the user. Do not describe an untested approximation as parity.
-- Definition of done includes a headset test of the target behavior plus a Halo
-  3 regression check whenever shared code or cross-title state can be affected.
+- Reuse shared behavior. Put only verified engine-specific signatures,
+  layouts, skeleton facts, and calibration in a title adapter.
+- Never copy a Halo 3 offset, structure member, bone, marker, tag meaning, or
+  engine constant into another title without title-specific evidence.
+- State the exact Halo 3 behavior being matched before implementing a title
+  feature.
+- Document any unavoidable player-visible difference and obtain explicit user
+  approval. An untested approximation is not parity.
+- A shared-code or lifecycle change requires a target-title headset result and
+  a Halo 3 regression result.
 
-This contract is non-negotiable unless the user explicitly changes the product
-direction.
 ## Render-pipeline parity
 
-Halo 3's frame lifecycle is the project-wide implementation assumption: arm at
-the first eligible fresh camera boundary after the same one-second safety
-interval, then render world, first-person/weapon, native CHUD, and capture for
-each eye as one transaction. Target adapters may locate equivalent engine
-stages with title-specific evidence, but must not add latency or replace native
-CHUD with a panel/copy path without explicit user approval. Apply this rule to
-every feature, investigation, and fix.
+The accepted lifecycle arms at the first eligible fresh camera boundary after
+the one-second safety interval. Each eye's world, first-person weapon, native
+CHUD, and capture work then occur as one transaction. A title adapter may locate
+equivalent engine stages with title-specific evidence, but must not add latency,
+replace native CHUD with a panel/copy path, or reorder the transaction without
+explicit approval.
+
+## Safety
+
+- Use unique AOB signatures and fail open to the stock game on zero or multiple
+  matches.
+- Never hook `halo3+0x120DF8`.
+- Never patch game files on disk or interact with Easy Anti-Cheat.
+- Keep logging, file I/O, locks, COM, allocation, and signature scanning out of
+  render and palette hot hooks.
+- Preserve finite-value, bounds, index, count, and teardown guards.
+- Headset observation outranks desktop appearance and theories. Verify the
+  installed DLL's SHA-256 separately and match the source/configuration in the
+  first log line. Do not call a runtime fix complete until the user tests that
+  exact hash in the headset.
+- `camscan` is opt-in and has process-memory write modes. Never build or run a
+  write mode without explicit user approval for that offline diagnostic.

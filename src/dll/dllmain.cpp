@@ -7,6 +7,14 @@
 #include "vr.h"
 #include "game.h"
 
+#ifndef HALOMCCVR_BUILD_COMMIT
+#define HALOMCCVR_BUILD_COMMIT "unknown"
+#endif
+
+#ifndef HALOMCCVR_BUILD_ODST
+#define HALOMCCVR_BUILD_ODST "unknown"
+#endif
+
 // Entry point of the injected DLL. DllMain itself must do almost nothing
 // (Windows holds a global "loader lock" while it runs), so we immediately
 // spawn a thread that does the real setup.
@@ -21,12 +29,11 @@ static DWORD WINAPI InitThread(LPVOID)
     dir.resize(dir.find_last_of(L'\\') + 1);
 
     LogInit((dir + L"halo3xr.log").c_str());
-    // The build stamp makes every log self-identifying: after the silent-deploy
-    // incident (2026-07-19, three headset sessions burned on one stale DLL) the
-    // FIRST line of any log must prove WHICH build actually ran. deploy.bat
-    // touches this file so the stamp recompiles on every build.
-    LOG("HaloMCCVR loaded into pid %lu (build " __DATE__ " " __TIME__ ")",
-        GetCurrentProcessId());
+    // Commit + compile option identify source/configuration. The timestamp is
+    // context only; verify the installed DLL's SHA-256 separately.
+    LOG("HaloMCCVR loaded into pid %lu (source %s, ODST %s, compiled "
+        __DATE__ " " __TIME__ ")", GetCurrentProcessId(),
+        HALOMCCVR_BUILD_COMMIT, HALOMCCVR_BUILD_ODST);
     const std::wstring primaryConfig = dir + L"halomccvr.cfg";
     const std::wstring legacyConfig = dir + L"halo3xr.cfg";
     ConfigLoadMigrating(primaryConfig.c_str(), legacyConfig.c_str());

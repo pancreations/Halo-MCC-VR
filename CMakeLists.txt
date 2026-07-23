@@ -4,40 +4,81 @@ project(halomccvr LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Static CRT so users don't need any Visual C++ redistributable installed.
+# Static CRT so users do not need a separate Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 include(FetchContent)
 include(CTest)
 
-option(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
-    "Enable the private experimental ODST camera/stereo bring-up" OFF)
+# Put a source identity in the first log line. The package command always
+# reconfigures from a clean commit, so changing commits recompiles dllmain.cpp.
+find_package(Git QUIET)
+set(HALOMCCVR_BUILD_COMMIT "unknown")
+if(Git_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+            rev-parse HEAD
+        OUTPUT_VARIABLE HALOMCCVR_BUILD_COMMIT
+        RESULT_VARIABLE HALOMCCVR_GIT_RESULT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(NOT HALOMCCVR_GIT_RESULT EQUAL 0)
+        set(HALOMCCVR_BUILD_COMMIT "unknown")
+    else()
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}"
+                status --porcelain --untracked-files=normal
+            OUTPUT_VARIABLE HALOMCCVR_GIT_STATUS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(NOT HALOMCCVR_GIT_STATUS STREQUAL "")
+            string(APPEND HALOMCCVR_BUILD_COMMIT "-dirty")
+        endif()
+    endif()
+endif()
 
-# --- OpenXR loader (static) ---
+# The accepted 0.2.1 product is one cumulative Halo 3 + ODST build. OFF remains
+# available only for a deliberate Halo 3 isolation build.
+option(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+    "Enable the cumulative Halo 3 + ODST runtime" ON)
+
+if(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP)
+    set(HALOMCCVR_BUILD_ODST "ON")
+    message(STATUS "Halo MCC VR: cumulative Halo 3 + ODST runtime enabled")
+else()
+    set(HALOMCCVR_BUILD_ODST "OFF")
+    message(WARNING
+        "Halo MCC VR: ODST is disabled; this does not match release 0.2.1")
+endif()
+message(STATUS
+    "Halo MCC VR build identity: ${HALOMCCVR_BUILD_COMMIT}, ODST=${HALOMCCVR_BUILD_ODST}")
+
+# Exact dependency commits used by the accepted release source. Shallow clones
+# avoid pulling entire third-party histories into the ignored build tree.
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
 set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(openxr
     GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
-    GIT_TAG release-1.1.61)
+    GIT_TAG 5267613edf3d937e3d77556a106a65c2f82b25c6
+    GIT_SHALLOW TRUE)
 
-# --- MinHook (static) ---
 FetchContent_Declare(minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG v1.3.4)
+    GIT_TAG c3fcafdc10146beb5919319d0683e44e3c30d537
+    GIT_SHALLOW TRUE)
 
-# --- Dear ImGui (no CMakeLists upstream; we build it ourselves below) ---
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.92.8)
-
+    GIT_TAG 8936b58fe26e8c3da834b8f60b06511d537b4c63
+    GIT_SHALLOW TRUE)
 
 FetchContent_MakeAvailable(openxr minhook imgui)
 
-
-# The OpenXR build forces the dynamic CRT onto the static loader, which
-# conflicts with our static-CRT build; force it back so everything matches.
+# OpenXR requests the dynamic CRT for its static loader; keep it consistent with
+# the mod's static-CRT build.
 set_target_properties(openxr_loader PROPERTIES
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -52,7 +93,6 @@ target_include_directories(imgui_lib PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends)
 
-# --- The mod DLL, injected into MCC-Win64-Shipping.exe ---
 add_library(halo3xr SHARED
     src/common/log.cpp
     src/common/config.cpp
@@ -71,19 +111,22 @@ add_library(halo3xr SHARED
 target_compile_definitions(halo3xr PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
     XR_USE_GRAPHICS_API_D3D11 XR_USE_PLATFORM_WIN32
-    HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP}>)
+    HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP}>
+    HALOMCCVR_BUILD_COMMIT="${HALOMCCVR_BUILD_COMMIT}"
+    HALOMCCVR_BUILD_ODST="${HALOMCCVR_BUILD_ODST}")
 target_link_libraries(halo3xr PRIVATE
     openxr_loader minhook imgui_lib
     d3d11 dxgi d3dcompiler)
 
-# --- The launcher: starts MCC without EAC and injects the DLL ---
 add_executable(halo3xr_launcher WIN32 src/launcher/launcher.cpp)
 target_compile_definitions(halo3xr_launcher PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-# --- Dev-only: read-only memory finder for locating the camera (not shipped) ---
-add_executable(camscan tools/camscan.cpp)
-target_compile_definitions(camscan PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+# Opt-in reverse-engineering helper; never shipped or built by the default
+# preset. Some diagnostic modes write to a running game process.
+add_executable(camscan EXCLUDE_FROM_ALL tools/camscan.cpp)
+target_compile_definitions(camscan PRIVATE
+    UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(camscan PRIVATE psapi)
 
 if(BUILD_TESTING)
@@ -101,11 +144,13 @@ if(BUILD_TESTING)
     add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
 endif()
 
-# --- "dist" layout: everything a user needs, in one folder ---
-# (installed via:  cmake --install build --config Release --prefix dist --component dist
-#  so the dependencies' own install rules don't pollute the folder)
-install(TARGETS halo3xr halo3xr_launcher RUNTIME DESTINATION . COMPONENT dist)
+# Stage an unaccepted local candidate only. Release-specific hashes and metadata
+# must never be copied into a newly rebuilt package.
+install(TARGETS halo3xr halo3xr_launcher
+    RUNTIME DESTINATION .
+    COMPONENT dist)
 install(FILES
-    installer/ALPHA-README.txt
+    LICENSE
     installer/MANUAL-README.txt
-    DESTINATION . COMPONENT dist)
+    DESTINATION .
+    COMPONENT dist)

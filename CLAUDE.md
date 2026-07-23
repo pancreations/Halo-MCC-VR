@@ -1,48 +1,48 @@
 # Project instructions
 
-Halo MCC VR is a native C++20 OpenXR VR mod for MCC Steam. Halo 3 is the first
-headset-confirmed title and ODST is the next approved adapter. Before changing
-code, read docs/CURRENT-STATE.md. It is the only authoritative status and
-failure ledger. docs/RE-notes.md contains only verified reverse-engineering
-facts, and docs/EDITING-KIT-EVIDENCE.md governs per-title evidence.
+Halo MCC VR is a native C++20 OpenXR mod for the Steam edition of Halo: The
+Master Chief Collection. The accepted cumulative release supports Halo 3 and
+Halo 3: ODST.
 
-Read and obey `AGENTS.md`. Its Halo 3 player-facing parity contract applies to
-every agent and every title adapter. Halo 3's headset-confirmed behavior is the
-foundation; title-specific engine evidence changes how that behavior is reached,
-not what the end user receives.
+Read and obey `AGENTS.md`, then read `docs/CURRENT-STATE.md` before changing
+code. Use `docs/RE-notes.md` only for verified Halo 3 facts and the ODST evidence
+documents for ODST-specific signatures and layouts.
 
-## User and testing
+## User and acceptance
 
-The user is a game modder, not a programmer. Explain test steps in plain language. Headset results outrank theories, logs, and desktop appearance. Do not claim a fix until the user has tested the exact deployed DLL.
+The user is a game modder, not a programmer. Explain test steps in plain
+language. A build or log is supporting evidence; the user's headset result is
+the acceptance test.
 
-## Non-negotiable workflow
+## Workflow
 
-1. Start from a clean Git branch and create a checkpoint before risky work.
-2. Make one evidence-backed behavioral change per test build.
-3. Build Release and stop on any compiler error.
-4. Deploy only with deploy.bat auto; it checks that MCC is closed, builds, copies, and byte-compares the DLL.
-5. Match the deployed DLL timestamp/hash to the first line of halo3xr.log.
-6. Record the headset result. Revert failed experiments instead of leaving dormant switches, probes, or fallback paths.
-7. Locate engine code with unique AOB signatures. Never ship a guessed hardcoded address.
-8. Keep logging, file I/O, locks, COM, and allocation out of render and palette hot hooks.
-9. Never patch game files on disk or interact with Easy Anti-Cheat. The mod runs only through MCC's official EAC-disabled mode.
-10. Never hook halo3+0x120DF8; even a pass-through detour crashed on level load.
-11. Preserve one universal halomccvr.cfg/F1 experience. Keep user preferences
-    portable and put verified engine/skeleton/HUD calibration in title adapters.
-12. For ODST, use H3ODSTEK and halo3odst.dll as primary evidence. Never copy a
-    Halo 3 offset, signature, bone, marker, or tag meaning without ODST proof.
+1. Confirm the branch descends from the accepted source pointer.
+2. Make one evidence-backed behavioral change per candidate.
+3. Configure, build, and test the cumulative Release preset described in
+   `BUILDING.md`. Stop on any compiler or test failure.
+4. Package only into the repository's ignored `out/` directory.
+5. Do not copy files into MCC or launch the game unless the user explicitly asks
+   to test that exact candidate.
+6. For a requested headset test, record the source commit, DLL SHA-256, unique
+   package path, embedded log source/configuration, title coverage, and result.
+   Verify the installed file's hash separately; the log does not contain it.
+7. Advance `docs/CURRENT-STATE.md` only after explicit headset acceptance.
+8. Revert failed behavior before making another candidate.
 
-## Paths
+There are intentionally no deploy, restore, installer, or uninstaller scripts.
+The old scripts could build ODST support off or restore an older DLL. Installation
+is manual and confined to a dedicated `Halo_MCC_VR` folder.
 
-- Source: N:\dev\halo3-openxr
-- Game: N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection
-- Host: MCC\Binaries\Win64\MCC-Win64-Shipping.exe
-- Engine: halo3\halo3.dll
-- ODST engine: halo3odst\halo3odst.dll
-- ODST editing kit: N:\SteamLibrary\steamapps\common\H3ODSTEK
-- Deployed mod: Halo_MCC_VR\halo3xr.dll
-- Runtime log: Halo_MCC_VR\halo3xr.log
+## Non-negotiable implementation rules
 
-## Definition of done
+- Locate engine code with unique signatures; never ship a guessed hardcoded
+  address.
+- Never hook `halo3+0x120DF8`.
+- Keep hot hooks deterministic and allocation-free.
+- Do not patch game files or run with anti-cheat enabled.
+- Preserve one universal `halomccvr.cfg` and F1 experience.
+- Use H3ODSTEK and `halo3odst.dll` as primary ODST evidence. Halo 3 offsets and
+  semantics are not ODST proof.
 
-A code change is complete only after a Release build succeeds, the diff contains no accidental behavior changes, deployment verifies byte-for-byte, and the requested behavior is confirmed in the headset. A failed signature must log clearly and leave the game running safely.
+Definition of done is: clean diff, Release build, passing tests, exact candidate
+identity, requested headset confirmation, and any required Halo 3 regression.

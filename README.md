@@ -1,142 +1,117 @@
 # Halo MCC VR
-⚠️ Heads up: 
 
-Windows or your antivirus might flag the mod or move a file to quarantine. The Files are not verified so please use at your own risk. More knowledgeable people are yelling at me so I gotta disclose that to you all.  Hopefully we can take care of this issue soon with some human review of the code itself. it's all there take a gander.
+A native OpenXR VR mod for Halo 3 and Halo 3: ODST in the Steam edition of
+Halo: The Master Chief Collection.
 
-A native OpenXR VR mod for Halo 3 and Halo 3: ODST in Halo: The Master Chief
-Collection (Steam).
+The current known-good release is
+[MCC VR Alpha 0.2.1](https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.1).
+It is an alpha: use it at your own risk, launch only without anti-cheat, and
+expect incomplete hardware and gameplay coverage.
 
-## This code was written by AI
+## What works
 
-Every line here was written by AI coding assistants — Anthropic's **Claude** and
-OpenAI's **Codex** — working under the direction of a human modder who is not a
-programmer. The human did the reverse-engineering decisions, ran every build, and
-verified every result in a VR headset; the AI wrote the C++.
+- Per-eye stereo and 6DOF head tracking.
+- Motion-controller input, weapon aim, arm IK, snap/smooth turning, melee,
+  grenades, and menu control.
+- Native HUD, authored floating weapon crosshair, scopes, resolution scaling,
+  comfort controls, and a shared F1 configuration menu.
+- Halo 3 campaign behavior, including cutscenes, pause/resume, death/respawn,
+  and mission transitions.
+- ODST stereo, controls, weapons/hands, native HUD, cutscenes, vibration,
+  death/respawn recovery, and one tested drivable car.
 
-That is stated up front for two reasons. It is honest, and it should change how you
-read the code: no human reviewed every line, so treat it as you would any unaudited
-source. Read it before you run it. It is also why the license is as permissive as it
-is — take it, learn from it, fork it, do whatever is useful to you.
+Known limitations:
 
-Licensed [MIT](LICENSE).
+- ODST's first captioned opening cutscene can be black. Skip that first scene
+  once; do not repeatedly skip or you will miss the working drop sequence.
+- MCC can retain multiple title modules after switching games. If a level
+  returns to the menu, fully close and restart MCC.
+- ODST brightness stays at the game default.
+- Broader ODST weapon, turret, passenger-gun, vehicle, co-op, headset, and
+  long-session coverage is still needed.
 
-Port work must follow the [per-title editing-kit evidence policy](docs/EDITING-KIT-EVIDENCE.md).
-
-## Current status
-
-The current unified ODST test line is `feature/odst-bringup`. Its runtime at
-commit `034c4a6` was built with `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` and
-headset-tested as DLL SHA-256
-`B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF`.
-The protected pre-ODST Halo 3 release remains tagged `v0.1.3-alpha`.
-
-Working in Halo 3 on PSVR2, HTC, and Quest headsets through SteamVR OpenXR:
-
-- true per-eye stereo and 6DOF head tracking;
-- Sense-controller input, snap/smooth turning, melee, grenades, and menu control;
-- controller-driven weapon aim and floating VR reticle;
-- articulated VRIK arms;
-- free left support hand on the shotgun, with assault rifle and pistol as the known-good comparison;
-- native HUD with the centered game reticle hidden and the authored weapon
-  reticle used as the floating VR crosshair;
-- motion blur disabled by default to prevent stereo echo artifacts;
-- verified build/deploy workflow.
-
-Headset-confirmed on the ODST-enabled build:
-
-- true stereo, 6DOF head tracking, head-relative movement, and snap/smooth turn;
-- controller-driven gun and hands, arm IK, two-hand options, and floating hands;
-- the native ODST HUD, authored floating crosshair, HUD size/aspect/curvature/
-  height controls, and controller vibration;
-- stereo cutscenes with head look and authored-shot facing;
-- death/respawn recovery, a tested drivable car, and ODST -> Halo 3 -> ODST
-  re-entry.
-
-This remains an alpha. ODST brightness intentionally stays at the game default
-because the attempted hook hid the HUD. Broader weapon, turret, passenger-gun,
-vehicle, co-op, and headset coverage is still needed. MCC can also retain more
-than one title module after switching games; if a level returns to the menu,
-fully restart MCC before loading it. The default CMake option remains OFF so a
-normal build stays on the frozen Halo-3-only path; ODST test builds must be
-configured explicitly with `-DHALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON`. See
-[docs/CURRENT-STATE.md](docs/CURRENT-STATE.md) for the exact evidence and
-remaining regression gates.
+The exact accepted source and artifact hashes are in
+[docs/CURRENT-STATE.md](docs/CURRENT-STATE.md).
 
 ## Install
 
-Installing is copying two files; there is no installer script.
+There is no installer script.
 
-1. In Steam, open MCC's **Manage > Browse local files** folder.
-2. Create a folder named exactly `Halo_MCC_VR` inside the main **Halo The Master Chief Collection** folder.
-3. Copy only `halo3xr.dll` and `halo3xr_launcher.exe` from the unzipped package into that new `Halo_MCC_VR` folder.
-4. Start Steam and your OpenXR headset runtime, then run `halo3xr_launcher.exe`.
-5. Optionally right-click the launcher and use **Send to > Desktop (create shortcut)**.
+1. Download the binary asset
+   `MCC_VR_ALPHA_0.2.1.zip` from the official `0.2.1` release page.
+2. In Steam, open MCC's **Manage > Browse local files** folder.
+3. Create a folder named exactly `Halo_MCC_VR` in the main MCC folder.
+4. Copy `halo3xr.dll` and `halo3xr_launcher.exe` into that folder.
+5. Make SteamVR the default OpenXR runtime, start Steam and SteamVR, then run
+   `halo3xr_launcher.exe`.
 
-The final layout must be `Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe`; do not place the files loose in the main MCC folder. To update, close MCC and copy the two new files over the old ones — `halomccvr.cfg` is left alone. To uninstall, close MCC and delete only the dedicated `Halo_MCC_VR` folder you created. The mod does not patch game files.
+The final path must end in:
 
-Settings live in `Halo_MCC_VR\halomccvr.cfg`, written with defaults on first run. Every setting carries its description, default, and range, so it can be edited by hand in Notepad with MCC closed; the F1 menu edits the same file live. Display & HUD has separate live controls for overall size, width/aspect, curvature, and vertical height. Deleting the file regenerates it with defaults.
+```text
+Halo The Master Chief Collection\Halo_MCC_VR\halo3xr_launcher.exe
+```
+
+Do not place the files loose in the MCC root. To update, close MCC and replace
+only the DLL and launcher; keep `halomccvr.cfg`. To uninstall, close MCC and
+delete only the dedicated `Halo_MCC_VR` folder.
+
+If one PC behaves differently, first confirm SteamVR is still the default
+OpenXR runtime, fully close every MCC process before relaunching, compare the
+installed hashes below, and compare `halomccvr.cfg`. Do not use a repository
+build folder as an installation source.
+
+Release `0.2.1` hashes:
+
+```text
+ZIP      C5AE012BC379CBC7A909652D297DC0E8059CDBF41D26260771B385F8F729B124
+DLL      B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF
+Launcher BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D
+```
+
+Windows security software may flag or quarantine unsigned injection-based VR
+mods. Download only from the official release, verify the hashes, inspect the
+source if desired, and allow only the two release files rather than disabling
+security software globally.
 
 ## Required MCC settings
 
-Set these in MCC before playing in VR. The mod does not change them for you.
-
 | Setting | Value |
 | --- | --- |
-| Settings > Video > Max Frame Rate | 120 |
-| Settings > Video > V-Sync | Off |
-| Halo 3 > Settings > Field of View | 120 |
-| Halo 3: ODST > Settings > Controls > Look Sensitivity | Maximum |
-| Halo 3: ODST > Settings > Controls > Look Acceleration | Off |
+| Video > Max Frame Rate | 120 |
+| Video > V-Sync | Off |
+| Halo 3 > Field of View | 120 |
+| ODST > Look Sensitivity | Maximum |
+| ODST > Look Acceleration | Off |
+| MCC FSR | Off |
 
-### ODST motion-aim check
+ODST's look settings control how quickly bullet direction catches the
+motion-controller crosshair. If shots trail, confirm sensitivity is at maximum
+and acceleration is off.
 
-ODST's look settings control how quickly the game's bullet direction catches up
-to the motion-controller crosshair. Set **Look Sensitivity to maximum** and turn
-**Look Acceleration off**. Then point left and fire: the bullets should snap to
-the crosshair instead of trailing behind it.
+Settings live in `Halo_MCC_VR\halomccvr.cfg`. The game creates this documented
+file on first launch; the F1 menu edits the same values. Deleting only that file
+with MCC closed regenerates the release defaults.
 
-Do **not** enable FSR in MCC's video menu; it breaks the VR image scale. Use the mod's
-picture quality presets instead.
+## Build from source
 
-Field of View is the one that visibly breaks the game if it is wrong: at the default
-FOV the engine culls geometry outside the flat-screen frustum, so scenery pops in and
-out at the edges of the headset view. FOV 120 pushes culling past the headset's field
-of view. V-Sync on or a 60 FPS limit caps the headset at that rate on any hardware.
+See [BUILDING.md](BUILDING.md). A clean build uses the accepted source and
+configuration, but produces a new, unaccepted candidate and file hash. Only the
+published hashes remain accepted until that rebuilt candidate passes a headset
+test. Use the released ZIP when you need the exact accepted binaries.
 
-These can be changed with the headset on from inside the VR session; no flat-screen
-launch is needed and the mod does not crash when MCC video settings change.
+## Development evidence
 
-## Requirements and safety
+- [Current accepted baseline](docs/CURRENT-STATE.md)
+- [Halo 3 reverse-engineering facts](docs/RE-notes.md)
+- [ODST signatures](docs/ODST-SIGNATURE-EVIDENCE.md)
+- [ODST camera layout](docs/ODST-CAMERA-LAYOUT.md)
+- [ODST weapon/IK evidence](docs/ODST-WEAPON-IK-EVIDENCE.md)
+- [Per-title evidence policy](docs/EDITING-KIT-EVIDENCE.md)
 
-- Steam copy of MCC and an OpenXR headset/runtime.
-- Launch through MCC's official "Play without anti-cheat" mode.
-- No game files are patched or redistributed.
-- Do not use the mod in anti-cheat-enabled matchmaking.
-- The install.bat/uninstall.bat scripts were removed on 2026-07-20; install and
-  uninstall are manual. Delete any `uninstall.bat` left over from an older
-  package rather than running it: a version from before 2026-07-20 could
-  recursively delete the folder containing it when package files had been
-  extracted directly into the MCC root.
+The code was written by Claude and Codex under the direction of a human modder
+who made the product and reverse-engineering decisions and performed the headset
+tests. No human reviewed every line. The project is licensed under the
+[MIT License](LICENSE).
 
-## If Windows warns about the files, it's a false alarm
-
-Windows or your antivirus may show a warning about `halo3xr_launcher.exe` or
-`halo3xr.dll`, or move one to quarantine. **The files are safe.** This happens to
-almost every VR mod, because the mod has to load itself into the game to turn on
-VR, and Windows plays it safe with anything it hasn't seen before. Because each
-release is a new file, the warning can come back after an update — that's normal
-and doesn't mean anything is wrong.
-
-If it gets blocked, just choose **Allow** (or **Run anyway**, or restore the file
-from Windows Security → Protection history) and you're good. **You don't need to
-turn your antivirus off** — allow only these two files, or your `Halo_MCC_VR`
-folder.
-
-Just get your download from the official page —
-[github.com/pancreations/Halo-MCC-VR](https://github.com/pancreations/Halo-MCC-VR) —
-where the full source is public too. (For the extra-cautious: each release's
-`BUILD-INFO.txt` lists a SHA-256 fingerprint you can check the files against.)
-
-## Credits
-
-Inspired by HaloCEVR by LivingFray and the proof of concept ReclaimerVR by Nibre. Halo is a Microsoft trademark; this project is not affiliated with Microsoft or Halo Studios.
+Inspired by HaloCEVR by LivingFray and ReclaimerVR by Nibre. Halo is a Microsoft
+trademark; this project is not affiliated with Microsoft or Halo Studios.

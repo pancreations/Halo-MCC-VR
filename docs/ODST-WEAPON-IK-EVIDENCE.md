@@ -1,7 +1,8 @@
 # ODST weapon, arm-IK, two-hand, and dual-slot evidence
 
-Status: private option-ON candidate, desk-side validated, headset proof pending.
-Public ODST support remains disabled.
+> **Status superseded:** ODST weapon/IK support later passed the recorded
+> headset tests and shipped in public release 0.2.1. Private/pending language
+> below describes historical gates; `docs/CURRENT-STATE.md` is authoritative.
 
 ## Halo 3 behavior being matched
 

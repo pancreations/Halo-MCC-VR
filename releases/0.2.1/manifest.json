@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "release": "MCC_VR_ALPHA_0.2.1",
+  "release_url": "https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.1",
+  "tag_commit": "3d7989e1a8e0cb34747a91801c4525ef70b29866",
+  "runtime_source_commit": "034c4a68e362b334d7994aa9e694243abf2aade5",
+  "build": {
+    "architecture": "x64",
+    "configuration": "Release",
+    "HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP": true
+  },
+  "published_artifacts": {
+    "zip": {
+      "name": "MCC_VR_ALPHA_0.2.1.zip",
+      "download_url": "https://github.com/pancreations/Halo-MCC-VR/releases/download/MCC_VR_ALPHA_0.2.1/MCC_VR_ALPHA_0.2.1.zip",
+      "preserved_local_name": "HaloMCCVR-odst-menu-fix-034c4a6.zip",
+      "sha256": "C5AE012BC379CBC7A909652D297DC0E8059CDBF41D26260771B385F8F729B124"
+    },
+    "halo3xr.dll": {
+      "sha256": "B7363F79650E42A04D4CED6A3F51F57A6B4C2F376FF00298A6173A8287752CEF"
+    },
+    "halo3xr_launcher.exe": {
+      "sha256": "BDC0A20F56DF72CDDE68E5D0AB621321FBDE91DA427B6C24142B38336D33EA6D"
+    }
+  },
+  "dependencies": {
+    "OpenXR-SDK": "5267613edf3d937e3d77556a106a65c2f82b25c6",
+    "MinHook": "c3fcafdc10146beb5919319d0683e44e3c30d537",
+    "Dear ImGui": "8936b58fe26e8c3da834b8f60b06511d537b4c63"
+  },
+  "rebuild_note": "Source rebuilds are not byte-identical because the DLL embeds compile date/time and toolchain output can differ."
+}

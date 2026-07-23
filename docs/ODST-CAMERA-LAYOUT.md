@@ -1,5 +1,9 @@
 # ODST camera/view layout evidence manifest
 
+> **Status superseded:** ODST runtime support later passed the recorded headset
+> gates and shipped in public release 0.2.1. No-authorization language below is
+> historical; `docs/CURRENT-STATE.md` controls current product status.
+
 Date: 2026-07-21
 Status: **evidence gate closed; no ODST runtime enablement is authorized**
 

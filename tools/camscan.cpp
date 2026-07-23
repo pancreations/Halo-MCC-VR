@@ -1,10 +1,9 @@
-// camscan.cpp — external, READ-ONLY memory finder for the Halo 3 camera.
+// camscan.cpp - external reverse-engineering helper for the Halo 3 camera.
 //
-// This replaces having the user drive Cheat Engine. It attaches to the running
-// game with read-only access and does a differential float scan: the user just
-// looks up / down / holds still on cue, and this tool narrows millions of
-// values down to the handful that track the camera. It never writes to the
-// game — it only reads — so it cannot break or crash anything.
+// Most modes perform differential scans and read only. The explicitly named
+// poke/spin/write modes call WriteProcessMemory and can crash or corrupt the
+// running session. CMake excludes this tool from normal builds. Use a write
+// mode only for an approved offline diagnostic with anti-cheat disabled.
 //
 // Commands (state is kept in the two .bin files so steps can run separately):
 //   camscan attach

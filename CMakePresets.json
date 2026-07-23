@@ -1,0 +1,40 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Halo MCC VR cumulative Release",
+      "description": "x64 Halo 3 + ODST build with tests enabled",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/release",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/out/deps",
+        "HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
