@@ -3,7 +3,7 @@
   "release": "MCC_VR_ALPHA_0.2.2",
   "release_url": "https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.2.2",
   "supersedes": "MCC_VR_ALPHA_0.2.1",
-  "tag_commit": "PENDING",
+  "tag_commit": "e2c049e5c3b98ce466f6072da4e0aa55ccc88e10",
   "runtime_source_commit": "3a2a11bfc66b36e70f60282e91c9d5436f2e18d1",
   "build": {
     "architecture": "x64",

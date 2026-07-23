@@ -12,7 +12,7 @@ Halo 3 + ODST release. It supersedes `MCC_VR_ALPHA_0.2.1`.
 
 | Identity | Value |
 | --- | --- |
-| Release tag commit | `PENDING (recorded at tag time; see releases/0.2.2/manifest.json)` |
+| Release tag commit | `e2c049e5c3b98ce466f6072da4e0aa55ccc88e10` |
 | Headset-tested runtime source | `3a2a11bfc66b36e70f60282e91c9d5436f2e18d1` |
 | Build | Release x64, `HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=ON` |
 | Release ZIP SHA-256 | `43E52AEF5A2D1647A8F3AE6AEFDB6C22F0C67C7AA06FD70D327FB3E00ACF5DCC` |
