@@ -9650,10 +9650,42 @@ void Game_AutoVrTick()
         // still multiplies by the universal haptic_intensity, so the shared
         // config/F1 slider tunes ODST rumble strength with no per-title profile.
         if (odstTitleActive)
-            TitleAdapter_SetRuntimeMode(
+        {
+            // Issue #18: once ODST has armed stereo on a stable level, keep
+            // reporting Gameplay through brief camera-freshness dips instead of
+            // dropping to Loading on the fragile per-frame inLevelStable signal.
+            // Movement head-relativity (Game_MoveStickIsLocomotion) and controller
+            // rumble (ApplyControllerHaptics) are both gated on this mode, while
+            // stereo/head-look/aim ride the persistent armed flag -- so the old
+            // gate let movement revert to hand-based and rumble cut out while the
+            // view kept working. Tie the mode to the same armed/stereo persistence
+            // so all three stay in lockstep. Native pause still maps to Paused;
+            // genuine heartbeat loss, pause, or teardown disarm within this same
+            // block, so the mode still downgrades on real transitions. Before the
+            // first arm, armed is false, so this reports Loading.
+            const bool odstStereoActive =
+                g_enabled.load(std::memory_order_relaxed) &&
+                g_odstCamera.armed.load(std::memory_order_relaxed);
+            const RuntimeMode odstMode =
                 (nativePauseKnown && nativePaused) ? RuntimeMode::Paused
-                : (inLevelStable ? RuntimeMode::Gameplay
-                                 : RuntimeMode::Loading));
+                : (odstStereoActive ? RuntimeMode::Gameplay
+                                    : RuntimeMode::Loading);
+            static RuntimeMode loggedOdstMode = RuntimeMode::Shell;
+            if (odstMode != loggedOdstMode)
+            {
+                loggedOdstMode = odstMode;
+                LOG("ISSUE18 odst runtime-mode -> %s (armed=%d enabled=%d "
+                    "cameraFresh=%d inLevelStable=%d nativePaused=%d)",
+                    RuntimeModeName(odstMode),
+                    static_cast<int>(g_odstCamera.armed.load(
+                        std::memory_order_relaxed)),
+                    static_cast<int>(g_enabled.load(std::memory_order_relaxed)),
+                    static_cast<int>(cameraFresh),
+                    static_cast<int>(inLevelStable),
+                    static_cast<int>(nativePauseKnown && nativePaused));
+            }
+            TitleAdapter_SetRuntimeMode(odstMode);
+        }
 
         // Match Halo 3's live HUD-config timing: begin title-owned layout
         // discovery from the first eligible fresh camera heartbeat, without
@@ -10149,6 +10181,24 @@ void Game_MapMoveStick(float& mx, float& my)
     const float headYaw = g_gameYawRef + g_yawSign.load() * WrapPi(hy - g_headYawRef);
     const float aimYaw = atan2f(g_aimFwdY.load(), g_aimFwdX.load());
     const float delta = WrapPi(headYaw - aimYaw);
+    // ISSUE18 diagnostic (ODST only, throttled ~2/sec): confirm the head-relative
+    // rotation actually runs here for ODST and that the (head - aim) delta is a
+    // sane non-zero value. If movement still feels hand-based while this logs a
+    // healthy delta, the cause is upstream (mode gating), not this math.
+    if (Game_IsCameraOnlyBringup())
+    {
+        static std::atomic<uint64_t> lastMoveLogMs{0};
+        const uint64_t nowMs = GetTickCount64();
+        uint64_t prevMs = lastMoveLogMs.load(std::memory_order_relaxed);
+        if (nowMs - prevMs >= 500 &&
+            lastMoveLogMs.compare_exchange_strong(prevMs, nowMs,
+                std::memory_order_relaxed))
+        {
+            LOG("ISSUE18 odst move-stick rotate: headYaw=%.1f aimYaw=%.1f "
+                "delta=%.1f deg (in=%.2f,%.2f)",
+                headYaw * 57.2958f, aimYaw * 57.2958f, delta * 57.2958f, mx, my);
+        }
+    }
     const float c = cosf(delta), s = sinf(delta);
     const float nx = mx * c - my * s;
     const float ny = mx * s + my * c;
