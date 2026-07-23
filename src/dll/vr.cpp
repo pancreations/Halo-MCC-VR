@@ -2128,29 +2128,6 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             Menu_IsOpen() || g_sessionState != XR_SESSION_STATE_FOCUSED;
         if (mustStop)
         {
-            // ISSUE18 diagnostic (throttled ~2/sec): the game asked for rumble
-            // but a gate suppressed it. The ODST regression is !modeAllows during
-            // play; log the raw request and which gate blocked so the headset
-            // session confirms rumble drops are gone after the RuntimeMode fix.
-            const float rawRequest = std::clamp(
-                g_requestedHaptics.load(std::memory_order_relaxed), 0.0f, 1.0f);
-            if (rawRequest > 0.0f)
-            {
-                static uint64_t lastDropLogMs = 0;
-                const uint64_t nowMs = GetTickCount64();
-                if (nowMs - lastDropLogMs >= 500)
-                {
-                    lastDropLogMs = nowMs;
-                    LOG("ISSUE18 haptics dropped: req=%.2f mode=%s modeAllows=%d "
-                        "tracking=%d menu=%d focused=%d",
-                        rawRequest, RuntimeModeName(mode),
-                        static_cast<int>(modeAllows),
-                        static_cast<int>(trackingValid),
-                        static_cast<int>(Menu_IsOpen()),
-                        static_cast<int>(
-                            g_sessionState == XR_SESSION_STATE_FOCUSED));
-                }
-            }
             if (active || mode != previousMode)
                 StopControllerHaptics();
             active = false;

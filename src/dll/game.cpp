@@ -9670,20 +9670,7 @@ void Game_AutoVrTick()
                 (nativePauseKnown && nativePaused) ? RuntimeMode::Paused
                 : (odstStereoActive ? RuntimeMode::Gameplay
                                     : RuntimeMode::Loading);
-            static RuntimeMode loggedOdstMode = RuntimeMode::Shell;
-            if (odstMode != loggedOdstMode)
-            {
-                loggedOdstMode = odstMode;
-                LOG("ISSUE18 odst runtime-mode -> %s (armed=%d enabled=%d "
-                    "cameraFresh=%d inLevelStable=%d nativePaused=%d)",
-                    RuntimeModeName(odstMode),
-                    static_cast<int>(g_odstCamera.armed.load(
-                        std::memory_order_relaxed)),
-                    static_cast<int>(g_enabled.load(std::memory_order_relaxed)),
-                    static_cast<int>(cameraFresh),
-                    static_cast<int>(inLevelStable),
-                    static_cast<int>(nativePauseKnown && nativePaused));
-            }
+            // Transitions are traced by TitleAdapter_SetRuntimeMode itself.
             TitleAdapter_SetRuntimeMode(odstMode);
         }
 
@@ -10181,24 +10168,6 @@ void Game_MapMoveStick(float& mx, float& my)
     const float headYaw = g_gameYawRef + g_yawSign.load() * WrapPi(hy - g_headYawRef);
     const float aimYaw = atan2f(g_aimFwdY.load(), g_aimFwdX.load());
     const float delta = WrapPi(headYaw - aimYaw);
-    // ISSUE18 diagnostic (ODST only, throttled ~2/sec): confirm the head-relative
-    // rotation actually runs here for ODST and that the (head - aim) delta is a
-    // sane non-zero value. If movement still feels hand-based while this logs a
-    // healthy delta, the cause is upstream (mode gating), not this math.
-    if (Game_IsCameraOnlyBringup())
-    {
-        static std::atomic<uint64_t> lastMoveLogMs{0};
-        const uint64_t nowMs = GetTickCount64();
-        uint64_t prevMs = lastMoveLogMs.load(std::memory_order_relaxed);
-        if (nowMs - prevMs >= 500 &&
-            lastMoveLogMs.compare_exchange_strong(prevMs, nowMs,
-                std::memory_order_relaxed))
-        {
-            LOG("ISSUE18 odst move-stick rotate: headYaw=%.1f aimYaw=%.1f "
-                "delta=%.1f deg (in=%.2f,%.2f)",
-                headYaw * 57.2958f, aimYaw * 57.2958f, delta * 57.2958f, mx, my);
-        }
-    }
     const float c = cosf(delta), s = sinf(delta);
     const float nx = mx * c - my * s;
     const float ny = mx * s + my * c;
