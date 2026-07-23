@@ -244,6 +244,11 @@ namespace
     }
 
     std::atomic<unsigned> g_diagReads{0}, g_diagPadValid{0}, g_diagMerged{0};
+    // Slot-0 polls answered while shared input was gated OFF but the virtual pad
+    // was still held connected+idle (no physical pad). A non-zero value around a
+    // title transition is the fingerprint of the former dead-menu window: the
+    // hook used to return NOT_CONNECTED there and MCC latched the disconnect.
+    std::atomic<unsigned> g_diagGateIdle{0};
 
     // Heartbeat: proves whether the game is reading through our hook at all,
     // and whether controller data was valid when it did.
@@ -253,28 +258,42 @@ namespace
         const DWORD now = GetTickCount();
         DWORD last = lastLog.load();
         if (now - last >= 10000 && lastLog.compare_exchange_strong(last, now))
-            LOG("M3 DIAG: xinput reads=%u padValid=%u merged=%u (last 10s window cumulative)",
-                g_diagReads.load(), g_diagPadValid.load(), g_diagMerged.load());
+            LOG("M3 DIAG: xinput reads=%u padValid=%u merged=%u gateIdle=%u (last 10s window cumulative)",
+                g_diagReads.load(), g_diagPadValid.load(), g_diagMerged.load(),
+                g_diagGateIdle.load());
     }
 
     DWORD ProcessGetState(DWORD r, DWORD user, XINPUT_STATE* state)
     {
         if (user != 0 || !state)
             return r;
-        // Controller admission is separate from shared gameplay ownership.
-        // The private ODST camera-only build may expose ordinary gamepad input
-        // while motion aim and every Halo 3 gameplay transform stay blocked.
-        if (!Game_AllowsSharedControllerInput())
-            return r;
-        g_diagReads.fetch_add(1);
-        DiagTick();
-        if (r != ERROR_SUCCESS)
+        // Connection presence is INDEPENDENT of the shared-input gate. With no
+        // physical gamepad the mod owns slot 0 and must always present it
+        // connected and idle -- even while shared input is gated off (e.g. the
+        // brief window mid ODST title-exit teardown). Returning NOT_CONNECTED
+        // there hands MCC a disconnect edge it latches, so the menu stays dead
+        // after the gate reopens (the post-Save&Quit dead controller, and the
+        // cross-title input drop when switching between Halo games). A real
+        // physical pad (r == ERROR_SUCCESS) passes through untouched.
+        const bool ownVirtualSlot = (r != ERROR_SUCCESS);
+        if (ownVirtualSlot)
         {
-            // No physical gamepad: fabricate a connected, idle one for slot 0
-            // even before VR controller data is ready (see ProcessGetCaps).
             *state = {};
             r = ERROR_SUCCESS;
         }
+        // Controller admission is separate from shared gameplay ownership.
+        // The private ODST camera-only build may expose ordinary gamepad input
+        // while motion aim and every Halo 3 gameplay transform stay blocked.
+        // Gate only decides whether to MERGE VR motion, not whether the pad
+        // exists: hold the connection above and skip the merge when gated off.
+        if (!Game_AllowsSharedControllerInput())
+        {
+            if (ownVirtualSlot)
+                g_diagGateIdle.fetch_add(1);
+            return r;
+        }
+        g_diagReads.fetch_add(1);
+        DiagTick();
         VrPadState pad;
         VR_GetPadState(pad);
         if (!pad.valid)
@@ -308,14 +327,15 @@ namespace
 
     DWORD ProcessGetCaps(DWORD r, DWORD user, XINPUT_CAPABILITIES* caps)
     {
-        if (!Game_AllowsSharedControllerInput())
-            return r;
         if (user != 0 || !caps || r == ERROR_SUCCESS)
             return r;
         // Fabricate a standard wired gamepad UNCONDITIONALLY: MCC enumerates
         // controllers once at startup, often seconds before SteamVR activates
         // our actions — gating this on live VR data made the whole input
-        // system a startup race. An idle fabricated pad is harmless.
+        // system a startup race. An idle fabricated pad is harmless. This must
+        // stay independent of Game_AllowsSharedControllerInput(): a gate-closed
+        // NOT_CONNECTED here during a title transition makes MCC drop the pad
+        // for good (dead menu after Save & Quit, cross-title input loss).
         *caps = {};
         caps->Type = XINPUT_DEVTYPE_GAMEPAD;
         caps->SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
