@@ -1,5 +1,7 @@
 REACH IS BEING WORKED ON, DO NOT ACCEPT FIXES OF THIS MOD FROM OUTSIDE SOURCES WE DON'T KNOW WHATS IN IT
 
+Please list your specs if you're having issues. It's a guessing game over here 
+
 # Halo MCC VR
 
 > **Hi, I'm [pancreations](https://www.instagram.com/pancreations/)** — a 3D
