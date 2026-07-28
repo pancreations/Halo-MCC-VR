@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <string_view>
 #include <windows.h>
 
+#include "pose_inertia_filter.h"
 #include "config.h"
 #include "frame_pacing_logic.h"
 #include "hud_layout_logic.h"
@@ -127,6 +129,202 @@ namespace
 int main()
 {
     {
+    // Standalone controller-pose inertia math. No OpenXR or game process is
+    // loaded here; each hand owns an independent filter instance at runtime.
+    {
+        const auto identityPose = [] {
+            PoseInertiaPose pose{};
+            pose.orientation[3] = 1.0f;
+            return pose;
+        };
+        const auto yawPose = [&](float degrees) {
+            PoseInertiaPose pose = identityPose();
+            const float half = degrees * 0.00872664626f;
+            pose.orientation[1] = std::sin(half);
+            pose.orientation[3] = std::cos(half);
+            return pose;
+        };
+        const auto quaternionErrorDegrees = [](const PoseInertiaPose& a,
+                                               const PoseInertiaPose& b) {
+            float dot = 0.0f;
+            for (int component = 0; component < 4; ++component)
+                dot += a.orientation[component] * b.orientation[component];
+            dot = std::clamp(std::fabs(dot), 0.0f, 1.0f);
+            return 2.0f * std::acos(dot) * 57.2957795f;
+        };
+        PoseInertiaSettings settings{};
+        PoseInertiaPose output{};
+
+        PoseInertiaFilter first;
+        PoseInertiaPose firstTarget = yawPose(35.0f);
+        firstTarget.position[0] = 0.4f;
+        Check(first.Update(true, true, firstTarget, 1.0f / 90.0f,
+                           settings, output) &&
+                  output.position[0] == firstTarget.position[0] &&
+                  quaternionErrorDegrees(output, firstTarget) < 0.001f,
+            "Weapon inertia first valid pose initializes without a jump");
+
+        PoseInertiaFilter disabled;
+        PoseInertiaPose raw = yawPose(20.0f);
+        raw.position[0] = 0.123f;
+        raw.position[1] = -0.456f;
+        Check(disabled.Update(false, true, raw, 1.0f / 72.0f,
+                              settings, output) &&
+                  std::memcmp(&raw, &output, sizeof(raw)) == 0,
+            "Disabled weapon inertia returns the exact normalized raw pose");
+
+        PoseInertiaSettings convergence = settings;
+        PoseInertiaFilter positionFilter;
+        PoseInertiaPose origin = identityPose();
+        PoseInertiaPose positionTarget = origin;
+        positionTarget.position[0] = 1.0f;
+        positionFilter.Update(true, true, origin, 1.0f / 90.0f,
+                              convergence, output);
+        for (int frame = 0; frame < 180; ++frame)
+            positionFilter.Update(true, true, positionTarget, 1.0f / 90.0f,
+                                  convergence, output);
+        Check(std::fabs(output.position[0] - 1.0f) < 0.001f,
+            "Weapon inertia position converges on a stationary target");
+
+        PoseInertiaFilter rotationFilter;
+        const PoseInertiaPose rotationTarget = yawPose(90.0f);
+        rotationFilter.Update(true, true, origin, 1.0f / 90.0f,
+                              convergence, output);
+        for (int frame = 0; frame < 180; ++frame)
+            rotationFilter.Update(true, true, rotationTarget, 1.0f / 90.0f,
+                                  convergence, output);
+        Check(quaternionErrorDegrees(output, rotationTarget) < 0.05f,
+            "Weapon inertia rotation converges on a stationary target");
+
+        PoseInertiaFilter unboundedPosition;
+        unboundedPosition.Update(true, true, origin, 1.0f / 90.0f,
+                                 settings, output);
+        unboundedPosition.Update(true, true, positionTarget, 1.0f / 90.0f,
+                                 settings, output);
+        Check(std::fabs(positionTarget.position[0] - output.position[0]) > 0.15f,
+            "Weapon inertia does not project position onto a 15 cm leash");
+
+        PoseInertiaFilter unboundedRotation;
+        unboundedRotation.Update(true, true, origin, 1.0f / 90.0f,
+                                 settings, output);
+        unboundedRotation.Update(true, true, rotationTarget, 1.0f / 90.0f,
+                                 settings, output);
+        Check(quaternionErrorDegrees(output, rotationTarget) > 20.0f,
+            "Weapon inertia does not project rotation onto a 20 degree leash");
+
+        // Reproduce the headset report: at 60% weight a rapid 5 m/s hand sweep
+        // used to ride the old 15 cm hard boundary and repeatedly erase
+        // velocity. Catch-up must remain continuous without any pose leash.
+        PoseInertiaSettings fastMotion = settings;
+        fastMotion.positionFollow = 17.2f;
+        fastMotion.rotationFollow = 19.2f;
+        fastMotion.catchupSpeed = 0.75f;
+        const auto simulateFastSweep = [&](PoseInertiaSettings sweepSettings,
+                                           float& maximumStep) {
+            PoseInertiaFilter filter;
+            PoseInertiaPose target = origin;
+            PoseInertiaPose result{};
+            filter.Update(true, true, target, 1.0f / 90.0f,
+                          sweepSettings, result);
+            float maximumLag = 0.0f;
+            maximumStep = 0.0f;
+            float previous = result.position[0];
+            constexpr float inputStep = 5.0f / 90.0f;
+            for (int frame = 0; frame < 90; ++frame)
+            {
+                target.position[0] += inputStep;
+                filter.Update(true, true, target, 1.0f / 90.0f,
+                              sweepSettings, result);
+                maximumLag = std::max(
+                    maximumLag, target.position[0] - result.position[0]);
+                maximumStep = std::max(
+                    maximumStep, result.position[0] - previous);
+                previous = result.position[0];
+            }
+            return maximumLag;
+        };
+        float catchupStep = 0.0f;
+        const float catchupLag = simulateFastSweep(fastMotion, catchupStep);
+        PoseInertiaSettings noCatchup = fastMotion;
+        noCatchup.catchupSpeed = 0.0f;
+        float noCatchupStep = 0.0f;
+        const float noCatchupLag = simulateFastSweep(noCatchup, noCatchupStep);
+        Check(catchupLag < 0.14f && noCatchupLag > 0.20f &&
+                  catchupStep < (5.0f / 90.0f) * 1.10f,
+            "Weapon catch-up smoothly closes 60%-weight fast-sweep error without a leash");
+
+        const auto simulateRate = [&](int hz) {
+            PoseInertiaFilter filter;
+            PoseInertiaPose result{};
+            filter.Update(true, true, origin, 1.0f / hz,
+                          convergence, result);
+            for (int frame = 0; frame < hz; ++frame)
+                filter.Update(true, true, positionTarget, 1.0f / hz,
+                              convergence, result);
+            return result.position[0];
+        };
+        const float rate72 = simulateRate(72);
+        const float rate80 = simulateRate(80);
+        const float rate90 = simulateRate(90);
+        const float rate120 = simulateRate(120);
+        const float rate144 = simulateRate(144);
+        const float rateMin = std::min({rate72, rate80, rate90, rate120, rate144});
+        const float rateMax = std::max({rate72, rate80, rate90, rate120, rate144});
+        Check(rateMax - rateMin < 0.01f,
+            "Weapon inertia remains similar at 72, 80, 90, 120 and 144 Hz");
+
+        PoseInertiaFilter trackingReset;
+        trackingReset.Update(true, true, origin, 1.0f / 90.0f,
+                             settings, output);
+        trackingReset.Update(true, true, positionTarget, 1.0f / 90.0f,
+                             settings, output);
+        Check(!trackingReset.Update(true, false, positionTarget,
+                                   1.0f / 90.0f, settings, output),
+            "Weapon inertia tracking loss invalidates and resets state");
+        PoseInertiaPose reacquired = origin;
+        reacquired.position[1] = 0.75f;
+        trackingReset.Update(true, true, reacquired, 1.0f / 90.0f,
+                             settings, output);
+        Check(output.position[1] == reacquired.position[1],
+            "Weapon inertia reacquisition initializes at the new raw pose");
+
+        PoseInertiaFilter longGap;
+        longGap.Update(true, true, origin, 1.0f / 90.0f, settings, output);
+        longGap.Update(true, true, positionTarget, 0.5f, settings, output);
+        Check(output.position[0] == positionTarget.position[0],
+            "Weapon inertia snaps safely after a long frame gap");
+
+        float quaternionLength = 0.0f;
+        for (float component : output.orientation)
+            quaternionLength += component * component;
+        Check(std::isfinite(quaternionLength) &&
+                  std::fabs(quaternionLength - 1.0f) < 0.0001f,
+            "Weapon inertia quaternion output stays finite and normalized");
+
+        PoseInertiaFilter leftHand;
+        PoseInertiaFilter rightHand;
+        PoseInertiaPose leftTarget = origin;
+        PoseInertiaPose rightTarget = origin;
+        leftTarget.position[0] = -1.0f;
+        rightTarget.position[0] = 1.0f;
+        PoseInertiaPose leftOutput{}, rightOutput{};
+        leftHand.Update(true, true, origin, 1.0f / 90.0f, settings, leftOutput);
+        rightHand.Update(true, true, origin, 1.0f / 90.0f, settings, rightOutput);
+        leftHand.Update(true, true, leftTarget, 1.0f / 90.0f, settings, leftOutput);
+        rightHand.Update(true, true, rightTarget, 1.0f / 90.0f, settings, rightOutput);
+        Check(leftOutput.position[0] < 0.0f && rightOutput.position[0] > 0.0f,
+            "Left and right weapon inertia state remains independent");
+
+        PoseInertiaFilter reenabled;
+        reenabled.Update(true, true, origin, 1.0f / 90.0f, settings, output);
+        reenabled.Update(false, true, positionTarget, 1.0f / 90.0f,
+                         settings, output);
+        reenabled.Update(true, true, positionTarget, 1.0f / 90.0f,
+                         settings, output);
+        Check(output.position[0] == positionTarget.position[0],
+            "Re-enabling weapon inertia cannot replay a stale lag jump");
+    }
+
         constexpr std::array<uint8_t, 6> repeatedPattern{
             0xAA, 0xBB, 0xCC, 0xAA, 0xBB, 0xCC
         };
@@ -3463,6 +3661,12 @@ int main()
     Check(g_config.screen_width_m == 6.25f, "Legacy values survive migration");
     Check(g_config.haptic_intensity == 0.86f,
         "Malformed new values retain their individual default");
+    const Config inertiaDefaults{};
+    Check(!g_config.weapon_inertia &&
+          g_config.weapon_position_follow == inertiaDefaults.weapon_position_follow &&
+          g_config.weapon_rotation_follow == inertiaDefaults.weapon_rotation_follow &&
+          g_config.weapon_catchup_speed == inertiaDefaults.weapon_catchup_speed,
+        "Older configs receive disabled weapon inertia with safe defaults");
     const std::string organizedConfig = ReadTextFile(primary);
     const size_t openXrSection = organizedConfig.find("#  OPENXR & COMFORT");
     const size_t controlsSection = organizedConfig.find("#  CONTROLS & TURNING");
@@ -3486,7 +3690,9 @@ int main()
         "The universal config contains no title-prefixed assignments");
     constexpr const char* universalKeys[] = {
         "config_version", "haptic_intensity", "headset_smoothing",
-        "aim_stabilization", "screen_width_m", "screen_distance_m",
+        "aim_stabilization", "weapon_inertia", "weapon_position_follow",
+        "weapon_rotation_follow", "weapon_catchup_speed",
+        "screen_width_m", "screen_distance_m",
         "turn_smooth", "turn_snap_deg", "turn_smooth_deg_s", "dpad_hand",
         "crosshair", "crosshair_distance_m", "crosshair_size_deg",
         "reticle_r", "reticle_g", "reticle_b", "kill_reticle",
@@ -3518,6 +3724,10 @@ int main()
         file << "aim_stabilization = -1.0\n";
         file << "aa_mode = 4\n";
     }
+    Check(organizedConfig.find("weapon_max_lag_m") == std::string::npos &&
+          organizedConfig.find("weapon_max_lag_deg") == std::string::npos,
+        "Generated config retires hard weapon pose limits");
+
     ConfigLoad(primary.c_str());
     Check(g_config.haptic_intensity == 1.0f, "Haptic intensity is safely clamped");
     Check(g_config.headset_smoothing == 0.10f,
@@ -3525,6 +3735,39 @@ int main()
     Check(g_config.aim_stabilization == 0.0f, "Aim stabilization is safely clamped");
     Check(g_config.aa_mode == 4,
         "SMAA 1x plus FXAA Strong survives config loading");
+
+    {
+        std::ofstream file(primary);
+        file << "weapon_inertia = 1\n";
+        file << "weapon_position_follow = -5\n";
+        file << "weapon_rotation_follow = 99\n";
+        file << "weapon_catchup_speed = 2\n";
+        file << "weapon_max_lag_m = 0.5\n";
+        file << "weapon_max_lag_deg = 99\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.weapon_inertia &&
+          g_config.weapon_position_follow == 2.0f &&
+          g_config.weapon_rotation_follow == 45.0f &&
+          g_config.weapon_catchup_speed == 1.0f,
+        "Weapon inertia config values parse while retired pose limits are ignored");
+    g_config.weapon_position_follow = 12.5f;
+    g_config.weapon_rotation_follow = 20.5f;
+    g_config.weapon_catchup_speed = 0.65f;
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(g_config.weapon_inertia &&
+          g_config.weapon_position_follow == 12.5f &&
+          g_config.weapon_rotation_follow == 20.5f &&
+          g_config.weapon_catchup_speed == 0.65f,
+        "Weapon inertia settings survive a save/reload round trip");
+    {
+        std::ofstream file(primary);
+        file << "weapon_position_follow = nan\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.weapon_position_follow == inertiaDefaults.weapon_position_follow,
+        "Malformed weapon inertia values retain their individual defaults");
 
     // resolution_scale is free-form: a hand-typed value must survive exactly,
     // not snap to one of the six installer tiers (the pre-2026-07-20 behavior).
@@ -3660,6 +3903,10 @@ int main()
           g_config.hud_vertical_offset == defaults.hud_vertical_offset &&
           g_config.scope_enabled &&
           g_config.scope_zoom == defaults.scope_zoom &&
+          !g_config.weapon_inertia &&
+          g_config.weapon_position_follow == defaults.weapon_position_follow &&
+          g_config.weapon_rotation_follow == defaults.weapon_rotation_follow &&
+          g_config.weapon_catchup_speed == defaults.weapon_catchup_speed &&
           g_config.scope_screen_width_m == defaults.scope_screen_width_m &&
           g_config.scope_screen_right_m == defaults.scope_screen_right_m &&
           g_config.scope_screen_up_m == defaults.scope_screen_up_m &&

@@ -37,6 +37,7 @@
 #include "../common/frame_pacing_logic.h"
 #include "../common/input_logic.h"
 #include "../common/scope_logic.h"
+#include "../common/pose_inertia_filter.h"
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
@@ -321,8 +322,19 @@ namespace
     bool g_rightAimPoseValid = false;
     XrPosef g_leftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_leftAimPoseValid = false;
+    // Raw poses remain available for controller UI gestures. The canonical
+    // aim/hand poses above are the only values gameplay and visible weapon
+    // consumers receive, so inertia can never split gun art from its ray.
+    XrPosef g_rawRightAimPose{{0, 0, 0, 1}, {0, 0, 0}};
+    bool g_rawRightAimPoseValid = false;
+    XrPosef g_rawLeftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
+    bool g_rawLeftAimPoseValid = false;
+    PoseInertiaFilter g_rightWeaponInertia;
+    PoseInertiaFilter g_leftWeaponInertia;
+    XrTime g_lastControllerPoseTime = 0;
+    GameTitle g_weaponInertiaTitle = GameTitle::Unknown;
     // Render-thread-only filtered copy for the compositor crosshair. Keeping it
-    // separate is intentional: weapon steering and bullets stay on raw aim.
+    // separate preserves the existing optional visual-only reticle smoothing.
     XrPosef g_reticleAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_reticleAimPoseValid = false;
 
@@ -999,6 +1011,8 @@ namespace
 
     // Tell the user VR failed without freezing the game (own thread) and let
     // the game keep running flat.
+    void ResetWeaponInertia(bool invalidateOutput);
+
     void Fail(const char* what, XrResult r = XR_SUCCESS)
     {
         char msg[512];
@@ -1007,6 +1021,7 @@ namespace
         else
             snprintf(msg, sizeof(msg), "%s", what);
         LOG("VR FAILED: %s", msg);
+        ResetWeaponInertia(true);
         g_authoredReticlePreparationReady.store(
             false, std::memory_order_release);
         g_state = State::Failed;
@@ -3692,6 +3707,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 
     void EnterFrameWaitFatalDrain(const char* reason)
     {
+        ResetWeaponInertia(true);
         g_waitPipelineFaulted.store(true, std::memory_order_release);
         g_waitThreadStop.store(true, std::memory_order_release);
         if (g_waitConsumedEvent)
@@ -3745,6 +3761,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     StopControllerHaptics();
                 if (sc.state == XR_SESSION_STATE_READY)
                 {
+                    ResetWeaponInertia(true);
                     XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
                     bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                     XrResult r = xrBeginSession(g_session, &bi);
@@ -3773,6 +3790,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 }
                 else if (sc.state == XR_SESSION_STATE_STOPPING)
                 {
+                    ResetWeaponInertia(true);
                     const char* fatalExitReason =
                         g_frameWaitFatalExitReason;
                     StopControllerHaptics();
@@ -3802,6 +3820,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 }
                 else if (sc.state == XR_SESSION_STATE_EXITING || sc.state == XR_SESSION_STATE_LOSS_PENDING)
                 {
+                    ResetWeaponInertia(true);
                     StopControllerHaptics();
                     ResetPreparedFrame();
                     g_authoredReticlePreparationReady.store(
@@ -3814,6 +3833,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             }
             case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
                 StopControllerHaptics();
+                ResetWeaponInertia(true);
                 ResetPreparedFrame();
                 g_authoredReticlePreparationReady.store(
                     false, std::memory_order_release);
@@ -4672,6 +4692,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     // multi-call aim getter). `active` mirrors it for the menu indicator.
     std::atomic<bool> g_twoHandLatched{false};
     std::atomic<bool> g_twoHandActive{false};
+    std::atomic<float> g_twoHandBlend{0.0f};
 
     // Called once per frame from the pose capture. Toggle mode (default): a
     // left-grip press while the left hand is inside the thin/long barrel zone
@@ -4711,6 +4732,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         bool twoHandEnabled = false;
         bool twoHandLatched = false;
         float leftHandForwardM = 0.0f;
+        float twoHandBlend = 0.0f;
         float leftGripForwardM = 0.0f;
         float gunYawDeg = 0.0f;
         float gunPitchDeg = 0.0f;
@@ -4740,6 +4762,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         inputs.left = left;
         inputs.twoHandEnabled = g_config.two_handed_aim;
         inputs.twoHandLatched = g_twoHandLatched.load();
+        inputs.twoHandBlend = g_twoHandBlend.load();
         inputs.leftHandForwardM = g_config.left_hand_forward_m;
         inputs.leftGripForwardM = g_config.left_grip_forward_m;
         inputs.gunYawDeg = g_config.gun_yaw_deg;
@@ -4794,7 +4817,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         };
 
         if (!inputs.twoHandEnabled || !inputs.leftValid ||
-            !inputs.twoHandLatched)
+            inputs.twoHandBlend <= 0.0001f)
         {
             finishAimPose();
             return result;
@@ -4879,9 +4902,27 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             finishAimPose();
             return result;
         }
-        result.pose.orientation = {
-            qx/ql, qy/ql, qz/ql, qw/ql};
-        result.twoHandActive = true;
+        XrQuaternionf twoHand{qx/ql, qy/ql, qz/ql, qw/ql};
+        float dot = rq.x*twoHand.x + rq.y*twoHand.y +
+                    rq.z*twoHand.z + rq.w*twoHand.w;
+        if (dot < 0.0f)
+        {
+            twoHand = {-twoHand.x, -twoHand.y, -twoHand.z, -twoHand.w};
+        }
+        const float blend = std::clamp(inputs.twoHandBlend, 0.0f, 1.0f);
+        XrQuaternionf blended{
+            rq.x + (twoHand.x-rq.x)*blend,
+            rq.y + (twoHand.y-rq.y)*blend,
+            rq.z + (twoHand.z-rq.z)*blend,
+            rq.w + (twoHand.w-rq.w)*blend};
+        const float blendedLength = sqrtf(
+            blended.x*blended.x + blended.y*blended.y +
+            blended.z*blended.z + blended.w*blended.w);
+        if (blendedLength >= 1e-5f && std::isfinite(blendedLength))
+            result.pose.orientation = {
+                blended.x/blendedLength, blended.y/blendedLength,
+                blended.z/blendedLength, blended.w/blendedLength};
+        result.twoHandActive = inputs.twoHandLatched;
         finishAimPose();
         return result;
     }
@@ -4930,6 +4971,72 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             g_twoHandLatched.store(UpdateTwoHandHold(
                 g_twoHandLatched.load(), gripHeld, inZone));
         }
+    }
+
+    PoseInertiaPose ToInertiaPose(const XrPosef& pose) noexcept
+    {
+        PoseInertiaPose converted{};
+        converted.orientation[0] = pose.orientation.x;
+        converted.orientation[1] = pose.orientation.y;
+        converted.orientation[2] = pose.orientation.z;
+        converted.orientation[3] = pose.orientation.w;
+        converted.position[0] = pose.position.x;
+        converted.position[1] = pose.position.y;
+        converted.position[2] = pose.position.z;
+        return converted;
+    }
+
+    XrPosef FromInertiaPose(const PoseInertiaPose& pose) noexcept
+    {
+        return {
+            {pose.orientation[0], pose.orientation[1],
+             pose.orientation[2], pose.orientation[3]},
+            {pose.position[0], pose.position[1], pose.position[2]}};
+    }
+
+    PoseInertiaSettings CurrentWeaponInertiaSettings() noexcept
+    {
+        return {
+            g_config.weapon_position_follow,
+            g_config.weapon_rotation_follow,
+            g_config.weapon_catchup_speed};
+    }
+
+    void ResetWeaponInertia(bool invalidateOutput)
+    {
+        if (!g_headCsInit)
+            return;
+        EnterCriticalSection(&g_headCs);
+        g_rightWeaponInertia.Reset();
+        g_leftWeaponInertia.Reset();
+        g_lastControllerPoseTime = 0;
+        g_weaponInertiaTitle = GameTitle::Unknown;
+        if (invalidateOutput)
+        {
+            g_rightAimPoseValid = false;
+            g_leftAimPoseValid = false;
+            g_rawRightAimPoseValid = false;
+            g_rawLeftAimPoseValid = false;
+        }
+        LeaveCriticalSection(&g_headCs);
+        g_twoHandLatched.store(false);
+        g_twoHandBlend.store(0.0f);
+        g_twoHandActive.store(false);
+    }
+
+    void UpdateTwoHandBlend(float deltaSeconds, bool posesValid) noexcept
+    {
+        const bool target = posesValid && g_config.two_handed_aim &&
+            g_twoHandLatched.load();
+        if (!posesValid || !std::isfinite(deltaSeconds) ||
+            deltaSeconds <= 0.0f || deltaSeconds > 0.25f)
+        {
+            g_twoHandBlend.store(target ? 1.0f : 0.0f);
+            return;
+        }
+        const float previous = g_twoHandBlend.load();
+        const float follow = 1.0f - std::exp(-18.0f * deltaSeconds);
+        g_twoHandBlend.store(previous + ((target ? 1.0f : 0.0f) - previous) * follow);
     }
 
     void StopControllerHaptics()
@@ -5017,15 +5124,24 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 
     bool CaptureRightControllerPose(XrTime time)
     {
-        if (g_gameplayActions == XR_NULL_HANDLE || g_rightAimAction == XR_NULL_HANDLE ||
+        if (g_gameplayActions == XR_NULL_HANDLE ||
+            g_rightAimAction == XR_NULL_HANDLE ||
             g_rightAimSpace == XR_NULL_HANDLE)
+        {
+            if (g_config.weapon_inertia)
+                ResetWeaponInertia(true);
             return false;
+        }
         XrActiveActionSet active{g_gameplayActions, XR_NULL_PATH};
         XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
         sync.countActiveActionSets = 1;
         sync.activeActionSets = &active;
         if (XR_FAILED(xrSyncActions(g_session, &sync)))
+        {
+            if (g_config.weapon_inertia)
+                ResetWeaponInertia(true);
             return false;
+        }
         XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
         get.action = g_rightAimAction;
         get.subactionPath = g_rightHandPath;
@@ -5040,7 +5156,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             valid = (location.locationFlags & required) == required &&
                     NormalizeTrackedPose(location.pose);
         }
-        // Left hand: position only matters (D-pad gesture), same locate path.
+        // Left hand uses the same locate path for support-hand placement and
+        // the independently weighted two-hand aim line.
         bool leftValid = false;
         XrSpaceLocation leftLocation{XR_TYPE_SPACE_LOCATION};
         if (g_leftAimAction != XR_NULL_HANDLE && g_leftAimSpace != XR_NULL_HANDLE)
@@ -5059,14 +5176,67 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             }
         }
 
+        const GameTitle activeTitle = TitleAdapter_GetActiveTitle();
+        float poseDeltaSeconds = 0.0f;
+        bool titleChanged = false;
         EnterCriticalSection(&g_headCs);
-        g_rightAimPoseValid = valid;
+        titleChanged = activeTitle != g_weaponInertiaTitle;
+        if (titleChanged)
+        {
+            g_rightWeaponInertia.Reset();
+            g_leftWeaponInertia.Reset();
+            g_lastControllerPoseTime = 0;
+            g_weaponInertiaTitle = activeTitle;
+        }
+        if (g_lastControllerPoseTime && time > g_lastControllerPoseTime)
+            poseDeltaSeconds = static_cast<float>(
+                static_cast<double>(time - g_lastControllerPoseTime) /
+                1000000000.0);
+        g_lastControllerPoseTime = time;
+
+        g_rawRightAimPoseValid = valid;
         if (valid)
-            g_rightAimPose = location.pose;
-        g_leftAimPoseValid = leftValid;
+            g_rawRightAimPose = location.pose;
+        g_rawLeftAimPoseValid = leftValid;
         if (leftValid)
-            g_leftAimPose = leftLocation.pose;
+            g_rawLeftAimPose = leftLocation.pose;
+
+        if (!g_config.weapon_inertia)
+        {
+            // Preserve the accepted disabled path exactly: already-normalized
+            // OpenXR poses are copied directly, with no spring math.
+            g_rightWeaponInertia.Reset();
+            g_leftWeaponInertia.Reset();
+            g_rightAimPoseValid = valid;
+            if (valid)
+                g_rightAimPose = location.pose;
+            g_leftAimPoseValid = leftValid;
+            if (leftValid)
+                g_leftAimPose = leftLocation.pose;
+        }
+        else
+        {
+            const PoseInertiaSettings inertiaSettings =
+                CurrentWeaponInertiaSettings();
+            PoseInertiaPose filtered{};
+            g_rightAimPoseValid = g_rightWeaponInertia.Update(
+                true, valid, ToInertiaPose(location.pose), poseDeltaSeconds,
+                inertiaSettings, filtered);
+            if (g_rightAimPoseValid)
+                g_rightAimPose = FromInertiaPose(filtered);
+            g_leftAimPoseValid = g_leftWeaponInertia.Update(
+                true, leftValid, ToInertiaPose(leftLocation.pose),
+                poseDeltaSeconds, inertiaSettings, filtered);
+            if (g_leftAimPoseValid)
+                g_leftAimPose = FromInertiaPose(filtered);
+        }
         LeaveCriticalSection(&g_headCs);
+        if (titleChanged)
+        {
+            g_twoHandLatched.store(false);
+            g_twoHandBlend.store(0.0f);
+            g_twoHandActive.store(false);
+        }
         static bool logged = false;
         if (valid && !logged)
         {
@@ -5139,6 +5309,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_padState = pad;
         LeaveCriticalSection(&g_headCs);
         UpdateTwoHandLatch(valid, location.pose, leftValid, leftLocation.pose, pad.gripL);
+        UpdateTwoHandBlend(poseDeltaSeconds, valid && leftValid);
         ApplyControllerHaptics(valid && leftValid);
         static bool padLogged = false;
         if (pad.valid && !padLogged)
@@ -5155,7 +5326,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         static bool hadHit = false;
         static float smoothU = 0.5f, smoothV = 0.5f;
         static uint64_t lastDiagMs = 0;
-        if (!g_rightAimPoseValid || (headLocked && !g_headPoseValid) ||
+        if (!g_rawRightAimPoseValid || (headLocked && !g_headPoseValid) ||
             (!headLocked && !g_haveCenter))
         {
             triggerPressed = false;
@@ -5171,12 +5342,12 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             -anchor.orientation.x, -anchor.orientation.y,
             -anchor.orientation.z, anchor.orientation.w};
         const XrVector3f relative{
-            g_rightAimPose.position.x - anchor.position.x,
-            g_rightAimPose.position.y - anchor.position.y,
-            g_rightAimPose.position.z - anchor.position.z};
+            g_rawRightAimPose.position.x - anchor.position.x,
+            g_rawRightAimPose.position.y - anchor.position.y,
+            g_rawRightAimPose.position.z - anchor.position.z};
         const XrVector3f localOrigin = Rotate(inverseAnchor, relative);
         const XrVector3f worldDirection =
-            Rotate(g_rightAimPose.orientation, {0.0f, 0.0f, -1.0f});
+            Rotate(g_rawRightAimPose.orientation, {0.0f, 0.0f, -1.0f});
         const XrVector3f localDirection = Rotate(inverseAnchor, worldDirection);
         const float origin[3] = {localOrigin.x, localOrigin.y, localOrigin.z};
         const float direction[3] = {localDirection.x, localDirection.y, localDirection.z};
@@ -6570,7 +6741,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         {
                             XrPosef rawAim{{aimQ[0],aimQ[1],aimQ[2],aimQ[3]},
                                            {aimP[0],aimP[1],aimP[2]}};
-                            const float smoothing =
+                            // Weapon weight already owns the shared gun/bullet/
+                            // reticle ray. Do not add a second visual-only lag.
+                            const float smoothing = g_config.weapon_inertia ? 0.0f :
                                 std::clamp(g_config.aim_stabilization, 0.0f, 0.95f);
                             g_reticleAimPose = g_reticleAimPoseValid && smoothing > 0.0f
                                 ? SmoothTrackedPose(rawAim, g_reticleAimPose, smoothing)
@@ -7371,6 +7544,7 @@ void VR_AfterResizeBuffers(IDXGISwapChain*)
 void VR_RequestRecenter()
 {
     g_haveCenter = false;
+    ResetWeaponInertia(false);
 }
 
 void VR_RequestPausePresentation(bool paused)
@@ -7436,6 +7610,7 @@ bool VR_IsFramePacingOwned()
 
 void VR_DetachGamePresentation()
 {
+    ResetWeaponInertia(true);
     // Game_AutoVrTick calls this from Present, after Halo has stopped issuing
     // camera renders and before this frame is submitted to OpenXR. Do not tear
     // down the session or shared MCC D3D hooks: the flat shell still needs
@@ -8408,6 +8583,46 @@ bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3])
     LeaveCriticalSection(&g_headCs);
     return ok;
 }
+bool VR_GetRawRightControllerPose(float outQuat[4], float outPos[3])
+{
+    if (!g_headCsInit)
+        return false;
+    EnterCriticalSection(&g_headCs);
+    const bool ok = g_rawRightAimPoseValid;
+    if (ok)
+    {
+        outQuat[0] = g_rawRightAimPose.orientation.x;
+        outQuat[1] = g_rawRightAimPose.orientation.y;
+        outQuat[2] = g_rawRightAimPose.orientation.z;
+        outQuat[3] = g_rawRightAimPose.orientation.w;
+        outPos[0] = g_rawRightAimPose.position.x;
+        outPos[1] = g_rawRightAimPose.position.y;
+        outPos[2] = g_rawRightAimPose.position.z;
+    }
+    LeaveCriticalSection(&g_headCs);
+    return ok;
+}
+
+bool VR_GetRawLeftControllerPose(float outQuat[4], float outPos[3])
+{
+    if (!g_headCsInit)
+        return false;
+    EnterCriticalSection(&g_headCs);
+    const bool ok = g_rawLeftAimPoseValid;
+    if (ok)
+    {
+        outQuat[0] = g_rawLeftAimPose.orientation.x;
+        outQuat[1] = g_rawLeftAimPose.orientation.y;
+        outQuat[2] = g_rawLeftAimPose.orientation.z;
+        outQuat[3] = g_rawLeftAimPose.orientation.w;
+        outPos[0] = g_rawLeftAimPose.position.x;
+        outPos[1] = g_rawLeftAimPose.position.y;
+        outPos[2] = g_rawLeftAimPose.position.z;
+    }
+    LeaveCriticalSection(&g_headCs);
+    return ok;
+}
+
 
 bool VR_GetEyeFov(int eye, float outFov[4])
 {

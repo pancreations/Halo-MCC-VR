@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <cmath>
 #include <imgui.h>
+#include <algorithm>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 #include "menu.h"
@@ -392,6 +393,38 @@ namespace
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Hand-held weapon");
+        const float positionWeight =
+            (40.0f - g_config.weapon_position_follow) / 38.0f;
+        const float rotationWeight =
+            (45.0f - g_config.weapon_rotation_follow) / 43.0f;
+        float weightPercent = g_config.weapon_inertia
+            ? std::clamp((positionWeight + rotationWeight) * 50.0f,
+                         0.0f, 100.0f)
+            : 0.0f;
+        if (ImGui::SliderFloat(
+                "Weapon weight", &weightPercent,
+                0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_None))
+        {
+            const float strength = weightPercent / 100.0f;
+            g_config.weapon_inertia = weightPercent >= 0.5f;
+            g_config.weapon_position_follow =
+                40.0f - strength * 38.0f;
+            g_config.weapon_rotation_follow =
+                45.0f - strength * 43.0f;
+            changed = true;
+        }
+        float catchupPercent = g_config.weapon_catchup_speed * 100.0f;
+        if (ImGui::SliderFloat(
+                "Fast-movement catch-up", &catchupPercent,
+                0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_None))
+        {
+            g_config.weapon_catchup_speed = catchupPercent / 100.0f;
+            changed = true;
+        }
+        ImGui::TextDisabled(
+            "Weight controls normal handling; catch-up smoothly pulls harder as\n"
+            "the real controller gets farther away. 0%% weight is exact tracking.");
+        ImGui::TextDisabled("Head tracking and buttons stay unfiltered.");
         changed |= ImGui::SliderFloat("Weapon size", &g_config.gun_scale, 0.3f, 3.0f, "%.2fx");
         ImGui::TextDisabled("Uniform scale of RIGHT hand + weapon about your grip (Home/End in-game).");
         changed |= ImGui::SliderFloat("Left hand size", &g_config.left_hand_scale,
@@ -457,21 +490,26 @@ namespace
         changed |= ImGui::Checkbox("Show a crosshair where the weapon shoots", &g_config.crosshair);
         if (g_config.crosshair)
         {
-            float crosshairSmoothPercent = g_config.aim_stabilization * 100.0f;
-            if (ImGui::SliderFloat("Crosshair smoothing", &crosshairSmoothPercent,
-                                   0.0f, 95.0f, "%.0f%%", ImGuiSliderFlags_None))
+            if (!g_config.weapon_inertia)
             {
-                g_config.aim_stabilization = crosshairSmoothPercent / 100.0f;
-                changed = true;
+                float crosshairSmoothPercent = g_config.aim_stabilization * 100.0f;
+                if (ImGui::SliderFloat("Crosshair smoothing", &crosshairSmoothPercent,
+                                       0.0f, 95.0f, "%.0f%%", ImGuiSliderFlags_None))
+                {
+                    g_config.aim_stabilization = crosshairSmoothPercent / 100.0f;
+                    changed = true;
+                }
             }
+            else
+                ImGui::TextDisabled("Extra crosshair-only smoothing is bypassed while weapon weight is on.");
             changed |= ImGui::SliderFloat("Crosshair size (deg)", &g_config.crosshair_size_deg,
                                           0.3f, 20.0f, "%.1f");
             changed |= ImGui::SliderFloat("Crosshair distance (m)", &g_config.crosshair_distance_m,
                                           2.0f, 50.0f, "%.0f");
             ImGui::TextDisabled("Uses the equipped weapon's authored crosshair and target colors.");
         }
-        ImGui::TextDisabled("Crosshair smoothing is visual only; bullets keep the current controller ray.\n"
-                            "Set it to 0%% for exact raw tracking.");
+        ImGui::TextDisabled("With weapon weight off, crosshair smoothing is visual only. With it on,\n"
+                            "gun, bullets and crosshair share the same weighted pose.");
 
         ImGui::Spacing();
         changed |= ImGui::Checkbox("Two-handed aiming", &g_config.two_handed_aim);

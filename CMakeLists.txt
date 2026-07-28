@@ -172,6 +172,7 @@ add_library(halo3xr SHARED
     src/common/log.cpp
     src/common/config.cpp
     src/common/input_logic.cpp
+    src/common/pose_inertia_filter.cpp
     src/common/scope_logic.cpp
     src/common/title_registry.cpp
     src/common/title_runtime_state.cpp
@@ -238,6 +239,7 @@ if(BUILD_TESTING)
     add_executable(halomccvr_core_tests
         tests/core_tests.cpp
         src/common/input_logic.cpp
+        src/common/pose_inertia_filter.cpp
         src/common/scope_logic.cpp
         src/common/title_registry.cpp
         src/common/title_runtime_state.cpp

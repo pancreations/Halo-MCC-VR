@@ -179,8 +179,8 @@ namespace
         {
             float hq[4], hp[3], cq[4], cp[3];
             const bool haveController = g_config.dpad_hand == 0
-                ? VR_GetLeftControllerPose(cq, cp)
-                : VR_GetRightControllerPose(cq, cp);
+                ? VR_GetRawLeftControllerPose(cq, cp)
+                : VR_GetRawRightControllerPose(cq, cp);
             if (haveController && VR_GetHeadPose(hq, hp))
             {
                 const float dx = hp[0] - cp[0], dy = hp[1] - cp[1], dz = hp[2] - cp[2];

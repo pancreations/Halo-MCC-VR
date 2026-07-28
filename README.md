@@ -167,7 +167,21 @@ configuration. The F1 menu edits the same values, and the game regenerates the
 file if it is missing — but a regenerated file contains bare built-in defaults,
 not the shipped tuning, so keep a copy of the shipped one.
 
+Optional simulated weapon/hand weight is disabled by default. Enable and tune
+it live in the F1 **Aim & Weapons** tab. **Weapon weight** controls normal
+handling (0% is exact tracking); **Fast-movement catch-up** progressively pulls
+harder as the controller gap grows. Catch-up reaches full strength around 15 cm
+or 20 degrees, but neither value is a hard pose limit:
+
+```text
+weapon_inertia = 0
+weapon_position_follow = 14.0
+weapon_rotation_follow = 17.0
+weapon_catchup_speed = 0.75
+```
+
 ## Build from source
+
 
 See [BUILDING.md](BUILDING.md). A clean build uses the accepted source and
 configuration, but produces a new, unaccepted candidate and file hash. Only the

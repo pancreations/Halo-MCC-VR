@@ -43,11 +43,21 @@ struct Config
     // Portable OpenXR feedback and pose stabilization. Headset smoothing is a
     // deliberately tiny previous-frame blend (0.03 shipped default, 10% hard maximum)
     // so users may remove micro-jitter without turning head motion into a laggy camera.
-    // Aim stabilization affects only the floating VR crosshair; weapon aim and
-    // bullets continue to use the current raw controller pose.
+    // Aim stabilization is a visual-only pass used when weapon inertia is off.
+    // Inertia bypasses it so gun, reticle and bullets share one weighted ray.
     float haptic_intensity = 0.86f;
     float headset_smoothing = 0.03f;
     float aim_stabilization = 0.48f;
+
+    // Optional controller-pose weight. Both hands are filtered independently,
+    // then the shared aim pose (including its two-hand line) is built from
+    // those results so gun art, IK, reticle, muzzle effects and bullets remain
+    // aligned. The headset pose is deliberately never routed through it, and
+    // smooth catch-up keeps the weapon attached during fast motion.
+    bool weapon_inertia = false;
+    float weapon_position_follow = 14.0f;
+    float weapon_rotation_follow = 17.0f;
+    float weapon_catchup_speed = 0.75f;
 
     float screen_width_m = 4.0f;    // width of the virtual screen, in meters
     float screen_distance_m = 2.4f; // how far away the screen floats, in meters

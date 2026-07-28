@@ -42,6 +42,12 @@ static void Clamp()
     g_config.haptic_intensity = std::clamp(g_config.haptic_intensity, 0.0f, 1.0f);
     g_config.headset_smoothing = std::clamp(g_config.headset_smoothing, 0.0f, 0.10f);
     g_config.aim_stabilization = std::clamp(g_config.aim_stabilization, 0.0f, 0.95f);
+    g_config.weapon_position_follow =
+        std::clamp(g_config.weapon_position_follow, 2.0f, 40.0f);
+    g_config.weapon_rotation_follow =
+        std::clamp(g_config.weapon_rotation_follow, 2.0f, 45.0f);
+    g_config.weapon_catchup_speed =
+        std::clamp(g_config.weapon_catchup_speed, 0.0f, 1.0f);
     g_config.screen_width_m = std::clamp(g_config.screen_width_m, 0.5f, 20.0f);
     g_config.screen_distance_m = std::clamp(g_config.screen_distance_m, 0.3f, 20.0f);
     g_config.turn_snap_deg = std::clamp(g_config.turn_snap_deg, 5.0f, 90.0f);
@@ -140,6 +146,14 @@ void ConfigLoad(const wchar_t* path)
             ParseFloatSetting(key, val, g_config.headset_smoothing);
         else if (!strcmp(key, "aim_stabilization"))
             ParseFloatSetting(key, val, g_config.aim_stabilization);
+        else if (!strcmp(key, "weapon_inertia"))
+            g_config.weapon_inertia = atoi(val) != 0;
+        else if (!strcmp(key, "weapon_position_follow"))
+            ParseFloatSetting(key, val, g_config.weapon_position_follow);
+        else if (!strcmp(key, "weapon_rotation_follow"))
+            ParseFloatSetting(key, val, g_config.weapon_rotation_follow);
+        else if (!strcmp(key, "weapon_catchup_speed"))
+            ParseFloatSetting(key, val, g_config.weapon_catchup_speed);
         else if (!strcmp(key, "screen_width_m"))
             g_config.screen_width_m = (float)atof(val);
         else if (!strcmp(key, "screen_distance_m"))
@@ -152,7 +166,9 @@ void ConfigLoad(const wchar_t* path)
             g_config.turn_smooth_deg_s = (float)atof(val);
         else if (!strcmp(key, "ghost_fix") || !strcmp(key, "stereo_alternate_order") ||
                  !strcmp(key, "stereo_warmup_pass") || !strcmp(key, "per_eye_history") ||
-                 !strcmp(key, "stereo_sun_shafts") || !strcmp(key, "gun_length_scale"))
+                 !strcmp(key, "stereo_sun_shafts") || !strcmp(key, "gun_length_scale") ||
+                 !strcmp(key, "weapon_max_lag_m") ||
+                 !strcmp(key, "weapon_max_lag_deg"))
             continue; // retired switches; accept old config files quietly
         else if (!strcmp(key, "dpad_hand"))
             g_config.dpad_hand = atoi(val) != 0 ? 1 : 0;
@@ -411,9 +427,23 @@ void ConfigSave()
     fprintf(f, "#  RETICLE & AIMING\n");
     fprintf(f, "#  Portable aiming preferences; title adapters supply engine offsets.\n");
     fprintf(f, "# -------------------------------------------------------------------\n\n");
-    fprintf(f, "# Floating VR-crosshair smoothing only; bullets stay raw.\n");
+    fprintf(f, "# Floating VR-crosshair smoothing only while weapon inertia is off.\n");
+    fprintf(f, "# Inertia bypasses this so gun art, reticle and bullets stay aligned.\n");
     fprintf(f, "# (default %.2f, range 0 to 0.95)\n", d.aim_stabilization);
     fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
+    fprintf(f, "# Optional simulated weapon/hand weight. 0 = exact raw poses (default),\n");
+    fprintf(f, "# 1 = filter both hands before shared weapon aim and IK are calculated.\n");
+    fprintf(f, "# (default %d)\n", d.weapon_inertia ? 1 : 0);
+    fprintf(f, "weapon_inertia = %d\n\n", g_config.weapon_inertia ? 1 : 0);
+    fprintf(f, "# Critically damped position/rotation follow speeds. Lower feels heavier.\n");
+    fprintf(f, "# (default %.1f, range 2 to 40)\n", d.weapon_position_follow);
+    fprintf(f, "weapon_position_follow = %.1f\n", g_config.weapon_position_follow);
+    fprintf(f, "# (default %.1f, range 2 to 45)\n", d.weapon_rotation_follow);
+    fprintf(f, "weapon_rotation_follow = %.1f\n\n", g_config.weapon_rotation_follow);
+    fprintf(f, "# Smooth fast-movement catch-up strength. 0 keeps the base spring;\n");
+    fprintf(f, "# 1 applies the strongest progressive pull as the controller gap grows.\n");
+    fprintf(f, "# (default %.2f, range 0 to 1)\n", d.weapon_catchup_speed);
+    fprintf(f, "weapon_catchup_speed = %.2f\n\n", g_config.weapon_catchup_speed);
     fprintf(f, "# Aim crosshair in stereo: a floating reticle where the weapon actually\n");
     fprintf(f, "# shoots (the game's own reticle follows your head, not your hand).\n");
     fprintf(f, "# (default %d)\n", d.crosshair ? 1 : 0);

@@ -150,11 +150,16 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
 // is a quaternion (x,y,z,w), position is meters (x,y,z). Returns false until a
 // valid pose has been read. Thread-safe; the game camera hook (M1) reads this.
 bool VR_GetHeadPose(float outQuat[4], float outPos[3]);
-// Latest right-controller aim pose in the same OpenXR local space as the head.
-// This is tracking only; weapon/projectile application is performed by M3 game hooks.
+// Latest weighted right-controller pose in the same OpenXR local space as the
+// head. Disabled inertia returns the exact current tracked pose.
 bool VR_GetRightControllerPose(float outQuat[4], float outPos[3]);
-// Left controller pose (used by the D-pad gesture; false until tracked).
+// Weighted left-controller pose used by visible support-hand targets.
 bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3]);
+// Raw tracking is reserved for UI/proximity gestures. Gameplay weapon, IK,
+// reticle, bullet and muzzle consumers must use the weighted getters above or
+// VR_GetAimPose so they cannot become visually misaligned.
+bool VR_GetRawRightControllerPose(float outQuat[4], float outPos[3]);
+bool VR_GetRawLeftControllerPose(float outQuat[4], float outPos[3]);
 // Called only from Halo's already-validated class-2 CHUD path. The active
 // weapon reticle is redirected into the controller-ray quad texture instead
 // of being drawn at the center of either VR eye.
@@ -232,7 +237,7 @@ struct ReachVrRenderSnapshot
     bool rightAimValid = false;
     float rightAimOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float rightAimPosition[3]{};
-    // Raw tracked left-controller pose for title-specific support-hand work.
+    // Weighted left-controller pose for title-specific support-hand work.
     bool leftControllerValid = false;
     float leftControllerOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float leftControllerPosition[3]{};
