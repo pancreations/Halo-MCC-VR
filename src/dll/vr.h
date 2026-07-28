@@ -232,8 +232,8 @@ struct ReachVrRenderSnapshot
     uint64_t preparedSerial = 0;
     float headOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float headPosition[3]{};
-    // The shared weapon aim after two-hand adjustment and controller-local
-    // mount calibration. Position remains the raw right-controller position.
+    // The shared weapon aim after two-hand adjustment, controller-local mount
+    // calibration, and optional final composite weapon inertia.
     bool rightAimValid = false;
     float rightAimOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float rightAimPosition[3]{};

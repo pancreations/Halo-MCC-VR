@@ -196,6 +196,19 @@ int main()
         Check(quaternionErrorDegrees(output, rotationTarget) < 0.05f,
             "Weapon inertia rotation converges on a stationary target");
 
+        PoseInertiaFilter compositeWeapon;
+        PoseInertiaPose compositeTarget = yawPose(55.0f);
+        compositeTarget.position[0] = 0.35f;
+        compositeWeapon.Update(true, true, origin, 1.0f / 90.0f,
+                               convergence, output);
+        compositeWeapon.Update(true, true, compositeTarget, 1.0f / 90.0f,
+                               convergence, output);
+        Check(output.position[0] > 0.0f &&
+                  output.position[0] < compositeTarget.position[0] &&
+                  quaternionErrorDegrees(output, origin) > 0.0f &&
+                  quaternionErrorDegrees(output, compositeTarget) > 0.0f,
+            "One composite weapon spring advances translation and two-hand rotation together");
+
         PoseInertiaFilter unboundedPosition;
         unboundedPosition.Update(true, true, origin, 1.0f / 90.0f,
                                  settings, output);

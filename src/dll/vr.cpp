@@ -322,15 +322,26 @@ namespace
     bool g_rightAimPoseValid = false;
     XrPosef g_leftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_leftAimPoseValid = false;
-    // Raw poses remain available for controller UI gestures. The canonical
-    // aim/hand poses above are the only values gameplay and visible weapon
-    // consumers receive, so inertia can never split gun art from its ray.
+    // Raw poses remain available for controller UI gestures and for building
+    // the composite weapon target. The controller poses above independently
+    // drive hand/arm targets after optional weighting.
     XrPosef g_rawRightAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_rawRightAimPoseValid = false;
     XrPosef g_rawLeftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_rawLeftAimPoseValid = false;
     PoseInertiaFilter g_rightWeaponInertia;
     PoseInertiaFilter g_leftWeaponInertia;
+    // The controller filters above drive visible hand/arm targets. Weapon
+    // inertia is applied separately, once, after raw one-/two-hand tracking
+    // has produced the complete weapon pose. This keeps two-hand pitch/yaw on
+    // the same rotation spring as one-hand aim instead of deriving it from two
+    // independently lagging positions.
+    PoseInertiaFilter g_compositeWeaponInertia;
+    XrPosef g_compositeWeaponAimPose{{0, 0, 0, 1}, {0, 0, 0}};
+    bool g_compositeWeaponAimPoseValid = false;
+    bool g_compositeWeaponTwoHandActive = false;
+    bool g_compositeWeaponRejectedExtreme = false;
+    float g_compositeWeaponRejectedAgreement = 0.0f;
     XrTime g_lastControllerPoseTime = 0;
     GameTitle g_weaponInertiaTitle = GameTitle::Unknown;
     // Render-thread-only filtered copy for the compositor crosshair. Keeping it
@@ -5009,6 +5020,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         EnterCriticalSection(&g_headCs);
         g_rightWeaponInertia.Reset();
         g_leftWeaponInertia.Reset();
+        g_compositeWeaponInertia.Reset();
         g_lastControllerPoseTime = 0;
         g_weaponInertiaTitle = GameTitle::Unknown;
         if (invalidateOutput)
@@ -5017,6 +5029,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             g_leftAimPoseValid = false;
             g_rawRightAimPoseValid = false;
             g_rawLeftAimPoseValid = false;
+            g_compositeWeaponAimPoseValid = false;
+            g_compositeWeaponTwoHandActive = false;
+            g_compositeWeaponRejectedExtreme = false;
+            g_compositeWeaponRejectedAgreement = 0.0f;
         }
         LeaveCriticalSection(&g_headCs);
         g_twoHandLatched.store(false);
@@ -5037,6 +5053,35 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         const float previous = g_twoHandBlend.load();
         const float follow = 1.0f - std::exp(-18.0f * deltaSeconds);
         g_twoHandBlend.store(previous + ((target ? 1.0f : 0.0f) - previous) * follow);
+    }
+
+    // Called once per successful OpenXR action sync, after the grip latch and
+    // engage blend have advanced. Raw controller poses still define the exact
+    // two-hand line and its leverage. The completed weapon target then passes
+    // through one pose spring, so translation and all rotation axes share one
+    // coherent weighted body instead of feeding two lagging hands back into
+    // the two-hand geometry.
+    void UpdateCompositeWeaponAim(
+        bool rightValid, const XrPosef& right,
+        bool leftValid, const XrPosef& left,
+        float deltaSeconds) noexcept
+    {
+        const AimPoseResult target = ComputeAimPose(CurrentAimPoseInputs(
+            rightValid, right, leftValid, left));
+        const PoseInertiaSettings settings = CurrentWeaponInertiaSettings();
+        PoseInertiaPose filtered{};
+
+        EnterCriticalSection(&g_headCs);
+        const bool filteredValid = g_compositeWeaponInertia.Update(
+            true, target.valid, ToInertiaPose(target.pose), deltaSeconds,
+            settings, filtered);
+        g_compositeWeaponAimPoseValid = filteredValid;
+        if (filteredValid)
+            g_compositeWeaponAimPose = FromInertiaPose(filtered);
+        g_compositeWeaponTwoHandActive = target.twoHandActive;
+        g_compositeWeaponRejectedExtreme = target.rejectedExtreme;
+        g_compositeWeaponRejectedAgreement = target.rejectedAgreement;
+        LeaveCriticalSection(&g_headCs);
     }
 
     void StopControllerHaptics()
@@ -5157,7 +5202,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     NormalizeTrackedPose(location.pose);
         }
         // Left hand uses the same locate path for support-hand placement and
-        // the independently weighted two-hand aim line.
+        // the raw two-hand weapon target.
         bool leftValid = false;
         XrSpaceLocation leftLocation{XR_TYPE_SPACE_LOCATION};
         if (g_leftAimAction != XR_NULL_HANDLE && g_leftAimSpace != XR_NULL_HANDLE)
@@ -5185,6 +5230,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         {
             g_rightWeaponInertia.Reset();
             g_leftWeaponInertia.Reset();
+            g_compositeWeaponInertia.Reset();
+            g_compositeWeaponAimPoseValid = false;
             g_lastControllerPoseTime = 0;
             g_weaponInertiaTitle = activeTitle;
         }
@@ -5207,6 +5254,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             // OpenXR poses are copied directly, with no spring math.
             g_rightWeaponInertia.Reset();
             g_leftWeaponInertia.Reset();
+            g_compositeWeaponInertia.Reset();
+            g_compositeWeaponAimPoseValid = false;
             g_rightAimPoseValid = valid;
             if (valid)
                 g_rightAimPose = location.pose;
@@ -5310,6 +5359,12 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         LeaveCriticalSection(&g_headCs);
         UpdateTwoHandLatch(valid, location.pose, leftValid, leftLocation.pose, pad.gripL);
         UpdateTwoHandBlend(poseDeltaSeconds, valid && leftValid);
+        if (g_config.weapon_inertia)
+        {
+            UpdateCompositeWeaponAim(
+                valid, location.pose, leftValid, leftLocation.pose,
+                poseDeltaSeconds);
+        }
         ApplyControllerHaptics(valid && leftValid);
         static bool padLogged = false;
         if (pad.valid && !padLogged)
@@ -5599,9 +5654,19 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         // prepared Reach serial: this snapshot is an exact-frame contract.
         const bool rightPoseFresh = padFresh && g_rightAimPoseValid;
         const bool leftPoseFresh = padFresh && g_leftAimPoseValid;
-        const AimPoseResult aim = ComputeAimPose(CurrentAimPoseInputs(
-            rightPoseFresh, g_rightAimPose,
-            leftPoseFresh, g_leftAimPose));
+        AimPoseResult aim{};
+        if (g_config.weapon_inertia)
+        {
+            aim.valid = padFresh && g_compositeWeaponAimPoseValid;
+            if (aim.valid)
+                aim.pose = g_compositeWeaponAimPose;
+        }
+        else
+        {
+            aim = ComputeAimPose(CurrentAimPoseInputs(
+                rightPoseFresh, g_rightAimPose,
+                leftPoseFresh, g_leftAimPose));
+        }
         next.rightAimValid = aim.valid;
         if (aim.valid)
         {
@@ -8521,10 +8586,31 @@ bool VR_GetAimPose(float outQuat[4], float outPos[3])
     const XrPosef right = g_rightAimPose;
     const bool okL = g_leftAimPoseValid;
     const XrPosef left = g_leftAimPose;
+    const bool compositeValid = g_compositeWeaponAimPoseValid;
+    const XrPosef composite = g_compositeWeaponAimPose;
+    const bool compositeTwoHandActive = g_compositeWeaponTwoHandActive;
+    const bool compositeRejectedExtreme = g_compositeWeaponRejectedExtreme;
+    const float compositeRejectedAgreement =
+        g_compositeWeaponRejectedAgreement;
     LeaveCriticalSection(&g_headCs);
 
-    const AimPoseResult aim = ComputeAimPose(
-        CurrentAimPoseInputs(okR, right, okL, left));
+    AimPoseResult aim{};
+    if (g_config.weapon_inertia && compositeValid)
+    {
+        aim.valid = true;
+        aim.updateTwoHandActivity = true;
+        aim.twoHandActive = compositeTwoHandActive;
+        aim.rejectedExtreme = compositeRejectedExtreme;
+        aim.rejectedAgreement = compositeRejectedAgreement;
+        aim.pose = composite;
+    }
+    else
+    {
+        // The feature-off path remains the accepted direct calculation. The
+        // same fallback also prevents a one-frame aim drop if the user enables
+        // inertia between OpenXR pose captures.
+        aim = ComputeAimPose(CurrentAimPoseInputs(okR, right, okL, left));
+    }
     if (!aim.updateTwoHandActivity)
         return false;
 

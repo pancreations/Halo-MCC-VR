@@ -49,11 +49,11 @@ struct Config
     float headset_smoothing = 0.03f;
     float aim_stabilization = 0.48f;
 
-    // Optional controller-pose weight. Both hands are filtered independently,
-    // then the shared aim pose (including its two-hand line) is built from
-    // those results so gun art, IK, reticle, muzzle effects and bullets remain
-    // aligned. The headset pose is deliberately never routed through it, and
-    // smooth catch-up keeps the weapon attached during fast motion.
+    // Optional weapon weight. Raw hand tracking first builds the one-/two-hand
+    // weapon target, then one composite spring keeps gun art, reticle, muzzle
+    // effects and bullets aligned. Separate controller springs drive visible
+    // hand/arm targets. The headset pose is deliberately never routed through
+    // this, and smooth catch-up keeps the weapon attached during fast motion.
     bool weapon_inertia = false;
     float weapon_position_follow = 14.0f;
     float weapon_rotation_follow = 17.0f;

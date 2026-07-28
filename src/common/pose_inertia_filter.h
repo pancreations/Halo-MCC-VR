@@ -13,8 +13,9 @@ struct PoseInertiaSettings
     float catchupSpeed = 0.75f;
 };
 
-// Allocation-free pose spring. One instance owns one tracked hand; callers
-// should never share an instance between hands or between title owners.
+// Allocation-free pose spring. One instance owns one independently filtered
+// pose (a tracked hand or the final weapon); callers should never share an
+// instance between targets or between title owners.
 class PoseInertiaFilter
 {
 public:

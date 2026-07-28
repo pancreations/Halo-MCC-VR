@@ -431,8 +431,9 @@ void ConfigSave()
     fprintf(f, "# Inertia bypasses this so gun art, reticle and bullets stay aligned.\n");
     fprintf(f, "# (default %.2f, range 0 to 0.95)\n", d.aim_stabilization);
     fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
-    fprintf(f, "# Optional simulated weapon/hand weight. 0 = exact raw poses (default),\n");
-    fprintf(f, "# 1 = filter both hands before shared weapon aim and IK are calculated.\n");
+    fprintf(f, "# Optional simulated weapon/hand weight. 0 = exact raw poses (default).\n");
+    fprintf(f, "# 1 = filter the final one-/two-hand weapon pose plus visible hand targets,\n");
+    fprintf(f, "# keeping the same weapon weight response in either grip mode.\n");
     fprintf(f, "# (default %d)\n", d.weapon_inertia ? 1 : 0);
     fprintf(f, "weapon_inertia = %d\n\n", g_config.weapon_inertia ? 1 : 0);
     fprintf(f, "# Critically damped position/rotation follow speeds. Lower feels heavier.\n");
