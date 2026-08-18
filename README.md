@@ -1,4 +1,4 @@
-www.buymeacoffee.com/pancreations
+Development is continuing here. I'm free I'm finally free! https://github.com/moistman42069/MCCVR-Halo-Build/tree/master
 
 <img width="1280" height="640" alt="heromxall" src="https://github.com/user-attachments/assets/6682b4bc-15d3-476f-b6f5-f6de82d1c0cd" />
 
