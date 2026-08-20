@@ -2,12 +2,10 @@
 
 Status: **C-H2-1 is headset-accepted on Steam as of 2026-08-20. Its required
 Halo 3 shared-code regression also passed, advancing the accepted development
-pointer to `f8928bb`. C-H2-2 is implemented in source and awaits headset
-validation; it is not accepted and has not advanced that pointer.**
-C-H2-1 remains the accepted read-only behavior. C-H2-2's deliberately narrow
-unaccepted claim is temporal position stereo; it does not claim 6DOF, head
-tracking, controller input/aim, HUD, or haptics. The machine-readable subset is
-`docs/HALO2-EVIDENCE-MANIFEST.json`.
+pointer to `f8928bb`. C-H2-2's alternating-eye implementation was rejected
+before headset testing and is compile-disabled; it is not accepted and did not
+advance that pointer.** C-H2-1 remains the accepted read-only behavior. The
+machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
 headset-owned orientation and position, controller aim, head-relative movement,
@@ -365,11 +363,12 @@ primary and resolved textures use `0x28` and have no UAV binding, so they do
 not match it. Halo 2 must never fall through the generic Halo 3 exact-shape
 discovery path. C-H2-2 avoids scene-target discovery and redirection entirely.
 
-## C-H2-2 implementation: temporal stereo only (headset pending)
+## Rejected C-H2-2 implementation: temporal stereo
 
-C-H2-2 is the narrowest runtime experiment supported by the evidence above.
-It is implemented in source but is not yet headset-tested, accepted, or part of
-the current-state pointer. Its transaction is:
+C-H2-2 was implemented but rejected before headset testing because alternating
+eyes divided the per-eye image update rate in half. It is compile-disabled,
+retained only as dormant evidence, and is not accepted or part of the
+current-state pointer. Its transaction was:
 
 1. Admit only after the existing Halo 2 liveness and exact anchor proofs.
    Hook the unique `render_player_window` entry, but claim only the ordinary
@@ -397,7 +396,7 @@ Texture caches and resource-generation state must be created outside the hot
 hook. The first frame, incomplete pair, or resize miss cannot be claimed and
 must fail open without redirecting or modifying the game's D3D targets.
 
-This produces one eye sample per game frame and never duplicates
+This produced one eye sample per game frame and never duplicated
 `render_view` or the player-window transaction. At 90 rendered game frames per
 second, each eye therefore updates at only 45 Hz, and the two images are
 separated by one game frame. Moving objects and camera motion can show temporal
@@ -411,10 +410,9 @@ head-relative movement, HUD/crosshair parity, haptics, or a scene-target
 redirect. Each is a later isolated feature transaction. Only a target-title
 headset result can accept even the narrow temporal-stereo claim.
 
-For this proof candidate, presentation starts automatically whenever the exact
-Halo 2 hook owns a live level; it does not yet honor `auto_vr` or the manual
-presentation veto. Matching Halo 3's full presentation-control contract is a
-later isolated behavior, not part of C-H2-2's stereo claim.
+This rejected proof candidate started presentation automatically whenever the
+exact Halo 2 hook owned a live level; it did not honor `auto_vr` or the manual
+presentation veto.
 
 ## Accepted C-H2-1 runtime contract
 

@@ -3,9 +3,9 @@
   "status": "C_H2_1_ACCEPTED",
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
-  "active_candidate": "C-H2-2",
+  "active_candidate": null,
   "accepted_build_pointer_advanced": true,
-  "remaining_gate": "C-H2-2 requires a Halo 2 headset stereo result and then a Halo 3 shared-code regression; C-H2-1 has no remaining gate",
+  "remaining_gate": "A replacement same-frame two-eye candidate must be implemented and headset-tested; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -104,8 +104,11 @@
     "failure_policy": "log-only stock fallback"
   },
   "c_h2_2_candidate": {
-    "status": "IMPLEMENTED_HEADSET_VALIDATION_PENDING",
+    "status": "REJECTED_BEFORE_HEADSET_TEST",
     "accepted": false,
+    "rejected": true,
+    "compiled_by_release_preset": false,
+    "rejection_reason": "alternating eyes divided the per-eye update rate in half; both eyes must be freshly rendered in every game frame at 72-144 Hz without a temporal N-1 cache",
     "accepted_build_pointer_advanced": false,
     "hook_eligible_from_static_evidence": true,
     "hook_count": 1,

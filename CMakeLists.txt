@@ -87,7 +87,7 @@ endif()
 option(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
     "Enable Halo 2 read-only cold observation (C-H2-1)" ON)
 option(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
-    "Enable Halo 2 one-render temporal position stereo (C-H2-2)" ON)
+    "Enable rejected Halo 2 temporal position stereo (C-H2-2, dormant)" OFF)
 if(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO AND
    NOT HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
     message(FATAL_ERROR

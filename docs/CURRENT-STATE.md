@@ -70,16 +70,15 @@
 >
 > **Active work (user-directed 2026-08-19): Halo 2 stereo 3D + 6DOF
 > bring-up.** C-H2-1 is accepted after its Halo 2 target pass and required Halo
-> 3 regression. C-H2-2 is now implemented in source as the first isolated
-> stereo candidate: one exact player-window hook, one stock render per game
-> frame, alternating position-only eyes, and adjacent-serial backbuffer pairing.
-> It temporarily writes and restores only the two proven 12-byte camera-position
-> spans and advertises only Stereo; controller admission, headset rotation/
-> translation, controller aim, HUD, haptics, generic draw distance, and 6DOF
-> remain disabled. At 90 rendered frames/s each eye updates at 45 Hz, so this is
-> a provisional temporal proof, not parity. It is not accepted and does not
-> advance the pointer above until its Halo 2 headset test and required Halo 3
-> regression both pass.
+> 3 regression. C-H2-2's alternating-eye temporal implementation was rejected
+> before headset testing because it divided the per-eye update rate in half. It
+> is compile-disabled and retained only as dormant history; it is not accepted
+> and did not advance the pointer. The replacement must follow the working Halo
+> 3/ODST/Reach contract: render both eyes from the same OpenXR frame serial in
+> every game frame, with no previous-frame eye cache and no per-eye cadence
+> division at 72, 80, 90, 120, or 144 Hz. Controller admission, headset
+> rotation/translation, controller aim, HUD, haptics, generic draw distance, and
+> 6DOF remain disabled until their own candidates earn them.
 > See `docs/HALO2-SIGNATURE-EVIDENCE.md`.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
