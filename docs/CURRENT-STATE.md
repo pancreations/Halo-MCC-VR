@@ -246,6 +246,62 @@
 > (SHA-256 `0D654E1071E7870068E72E9B615A1896EAAB67BB97C512151E1AA89BF431F498`).
 > C-H2-6 is compile-disabled before the render binding is changed.
 >
+> **HEADSET VALIDATION REQUIRED (2026-08-20): Halo 2 C-H2-8 headset-owned
+> observer camera - 6DOF in BOTH renderers. This is not accepted; the accepted
+> pointer remains C-H2-1 at `f8928bb`.** C-H2-8 keeps everything C-H2-7 added
+> and adds the first Halo 2 engine write.
+>
+> Halo 2's per-user observer is the single camera root that both renderers
+> consume. The classic Blam tree reads it through the camera builder `0x7DF5A0`
+> into the window cameras at RVA `0x19976E0`; the remastered Anniversary
+> renderer reads the same struct through the bridge `0x5F510`, which converts it
+> into a Saber world matrix in metres. Writing a headset pose into
+> `observer_result` therefore reaches whichever renderer is live, with no
+> mode forcing and without touching either renderer.
+>
+> **Ordering is load-bearing.** The Saber bridge is invoked from inside
+> `observer_update_all` itself, at `0x6F1C1F`, so a pose applied after
+> `observer_update_all` returns would already be too late for the remastered
+> renderer. The injection therefore sits at the tail of the observer's LAST
+> per-frame writer, `0x6F0250`, which runs per user before that call.
+>
+> The hook is resolved by a signature that is unique in the complete mapped
+> image and carries the `0x368` observer stride inside itself
+> (`48 89 5C 24 18 48 89 74 24 20 55 57 41 57 48 8D 6C 24 D0 48 81 EC 30 01 00
+> 00 48 8B 05 ?? ?? ?? ?? 48 63 D9 48 69 FB 68 03 00 00`). A second independent
+> identity check decodes its `mov rax,[rip+disp32]` to the director-space matrix
+> pointer slot at RVA `0xDFCB58`. Zero or multiple matches, a moved anchor, a bad
+> decode, or an unproven observer array withhold the hook and leave the stock
+> camera untouched.
+>
+> **Exact write scope.** The engine's own transform always runs first and
+> unchanged; the mod only post-processes its result. Exactly three
+> non-contiguous 12-byte spans are written for user 0 - position `+0x00`,
+> forward `+0x20`, up `+0x2C`. Field of view (`+0x38` horizontal and `+0x4C`
+> vertical, which the engine derives together), aspect, cluster and leaf
+> indices, and velocity all stay engine-owned. No restore is required or
+> performed: `0x6F10E0` rebuilds all three vectors from the observer's own state
+> every frame, so an injected pose cannot accumulate. Split-screen guests keep
+> their stock camera.
+>
+> **What this is and is not.** This is headset-owned camera position and
+> orientation - 6DOF - reaching the renderer the player actually uses. It is
+> **not** stereo: Halo 2 still presents one image. Per-eye stereo needs the
+> render run twice per frame, and the binding for that is now identified but
+> unproven at runtime: in the remastered mode the live world render is
+> `Saber -> 0x69540 -> 0x960230(mode=1) -> 0x7E1990`, an inline player-window
+> renderer that never calls `render_player_window`, which is exactly why the
+> C-H2-3..C-H2-6 hooks saw zero callbacks. `0x69540` also installs the
+> host-owned render target into slots `0x197EE58`/`0x197EE60` for the duration
+> of that call, which is where a per-eye capture would have to read.
+>
+> Packaging advances in lockstep to manifest schema 17, slug
+> `halo2-c8-observer-6dof`, and build identity
+> `Halo2=OBSERVER_6DOF_BOTH_RENDERERS`. A Halo 2 headset run must report whether
+> the view follows the headset in the graphics mode being played, and the same
+> DLL still requires a Halo 3 headset regression before any pointer advance.
+>
+
 > **HEADSET VALIDATION REQUIRED (2026-08-20): Halo 2 C-H2-7 live-renderer
 > report with mode-gated classic stereo + 6DOF. This is not accepted; the
 > accepted pointer remains C-H2-1 at `f8928bb`.** C-H2-7 exists because the

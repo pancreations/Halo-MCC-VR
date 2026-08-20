@@ -52,6 +52,7 @@
 #endif
 #if HALOMCCVR_HALO2_STEREO6DOF
 #include "halo2_stereo_core.h"
+#include "halo2_observer_6dof.h"
 #endif
 #include "halo4_adapter.h"
 #include "halo4_cold_observation.h"
@@ -35560,6 +35561,24 @@ namespace
             }
             if (!halo2Active)
                 Halo2ColdObservation_Rearm();
+            {
+                // C-H2-8. The observer is the one camera root BOTH halo2
+                // renderers consume, so this owns the headset pose in the
+                // classic and the remastered mode alike.
+                const uint32_t halo2ObserverGeneration =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                const bool halo2ObserverVrAvailable =
+                    !g_vrRuntimeFailureLatched.load(
+                        std::memory_order_acquire);
+                (void)Halo2Observer6Dof_Poll(
+                    halo2GateBase, halo2GateSize, halo2ObserverGeneration,
+                    halo2Active && halo2GateSampled &&
+                        halo2ObserverVrAvailable,
+                    activeLevelRunning,
+                    Halo2ColdObservation_Passed(halo2ObserverGeneration),
+                    Halo2ColdObservation_ObserverResultArray(
+                        halo2ObserverGeneration));
+            }
 #if HALOMCCVR_HALO2_STEREO6DOF
             {
                 const uint32_t halo2Generation =
@@ -36657,6 +36676,7 @@ void Game_DetachForVrRuntimeFailure()
     if (halo2Owned)
 #if HALOMCCVR_HALO2_STEREO6DOF
         Halo2Stereo_ShutdownForVrFailure();
+        Halo2Observer6Dof_ShutdownForVrFailure();
 #else
         Halo2TemporalStereo_ShutdownForVrFailure();
 #endif
@@ -36750,6 +36770,7 @@ void Game_ToggleHeadTracking()
 #if HALOMCCVR_HALO2_STEREO6DOF
         if (Game_UsesTitleOwnedHeadTracking())
             Halo2Stereo_RequestRecenter();
+            Halo2Observer6Dof_RequestRecenter();
 #endif
     }
     else
@@ -37291,6 +37312,8 @@ void Game_AutoVrTick()
                 g_enabled.store(true, std::memory_order_release);
                 g_needRecenter.store(true, std::memory_order_release);
                 Halo2Stereo_RequestRecenter();
+                Halo2Observer6Dof_RequestRecenter();
+            Halo2Observer6Dof_RequestRecenter();
                 g_autoVrOwned.store(true, std::memory_order_release);
                 if (!VR_IsStereoEnabled())
                     VR_ToggleStereo();

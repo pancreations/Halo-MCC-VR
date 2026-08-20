@@ -4,7 +4,7 @@
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
   "accepted_build_pointer_source": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
-  "active_candidate": "C-H2-7",
+  "active_candidate": "C-H2-8",
   "accepted_build_pointer_advanced": true,
   "active_candidate_accepted_build_pointer_advanced": false,
   "remaining_gate": "the C-H2-6 zero-callback result is explained: halo2.dll ships two renderers and the classic Blam tree is skipped whole at 0x95FEC0 when the byte at RVA 0xE70CF8 is non-zero, set from the render mode dword at RVA 0xE21280 whose zero value the engine itself calls isLegacy; C-H2-7 reports the live renderer read-only and arms the classic stereo core only when the classic tree runs; Anniversary stereo still needs the Saber render binding and one runtime fact about which render target holds the finished remastered frame; C-H2-1 has no remaining gate",

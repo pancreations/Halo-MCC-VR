@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c7-live-renderer-mode-gate',
+        'halo2-c8-observer-6dof',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 16
+        schema_version = 17
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -187,7 +187,7 @@ try {
             reach = $true
             reach_render = $true
             halo4 = $true
-            halo2 = 'LIVE_RENDERER_REPORT_MODE_GATED_STEREO'
+            halo2 = 'OBSERVER_6DOF_BOTH_RENDERERS'
         }
         deployment_policy = [ordered]@{
             automatic_after_package = $true
@@ -253,15 +253,27 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-7'
-            status = 'HEADSET_LIVE_RENDERER_REPORT_AND_MODE_GATED_STEREO_VALIDATION_REQUIRED'
+            id = 'C-H2-8'
+            status = 'HEADSET_OBSERVER_6DOF_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
-                'read-only-live-renderer-report-plus-classic-mode-gated-same-frame-two-fresh-eye-stereo-6dof'
+                'headset-owned-observer-camera-position-and-orientation-in-both-renderers-plus-live-renderer-report'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
+            # C-H2-8, E-H2-4: the observer is the single camera root both
+            # halo2.dll renderers consume, so one write owns the headset
+            # pose in the classic and the remastered mode alike.
+            observer_6dof = $true
+            observer_6dof_hook_rva = '0x006F0250'
+            observer_6dof_owned_user = 0
+            observer_6dof_owned_span_count = 3
+            observer_6dof_owned_span_bytes = 12
+            observer_6dof_writes_field_of_view = $false
+            observer_6dof_engine_transform_runs_first = $true
+            observer_6dof_requires_restore = $false
+            observer_6dof_reaches_both_renderers = $true
             live_renderer_report = $true
             live_renderer_source = 'unique-signature-decoded-classic-render-gate'
             classic_render_gate_rva = '0x00E70CF8'
