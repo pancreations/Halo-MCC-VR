@@ -8,8 +8,10 @@ before headset testing and is compile-disabled. C-H2-3 same-frame stereo +
 compile-disabled; it did not advance that pointer. C-H2-4 added a stock-screen
 fail-open for every ordinary unclaimed missing exact-current pair, but a fresh
 static audit found persistent post-Claim and inherited-pause black paths; it is
-also compile-disabled.** C-H2-1 remains the accepted read-only behavior. The
-machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
+also compile-disabled. C-H2-5 is the unaccepted, release-enabled black-safe
+successor awaiting its own headset run and Halo 3 regression.** C-H2-1 remains
+the accepted read-only behavior. The machine-readable subset is
+`docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
 headset-owned orientation and position, controller aim, head-relative movement,
@@ -27,14 +29,14 @@ layout, or hook boundary from another title.
 - A kit RVA is never a retail RVA. Cross-architecture matching requires
   semantics, layout, call topology, and unique retail bytes to agree.
 - Zero/multiple runtime matches or a moved decode fail the affected stage
-  closed. C-H2-1 installs no hook either way; C-H2-3/C-H2-4 withhold their
-  camera core.
+  closed. C-H2-1 installs no hook either way; C-H2-3/C-H2-4/C-H2-5 withhold
+  their camera core.
 - Accepted C-H2-1 writes no H2 engine field. Rejected C-H2-2 admitted only the
-  render and raster cameras' 12-byte position spans. C-H2-3/C-H2-4 own six 12-byte
-  position/forward/up spans and two 4-byte vertical-FOV spans, restores every
-  owned span, and never writes z-far or the asymmetric/pixel-offset fields. The
-  shared `render_far_clip_distance` scanner/writer is not a Halo 2 binding and
-  remains hard-denied.
+  render and raster cameras' 12-byte position spans. C-H2-3/C-H2-4/C-H2-5 own
+  six 12-byte position/forward/up spans and two 4-byte vertical-FOV spans,
+  restore every owned span, and never write z-far or the asymmetric/pixel-offset
+  fields. The shared `render_far_clip_distance` scanner/writer is not a Halo 2
+  binding and remains hard-denied.
 
 ## Pinned identities (measured 2026-08-19)
 
@@ -439,9 +441,10 @@ presentation veto.
 
 **C-H2-3 was headset-rejected and compile-disabled by standalone revert
 `eda5762`. It is not accepted, and the accepted pointer remains C-H2-1 at
-`f8928bb`.** That revert set `HALOMCCVR_HALO2_STEREO6DOF=OFF`; C-H2-4 reuses the
-gate only with the no-pair fail-open contract below. The rejected temporal gate
-remains OFF. The registry advertises exactly
+`f8928bb`.** That revert set `HALOMCCVR_HALO2_STEREO6DOF=OFF`; C-H2-4 later
+reused the gate for its no-pair fallback and was itself disabled after audit.
+C-H2-5 now reuses the gate only with the black-safe contract below. The rejected
+temporal gate remains OFF. The registry advertises exactly
 `Stereo | RoomScale | RuntimeModes`, uses hook plan `Halo2StereoCore`, and
 retains zero controller admission.
 
@@ -629,10 +632,149 @@ No C-H2-4 headset result is accepted. Its successor must pass the fallback,
 same-frame stereo, full headset rotation/translation, and full-rate headset
 checks, followed by the Halo 3 shared-code regression.
 
+## Unaccepted C-H2-5 successor: black-safe stereo + 6DOF
+
+**C-H2-5 is release-enabled for a target-title headset run, but is not
+accepted. The accepted pointer remains C-H2-1 at `f8928bb`.** It changes no
+signature, caller edge, camera layout, engine-write span, pose mapping, or pair
+identity rule from C-H2-3/C-H2-4. It retains two fresh left/right renders and
+captures from one game frame, requires both eye serials to equal the current
+prepared OpenXR serial, forbids any temporal/N-1 eye, and keeps the intentional
+cadence divisor at 1. Headset rotation and translation remain part of both eyes'
+restored camera transactions.
+
+### No claim while inherited pause or unsupported app cadence is active
+
+C-H2-5 clears any pause/head-lock presentation target inherited from another
+title before allowing an H2 hook to claim. The render core's admission atomic
+remains false until both the pause target and current pause presentation are
+clear, so the comfort-fade interval itself stays unclaimed and uses the stock
+screen path.
+
+H2 stereo admission requires two timing witnesses from the current prepared
+serial. Both the current `xrWaitFrame.predictedDisplayPeriod` target and the
+delta between that serial's `predictedDisplayTime` and its predecessor must be
+inside the exact integer-nanosecond interval `6,944,444..13,888,889`, the nearest
+integer representations of nominal inclusive 144–72 Hz. The only rounding is
+the sub-nanosecond representation inherent in those endpoints; there is no
+±0.5 Hz tolerance. This second witness detects half-rate delivery even when the
+runtime continues to advertise a 90 Hz target:
+
+| C-H2-5 app-cadence contract | Value |
+| --- | --- |
+| Sources | current `xrWaitFrame.predictedDisplayPeriod` **and** same prepared serial's `predictedDisplayTime` delta |
+| Nominal minimum / maximum | 72 Hz / 144 Hz |
+| Accepted period bounds | `6,944,444..13,888,889 ns` for both witnesses |
+| 90 Hz target + `22,222,222 ns` delivery delta | unclaimed stock-screen before either eye renders |
+| 45 Hz or 60 Hz | unclaimed stock-screen before either eye renders |
+| unknown, zero, or outside either bound | unclaimed stock-screen before either eye renders |
+
+This gate prevents the mod from intentionally selecting, or accepting a runtime
+target for, below-72-Hz H2 stereo. It is not a static promise that the GPU will
+finish every frame at the target cadence. The headset result must prove the
+actual observed application cadence is 72–144 Hz and that both eyes update on
+every admitted game frame.
+
+After the first completed pair, cadence continuity is also mechanical: every
+attempted pair's prepared serial must equal the previous completed serial plus
+one. A duplicate, skipped, missing, or wrapped serial publishes the named
+`CorePreparedSerialGap` generation quarantine before an original eye render;
+that gap frame remains unclaimed and uses the stock screen. This prevents an
+otherwise valid later pair from establishing a half-rate sequence by silently
+skipping prepared frames.
+
+### One touched drop, then generation-scoped quarantine
+
+The first structural failure after H2 has published `Claimed` still restores
+every dirty span and drops that touched frame. It then publishes a quarantine
+for that exact `halo2.dll` module generation before a later callback can claim.
+The worker removes only the H2 stereo core, while the durable disposition keeps
+the already touched failure from masquerading as an unclaimed frame. Subsequent
+untouched frames therefore use the stock screen-quad fallback instead of
+repeating a claimed-frame drop. A new module generation may perform a fresh
+evidence and hook-install attempt.
+
+This is feature isolation: structural H2 failure does not detach or end the
+OpenXR session and does not disable another title's path. OpenXR remains
+available. The maximum number of claimed failed frames before quarantine is 1;
+the touched failure frame is `drop`, and subsequent untouched frames are
+`stock-screen`.
+
+### Strict unclaimed stock-screen transaction
+
+Every active-H2 unclaimed fallback, including detached/quarantined H2 frames,
+uses a title-specific strict screen transaction. Swapchain acquire, wait, and
+release must each return exact `XR_SUCCESS`; `XR_SUCCEEDED` is insufficient.
+The acquired index, image resource, and RTV must be valid, and the backbuffer
+`Blit` must return success before the quad can be queued.
+
+Any failure enters the named OpenXR session-recovery path
+`EnterFrameWaitFatalDrain`. The begun frame is paired with an empty
+`xrEndFrame`, no world layer is submitted, and the same session does not retry a
+possibly poisoned acquire/wait/release transaction. This OpenXR-transaction
+recovery is distinct from an H2 structural-core failure: the latter quarantines
+only H2 stereo and leaves a healthy OpenXR session available.
+
+### Package and acceptance contract
+
+Packaging advances in lockstep to manifest schema 14 and slug
+`halo2-c5-black-safe-stereo6dof`. Producer and installer require the exact build
+identity `Halo2=SAME_FRAME_6DOF_FAIL_OPEN`, all C-H2-4 exact-pair/no-temporal/
+divisor-1/full-6DOF fields, and these additional typed fields:
+
+```text
+foreign_pause_cleared_before_claim=true
+app_cadence_gate_hz.min=72
+app_cadence_gate_hz.max=144
+app_cadence_gate_hz.source=current xrWaitFrame predictedDisplayPeriod and same prepared serial predictedDisplayTime delta
+app_cadence_gate_hz.target_period_source=current xrWaitFrame predictedDisplayPeriod
+app_cadence_gate_hz.delivered_delta_source=same prepared serial predictedDisplayTime delta
+app_cadence_gate_hz.period_ns_min=6944444
+app_cadence_gate_hz.period_ns_max=13888889
+app_cadence_gate_hz.both_witnesses_required=true
+app_cadence_gate_hz.hz_tolerance=0
+app_cadence_gate_hz.at_45_hz=unclaimed-stock-screen-before-eye-render
+app_cadence_gate_hz.at_60_hz=unclaimed-stock-screen-before-eye-render
+app_cadence_gate_hz.unknown_or_outside=unclaimed-stock-screen-before-eye-render
+app_cadence_gate_hz.target_90_hz_delta_22222222_ns=unclaimed-stock-screen-before-eye-render
+post_first_complete_serial_policy=previous-completed-serial-plus-one
+serial_gap_quarantine_reason=CorePreparedSerialGap
+serial_gap_quarantines_before_eye_render=true
+serial_gap_frame_presentation=unclaimed-stock-screen
+post_claim_failure_quarantine=true
+quarantine_scope=module-generation
+max_claimed_failed_frames_before_quarantine=1
+touched_failure_frame=drop
+subsequent_untouched_frames=stock-screen
+openxr_remains_available_for_structural_halo2_failure=true
+strict_unclaimed_stock_screen_transaction.acquire_result=XR_SUCCESS
+strict_unclaimed_stock_screen_transaction.wait_result=XR_SUCCESS
+strict_unclaimed_stock_screen_transaction.release_result=XR_SUCCESS
+strict_unclaimed_stock_screen_transaction.valid_resource_and_rtv_required=true
+strict_unclaimed_stock_screen_transaction.blit_success_required=true
+strict_unclaimed_stock_screen_transaction.named_session_recovery=EnterFrameWaitFatalDrain
+strict_unclaimed_stock_screen_transaction.repeated_same_session_retry=false
+```
+
+The exact active line is:
+
+```text
+Halo 2 C-H2-5 simultaneous stereo + 6DOF active
+```
+
+It may be emitted only after a complete exact-current pair survives
+`xrEndFrame`; install/build success alone cannot produce the player-facing
+claim. The headset run must record edition, runtime, headset, configured panel
+rate, measured app cadence, source/package identity, installed DLL SHA-256, and
+the preserved log. It must demonstrate visible unclaimed fallback, true
+same-frame stereo, full headset rotation/translation, no 45/60-Hz H2 stereo,
+and actual 72–144 Hz. The same exact DLL then requires a Halo 3 headset
+regression before any accepted pointer advances.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are
-  the accepted C-H2-1 build settings; C-H2-2, C-H2-3, and C-H2-4 change only
+  the accepted C-H2-1 behavior settings; C-H2-2 through C-H2-5 change only
   their separately gated hook/capability/heartbeat fields described above.
 - `runtimeSupported=false`, runtime capabilities none, admission capabilities
   none, hook plan none, heartbeat window zero.
@@ -689,8 +831,9 @@ cannot establish a render-performance cause.
 
 This accepts the Halo 2 read-only observation claim and clears its evidence for
 stereo design. That C-H2-1 result did not accept C-H2-3's rejected hook/write or
-stereo/6DOF runtime claim and does not accept C-H2-4's successor claim; C-H2-4
-still needs its own headset result and Halo 3 regression.
+stereo/6DOF runtime claim, C-H2-4's audit-rejected fallback successor, or the
+C-H2-5 black-safe headset candidate. C-H2-5 still needs its own headset result
+and Halo 3 regression.
 
 ### Required Halo 3 shared-code regression PASS
 

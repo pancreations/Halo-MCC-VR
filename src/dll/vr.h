@@ -25,6 +25,11 @@ struct Halo2VrEyeSnapshot
 struct Halo2VrRenderSnapshot
 {
     uint64_t preparedSerial = 0;
+    // Exact OpenXR timing for this prepared serial. The period is the
+    // xrWaitFrame target; the delta is current minus prior predicted display
+    // time and exposes half-rate delivery before the game can claim the frame.
+    uint64_t predictedDisplayPeriodNs = 0;
+    uint64_t predictedDisplayDeltaNs = 0;
     uint32_t generation = 0;
     Halo2VrEyeSnapshot eyes[2]{};
     float headOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
@@ -36,6 +41,13 @@ struct Halo2VrRenderSnapshot
 #if HALOMCCVR_HALO2_STEREO6DOF
 using Halo2SynchronousVrEyeSnapshot = Halo2VrEyeSnapshot;
 using Halo2SynchronousVrRenderSnapshot = Halo2VrRenderSnapshot;
+
+struct Halo2PreparedCadenceSnapshot
+{
+    uint64_t preparedSerial = 0;
+    uint64_t predictedDisplayPeriodNs = 0;
+    uint64_t predictedDisplayDeltaNs = 0;
+};
 
 enum class Halo2SynchronousFrameDisposition : uint8_t
 {
@@ -55,6 +67,19 @@ struct Halo2SynchronousPresentationStamp
         Halo2SynchronousFrameDisposition::Unclaimed;
 };
 
+constexpr bool Halo2SynchronousPresentationStampMatches(
+    uint32_t generation, uint64_t preparedSerial,
+    const Halo2SynchronousPresentationStamp& presentation) noexcept
+{
+    return generation != 0 && preparedSerial != 0 &&
+        presentation.generation == generation &&
+        presentation.preparedSerial == preparedSerial &&
+        (presentation.disposition ==
+             Halo2SynchronousFrameDisposition::Claimed ||
+         presentation.disposition ==
+             Halo2SynchronousFrameDisposition::Complete);
+}
+
 enum class Halo2SynchronousPresentationDecision : uint8_t
 {
     SharedDefault = 0,
@@ -63,7 +88,7 @@ enum class Halo2SynchronousPresentationDecision : uint8_t
     Drop,
 };
 
-// C-H2-4 presentation admission is exact and frame-local. A currently live
+// C-H2-5 presentation admission is exact and frame-local. A currently live
 // complete pair wins; otherwise only the durable stamp carrying this exact
 // generation+serial has authority. A stale/foreign stamp is Unclaimed.
 constexpr Halo2SynchronousFrameDisposition
@@ -73,13 +98,8 @@ Halo2SynchronousClassifyFrame(
 {
     if (exactLivePair)
         return Halo2SynchronousFrameDisposition::Complete;
-    if (generation && preparedSerial &&
-        presentation.generation == generation &&
-        presentation.preparedSerial == preparedSerial &&
-        (presentation.disposition ==
-             Halo2SynchronousFrameDisposition::Claimed ||
-         presentation.disposition ==
-             Halo2SynchronousFrameDisposition::Complete))
+    if (Halo2SynchronousPresentationStampMatches(
+            generation, preparedSerial, presentation))
     {
         return presentation.disposition;
     }
@@ -118,11 +138,39 @@ Halo2SynchronousSelectPresentation(
     default:
         // No original eye render ran, so ordinary late-ineligible behavior may
         // still present the untouched stock backbuffer. When stereo remains
-        // eligible, identify the intentional C-H2-4 fallback for diagnostics.
+        // eligible, identify the intentional C-H2-5 fallback for diagnostics.
         return stereoRequested
             ? Halo2SynchronousPresentationDecision::StockScreen
             : Halo2SynchronousPresentationDecision::SharedDefault;
     }
+}
+
+// A Drop is allowed to consume the current claimed frame, but it must also
+// quarantine that H2 generation before another render callback can claim the
+// next frame. Foreign/stale stamps and ordinary unclaimed screen fallback do
+// not own the current transaction and therefore cannot quarantine anything.
+constexpr bool Halo2SynchronousDropRequiresQuarantine(
+    uint32_t generation, uint64_t preparedSerial,
+    const Halo2SynchronousPresentationStamp& presentation,
+    Halo2SynchronousPresentationDecision decision) noexcept
+{
+    return decision == Halo2SynchronousPresentationDecision::Drop &&
+        Halo2SynchronousPresentationStampMatches(
+            generation, preparedSerial, presentation);
+}
+
+// Only H2's ordinary unclaimed fallback opts into the strict screen-swapchain
+// transaction. Claimed/complete frames remain drops or synchronous stereo, and
+// every other title retains the established shared screen delivery behavior.
+constexpr bool Halo2SynchronousRequiresStrictStockScreen(
+    bool halo2Frame,
+    Halo2SynchronousFrameDisposition disposition,
+    Halo2SynchronousPresentationDecision decision) noexcept
+{
+    return halo2Frame &&
+        disposition == Halo2SynchronousFrameDisposition::Unclaimed &&
+        (decision == Halo2SynchronousPresentationDecision::StockScreen ||
+         decision == Halo2SynchronousPresentationDecision::SharedDefault);
 }
 #endif
 
@@ -207,6 +255,11 @@ bool VR_Halo2GetTemporalHalfFovs(
 // owner. Every getter is lock-free and rejects a publication rollover.
 bool VR_Halo2GetSynchronousRenderSnapshot(
     Halo2SynchronousVrRenderSnapshot& snapshot);
+// Atomic-only exact-current publication for presentation admission before the
+// synchronous hook is enabled. The render snapshot above carries the same
+// fields and remains the authoritative per-transaction proof.
+bool VR_Halo2GetCurrentPreparedCadence(
+    Halo2PreparedCadenceSnapshot& cadence) noexcept;
 // The game core resolves the title-proven final-output RTV outside its hot
 // hooks and lends that raw pointer for this synchronous render transaction.
 // No COM call, allocation, lock, scan, or log occurs in these functions.

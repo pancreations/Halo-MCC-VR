@@ -15,8 +15,8 @@
 > only C-H2-1's read-only observation behavior. In that accepted build, Halo 2
 > controller admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership,
 > engine hooks, and engine writes are disabled. The headset-rejected C-H2-3
-> candidate and its audit-rejected, compile-disabled C-H2-4 successor described
-> below do not alter this accepted claim.
+> candidate, its audit-rejected C-H2-4 successor, and the unaccepted C-H2-5
+> black-safe successor described below do not alter this accepted claim.
 >
 > | Accepted Halo 2 C-H2-1 identity | Value |
 > | --- | --- |
@@ -138,6 +138,49 @@
 > The rejected package contract was manifest schema 12 with slug
 > `halo2-c4-no-pair-fail-open` and the runtime claim line `Halo 2 C-H2-4
 > simultaneous stereo + 6DOF active`. No C-H2-4 headset result is accepted.
+
+> **UNACCEPTED HEADSET CANDIDATE (2026-08-20): Halo 2 C-H2-5 black-safe
+> same-frame stereo + full headset 6DOF. The accepted pointer remains C-H2-1
+> at `f8928bb`.** C-H2-5 retains exactly two fresh eyes from one game frame;
+> both render and capture serials must equal the current prepared OpenXR serial.
+> Temporal eye reuse remains forbidden, the intentional cadence divisor remains
+> 1, and full headset rotation plus translation are applied to both eyes.
+>
+> Before any H2 stereo claim, inherited foreign pause presentation must be
+> cleared. Stereo admission also requires two current prepared-frame witnesses:
+> both `xrWaitFrame.predictedDisplayPeriod` and that same serial's delta from the
+> prior `predictedDisplayTime` must fall within integer-nanosecond bounds
+> `6,944,444..13,888,889`, nominal inclusive 72–144 Hz. A 90 Hz target paired
+> with an ASW-style `22,222,222 ns`/45 Hz delivery delta, 45 Hz, 60 Hz,
+> unknown timing, or any outside value remains unclaimed and takes the stock
+> screen-quad path before either eye renders. There is no ±0.5 Hz allowance.
+> After the first `Complete`, every attempted pair must use exactly the previous
+> completed serial plus one; a duplicate or gap quarantines the generation as
+> `CorePreparedSerialGap` before either eye renders. These safeguards prevent an
+> intentional or runtime-targeted below-72-Hz Halo 2 stereo mode; they cannot
+> statically guarantee measured GPU frame rate. The headset result must
+> establish the actual 72–144 Hz cadence.
+>
+> The first structural failure after a claim restores owned state and drops that
+> touched frame, then quarantines only Halo 2 stereo for the current
+> `halo2.dll` module generation. Every later untouched frame uses the stock
+> screen instead of entering a persistent claimed-drop black loop. OpenXR and
+> other titles remain available; a new H2 module generation may attempt a fresh
+> proof. The no-callback/loading/cinematic path remains the C-H2-4 unclaimed
+> stock-screen fallback. That fallback is now a strict transaction: acquire,
+> wait, and release must each return exact `XR_SUCCESS`; the acquired image and
+> RTV must be valid; and `Blit` must succeed. Any failure enters the named
+> OpenXR session-recovery path `EnterFrameWaitFatalDrain` instead of repeatedly
+> retrying a possibly poisoned swapchain transaction.
+>
+> Its package contract is schema 14 with slug
+> `halo2-c5-black-safe-stereo6dof`, build identity
+> `Halo2=SAME_FRAME_6DOF_FAIL_OPEN`, and runtime claim line `Halo 2 C-H2-5
+> simultaneous stereo + 6DOF active`. That line is valid only after a complete
+> exact-current pair survives `xrEndFrame`; it is not an offline acceptance.
+> C-H2-5 must pass a Halo 2 headset run showing visible fallback, simultaneous
+> stereo, full rotation/translation, and actual 72–144 Hz, followed by the same
+> DLL's Halo 3 shared-code regression before this pointer advances.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
 > it records what Halo 4 does today, what was never finished, and the six

@@ -40,6 +40,7 @@
 #include "../common/level_load_gate_logic.h"
 #include "halo2_adapter.h"
 #include "halo2_cold_observation.h"
+#include "../common/halo2_render_logic.h"
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
 #define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
 #endif
@@ -36758,6 +36759,27 @@ void Game_ToggleHeadTracking()
 // while in a level vetoes auto-arm until the next level load; F2/F11 still work.
 void Game_AutoVrTick()
 {
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // Some title-specific branches below return early. Close H2's atomic claim
+    // gate before any of them can take ownership, even when the ordinary H2
+    // presentation cleanup at the end of this function is deferred.
+    static bool wasHalo2ClaimContext = false;
+    static bool halo2PauseClearRequested = false;
+    static bool halo2CadenceStateKnown = false;
+    static bool halo2CadenceWasSupported = false;
+    static uint64_t halo2CadenceLastLogMs = 0;
+    const bool halo2ClaimContext =
+        TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
+    const bool enteringHalo2ClaimContext =
+        halo2ClaimContext && !wasHalo2ClaimContext;
+    if (!halo2ClaimContext && wasHalo2ClaimContext)
+    {
+        Halo2Stereo_SetPresentationReady(false);
+        halo2PauseClearRequested = false;
+        halo2CadenceStateKnown = false;
+    }
+    wasHalo2ClaimContext = halo2ClaimContext;
+#endif
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     static OdstFreshCameraDebounce odstFreshDebounce;
     static bool wasOdstCameraContext = false;
@@ -37157,10 +37179,84 @@ void Game_AutoVrTick()
 
 #if HALOMCCVR_HALO2_STEREO6DOF
     static bool wasHalo2Stereo6DofContext = false;
-    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    if (halo2ClaimContext)
     {
+        // This atomic gate starts false in the H2 core. Publish false before
+        // touching inherited presentation state so no render hook can claim a
+        // frame during the comfort-fade back from another title's 2D pause.
+        if (enteringHalo2ClaimContext)
+            Halo2Stereo_SetPresentationReady(false);
         wasHalo2Stereo6DofContext = true;
         const bool halo2StereoUsable = Halo2Stereo_Armed();
+        const bool pauseTarget = VR_IsPausePresentationTarget();
+        const bool pausePresentation = VR_IsPausePresentation();
+        const bool mustClearForeignPause = Halo2MustClearForeignPause(
+            true, pauseTarget, pausePresentation);
+        Halo2PreparedCadenceSnapshot halo2Cadence{};
+        const bool halo2CadenceCurrent =
+            VR_Halo2GetCurrentPreparedCadence(halo2Cadence);
+        const bool halo2CadenceSupported = halo2CadenceCurrent &&
+            Halo2PreparedCadenceSupported(
+                halo2Cadence.predictedDisplayPeriodNs,
+                halo2Cadence.predictedDisplayDeltaNs);
+        const float halo2TargetCadenceHz = Halo2CadenceHz(
+            halo2Cadence.predictedDisplayPeriodNs);
+        const float halo2DeliveredCadenceHz = Halo2CadenceHz(
+            halo2Cadence.predictedDisplayDeltaNs);
+        if (mustClearForeignPause || !halo2CadenceSupported)
+            Halo2Stereo_SetPresentationReady(false);
+        if (mustClearForeignPause)
+        {
+            // VR_RequestPausePresentation requeues the comfort fade whenever
+            // current != target. Issue exactly one request for this clear
+            // episode; repeating it every Present would restart FadeOut before
+            // it could ever finish.
+            if (Halo2ShouldRequestForeignPauseClear(
+                    true, pauseTarget, pausePresentation,
+                    halo2PauseClearRequested))
+            {
+                VR_RequestPausePresentation(false);
+                LOG("Halo 2 presentation: clearing foreign pause/head-lock "
+                    "state before stereo claims");
+                halo2PauseClearRequested = true;
+            }
+        }
+        else
+            halo2PauseClearRequested = false;
+
+        // Stable xrWaitFrame periods produce no render-thread log traffic. A
+        // two-second bound also prevents a runtime hovering at an exact range
+        // boundary from alternating BLOCKED/OPEN every Present. Reset state on a
+        // fresh title entry so each test run records its actual admission.
+        if (enteringHalo2ClaimContext)
+            halo2CadenceStateKnown = false;
+        const uint64_t halo2CadenceNowMs = GetTickCount64();
+        const bool halo2CadenceChanged = !halo2CadenceStateKnown ||
+            halo2CadenceSupported != halo2CadenceWasSupported;
+        const bool halo2CadenceLogReady = !halo2CadenceStateKnown ||
+            halo2CadenceNowMs < halo2CadenceLastLogMs ||
+            halo2CadenceNowMs - halo2CadenceLastLogMs >= 2000;
+        if (halo2CadenceChanged && halo2CadenceLogReady)
+        {
+            if (halo2CadenceSupported)
+            {
+                LOG("Halo 2 cadence gate OPEN: xrWaitFrame target %.1fHz and "
+                    "predicted-display delivery %.1fHz are within 72-144Hz",
+                    halo2TargetCadenceHz, halo2DeliveredCadenceHz);
+            }
+            else
+            {
+                LOG("Halo 2 cadence gate BLOCKED: xrWaitFrame target %.1fHz, "
+                    "predicted-display delivery %.1fHz (current=%d); both "
+                    "must be within 72-144Hz, keeping stock unclaimed "
+                    "presentation", halo2TargetCadenceHz,
+                    halo2DeliveredCadenceHz,
+                    halo2CadenceCurrent ? 1 : 0);
+            }
+            halo2CadenceStateKnown = true;
+            halo2CadenceWasSupported = halo2CadenceSupported;
+            halo2CadenceLastLogMs = halo2CadenceNowMs;
+        }
 
         // Match the universal auto_vr contract. A manual F2 veto owns the
         // remainder of this level; a config-off transition releases only the
@@ -37168,6 +37264,7 @@ void Game_AutoVrTick()
         if (!g_config.auto_vr ||
             g_autoVrUserVeto.load(std::memory_order_acquire))
         {
+            Halo2Stereo_SetPresentationReady(false);
             if (g_autoVrOwned.load(std::memory_order_acquire))
             {
                 g_enabled.store(false, std::memory_order_release);
@@ -37177,7 +37274,12 @@ void Game_AutoVrTick()
             return;
         }
 
-        if (halo2StereoUsable)
+        const bool presentationMayClaim = Halo2PresentationMayClaim(
+            true, halo2StereoUsable, true,
+            VR_IsPausePresentationTarget(), VR_IsPausePresentation(),
+            halo2Cadence.predictedDisplayPeriodNs,
+            halo2Cadence.predictedDisplayDeltaNs);
+        if (presentationMayClaim)
         {
             if (!g_enabled.load(std::memory_order_relaxed) ||
                 !VR_IsStereoEnabled())
@@ -37188,25 +37290,37 @@ void Game_AutoVrTick()
                 g_autoVrOwned.store(true, std::memory_order_release);
                 if (!VR_IsStereoEnabled())
                     VR_ToggleStereo();
-                LOG("Halo 2 C-H2-4 camera core armed: a complete exact-current "
+                LOG("Halo 2 C-H2-5 camera core armed: a complete exact-current "
                     "pair will use simultaneous stereo + 6DOF; an unclaimed "
                     "no-pair frame keeps the stock screen-quad path, while a "
-                    "partially claimed failure drops only that frame");
+                    "partially claimed failure drops that frame and quarantines "
+                    "H2 stereo for this module generation");
             }
+            // Publish last: g_enabled, recenter, and the shared stereo path are
+            // fully ready before a game render is allowed to claim ownership.
+            Halo2Stereo_SetPresentationReady(true);
         }
-        else if (g_enabled.load(std::memory_order_relaxed) ||
-                 VR_IsStereoEnabled() ||
-                 g_autoVrOwned.load(std::memory_order_relaxed))
+        else
         {
-            g_enabled.store(false, std::memory_order_release);
-            g_autoVrOwned.store(false, std::memory_order_release);
-            VR_DetachGamePresentation();
+            Halo2Stereo_SetPresentationReady(false);
+            if (!halo2StereoUsable &&
+                (g_enabled.load(std::memory_order_relaxed) ||
+                 VR_IsStereoEnabled() ||
+                 g_autoVrOwned.load(std::memory_order_relaxed)))
+            {
+                g_enabled.store(false, std::memory_order_release);
+                g_autoVrOwned.store(false, std::memory_order_release);
+                VR_DetachGamePresentation();
+            }
         }
         return;
     }
     if (wasHalo2Stereo6DofContext)
     {
+        Halo2Stereo_SetPresentationReady(false);
         wasHalo2Stereo6DofContext = false;
+        halo2PauseClearRequested = false;
+        halo2CadenceStateKnown = false;
         g_enabled.store(false, std::memory_order_release);
         g_autoVrOwned.store(false, std::memory_order_release);
         g_autoVrUserVeto.store(false, std::memory_order_release);

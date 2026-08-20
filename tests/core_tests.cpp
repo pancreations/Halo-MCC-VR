@@ -5250,6 +5250,94 @@ int main()
             "private ODST entry clears either pending or active foreign pause state");
         Check(!OdstMustClearForeignPause(false, true, true),
             "foreign pause cleanup cannot affect non-ODST title ownership");
+        Check(Halo2MustClearForeignPause(true, true, false) &&
+                  Halo2MustClearForeignPause(true, false, true),
+            "H2 ownership clears either pending or active foreign pause state");
+        Check(!Halo2MustClearForeignPause(false, true, true),
+            "H2 foreign pause cleanup is confined to its title context");
+        Check(Halo2ShouldRequestForeignPauseClear(
+                  true, false, true, false) &&
+                  !Halo2ShouldRequestForeignPauseClear(
+                      true, false, true, true) &&
+                  !Halo2ShouldRequestForeignPauseClear(
+                      true, false, false, false),
+            "H2 requests one pause clear per episode and does not restart its fade");
+        Check(!Halo2RefreshCadenceSupported(0.0f) &&
+                  !Halo2RefreshCadenceSupported(45.0f) &&
+                  !Halo2RefreshCadenceSupported(60.0f) &&
+                  !Halo2RefreshCadenceSupported(
+                      std::numeric_limits<float>::infinity()) &&
+                  !Halo2RefreshCadenceSupported(
+                      std::numeric_limits<float>::quiet_NaN()),
+            "H2 rejects unknown, non-finite, 45 Hz, and 60 Hz app cadence");
+        Check(Halo2RefreshCadenceSupported(72.0f) &&
+                  Halo2RefreshCadenceSupported(80.0f) &&
+                  Halo2RefreshCadenceSupported(90.0f) &&
+                  Halo2RefreshCadenceSupported(120.0f) &&
+                  Halo2RefreshCadenceSupported(144.0f),
+            "H2 admits the requested 72/80/90/120/144 Hz app cadences");
+        Check(!Halo2RefreshCadenceSupported(71.5f) &&
+                  !Halo2RefreshCadenceSupported(144.5f) &&
+                  !Halo2RefreshCadenceSupported(71.999f) &&
+                  !Halo2RefreshCadenceSupported(144.001f),
+            "H2 float cadence admission is strictly inclusive 72-144 Hz");
+        Check(Halo2PreparedCadenceSupported(13888889, 13888889) &&
+                  Halo2PreparedCadenceSupported(12500000, 12500000) &&
+                  Halo2PreparedCadenceSupported(11111111, 11111111) &&
+                  Halo2PreparedCadenceSupported(8333333, 8333333) &&
+                  Halo2PreparedCadenceSupported(6944444, 6944444),
+            "H2 exact durations admit nominal 72/80/90/120/144 Hz");
+        Check(!Halo2PreparedCadenceSupported(11111111, 22222222) &&
+                  !Halo2PreparedCadenceSupported(11111111, 16666667) &&
+                  !Halo2PreparedCadenceSupported(0, 11111111) &&
+                  !Halo2PreparedCadenceSupported(11111111, 0) &&
+                  !Halo2CadencePeriodSupported(13888890) &&
+                  !Halo2CadencePeriodSupported(6944443),
+            "H2 rejects 45/60 Hz delivery, unknown timing, and periods beyond exact bounds");
+        Check(Halo2PreparedCadenceSupported(11111111, 11111111) &&
+                  !Halo2PreparedCadenceSupported(11111111, 22222222),
+            "H2 closes hot admission when a 90 Hz target changes from full-rate "
+            "delivery to ASW-style 45 Hz delivery before any eye render");
+        Check(!Halo2PresentationMayClaim(
+                  true, true, true, true, false, 11111111, 11111111) &&
+                  !Halo2PresentationMayClaim(
+                      true, true, true, false, true, 11111111, 11111111),
+            "H2 cannot claim while either half of pause clearing is active");
+        Check(Halo2PresentationMayClaim(
+                  true, true, true, false, false, 11111111, 11111111),
+            "H2 may claim only after its core and immersive presentation are ready");
+        Check(!Halo2PresentationMayClaim(
+                  false, true, true, false, false, 11111111, 11111111) &&
+                  !Halo2PresentationMayClaim(
+                      true, false, true, false, false, 11111111, 11111111) &&
+                  !Halo2PresentationMayClaim(
+                      true, true, false, false, false, 11111111, 11111111) &&
+                  !Halo2PresentationMayClaim(
+                      true, true, true, false, false, 11111111, 22222222),
+            "H2 cannot claim outside its intended usable stereo context");
+        Check(Halo2PreparedSerialMayFollowCompletedPair(0, 400) &&
+                  Halo2PreparedSerialMayFollowCompletedPair(400, 401),
+            "H2 preserves loading before its first pair then admits the exact next serial");
+        Check(!Halo2PreparedSerialMayFollowCompletedPair(400, 400) &&
+                  !Halo2PreparedSerialMayFollowCompletedPair(400, 402) &&
+                  !Halo2PreparedSerialMayFollowCompletedPair(400, 0) &&
+                  !Halo2PreparedSerialMayFollowCompletedPair(UINT64_MAX, 1),
+            "H2 rejects duplicate, skipped, missing, and wrapped serials after first Complete");
+        Check(!Halo2StructuralFailureRequiresQuarantine(
+                  0, false, false, false, false),
+            "A clean zero-eye H2 failure retains its one stock replay");
+        Check(Halo2StructuralFailureRequiresQuarantine(
+                  1, false, false, false, false) &&
+                  Halo2StructuralFailureRequiresQuarantine(
+                      0, true, false, false, false) &&
+                  Halo2StructuralFailureRequiresQuarantine(
+                      0, false, true, false, false) &&
+                  Halo2StructuralFailureRequiresQuarantine(
+                      0, false, false, true, false) &&
+                  Halo2StructuralFailureRequiresQuarantine(
+                      0, false, false, false, true),
+            "Any eye render, failed owned-state restore/raster close, exception, "
+            "or exact-call shape violation quarantines the H2 generation");
         Check(OdstNestedSourceIsCompatible(0, 0x1234),
             "ODST installation may precede the first nested FP source publish");
         Check(OdstNestedSourceIsCompatible(0x1234, 0x1234),
@@ -5806,7 +5894,7 @@ int main()
 #if HALOMCCVR_HALO2_STEREO6DOF
     Check(Halo2Adapter_RuntimeHooksPermitted() &&
               Halo2Adapter_EngineWritesPermitted(),
-        "C-H2-4 permits its same-frame camera hooks and scoped pose writes");
+        "C-H2-5 permits its same-frame camera hooks and scoped pose writes");
     {
         constexpr uint32_t generation = 7;
         constexpr uint64_t serial = 42;
@@ -5819,70 +5907,110 @@ int main()
                   false, false, true, false,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-4 drops a claimed H2 frame even when stereo becomes "
+            "C-H2-5 drops a claimed H2 frame even when stereo becomes "
             "ineligible before submission");
         Check(Halo2SynchronousSelectPresentation(
                   false, true, true, false,
                   generation, serial, complete) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-4 retains a completed disposition across live-pair reset and "
+            "C-H2-5 retains a completed disposition across live-pair reset and "
             "drops when late state cannot admit synchronous stereo");
         Check(Halo2SynchronousSelectPresentation(
                   false, false, true, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::SharedDefault,
-            "C-H2-4 preserves ordinary late-ineligible screen presentation for "
+            "C-H2-5 preserves ordinary late-ineligible screen presentation for "
             "an H2 frame that no eye transaction claimed");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, false, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::SharedDefault,
-            "C-H2-4 cannot change another title's stereo presentation decision");
+            "C-H2-5 cannot change another title's stereo presentation decision");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, false, false,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-4 keeps an exact claimed H2 frame out of SharedDefault after "
+            "C-H2-5 keeps an exact claimed H2 frame out of SharedDefault after "
             "a late active-title transition");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, true,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::SynchronousStereo,
-            "C-H2-4 gives an exact completed current pair precedence over a "
+            "C-H2-5 gives an exact completed current pair precedence over a "
             "conservative claimed stamp");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-4 routes an unclaimed H2 frame to the stock screen-quad path");
+            "C-H2-5 routes an unclaimed H2 frame to the stock screen-quad path");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, true, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-4 routes an unclaimed H2 frame to the stock screen even when "
+            "C-H2-5 routes an unclaimed H2 frame to the stock screen even when "
             "stereo is requested but its projection descriptor is not ready");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, true, true,
                   generation, serial, complete) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-4 drops a completed H2 pair when its projection descriptor "
+            "C-H2-5 drops a completed H2 pair when its projection descriptor "
             "is not ready");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-4 drops a claimed frame whose live pair was reset instead of "
+            "C-H2-5 drops a claimed frame whose live pair was reset instead of "
             "sampling its unproven backbuffer");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation + 1, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-4 rejects a durable claim from another generation");
+            "C-H2-5 rejects a durable claim from another generation");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation, serial + 1, claimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-4 rejects a durable claim from another prepared serial");
+            "C-H2-5 rejects a durable claim from another prepared serial");
+        Check(Halo2SynchronousDropRequiresQuarantine(
+                  generation, serial, claimed,
+                  Halo2SynchronousPresentationDecision::Drop) &&
+                  Halo2SynchronousDropRequiresQuarantine(
+                      generation, serial, complete,
+                      Halo2SynchronousPresentationDecision::Drop),
+            "A current H2 Claim or Complete drop quarantines its generation");
+        Check(!Halo2SynchronousDropRequiresQuarantine(
+                  generation, serial, unclaimed,
+                  Halo2SynchronousPresentationDecision::Drop) &&
+                  !Halo2SynchronousDropRequiresQuarantine(
+                      generation + 1, serial, claimed,
+                      Halo2SynchronousPresentationDecision::Drop) &&
+                  !Halo2SynchronousDropRequiresQuarantine(
+                      generation, serial + 1, claimed,
+                      Halo2SynchronousPresentationDecision::Drop) &&
+                  !Halo2SynchronousDropRequiresQuarantine(
+                      generation, serial, complete,
+                      Halo2SynchronousPresentationDecision::SynchronousStereo),
+            "Unclaimed, stale, foreign, and successfully admitted H2 frames "
+            "cannot quarantine the stereo generation");
+        Check(Halo2SynchronousRequiresStrictStockScreen(
+                  true, Halo2SynchronousFrameDisposition::Unclaimed,
+                  Halo2SynchronousPresentationDecision::StockScreen) &&
+                  Halo2SynchronousRequiresStrictStockScreen(
+                      true, Halo2SynchronousFrameDisposition::Unclaimed,
+                      Halo2SynchronousPresentationDecision::SharedDefault),
+            "active H2 unclaimed frames use strict stock-screen delivery with "
+            "stereo either requested or detached");
+        Check(!Halo2SynchronousRequiresStrictStockScreen(
+                  false, Halo2SynchronousFrameDisposition::Unclaimed,
+                  Halo2SynchronousPresentationDecision::SharedDefault) &&
+                  !Halo2SynchronousRequiresStrictStockScreen(
+                      true, Halo2SynchronousFrameDisposition::Claimed,
+                      Halo2SynchronousPresentationDecision::Drop) &&
+                  !Halo2SynchronousRequiresStrictStockScreen(
+                      true, Halo2SynchronousFrameDisposition::Complete,
+                      Halo2SynchronousPresentationDecision::SynchronousStereo),
+            "strict H2 stock-screen delivery cannot change another title or "
+            "a claimed/complete H2 transaction");
     }
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     Check(Halo2Adapter_RuntimeHooksPermitted() &&

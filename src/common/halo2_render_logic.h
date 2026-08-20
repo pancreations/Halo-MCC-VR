@@ -26,6 +26,103 @@ inline constexpr char kHalo2KitBuildTag[] =
 inline constexpr char kHalo2KitTagTestSha256[] =
     "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36";
 
+// Halo 2 does not yet own a title-native pause signal. A pause/head-lock
+// transition requested by another MCC engine must therefore be cleared while
+// H2 owns the title context, and the synchronous render hooks must remain stock
+// until both the requested and currently displayed presentation have returned
+// to immersive stereo. Keeping this policy pure makes the no-claim boundary
+// independently testable without touching OpenXR state.
+inline bool Halo2MustClearForeignPause(
+    bool stereoContext, bool pauseTarget, bool pausePresentation)
+{
+    return stereoContext && (pauseTarget || pausePresentation);
+}
+
+inline bool Halo2ShouldRequestForeignPauseClear(
+    bool stereoContext, bool pauseTarget, bool pausePresentation,
+    bool clearAlreadyRequested)
+{
+    return Halo2MustClearForeignPause(
+               stereoContext, pauseTarget, pausePresentation) &&
+        !clearAlreadyRequested;
+}
+
+inline constexpr float kHalo2MinimumAppCadenceHz = 72.0f;
+inline constexpr float kHalo2MaximumAppCadenceHz = 144.0f;
+
+inline bool Halo2RefreshCadenceSupported(float appCadenceHz)
+{
+    return std::isfinite(appCadenceHz) &&
+        appCadenceHz >= kHalo2MinimumAppCadenceHz &&
+        appCadenceHz <= kHalo2MaximumAppCadenceHz;
+}
+
+inline constexpr uint64_t kHalo2NanosecondsPerSecond = 1000000000ull;
+// XrDuration is an integer count of nanoseconds. These two bounds are the
+// nearest integer representations of exactly 144 Hz and exactly 72 Hz; the
+// resulting sub-nanosecond rounding allowance is the only tolerance admitted.
+inline constexpr uint64_t kHalo2FastestCadencePeriodNs = 6944444ull;
+inline constexpr uint64_t kHalo2SlowestCadencePeriodNs = 13888889ull;
+
+inline constexpr bool Halo2CadencePeriodSupported(uint64_t periodNs) noexcept
+{
+    return periodNs >= kHalo2FastestCadencePeriodNs &&
+        periodNs <= kHalo2SlowestCadencePeriodNs;
+}
+
+inline constexpr bool Halo2PreparedCadenceSupported(
+    uint64_t targetPeriodNs, uint64_t predictedDisplayDeltaNs) noexcept
+{
+    return Halo2CadencePeriodSupported(targetPeriodNs) &&
+        Halo2CadencePeriodSupported(predictedDisplayDeltaNs);
+}
+
+inline float Halo2CadenceHz(uint64_t periodNs) noexcept
+{
+    return periodNs
+        ? static_cast<float>(
+              static_cast<double>(kHalo2NanosecondsPerSecond) /
+              static_cast<double>(periodNs))
+        : 0.0f;
+}
+
+inline bool Halo2PresentationMayClaim(
+    bool stereoContext, bool coreUsable, bool presentationIntended,
+    bool pauseTarget, bool pausePresentation, uint64_t targetPeriodNs,
+    uint64_t predictedDisplayDeltaNs)
+{
+    return stereoContext && coreUsable && presentationIntended &&
+        !pauseTarget && !pausePresentation &&
+        Halo2PreparedCadenceSupported(
+            targetPeriodNs, predictedDisplayDeltaNs);
+}
+
+inline constexpr bool Halo2PreparedSerialMayFollowCompletedPair(
+    uint64_t lastCompletedSerial, uint64_t preparedSerial) noexcept
+{
+    if (!preparedSerial)
+        return false;
+    if (!lastCompletedSerial)
+        return true;
+    return lastCompletedSerial != UINT64_MAX &&
+        preparedSerial == lastCompletedSerial + 1;
+}
+
+// A completed engine eye is not the only point of no safe retry. If an owned
+// camera span cannot be restored, or an H2 raster scope cannot be closed, the
+// current frame may stay screen-visible but this module generation must not
+// attempt another title transaction. A clean zero-eye failure remains eligible
+// for the proven stock replay.
+inline constexpr bool Halo2StructuralFailureRequiresQuarantine(
+    uint32_t renderViewCalls, bool ownedStateRestoreFailed,
+    bool rasterScopeCloseFailed, bool transactionExceptionSeen,
+    bool transactionShapeFailed) noexcept
+{
+    return renderViewCalls > 0 || ownedStateRestoreFailed ||
+        rasterScopeCloseFailed || transactionExceptionSeen ||
+        transactionShapeFailed;
+}
+
 // The engine stores one heap-allocated 0x2C-byte game_time_globals object
 // behind this module pointer slot. The official H2EK establishes the layout;
 // retail's unique incrementer and level initializer independently decode the

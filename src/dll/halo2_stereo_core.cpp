@@ -130,6 +130,9 @@ namespace
         bool pairCompleted = false;
         bool presentationClaimPublished = false;
         bool exceptionSeen = false;
+        bool ownedStateRestoreFailed = false;
+        bool rasterScopeCloseFailed = false;
+        bool transactionShapeFailed = false;
         uint32_t exactInnerInvocations = 0;
         uint32_t renderViewCalls = 0;
         uint32_t renderViewReturns = 0;
@@ -155,6 +158,7 @@ namespace
     std::atomic<bool> g_installed{false};
     std::atomic<bool> g_armed{false};
     std::atomic<bool> g_stereoRequested{false};
+    std::atomic<bool> g_presentationReady{false};
     std::atomic<bool> g_levelLive{false};
     std::atomic<bool> g_coldObservationPassed{false};
     std::atomic<bool> g_teardownRequested{false};
@@ -167,6 +171,16 @@ namespace
     std::atomic<uintptr_t> g_backbufferRtvSlotAddress{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
     std::atomic<uint64_t> g_seenSerial{0};
+    // Zero admits the first complete pair at any prepared serial so loading
+    // remains stock/fail-open. Once a pair completes, every later stereo
+    // transaction must consume exactly the next OpenXR prepared serial.
+    std::atomic<uint64_t> g_lastCompletedPairSerial{0};
+    std::atomic<uint64_t> g_serialGapExpected{};
+    std::atomic<uint64_t> g_serialGapObserved{};
+    // High 32 bits are the module generation; low 32 bits are the first
+    // Halo2StereoQuarantineReason published for it. One atomic makes the
+    // cross-thread reason/generation observation indivisible.
+    std::atomic<uint64_t> g_runtimeQuarantine{0};
 
     // Low bits: 0 empty/old, 1 writer owns publication, 2 ready. The upper
     // bits are the module generation. Components are stored as atomic bit
@@ -644,7 +658,10 @@ namespace
                 restored = false;
         }
         if (!restored)
+        {
+            scope.ownedStateRestoreFailed = true;
             g_telemetry.restoreFailures.fetch_add(1, std::memory_order_relaxed);
+        }
         return restored;
     }
 
@@ -706,6 +723,98 @@ namespace
         return false;
     }
 
+    uint64_t PackRuntimeQuarantine(
+        uint32_t generation, Halo2StereoQuarantineReason reason) noexcept
+    {
+        return (static_cast<uint64_t>(generation) << 32) |
+            static_cast<uint32_t>(reason);
+    }
+
+    uint32_t RuntimeQuarantineGeneration(uint64_t packed) noexcept
+    {
+        return static_cast<uint32_t>(packed >> 32);
+    }
+
+    Halo2StereoQuarantineReason RuntimeQuarantineReason(
+        uint64_t packed) noexcept
+    {
+        return static_cast<Halo2StereoQuarantineReason>(
+            static_cast<uint32_t>(packed));
+    }
+
+    bool QuarantineReasonIsKnown(
+        Halo2StereoQuarantineReason reason) noexcept
+    {
+        switch (reason)
+        {
+        case Halo2StereoQuarantineReason::CoreClaimedTransactionFailed:
+        case Halo2StereoQuarantineReason::CorePreparedSerialGap:
+        case Halo2StereoQuarantineReason::VrClaimedPresentationUnavailable:
+        case Halo2StereoQuarantineReason::VrClaimedPairUnavailable:
+        case Halo2StereoQuarantineReason::VrClaimedSwapchainFailed:
+        case Halo2StereoQuarantineReason::VrClaimedProjectionFailed:
+        case Halo2StereoQuarantineReason::VrClaimedSubmissionFailed:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    const char* QuarantineReasonName(
+        Halo2StereoQuarantineReason reason) noexcept
+    {
+        switch (reason)
+        {
+        case Halo2StereoQuarantineReason::CoreClaimedTransactionFailed:
+            return "CoreClaimedTransactionFailed";
+        case Halo2StereoQuarantineReason::CorePreparedSerialGap:
+            return "CorePreparedSerialGap";
+        case Halo2StereoQuarantineReason::VrClaimedPresentationUnavailable:
+            return "VrClaimedPresentationUnavailable";
+        case Halo2StereoQuarantineReason::VrClaimedPairUnavailable:
+            return "VrClaimedPairUnavailable";
+        case Halo2StereoQuarantineReason::VrClaimedSwapchainFailed:
+            return "VrClaimedSwapchainFailed";
+        case Halo2StereoQuarantineReason::VrClaimedProjectionFailed:
+            return "VrClaimedProjectionFailed";
+        case Halo2StereoQuarantineReason::VrClaimedSubmissionFailed:
+            return "VrClaimedSubmissionFailed";
+        default:
+            return "UnknownQuarantineReason";
+        }
+    }
+
+    void PublishRuntimeQuarantine(
+        uint32_t generation, Halo2StereoQuarantineReason reason) noexcept
+    {
+        if (!generation || !QuarantineReasonIsKnown(reason) ||
+            g_generation.load(std::memory_order_acquire) != generation)
+        {
+            return;
+        }
+
+        const uint64_t desired = PackRuntimeQuarantine(generation, reason);
+        uint64_t observed =
+            g_runtimeQuarantine.load(std::memory_order_acquire);
+        for (;;)
+        {
+            if (RuntimeQuarantineGeneration(observed) == generation)
+                return;
+            if (g_generation.load(std::memory_order_acquire) != generation)
+                return;
+            if (g_runtimeQuarantine.compare_exchange_weak(
+                    observed, desired, std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                // HotStateMatches also reads the packed request directly. This
+                // store makes the ordinary admission gate close immediately as
+                // well, without waiting for worker teardown.
+                g_stereoRequested.store(false, std::memory_order_release);
+                return;
+            }
+        }
+    }
+
     void InvalidateScope(StereoScope& scope) noexcept
     {
         if (scope.invalidated)
@@ -730,14 +839,32 @@ namespace
 
     bool HotStateMatches(uint32_t generation) noexcept
     {
-        return generation &&
+        const uint64_t quarantine =
+            g_runtimeQuarantine.load(std::memory_order_acquire);
+        if (!(generation &&
             g_installed.load(std::memory_order_acquire) &&
             g_armed.load(std::memory_order_acquire) &&
             g_stereoRequested.load(std::memory_order_acquire) &&
+            g_presentationReady.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
             g_coldObservationPassed.load(std::memory_order_acquire) &&
             !g_teardownRequested.load(std::memory_order_acquire) &&
-            g_generation.load(std::memory_order_acquire) == generation;
+            RuntimeQuarantineGeneration(quarantine) != generation &&
+            g_generation.load(std::memory_order_acquire) == generation))
+        {
+            return false;
+        }
+
+        // These getters are atomic-only. Checking pause here closes the gap
+        // between Presents; checking exact prepared timing prevents a nominal
+        // 90 Hz target with 45 Hz predicted-display delivery from claiming.
+        Halo2PreparedCadenceSnapshot cadence{};
+        return !VR_IsPausePresentationTarget() &&
+            !VR_IsPausePresentation() &&
+            VR_Halo2GetCurrentPreparedCadence(cadence) &&
+            Halo2PreparedCadenceSupported(
+                cadence.predictedDisplayPeriodNs,
+                cadence.predictedDisplayDeltaNs);
     }
 
     bool HeadReferenceIsCurrent(const StereoScope& scope) noexcept
@@ -758,7 +885,10 @@ namespace
         {
             return VR_Halo2GetSynchronousRenderSnapshot(current) &&
                 current.generation == generation &&
-                current.preparedSerial == serial;
+                current.preparedSerial == serial &&
+                Halo2PreparedCadenceSupported(
+                    current.predictedDisplayPeriodNs,
+                    current.predictedDisplayDeltaNs);
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -894,6 +1024,17 @@ namespace
         if (g_stereoScope)
         {
             g_stereoScope->exceptionSeen = true;
+            if (!g_stereoScope->presentationClaimPublished)
+            {
+                g_stereoScope->presentationClaimPublished =
+                    GuardedClaimPresentation(
+                        g_stereoScope->generation,
+                        g_stereoScope->serial);
+            }
+            PublishRuntimeQuarantine(
+                g_stereoScope->generation,
+                Halo2StereoQuarantineReason::
+                    CoreClaimedTransactionFailed);
             InvalidateScope(*g_stereoScope);
             return EXCEPTION_EXECUTE_HANDLER;
         }
@@ -986,6 +1127,7 @@ namespace
             // The proven player edge contains one render_view call. Suppress a
             // duplicate instead of creating a third game render, and revoke
             // any pair the first invocation may already have completed.
+            scope->transactionShapeFailed = true;
             InvalidateScope(*scope);
             return;
         }
@@ -1077,6 +1219,8 @@ namespace
                     // strand the other camera or projection input.
                     if (rasterEyeAttempted)
                         rasterEyeEnded = GuardedEndRasterEye();
+                    if (rasterEyeAttempted && !rasterEyeEnded)
+                        scope->rasterScopeCloseFailed = true;
                     rasterScopesClosed = rasterScopesClosed &&
                         (!rasterEyeAttempted || rasterEyeEnded);
                     spansRestored = RestoreOwnedSpans(*scope);
@@ -1328,11 +1472,34 @@ namespace
             snapshotReady = false;
         }
         if (!snapshotReady || !snapshot.preparedSerial ||
-            snapshot.generation != generation)
+            snapshot.generation != generation ||
+            !Halo2PreparedCadenceSupported(
+                snapshot.predictedDisplayPeriodNs,
+                snapshot.predictedDisplayDeltaNs))
         {
             g_telemetry.missingSnapshots.fetch_add(
                 1, std::memory_order_relaxed);
             RejectToken(snapshot.generation, snapshot.preparedSerial);
+            CallStockOuter(original, window, flag);
+            return;
+        }
+
+        const uint64_t lastCompletedPairSerial =
+            g_lastCompletedPairSerial.load(std::memory_order_acquire);
+        if (!Halo2PreparedSerialMayFollowCompletedPair(
+                lastCompletedPairSerial, snapshot.preparedSerial))
+        {
+            // No eye has rendered and no presentation claim exists, so this
+            // frame stays on the stock path. The worker removes this generation
+            // before any later serial can resume a half-rate sequence.
+            g_serialGapExpected.store(
+                lastCompletedPairSerial + 1, std::memory_order_relaxed);
+            g_serialGapObserved.store(
+                snapshot.preparedSerial, std::memory_order_release);
+            PublishRuntimeQuarantine(
+                generation,
+                Halo2StereoQuarantineReason::CorePreparedSerialGap);
+            RejectToken(generation, snapshot.preparedSerial);
             CallStockOuter(original, window, flag);
             return;
         }
@@ -1374,6 +1541,16 @@ namespace
         if (!WriteOuterCoverFovs(scope))
         {
             const bool restored = RestoreOwnedSpans(scope);
+            if (!restored)
+            {
+                scope.presentationClaimPublished =
+                    GuardedClaimPresentation(
+                        generation, snapshot.preparedSerial);
+                PublishRuntimeQuarantine(
+                    generation,
+                    Halo2StereoQuarantineReason::
+                        CoreClaimedTransactionFailed);
+            }
             RejectToken(generation, snapshot.preparedSerial);
             if (restored)
                 CallStockOuter(original, window, flag);
@@ -1414,11 +1591,23 @@ namespace
             GuardedCompletePair(generation, snapshot.preparedSerial))
         {
             scope.pairCompleted = true;
+            g_lastCompletedPairSerial.store(
+                snapshot.preparedSerial, std::memory_order_release);
             g_telemetry.completedPairs.fetch_add(
                 1, std::memory_order_relaxed);
             return;
         }
 
+        if (Halo2StructuralFailureRequiresQuarantine(
+                scope.renderViewCalls, scope.ownedStateRestoreFailed,
+                scope.rasterScopeCloseFailed, scope.exceptionSeen,
+                scope.transactionShapeFailed))
+        {
+            PublishRuntimeQuarantine(
+                generation,
+                Halo2StereoQuarantineReason::
+                    CoreClaimedTransactionFailed);
+        }
         RejectToken(generation, snapshot.preparedSerial);
         g_telemetry.droppedPairs.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1870,6 +2059,7 @@ namespace
     bool RemoveCore(const char* reason) noexcept
     {
         g_stereoRequested.store(false, std::memory_order_release);
+        g_presentationReady.store(false, std::memory_order_release);
         g_teardownRequested.store(true, std::memory_order_release);
         g_armed.store(false, std::memory_order_release);
         ResetHeadReferenceAtomic();
@@ -1948,6 +2138,9 @@ namespace
         g_moduleBase.store(0, std::memory_order_release);
         g_backbufferRtvSlotAddress.store(0, std::memory_order_release);
         g_seenSerial.store(0, std::memory_order_release);
+        g_lastCompletedPairSerial.store(0, std::memory_order_release);
+        g_serialGapExpected.store(0, std::memory_order_release);
+        g_serialGapObserved.store(0, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
         if (g_moduleReference)
         {
@@ -2125,6 +2318,9 @@ namespace
         g_backbufferRtvSlotAddress.store(
             backbufferSlot, std::memory_order_release);
         g_seenSerial.store(0, std::memory_order_release);
+        g_lastCompletedPairSerial.store(0, std::memory_order_release);
+        g_serialGapExpected.store(0, std::memory_order_release);
+        g_serialGapObserved.store(0, std::memory_order_release);
         g_teardownRequested.store(false, std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         g_coreState = CoreState::CleanupRequired;
@@ -2188,17 +2384,34 @@ bool Halo2Stereo_Poll(
             g_vrFailureGeneration.load(std::memory_order_acquire);
     }
 
+    uint64_t runtimeQuarantine =
+        g_runtimeQuarantine.load(std::memory_order_acquire);
+    const uint32_t quarantineGeneration =
+        RuntimeQuarantineGeneration(runtimeQuarantine);
+    if (quarantineGeneration && generation &&
+        quarantineGeneration != generation)
+    {
+        g_runtimeQuarantine.compare_exchange_strong(
+            runtimeQuarantine, 0, std::memory_order_acq_rel,
+            std::memory_order_acquire);
+        runtimeQuarantine =
+            g_runtimeQuarantine.load(std::memory_order_acquire);
+    }
+
     const bool identityValid = moduleBase && generation &&
         moduleSize == kHalo2RetailImageSize;
     const bool vrAvailable = !vrFailureGeneration ||
         generation != vrFailureGeneration;
     const bool desired = identityValid && activeAndRange && levelRunning &&
         coldPassed && vrAvailable;
+    const bool runtimeQuarantined = generation &&
+        RuntimeQuarantineGeneration(runtimeQuarantine) == generation;
     const bool ownsDifferentModule = (g_outerTarget || g_innerTarget) &&
         (ownedGeneration != generation ||
          g_moduleBase.load(std::memory_order_acquire) != moduleBase);
-    const bool hotEligible = desired && !ownsDifferentModule &&
-        g_coreState == CoreState::Installed;
+    const bool hotEligible = desired && !runtimeQuarantined &&
+        !ownsDifferentModule && g_coreState == CoreState::Installed &&
+        g_presentationReady.load(std::memory_order_acquire);
 
     g_levelLive.store(levelRunning, std::memory_order_release);
     g_coldObservationPassed.store(coldPassed, std::memory_order_release);
@@ -2206,6 +2419,40 @@ bool Halo2Stereo_Poll(
         g_config.right_eye_first, std::memory_order_release);
     g_stereoRequested.store(hotEligible, std::memory_order_release);
     ReportTelemetry();
+
+    if (runtimeQuarantined)
+    {
+        const Halo2StereoQuarantineReason quarantineReason =
+            RuntimeQuarantineReason(runtimeQuarantine);
+        const char* const reason = QuarantineReasonName(quarantineReason);
+        if (g_rejectedGeneration != generation)
+        {
+            if (quarantineReason ==
+                Halo2StereoQuarantineReason::CorePreparedSerialGap)
+            {
+                LOG("Halo 2 stereo generation %u QUARANTINED (%s): expected "
+                    "prepared serial %llu after the first complete pair, saw "
+                    "%llu; no eye rendered for the gap frame and later frames "
+                    "use stock-screen fallback",
+                    generation, reason,
+                    static_cast<unsigned long long>(
+                        g_serialGapExpected.load(std::memory_order_acquire)),
+                    static_cast<unsigned long long>(
+                        g_serialGapObserved.load(std::memory_order_acquire)));
+            }
+            else
+            {
+                LOG("Halo 2 stereo generation %u QUARANTINED (%s): the current "
+                    "claimed frame remains dropped; later frames use "
+                    "stock-screen fallback until a new module generation",
+                    generation, reason);
+            }
+        }
+        g_rejectedGeneration = generation;
+        if ((g_outerTarget || g_innerTarget) && !RemoveCore(reason))
+            return false;
+        return false;
+    }
 
     if ((g_outerTarget || g_innerTarget) &&
         (!desired || ownsDifferentModule ||
@@ -2237,7 +2484,9 @@ bool Halo2Stereo_Poll(
         g_installed.load(std::memory_order_acquire) &&
         g_armed.load(std::memory_order_acquire) &&
         g_generation.load(std::memory_order_acquire) == generation;
-    g_stereoRequested.store(armed, std::memory_order_release);
+    g_stereoRequested.store(
+        armed && g_presentationReady.load(std::memory_order_acquire),
+        std::memory_order_release);
     return armed;
 }
 
@@ -2263,10 +2512,24 @@ void Halo2Stereo_ShutdownForVrFailure() noexcept
     if (generation)
         g_vrFailureGeneration.store(generation, std::memory_order_release);
     g_stereoRequested.store(false, std::memory_order_release);
+    g_presentationReady.store(false, std::memory_order_release);
     g_teardownRequested.store(true, std::memory_order_release);
     g_armed.store(false, std::memory_order_release);
     ResetHeadReferenceAtomic();
     VR_ResetHalo2SynchronousStereo();
+}
+
+void Halo2Stereo_SetPresentationReady(bool ready) noexcept
+{
+    g_presentationReady.store(ready, std::memory_order_release);
+    if (!ready)
+        g_stereoRequested.store(false, std::memory_order_release);
+}
+
+void Halo2Stereo_RequestGenerationQuarantine(
+    uint32_t generation, Halo2StereoQuarantineReason reason) noexcept
+{
+    PublishRuntimeQuarantine(generation, reason);
 }
 
 void Halo2Stereo_RequestRecenter() noexcept
@@ -2286,6 +2549,9 @@ bool Halo2Stereo_Installed() noexcept { return false; }
 bool Halo2Stereo_Armed() noexcept { return false; }
 uint32_t Halo2Stereo_Generation() noexcept { return 0; }
 void Halo2Stereo_ShutdownForVrFailure() noexcept {}
+void Halo2Stereo_SetPresentationReady(bool) noexcept {}
+void Halo2Stereo_RequestGenerationQuarantine(
+    uint32_t, Halo2StereoQuarantineReason) noexcept {}
 void Halo2Stereo_RequestRecenter() noexcept {}
 
 #endif

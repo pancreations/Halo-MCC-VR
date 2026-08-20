@@ -8,8 +8,8 @@ param(
 )
 
 # Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4,
-# with Halo 2 C-H2-4's same-frame stereo + 6DOF and no-pair stock-screen
-# fail-open stage.
+# with Halo 2 C-H2-5's cadence-gated same-frame stereo + 6DOF and
+# generation-scoped post-claim failure quarantine.
 # Reach's camera core is permanent while Halo 4 is still an explicitly
 # unaccepted bring-up line. Optional player-visible features fail open
 # independently. This stages one unaccepted local candidate under out/candidates
@@ -90,15 +90,15 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H2-4: prerequisite Halo 2 cold observation is not ON.'
+        throw 'Refusing to package C-H2-5: prerequisite Halo 2 cold observation is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO:BOOL=OFF\r?$') {
-        throw 'Refusing to package C-H2-4: rejected Halo 2 temporal stereo is not OFF.'
+        throw 'Refusing to package C-H2-5: rejected Halo 2 temporal stereo is not OFF.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_HALO2_STEREO6DOF:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H2-4: Halo 2 same-frame stereo + 6DOF is not ON.'
+        throw 'Refusing to package C-H2-5: Halo 2 same-frame stereo + 6DOF is not ON.'
     }
     if ($cache -notmatch '(?m)^BUILD_TESTING:BOOL=ON\r?$') {
         throw 'Refusing to package: BUILD_TESTING is not ON.'
@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c4-no-pair-fail-open',
+        'halo2-c5-black-safe-stereo6dof',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 12
+        schema_version = 14
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -187,7 +187,7 @@ try {
             reach = $true
             reach_render = $true
             halo4 = $true
-            halo2 = 'SAME_FRAME_6DOF'
+            halo2 = 'SAME_FRAME_6DOF_FAIL_OPEN'
         }
         deployment_policy = [ordered]@{
             automatic_after_package = $true
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-4'
-            status = 'HEADSET_STEREO_6DOF_FAIL_OPEN_VALIDATION_REQUIRED'
+            id = 'C-H2-5'
+            status = 'HEADSET_STEREO_6DOF_BLACK_SAFE_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
-                'same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof-unclaimed-no-pair-stock-screen-fail-open'
+                'dual-cadence-witness-consecutive-prepared-serial-same-game-frame-two-fresh-eye-6dof-strict-stock-screen-recovery'
             identity_anchor_count = 6
             liveness_anchor_count = 2
             hook_count = 2
@@ -266,17 +266,63 @@ try {
             both_eye_renders_per_game_frame = 2
             fresh_eye_count = 2
             both_eye_serial_policy = 'current-prepared-serial'
+            both_eye_render_serials_equal_current_prepared_serial = $true
+            both_eye_capture_serials_equal_current_prepared_serial = $true
             same_game_frame_pair = $true
+            same_generation_resource_epoch_and_attempt_required = $true
+            duplicate_or_missing_eye_allowed = $false
             temporal_previous_eye_allowed = $false
             temporal_eye_gap_frames = 0
             intentional_cadence_divisor = 1
             per_eye_render_rate_equals_game_frame_rate = $true
             supported_refresh_hz = @(72, 80, 90, 120, 144)
+            foreign_pause_cleared_before_claim = $true
+            app_cadence_gate_hz = [ordered]@{
+                min = 72
+                max = 144
+                source = 'current xrWaitFrame predictedDisplayPeriod and same prepared serial predictedDisplayTime delta'
+                target_period_source = 'current xrWaitFrame predictedDisplayPeriod'
+                delivered_delta_source = 'same prepared serial predictedDisplayTime delta'
+                period_ns_min = 6944444
+                period_ns_max = 13888889
+                both_witnesses_required = $true
+                hz_tolerance = 0
+                at_45_hz = 'unclaimed-stock-screen-before-eye-render'
+                at_60_hz = 'unclaimed-stock-screen-before-eye-render'
+                unknown_or_outside = 'unclaimed-stock-screen-before-eye-render'
+                target_90_hz_delta_22222222_ns =
+                    'unclaimed-stock-screen-before-eye-render'
+            }
+            runtime_targeted_below_72_h2_stereo_allowed = $false
+            measured_gpu_fps_statically_guaranteed = $false
+            headset_actual_72_144_validation_required = $true
+            post_first_complete_serial_policy =
+                'previous-completed-serial-plus-one'
+            serial_gap_quarantine_reason = 'CorePreparedSerialGap'
+            serial_gap_quarantines_before_eye_render = $true
+            serial_gap_frame_presentation = 'unclaimed-stock-screen'
             unclaimed_no_pair_presentation = 'stock-screen'
             unclaimed_no_pair_intentional_zero_layer = $false
             claimed_partial_pair_presentation = 'drop-frame'
+            unclaimed_no_pair_fallback_counts_as_eye = $false
+            unclaimed_no_pair_fallback_publishes_stereo_or_gameplay_heartbeat = $false
+            post_claim_failure_quarantine = $true
+            quarantine_scope = 'module-generation'
+            max_claimed_failed_frames_before_quarantine = 1
+            touched_failure_frame = 'drop'
+            subsequent_untouched_frames = 'stock-screen'
+            openxr_remains_available_for_structural_halo2_failure = $true
+            strict_unclaimed_stock_screen_transaction = [ordered]@{
+                acquire_result = 'XR_SUCCESS'
+                wait_result = 'XR_SUCCESS'
+                release_result = 'XR_SUCCESS'
+                valid_resource_and_rtv_required = $true
+                blit_success_required = $true
+                named_session_recovery = 'EnterFrameWaitFatalDrain'
+                repeated_same_session_retry = $false
+            }
             expected_cold_pass_line = 'Halo 2 cold observation PASS (C-H2-1)'
-            expected_stereo_line = 'Halo 2 C-H2-4 simultaneous stereo + 6DOF active'
+            expected_stereo_line = 'Halo 2 C-H2-5 simultaneous stereo + 6DOF active'
             controller_input = $false
             stereo = $true
             six_dof = $true
@@ -302,7 +348,7 @@ try {
             generic_draw_distance_write = $false
             halo3_regression_required = $true
             failure_policy =
-                'unclaimed-no-pair-stock-screen-pre-claim-stock-post-claim-frame-drop-core-and-openxr-remain-armed'
+                'dual-cadence-and-consecutive-serial-preclaim-stock-screen-post-claim-drop-generation-quarantine-strict-stock-screen-xr-failure-enters-session-recovery'
             evidence = 'docs/HALO2-SIGNATURE-EVIDENCE.md'
         }
         # Reach support is permanent, while player-visible optional features
@@ -378,7 +424,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-4 retains C-H2-3''s two fresh Halo 2 eye renders in the same game frame while fixing its headset-rejected no-pair presentation failure: every unclaimed missing exact-current pair uses the stock screen-quad path and does not intentionally suppress both world paths; a claimed partial eye transaction still drops that frame and never borrows the flat fallback. Both render/capture serials must equal the current prepared serial; a previous-frame eye is forbidden, and each eye intentionally renders at the full game-frame cadence across 72/80/90/120/144 Hz. The candidate adds headset rotation and translation for 6DOF plus a title-native symmetric binocular FOV cover. Its exact engine-write scope is six restored 12-byte render/raster position/forward/up spans plus two restored 4-byte vertical-FOV spans; native asymmetric FOV writes, controller admission/aim, HUD, haptics, scene-target redirect, and generic draw-distance writes remain disabled. Existing accepted-title behavior and the carried Halo 4 D1 diagnostic are intended unchanged; Halo 2 headset validation and then a Halo 3 regression are required.'
+        note = 'C-H2-5 retains C-H2-3/C-H2-4''s two fresh Halo 2 eye renders in one game frame, exact current render/capture serials, no previous-eye reuse, intentional cadence divisor 1, full headset rotation/translation, symmetric binocular FOV cover, and unclaimed stock-screen fallback. It clears inherited pause before claims. Both the current xrWaitFrame predictedDisplayPeriod and the same prepared serial''s predictedDisplayTime delta must fall within the exact integer-nanosecond bounds 6944444..13888889 (nominal inclusive 72-144 Hz); a 90 Hz target with a 22222222 ns ASW-style 45 Hz delivery delta, 45 Hz, 60 Hz, unknown timing, or any outside value stays unclaimed on the stock screen before an eye renders. After the first Complete, every attempted pair must be the previous completed serial plus one; a gap quarantines the module generation as CorePreparedSerialGap before an eye renders. These safeguards prevent an intentional or runtime-targeted sub-72-Hz H2 stereo path but do not statically guarantee measured GPU frame rate; the headset run must prove actual 72-144 Hz. The first post-claim structural failure drops that touched frame, quarantines only H2 stereo for the module generation, and leaves later untouched frames on the stock screen while OpenXR remains available. Every H2 unclaimed stock-screen transaction requires exact XR_SUCCESS acquire/wait/release, a valid resource and RTV, and successful Blit; failure enters named OpenXR session recovery through EnterFrameWaitFatalDrain instead of retrying a possibly poisoned swapchain transaction. Its exact engine-write scope remains six restored 12-byte render/raster position/forward/up spans plus two restored 4-byte vertical-FOV spans. Controller admission/aim, HUD, haptics, scene-target redirect, native asymmetric writes, and generic draw-distance writes remain disabled. Halo 2 headset validation and then a Halo 3 regression are required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
