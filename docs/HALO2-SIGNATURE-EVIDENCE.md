@@ -1,6 +1,8 @@
 # Halo 2 signature evidence
 
-Status: **C-H2-1 is offline-complete and headset/log validation is pending.**
+Status: **C-H2-1 passed Steam target-title headset/log validation on
+2026-08-20; the accepted-build pointer remains `8ee18fd` pending the required
+Halo 3 regression of `f8928bb`'s shared title-worker/lifecycle changes.**
 It is a read-only cold-observation candidate. It does not claim stereo, 6DOF,
 head tracking, controller input, aim, HUD, haptics, or any engine hook/write.
 The machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
@@ -232,6 +234,39 @@ Halo 2 cold observation PASS (C-H2-1): ...
 The headset run must record edition, OpenXR runtime, headset, refresh rate,
 source commit, and installed DLL SHA-256. A PASS advances only to designing the
 stereo candidate; it does not itself constitute stereo or 6DOF acceptance.
+
+## C-H2-1 target-title headset/log PASS (2026-08-20)
+
+| Accepted claim identity | Value |
+| --- | --- |
+| Source | `f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1` |
+| Package | `f8928bb-halo2-c1-cold-observation-20260820-035247738Z` |
+| `HaloMCCVR.dll` | `A9F384F26FE2E313AA7037A3A8C250839AE0D9950FD3A1D4414268225EAD5CF9` |
+| `HaloMCCVRLauncher.exe` | `DC18587C6A7CBC6FF9A274703057C299AB2334CFD0E22C5CF7702D66AF9813BC` |
+| Steam `HaloMCCVR.log` | `FDEEC3D8A2C68C05BCFEE07D54E0E4B41EE7AED72E99575DD7FF109F1EC09896` |
+| Run | Steam; SteamVR/OpenXR 2.17.7; `SteamVR/OpenXR : oculus`; 90 Hz |
+| Store edition | same artifact installed and hash-verified; not headset-run |
+
+The run exercised two independent Halo 2 module generations. Generation 1
+PASSed at `00:39:38.356`; generation 3 PASSed at `00:41:14.816`. Each proved
+the pinned PE timestamp and `SizeOfImage`, six of six unique anchors at their
+pinned RVAs, and two agreeing game-time decodes to pointer-slot RVA
+`0x15FE008`. The log contains two PASSes and zero FAIL, WITHHELD, zero-match,
+multiple-match, moved-anchor, bad-decode, pin-failure, or scan-failure lines.
+
+Four explicit disposed/uninitialized observations closed level liveness. Two
+same-generation reopens earned a fresh baseline and tick without repeating the
+one-shot full-image scan. One initial incoherent clock read in each title
+generation recovered as designed. Visible `1.829 s` and `1.391 s` game-load
+stalls ended before either gate opened and before either full-image scan. The
+first generation mostly reported 45 Hz and the later generation sustained
+approximately 88–90 Hz after loading, but C-H2-1 owns no Halo 2 render path and
+cannot establish a render-performance cause.
+
+This accepts the Halo 2 read-only observation claim and clears its evidence for
+stereo design. It does not authorize any Halo 2 hook/write or stereo/6DOF
+claim, and it does not advance the repository accepted-build pointer until the
+required Halo 3 regression passes.
 
 ## Offline verification method
 
