@@ -128,6 +128,7 @@ namespace
         bool invalidated = false;
         bool outerReturned = false;
         bool pairCompleted = false;
+        bool presentationClaimPublished = false;
         bool exceptionSeen = false;
         uint32_t exactInnerInvocations = 0;
         uint32_t renderViewCalls = 0;
@@ -830,6 +831,20 @@ namespace
         }
     }
 
+    bool GuardedClaimPresentation(
+        uint32_t generation, uint64_t serial) noexcept
+    {
+        __try
+        {
+            return VR_Halo2ClaimSynchronousPairForPresentation(
+                generation, serial);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     bool GuardedEndRasterEye() noexcept
     {
         __try
@@ -1026,20 +1041,32 @@ namespace
                         scope->generation, scope->serial, eye);
                     if (rasterEyeBegun)
                     {
-                        ++scope->renderViewCalls;
-                        __try
+                        // Publish the exact resource-free claim immediately
+                        // before the first original eye call. If publication
+                        // fails, run no eye and use the stock replay below.
+                        if (!scope->presentationClaimPublished)
                         {
-                            original(
-                                argument01, argument02, argument03, argument04,
-                                argument05, argument06, argument07, argument08,
-                                argument09, argument10, argument11, argument12,
-                                argument13, argument14, argument15, argument16,
-                                argument17, argument18, argument19);
-                            originalReturned = true;
-                            ++scope->renderViewReturns;
+                            scope->presentationClaimPublished =
+                                GuardedClaimPresentation(
+                                    scope->generation, scope->serial);
                         }
-                        __except (NoteClaimedTransactionException())
+                        if (scope->presentationClaimPublished)
                         {
+                            ++scope->renderViewCalls;
+                            __try
+                            {
+                                original(
+                                    argument01, argument02, argument03, argument04,
+                                    argument05, argument06, argument07, argument08,
+                                    argument09, argument10, argument11, argument12,
+                                    argument13, argument14, argument15, argument16,
+                                    argument17, argument18, argument19);
+                                originalReturned = true;
+                                ++scope->renderViewReturns;
+                            }
+                            __except (NoteClaimedTransactionException())
+                            {
+                            }
                         }
                     }
                 }
@@ -1443,6 +1470,31 @@ namespace
         return out;
     }
 
+    void ResetTelemetryForInstall() noexcept
+    {
+#define H2_RESET_TELEMETRY(field) \
+        g_telemetry.field.store(0, std::memory_order_relaxed)
+        H2_RESET_TELEMETRY(outerCallbacks);
+        H2_RESET_TELEMETRY(innerCallbacks);
+        H2_RESET_TELEMETRY(stockOuterCalls);
+        H2_RESET_TELEMETRY(stockInnerCalls);
+        H2_RESET_TELEMETRY(missingSnapshots);
+        H2_RESET_TELEMETRY(foreignOuterCallers);
+        H2_RESET_TELEMETRY(foreignInnerCallers);
+        H2_RESET_TELEMETRY(invalidWindows);
+        H2_RESET_TELEMETRY(duplicateSerials);
+        H2_RESET_TELEMETRY(claimedPairs);
+        H2_RESET_TELEMETRY(claimedInnerCalls);
+        H2_RESET_TELEMETRY(renderedEyes);
+        H2_RESET_TELEMETRY(completedPairs);
+        H2_RESET_TELEMETRY(droppedPairs);
+        H2_RESET_TELEMETRY(restoreFailures);
+        H2_RESET_TELEMETRY(transactionExceptions);
+#undef H2_RESET_TELEMETRY
+        g_lastTelemetry = {};
+        g_lastTelemetryMs = 0;
+    }
+
     bool TelemetryChanged(
         const TelemetrySnapshot& left,
         const TelemetrySnapshot& right) noexcept
@@ -1458,7 +1510,12 @@ namespace
         if (g_lastTelemetryMs && now - g_lastTelemetryMs < kTelemetryPeriodMs)
             return;
         const TelemetrySnapshot current = ReadTelemetry();
-        if (TelemetryChanged(current, g_lastTelemetry))
+        // The first post-install sample is evidence even when every counter is
+        // zero: it distinguishes an installed hook that has not been reached
+        // yet (for example, a loading/cinematic path) from a camera transaction
+        // that entered and failed later. Subsequent quiet zero samples stay
+        // silent; the shared VR worker reports the active stock-screen fallback.
+        if (!g_lastTelemetryMs || TelemetryChanged(current, g_lastTelemetry))
         {
             LOG("Halo 2 stereo core: outer=%llu inner=%llu stockOuter=%llu "
                 "stockInner=%llu snapshotMiss=%llu foreignOuter=%llu "
@@ -2072,6 +2129,10 @@ namespace
         g_installed.store(true, std::memory_order_release);
         g_coreState = CoreState::CleanupRequired;
 
+        // Reset the generation's baseline before MH_ApplyQueued can expose
+        // either detour. Resetting after Apply races the first live callback and
+        // can erase exactly the evidence this telemetry exists to preserve.
+        ResetTelemetryForInstall();
         const MH_STATUS queuedInner = MH_QueueEnableHook(innerTarget);
         const MH_STATUS queuedOuter = queuedInner == MH_OK
             ? MH_QueueEnableHook(outerTarget)
@@ -2092,8 +2153,6 @@ namespace
             return false;
         }
 
-        g_lastTelemetry = {};
-        g_lastTelemetryMs = 0;
         g_coreState = CoreState::Installed;
         ResetHeadReferenceAtomic();
         g_armed.store(true, std::memory_order_release);

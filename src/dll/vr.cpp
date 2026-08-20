@@ -348,6 +348,15 @@ namespace
     std::atomic<uint64_t> g_halo2SynchronousRedirectSerial[2]{};
     std::atomic<uint32_t> g_halo2SynchronousRedirectCount[2]{};
     std::atomic<uint32_t> g_halo2SynchronousResourceEpoch{1};
+    // Resource-free presentation history. The even sequence is the publication
+    // anchor; odd means a writer owns the payload. Unlike pair/cache state this
+    // exact integer-only stamp deliberately survives reset until a newer
+    // process-monotonic prepared serial replaces it.
+    std::atomic<uint64_t> g_halo2SynchronousPresentationSequence{};
+    std::atomic<uint64_t> g_halo2SynchronousPresentationSerial{};
+    std::atomic<uint32_t> g_halo2SynchronousPresentationGeneration{};
+    std::atomic<uint32_t> g_halo2SynchronousPresentationDisposition{};
+    static_assert(std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<uint64_t> g_halo2XrPairsSubmitted{};
     std::atomic<uint64_t> g_halo2XrPairsDropped{};
     std::atomic<uint32_t> g_halo2LastDropReason{};
@@ -7088,6 +7097,91 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             LOG("frame %d: %s", g_frameNo, step);
     }
 
+#if HALOMCCVR_HALO2_STEREO6DOF
+    void ReportHalo2SynchronousDisposition(
+        bool synchronousPresentationActive,
+        Halo2SynchronousPresentationDecision decision,
+        uint64_t preparedSerial) noexcept
+    {
+        // SubmitPreparedFrame is render-thread-owned, so these diagnostics need
+        // no synchronization. Log the transition immediately, then only once
+        // per two seconds while a non-player/cinematic path continues to omit
+        // the exact player-window pair.
+        static Halo2SynchronousPresentationDecision previous =
+            Halo2SynchronousPresentationDecision::SharedDefault;
+        static uint64_t lastStateLogMs = 0;
+        const uint64_t nowMs = GetTickCount64();
+        const bool reportable =
+            decision == Halo2SynchronousPresentationDecision::StockScreen ||
+            decision == Halo2SynchronousPresentationDecision::Drop;
+        if (reportable)
+        {
+            if (decision != previous || nowMs - lastStateLogMs >= 2000)
+            {
+                if (decision ==
+                    Halo2SynchronousPresentationDecision::StockScreen)
+                {
+                    LOG("Halo 2 C-H2-4 frame-local fallback: prepared serial "
+                        "%llu was not claimed by an eye render transaction; "
+                        "submitting the stock screen-quad path from the "
+                        "available game backbuffer (no stale/N-1 stereo-pair "
+                        "reuse)",
+                        static_cast<unsigned long long>(preparedSerial));
+                }
+                else
+                {
+                    LOG("Halo 2 C-H2-4 frame-local drop: prepared serial %llu "
+                        "was claimed immediately before its original eye render "
+                        "and did not produce a live admissible pair; submitting "
+                        "no world layer and not sampling "
+                        "the unproven game backbuffer",
+                        static_cast<unsigned long long>(preparedSerial));
+                }
+                lastStateLogMs = nowMs;
+            }
+            previous = decision;
+            return;
+        }
+
+        const bool previousWasReportable =
+            previous == Halo2SynchronousPresentationDecision::StockScreen ||
+            previous == Halo2SynchronousPresentationDecision::Drop;
+        if (!previousWasReportable)
+        {
+            previous = decision;
+            return;
+        }
+        if (synchronousPresentationActive &&
+            decision ==
+                Halo2SynchronousPresentationDecision::SynchronousStereo)
+        {
+            if (previous == Halo2SynchronousPresentationDecision::Drop)
+            {
+                LOG("Halo 2 C-H2-4 frame-local drop ended: prepared serial "
+                    "%llu has a projection-ready exact-current-serial pair; "
+                    "resuming synchronous stereo",
+                    static_cast<unsigned long long>(preparedSerial));
+            }
+            else
+            {
+                LOG("Halo 2 C-H2-4 frame-local fallback ended: prepared serial "
+                    "%llu has a projection-ready exact-current-serial pair; "
+                    "resuming synchronous stereo",
+                    static_cast<unsigned long long>(preparedSerial));
+            }
+        }
+        else
+        {
+            LOG("Halo 2 C-H2-4 frame-local %s ended: synchronous Halo 2 "
+                "presentation is no longer active",
+                previous == Halo2SynchronousPresentationDecision::Drop
+                    ? "drop" : "fallback");
+        }
+        previous = decision;
+        lastStateLogMs = 0;
+    }
+#endif
+
     bool LocateViewsForUpcomingRender(XrTime displayTime);
 
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
@@ -8175,8 +8269,65 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 const bool pausedPresentation = g_pausePresentation.load();
                 const bool stereo = !pausedPresentation && g_stereoEnabled.load() && viewsValid &&
                                     g_stereoChain != XR_NULL_HANDLE && Game_IsHeadTracking();
+#if HALOMCCVR_HALO2_STEREO6DOF
+                const bool currentHalo2Title =
+                    TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
+                Halo2SynchronousPresentationStamp halo2Presentation{};
+                (void)VR_Halo2GetSynchronousPresentationStamp(
+                    halo2Presentation);
+                const bool halo2DurableExactSerial =
+                    halo2Presentation.preparedSerial ==
+                        g_preparedFrame.serial &&
+                    halo2Presentation.generation != 0 &&
+                    (halo2Presentation.disposition ==
+                         Halo2SynchronousFrameDisposition::Claimed ||
+                     halo2Presentation.disposition ==
+                         Halo2SynchronousFrameDisposition::Complete);
+                // An exact durable claim owns this frame even if AutoVrTick
+                // changed the active title immediately before Submit.
+                const bool halo2Title =
+                    currentHalo2Title || halo2DurableExactSerial;
+                const uint32_t halo2Generation = halo2DurableExactSerial
+                    ? halo2Presentation.generation
+                    : currentHalo2Title
+                        ? TitleAdapter_GetGeneration(GameTitle::Halo2) : 0;
+                float halo2HalfX[2]{}, halo2HalfY[2]{};
+                // Revalidate the raw pair independently of late presentation
+                // eligibility. A completed synchronous pair has replaced the
+                // stock output even if pause/head/session/view state changed
+                // after rendering, so that case must classify Complete and drop
+                // rather than masquerade as an unclaimed flat-screen frame.
+                const bool halo2LiveExactPair = currentHalo2Title &&
+                    VR_Halo2GetSynchronousHalfFovs(
+                        halo2Generation, g_preparedFrame.serial,
+                        halo2HalfX, halo2HalfY);
+                const bool halo2Images = !halo2Title || halo2LiveExactPair;
+                const bool halo2ProjectionReady = projection.viewCount == 2;
+                const Halo2SynchronousPresentationDecision
+                    halo2PresentationDecision =
+                        Halo2SynchronousSelectPresentation(
+                            stereo, halo2ProjectionReady, halo2Title,
+                            halo2LiveExactPair,
+                            halo2Generation, g_preparedFrame.serial,
+                            halo2Presentation);
+                const bool stereoWorldFrame =
+                    halo2PresentationDecision ==
+                        Halo2SynchronousPresentationDecision::SharedDefault
+                    ? stereo
+                    : halo2PresentationDecision ==
+                        Halo2SynchronousPresentationDecision::SynchronousStereo;
+                const bool allowStockScreenFrame =
+                    halo2PresentationDecision !=
+                        Halo2SynchronousPresentationDecision::Drop;
+                ReportHalo2SynchronousDisposition(
+                    stereo && halo2Title, halo2PresentationDecision,
+                    g_preparedFrame.serial);
+#else
+                const bool stereoWorldFrame = stereo;
+                constexpr bool allowStockScreenFrame = true;
+#endif
                 float requestedTheaterAspect = 0.0f;
-                const bool theaterQualified = stereo &&
+                const bool theaterQualified = stereoWorldFrame &&
                     Game_GetCutsceneTheaterPresentation(
                         requestedTheaterAspect);
                 if (theaterQualified)
@@ -8276,18 +8427,12 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                             eye;
                     }
                 }
-                if (stereo)
+                if (stereoWorldFrame)
                 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-                    const bool halo2Title =
-                        TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
-                    const uint32_t halo2Generation = halo2Title
-                        ? TitleAdapter_GetGeneration(GameTitle::Halo2) : 0;
-                    float halo2HalfX[2]{}, halo2HalfY[2]{};
-                    const bool halo2Images = !halo2Title ||
-                        VR_Halo2GetSynchronousHalfFovs(
-                            halo2Generation, g_preparedFrame.serial,
-                            halo2HalfX, halo2HalfY);
+                    // The exact-current H2 pair and projection descriptor were
+                    // admitted together immediately above. This branch never
+                    // sees a missing, late, partial, or N-1 H2 pair.
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
                     const bool halo2Title =
                         TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
@@ -9281,7 +9426,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         VR_ReachEndRenderAccess(reachAccess);
 #endif
                 }
-                else if (g_haveCenter && EnsureScreenChain(bd.Width, bd.Height))
+                else if (allowStockScreenFrame && g_haveCenter &&
+                         EnsureScreenChain(bd.Width, bd.Height))
                 {
                     uint32_t idx = 0;
                     XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -9439,7 +9585,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (halo2ProjectionQueued && r == XR_SUCCESS)
         {
 #if HALOMCCVR_HALO2_STEREO6DOF
-            // C-H2-3 runtime ownership is earned by a headset-admitted pair,
+            // C-H2-4 runtime ownership is earned by a headset-admitted pair,
             // not by locating/installing/arming the title hook. Revalidate the
             // exact current serial after xrEndFrame so a concurrent reset or
             // title-generation transition cannot resurrect Gameplay.
@@ -9467,8 +9613,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     true, std::memory_order_acq_rel))
             {
 #if HALOMCCVR_HALO2_STEREO6DOF
-                LOG("Halo 2 synchronous stereo+6DOF active: first exact-current-"
-                    "serial two-eye pair accepted by xrEndFrame");
+                LOG("Halo 2 C-H2-4 simultaneous stereo + 6DOF active: first "
+                    "exact-current-serial two-eye pair accepted by xrEndFrame; "
+                    "no temporal eye reuse or cadence division");
 #else
                 LOG("Halo 2 C-H2-2 stereo active: first adjacent temporal eye "
                     "pair accepted by xrEndFrame; stock head pose remains in "
@@ -9744,6 +9891,84 @@ namespace
         return std::isfinite(halfFov) && halfFov > 0.0f &&
             halfFov < 1.5707f;
     }
+
+    bool PublishHalo2SynchronousPresentation(
+        uint32_t generation, uint64_t preparedSerial,
+        Halo2SynchronousFrameDisposition disposition) noexcept
+    {
+        if (!generation || !preparedSerial ||
+            Halo2SynchronousSerialIsReserved(preparedSerial) ||
+            (disposition != Halo2SynchronousFrameDisposition::Claimed &&
+             disposition != Halo2SynchronousFrameDisposition::Complete))
+        {
+            return false;
+        }
+
+        // Writers are only expected on H2's render thread. Keep the bounded CAS
+        // nevertheless: failure to acquire the slot makes the first-eye path
+        // take its zero-eye stock fallback, while a failed Complete publication
+        // leaves the already-published conservative Claim in force.
+        uint64_t sequence =
+            g_halo2SynchronousPresentationSequence.load(
+                std::memory_order_acquire);
+        for (unsigned attempt = 0; attempt < 8; ++attempt)
+        {
+            if ((sequence & 1u) != 0)
+            {
+                sequence = g_halo2SynchronousPresentationSequence.load(
+                    std::memory_order_acquire);
+                continue;
+            }
+            if (g_halo2SynchronousPresentationSequence.compare_exchange_weak(
+                    sequence, sequence + 1, std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                const uint64_t currentSerial =
+                    g_halo2SynchronousPresentationSerial.load(
+                        std::memory_order_relaxed);
+                const uint32_t currentGeneration =
+                    g_halo2SynchronousPresentationGeneration.load(
+                        std::memory_order_relaxed);
+                const auto currentDisposition =
+                    static_cast<Halo2SynchronousFrameDisposition>(
+                        g_halo2SynchronousPresentationDisposition.load(
+                            std::memory_order_relaxed));
+
+                bool accepted = false;
+                bool replace = false;
+                if (!currentSerial || preparedSerial > currentSerial)
+                {
+                    accepted = true;
+                    replace = true;
+                }
+                else if (preparedSerial == currentSerial &&
+                         generation == currentGeneration)
+                {
+                    // Complete is terminal and never regresses to Claimed.
+                    accepted = true;
+                    replace = currentDisposition !=
+                                  Halo2SynchronousFrameDisposition::Complete &&
+                        disposition ==
+                            Halo2SynchronousFrameDisposition::Complete;
+                }
+
+                if (replace)
+                {
+                    g_halo2SynchronousPresentationGeneration.store(
+                        generation, std::memory_order_relaxed);
+                    g_halo2SynchronousPresentationDisposition.store(
+                        static_cast<uint32_t>(disposition),
+                        std::memory_order_relaxed);
+                    g_halo2SynchronousPresentationSerial.store(
+                        preparedSerial, std::memory_order_relaxed);
+                }
+                g_halo2SynchronousPresentationSequence.store(
+                    sequence + 2, std::memory_order_release);
+                return accepted;
+            }
+        }
+        return false;
+    }
 }
 
 bool VR_Halo2GetSynchronousRenderSnapshot(
@@ -9929,9 +10154,86 @@ bool VR_Halo2CompleteSynchronousPair(
         }
     }
     uint64_t expected = reserved;
-    return g_halo2SynchronousPairToken.compare_exchange_strong(
-        expected, preparedSerial, std::memory_order_release,
-        std::memory_order_acquire);
+    if (!g_halo2SynchronousPairToken.compare_exchange_strong(
+            expected, preparedSerial, std::memory_order_release,
+            std::memory_order_acquire))
+    {
+        return false;
+    }
+    return PublishHalo2SynchronousPresentation(
+        generation, preparedSerial,
+        Halo2SynchronousFrameDisposition::Complete);
+}
+
+bool VR_Halo2ClaimSynchronousPairForPresentation(
+    uint32_t generation, uint64_t preparedSerial)
+{
+    if (!generation || !preparedSerial ||
+        Halo2SynchronousSerialIsReserved(preparedSerial))
+    {
+        return false;
+    }
+    const uint32_t resourceEpoch =
+        g_halo2SynchronousResourceEpoch.load(std::memory_order_acquire);
+    if (!Halo2SynchronousContextCurrent(
+            generation, preparedSerial, resourceEpoch))
+    {
+        return false;
+    }
+
+    const uint64_t reserved =
+        Halo2ReservedSynchronousSerial(preparedSerial);
+    if (g_halo2SynchronousPairToken.load(std::memory_order_acquire) != reserved ||
+        g_halo2SynchronousPairGeneration.load(std::memory_order_relaxed) !=
+            generation)
+    {
+        return false;
+    }
+    return PublishHalo2SynchronousPresentation(
+        generation, preparedSerial,
+        Halo2SynchronousFrameDisposition::Claimed);
+}
+
+bool VR_Halo2GetSynchronousPresentationStamp(
+    Halo2SynchronousPresentationStamp& presentation)
+{
+    presentation = {};
+    for (unsigned attempt = 0; attempt < 8; ++attempt)
+    {
+        const uint64_t sequenceBefore =
+            g_halo2SynchronousPresentationSequence.load(
+                std::memory_order_acquire);
+        if ((sequenceBefore & 1u) != 0)
+            continue;
+
+        Halo2SynchronousPresentationStamp candidate{};
+        candidate.preparedSerial =
+            g_halo2SynchronousPresentationSerial.load(
+                std::memory_order_relaxed);
+        candidate.generation =
+            g_halo2SynchronousPresentationGeneration.load(
+                std::memory_order_relaxed);
+        candidate.disposition =
+            static_cast<Halo2SynchronousFrameDisposition>(
+                g_halo2SynchronousPresentationDisposition.load(
+                    std::memory_order_relaxed));
+        const uint64_t sequenceAfter =
+            g_halo2SynchronousPresentationSequence.load(
+                std::memory_order_acquire);
+        if (sequenceBefore != sequenceAfter || (sequenceAfter & 1u) != 0)
+            continue;
+        if (!candidate.generation || !candidate.preparedSerial ||
+            (candidate.disposition !=
+                 Halo2SynchronousFrameDisposition::Claimed &&
+             candidate.disposition !=
+                 Halo2SynchronousFrameDisposition::Complete))
+        {
+            return false;
+        }
+        presentation = candidate;
+        return true;
+    }
+    return false;
 }
 
 void VR_Halo2InvalidateSynchronousPair(
@@ -9982,6 +10284,11 @@ void VR_ResetHalo2SynchronousStereo()
     g_halo2SynchronousPairResourceEpoch.store(0, std::memory_order_release);
     g_halo2SynchronousTargetSerial.store(0, std::memory_order_release);
     g_halo2SynchronousFinalRtv.store(nullptr, std::memory_order_release);
+    // Do not clear g_halo2SynchronousPresentation*. Game_AutoVrTick, resize, or
+    // cache recreation can reset live resources before Submit consumes this
+    // exact serial. The integer-only stamp owns no RTV/resource and cannot
+    // match a later process-monotonic prepared serial.
+    g_halo2FirstPairAccepted.store(false, std::memory_order_release);
     for (int eye = 0; eye < 2; ++eye)
     {
         g_halo2SynchronousEyeSerial[eye].store(
@@ -10586,7 +10893,7 @@ void VR_FramePacingWorkerPoll()
             TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         {
 #if HALOMCCVR_HALO2_STEREO6DOF
-            LOG("Halo 2 C-H2-3 synchronous XR publish: %llu exact-current-"
+            LOG("Halo 2 C-H2-4 synchronous XR publish: %llu exact-current-"
                 "serial pairs submitted, %llu recoverable frame drops in 2s; "
                 "last drop: %s (two renders/frame; no temporal reuse; drops "
                 "keep the core/session armed)",
@@ -10913,7 +11220,7 @@ void VR_ToggleStereo()
             "one render per frame, adjacent-eye pair)");
 #if HALOMCCVR_HALO2_STEREO6DOF
     else if (on && Game_UsesTitleOwnedHeadTracking())
-        LOG("Halo 2 C-H2-3 synchronous stereo+6DOF presentation ON "
+        LOG("Halo 2 C-H2-4 synchronous stereo+6DOF presentation ON "
             "(title-owned headset pose; exact-current-serial eye pair)");
 #endif
     else

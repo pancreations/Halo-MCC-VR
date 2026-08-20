@@ -136,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 11) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 12) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 11) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c3-stereo6dof-',
+            $head.Substring(0, 7) + '-halo2-c4-no-pair-fail-open-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 11) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-3' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-4' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_STEREO_6DOF_VALIDATION_REQUIRED' -or
+            'HEADSET_STEREO_6DOF_FAIL_OPEN_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof' -or
+            'same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof-unclaimed-no-pair-stock-screen-fail-open' -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.identity_anchor_count 6) -or
         -not (Test-ExactInt32 `
@@ -241,10 +241,17 @@ if (-not (Test-ExactInt32 $manifest.schema_version 11) -or
             $manifest.halo2_candidate.supported_refresh_hz[3] 120) -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.supported_refresh_hz[4] 144) -or
+        [string]$manifest.halo2_candidate.unclaimed_no_pair_presentation -cne
+            'stock-screen' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.unclaimed_no_pair_intentional_zero_layer `
+            $false) -or
+        [string]$manifest.halo2_candidate.claimed_partial_pair_presentation -cne
+            'drop-frame' -or
         [string]$manifest.halo2_candidate.expected_cold_pass_line -cne
             'Halo 2 cold observation PASS (C-H2-1)' -or
         [string]$manifest.halo2_candidate.expected_stereo_line -cne
-            'Halo 2 C-H2-3 simultaneous stereo + 6DOF active' -or
+            'Halo 2 C-H2-4 simultaneous stereo + 6DOF active' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.controller_input $false) -or
         -not (Test-ExactBoolean `
@@ -292,7 +299,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 11) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.halo3_regression_required $true) -or
         [string]$manifest.halo2_candidate.failure_policy -cne
-            'pre-claim-stock-post-claim-frame-drop-core-and-openxr-remain-armed' -or
+            'unclaimed-no-pair-stock-screen-pre-claim-stock-post-claim-frame-drop-core-and-openxr-remain-armed' -or
         [string]$manifest.halo2_candidate.evidence -cne
             'docs/HALO2-SIGNATURE-EVIDENCE.md' -or
         $manifest.deployment_policy.automatic_after_package -ne $true -or

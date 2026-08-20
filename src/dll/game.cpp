@@ -37188,10 +37188,10 @@ void Game_AutoVrTick()
                 g_autoVrOwned.store(true, std::memory_order_release);
                 if (!VR_IsStereoEnabled())
                     VR_ToggleStereo();
-                LOG("Halo 2 C-H2-3 simultaneous stereo + 6DOF active: "
-                    "both eyes render fresh from one current OpenXR serial "
-                    "per game frame; no temporal eye reuse or cadence "
-                    "division");
+                LOG("Halo 2 C-H2-4 camera core armed: a complete exact-current "
+                    "pair will use simultaneous stereo + 6DOF; an unclaimed "
+                    "no-pair frame keeps the stock screen-quad path, while a "
+                    "partially claimed failure drops only that frame");
             }
         }
         else if (g_enabled.load(std::memory_order_relaxed) ||

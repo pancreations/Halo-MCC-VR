@@ -8,7 +8,8 @@ param(
 )
 
 # Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4,
-# with Halo 2 C-H2-3's same-frame stereo + 6DOF stage.
+# with Halo 2 C-H2-4's same-frame stereo + 6DOF and no-pair stock-screen
+# fail-open stage.
 # Reach's camera core is permanent while Halo 4 is still an explicitly
 # unaccepted bring-up line. Optional player-visible features fail open
 # independently. This stages one unaccepted local candidate under out/candidates
@@ -89,15 +90,15 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H2-3: prerequisite Halo 2 cold observation is not ON.'
+        throw 'Refusing to package C-H2-4: prerequisite Halo 2 cold observation is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO:BOOL=OFF\r?$') {
-        throw 'Refusing to package C-H2-3: rejected Halo 2 temporal stereo is not OFF.'
+        throw 'Refusing to package C-H2-4: rejected Halo 2 temporal stereo is not OFF.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_HALO2_STEREO6DOF:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H2-3: Halo 2 same-frame stereo + 6DOF is not ON.'
+        throw 'Refusing to package C-H2-4: Halo 2 same-frame stereo + 6DOF is not ON.'
     }
     if ($cache -notmatch '(?m)^BUILD_TESTING:BOOL=ON\r?$') {
         throw 'Refusing to package: BUILD_TESTING is not ON.'
@@ -138,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c3-stereo6dof',
+        'halo2-c4-no-pair-fail-open',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -170,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 11
+        schema_version = 12
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -252,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-3'
-            status = 'HEADSET_STEREO_6DOF_VALIDATION_REQUIRED'
+            id = 'C-H2-4'
+            status = 'HEADSET_STEREO_6DOF_FAIL_OPEN_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
-                'same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof'
+                'same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof-unclaimed-no-pair-stock-screen-fail-open'
             identity_anchor_count = 6
             liveness_anchor_count = 2
             hook_count = 2
@@ -271,8 +272,11 @@ try {
             intentional_cadence_divisor = 1
             per_eye_render_rate_equals_game_frame_rate = $true
             supported_refresh_hz = @(72, 80, 90, 120, 144)
+            unclaimed_no_pair_presentation = 'stock-screen'
+            unclaimed_no_pair_intentional_zero_layer = $false
+            claimed_partial_pair_presentation = 'drop-frame'
             expected_cold_pass_line = 'Halo 2 cold observation PASS (C-H2-1)'
-            expected_stereo_line = 'Halo 2 C-H2-3 simultaneous stereo + 6DOF active'
+            expected_stereo_line = 'Halo 2 C-H2-4 simultaneous stereo + 6DOF active'
             controller_input = $false
             stereo = $true
             six_dof = $true
@@ -298,7 +302,7 @@ try {
             generic_draw_distance_write = $false
             halo3_regression_required = $true
             failure_policy =
-                'pre-claim-stock-post-claim-frame-drop-core-and-openxr-remain-armed'
+                'unclaimed-no-pair-stock-screen-pre-claim-stock-post-claim-frame-drop-core-and-openxr-remain-armed'
             evidence = 'docs/HALO2-SIGNATURE-EVIDENCE.md'
         }
         # Reach support is permanent, while player-visible optional features
@@ -374,7 +378,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-3 replaces rejected temporal pairing with two fresh Halo 2 eye renders in the same game frame. Both render/capture serials must equal the current prepared serial; a previous-frame eye is forbidden, and each eye intentionally renders at the full game-frame cadence across 72/80/90/120/144 Hz. The candidate adds headset rotation and translation for 6DOF plus a title-native symmetric binocular FOV cover. Its exact engine-write scope is six restored 12-byte render/raster position/forward/up spans plus two restored 4-byte vertical-FOV spans; native asymmetric FOV writes, controller admission/aim, HUD, haptics, scene-target redirect, and generic draw-distance writes remain disabled. Existing accepted-title behavior and the carried Halo 4 D1 diagnostic are intended unchanged; Halo 2 headset validation and then a Halo 3 regression are required.'
+        note = 'C-H2-4 retains C-H2-3''s two fresh Halo 2 eye renders in the same game frame while fixing its headset-rejected no-pair presentation failure: every unclaimed missing exact-current pair uses the stock screen-quad path and does not intentionally suppress both world paths; a claimed partial eye transaction still drops that frame and never borrows the flat fallback. Both render/capture serials must equal the current prepared serial; a previous-frame eye is forbidden, and each eye intentionally renders at the full game-frame cadence across 72/80/90/120/144 Hz. The candidate adds headset rotation and translation for 6DOF plus a title-native symmetric binocular FOV cover. Its exact engine-write scope is six restored 12-byte render/raster position/forward/up spans plus two restored 4-byte vertical-FOV spans; native asymmetric FOV writes, controller admission/aim, HUD, haptics, scene-target redirect, and generic draw-distance writes remain disabled. Existing accepted-title behavior and the carried Halo 4 D1 diagnostic are intended unchanged; Halo 2 headset validation and then a Halo 3 regression are required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

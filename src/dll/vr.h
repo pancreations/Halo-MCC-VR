@@ -36,6 +36,94 @@ struct Halo2VrRenderSnapshot
 #if HALOMCCVR_HALO2_STEREO6DOF
 using Halo2SynchronousVrEyeSnapshot = Halo2VrEyeSnapshot;
 using Halo2SynchronousVrRenderSnapshot = Halo2VrRenderSnapshot;
+
+enum class Halo2SynchronousFrameDisposition : uint8_t
+{
+    Unclaimed = 0,
+    Claimed,
+    Complete,
+};
+
+// Resource-free terminal history for one exact H2 prepared frame. The live
+// pair token/FOV/cache state may be reset before Present consumes this stamp;
+// generation+serial remain sufficient to forbid reuse by any later frame.
+struct Halo2SynchronousPresentationStamp
+{
+    uint32_t generation = 0;
+    uint64_t preparedSerial = 0;
+    Halo2SynchronousFrameDisposition disposition =
+        Halo2SynchronousFrameDisposition::Unclaimed;
+};
+
+enum class Halo2SynchronousPresentationDecision : uint8_t
+{
+    SharedDefault = 0,
+    SynchronousStereo,
+    StockScreen,
+    Drop,
+};
+
+// C-H2-4 presentation admission is exact and frame-local. A currently live
+// complete pair wins; otherwise only the durable stamp carrying this exact
+// generation+serial has authority. A stale/foreign stamp is Unclaimed.
+constexpr Halo2SynchronousFrameDisposition
+Halo2SynchronousClassifyFrame(
+    bool exactLivePair, uint32_t generation, uint64_t preparedSerial,
+    const Halo2SynchronousPresentationStamp& presentation) noexcept
+{
+    if (exactLivePair)
+        return Halo2SynchronousFrameDisposition::Complete;
+    if (generation && preparedSerial &&
+        presentation.generation == generation &&
+        presentation.preparedSerial == preparedSerial &&
+        (presentation.disposition ==
+             Halo2SynchronousFrameDisposition::Claimed ||
+         presentation.disposition ==
+             Halo2SynchronousFrameDisposition::Complete))
+    {
+        return presentation.disposition;
+    }
+    return Halo2SynchronousFrameDisposition::Unclaimed;
+}
+
+constexpr Halo2SynchronousPresentationDecision
+Halo2SynchronousSelectPresentation(
+    bool stereoRequested, bool projectionReady, bool activeHalo2,
+    bool exactLivePair,
+    uint32_t generation, uint64_t preparedSerial,
+    const Halo2SynchronousPresentationStamp& presentation) noexcept
+{
+    const Halo2SynchronousFrameDisposition disposition =
+        Halo2SynchronousClassifyFrame(
+            exactLivePair, generation, preparedSerial, presentation);
+    // An exact durable H2 claim still owns this prepared frame if AutoVrTick
+    // changed the active title immediately before submission.
+    if (!activeHalo2 &&
+        disposition == Halo2SynchronousFrameDisposition::Unclaimed)
+    {
+        return Halo2SynchronousPresentationDecision::SharedDefault;
+    }
+    switch (disposition)
+    {
+    case Halo2SynchronousFrameDisposition::Complete:
+        // A completed pair has replaced the stock game output for this serial.
+        // If late OpenXR/session state cannot admit it, dropping is the only
+        // safe choice: falling through would sample that non-stock backbuffer.
+        return exactLivePair && stereoRequested && projectionReady
+            ? Halo2SynchronousPresentationDecision::SynchronousStereo
+            : Halo2SynchronousPresentationDecision::Drop;
+    case Halo2SynchronousFrameDisposition::Claimed:
+        return Halo2SynchronousPresentationDecision::Drop;
+    case Halo2SynchronousFrameDisposition::Unclaimed:
+    default:
+        // No original eye render ran, so ordinary late-ineligible behavior may
+        // still present the untouched stock backbuffer. When stereo remains
+        // eligible, identify the intentional C-H2-4 fallback for diagnostics.
+        return stereoRequested
+            ? Halo2SynchronousPresentationDecision::StockScreen
+            : Halo2SynchronousPresentationDecision::SharedDefault;
+    }
+}
 #endif
 
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
@@ -132,6 +220,13 @@ bool VR_Halo2CompleteSynchronousEye(
     float halfFovX, float halfFovY);
 bool VR_Halo2CompleteSynchronousPair(
     uint32_t generation, uint64_t preparedSerial);
+// Claim immediately before the first original eye render_view call. A failed
+// publication must take the zero-eye stock fallback; once published, this
+// resource-free identity survives reset until its exact serial is submitted.
+bool VR_Halo2ClaimSynchronousPairForPresentation(
+    uint32_t generation, uint64_t preparedSerial);
+bool VR_Halo2GetSynchronousPresentationStamp(
+    Halo2SynchronousPresentationStamp& presentation);
 void VR_Halo2InvalidateSynchronousPair(
     uint32_t generation, uint64_t preparedSerial);
 void VR_ResetHalo2SynchronousStereo();

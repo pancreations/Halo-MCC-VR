@@ -5,7 +5,9 @@ Halo 3 shared-code regression also passed, advancing the accepted development
 pointer to `f8928bb`. C-H2-2's alternating-eye implementation was rejected
 before headset testing and is compile-disabled. C-H2-3 same-frame stereo +
 6DOF was headset-rejected for a zero-layer black screen and is now also
-compile-disabled; it did not advance that pointer.** C-H2-1 remains the accepted read-only behavior. The
+compile-disabled; it did not advance that pointer. C-H2-4 adds a stock-screen
+fail-open for every ordinary unclaimed missing exact-current pair and is implemented but
+headset-pending.** C-H2-1 remains the accepted read-only behavior. The
 machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
@@ -24,9 +26,10 @@ layout, or hook boundary from another title.
 - A kit RVA is never a retail RVA. Cross-architecture matching requires
   semantics, layout, call topology, and unique retail bytes to agree.
 - Zero/multiple runtime matches or a moved decode fail the affected stage
-  closed. C-H2-1 installs no hook either way; C-H2-3 withholds its camera core.
+  closed. C-H2-1 installs no hook either way; C-H2-3/C-H2-4 withhold their
+  camera core.
 - Accepted C-H2-1 writes no H2 engine field. Rejected C-H2-2 admitted only the
-  render and raster cameras' 12-byte position spans. C-H2-3 owns six 12-byte
+  render and raster cameras' 12-byte position spans. C-H2-3/C-H2-4 own six 12-byte
   position/forward/up spans and two 4-byte vertical-FOV spans, restores every
   owned span, and never writes z-far or the asymmetric/pixel-offset fields. The
   shared `render_far_clip_distance` scanner/writer is not a Halo 2 binding and
@@ -433,11 +436,13 @@ presentation veto.
 
 ## Rejected C-H2-3 candidate: same-frame stereo + 6DOF
 
-**C-H2-3 was headset-rejected and is compile-disabled. It is not accepted, and
-the accepted pointer remains C-H2-1 at `f8928bb`.** Its dormant gate is
-`HALOMCCVR_HALO2_STEREO6DOF=OFF`; the rejected temporal gate also remains OFF.
-The registry advertises exactly `Stereo | RoomScale | RuntimeModes`, uses hook
-plan `Halo2StereoCore`, and retains zero controller admission.
+**C-H2-3 was headset-rejected and compile-disabled by standalone revert
+`eda5762`. It is not accepted, and the accepted pointer remains C-H2-1 at
+`f8928bb`.** That revert set `HALOMCCVR_HALO2_STEREO6DOF=OFF`; C-H2-4 reuses the
+gate only with the no-pair fail-open contract below. The rejected temporal gate
+remains OFF. The registry advertises exactly
+`Stereo | RoomScale | RuntimeModes`, uses hook plan `Halo2StereoCore`, and
+retains zero controller admission.
 
 ### Two-hook outer-once/inner-twice transaction
 
@@ -542,14 +547,15 @@ the stereo branch, suppress the stock screen quad, and submit no world layer.
 The selected player-window path may be scene-specific; this run does not prove
 that it is globally dead.
 
-Any successor must keep stock flat presentation for every no-pair frame,
-including loading and cinematics, while still forbidding N-1 eye reuse. It must
-log the first outer/inner callback and cannot claim stereo active until a full
+Any successor must keep stock flat presentation for every ordinary unclaimed
+no-pair frame, including loading and cinematics, while still forbidding N-1 eye
+reuse and dropping a partially claimed failed-eye transaction. It must log the
+first outer/inner callback and cannot claim stereo active until a full
 current-serial pair reaches `xrEndFrame`.
 
 ### Explicit nonclaims and acceptance debt
 
-C-H2-3 claims stereo, headset rotation, and headset translation/room scale. It
+C-H2-3 attempted stereo, headset rotation, and headset translation/room scale. It
 does **not** claim controller input/admission, controller aim, head-relative
 movement input, HUD/crosshair behavior, haptics, arm IK, cutscene theatre,
 scene-target redirection, native asymmetric per-eye projection, or generic
@@ -564,11 +570,68 @@ half-rate cadence. The same exact DLL then requires a Halo 3 headset regression.
 Until both results pass, no accepted-build pointer or C-H2-1 acceptance field
 may advance.
 
+## Implemented C-H2-4 successor: no-pair stock-screen fail-open
+
+**C-H2-4 is implemented and headset-pending. It is not accepted, and the
+accepted pointer remains C-H2-1 at `f8928bb`.** It retains C-H2-3's two proven
+hook targets, exact write/restore allow-list, headset pose mapping, and
+same-frame pair validator. It adds no Halo 2 binding, engine write, controller
+feature, or temporal eye cache.
+
+The only player-visible delta is the ordinary missing-pair presentation choice:
+
+- A complete pair still requires exactly two fresh renders and captures whose
+  serials both equal the current prepared OpenXR serial in one game frame.
+- If no H2 eye original was claimed and the complete pair is absent, the frame
+  takes the stock screen-quad path:
+  `unclaimed_no_pair_presentation=stock-screen`.
+- That ordinary unclaimed decision does not intentionally suppress both world
+  paths: `unclaimed_no_pair_intentional_zero_layer=false`. Loading, cinematics,
+  and a scene that never calls the selected player-window hook therefore retain
+  flat presentation while the shared screen chain is healthy.
+- The stock screen is a flat fail-open presentation, not an eye cache. It never
+  counts as a left or right eye, never publishes a stereo pair or Gameplay
+  heartbeat, and cannot admit an N-1/current or all-N-1 pair.
+- Immediately before the first original eye render, C-H2-4 publishes a
+  resource-free generation- and process-monotonic-serial-tagged `Claimed`
+  disposition; a finished exact pair upgrades it to `Complete`. The durable
+  stamp survives a late resource reset, while every RTV/cache/token is still
+  revoked. Without a live complete pair, either exact disposition remains
+  `drop-frame`: it cannot borrow the unclaimed flat fallback or promote a prior
+  eye cache into stereo.
+- Screen-chain creation/acquire/wait failure and a later XR upload/projection
+  failure retain the shared exact-title recovery policy. C-H2-4 does not claim
+  that an unavailable OpenXR resource can still produce a layer.
+
+The simultaneous path remains refresh-invariant: two fresh eyes per game frame,
+`temporal_previous_eye_allowed=false`, `temporal_eye_gap_frames=0`, and
+`intentional_cadence_divisor=1` at 72, 80, 90, 120, and 144 Hz. Full headset
+rotation and translation remain enabled only for that exact current pair.
+
+Packaging advances in lockstep to manifest schema 12 and slug
+`halo2-c4-no-pair-fail-open`. The producer and installer both require
+`unclaimed_no_pair_presentation=stock-screen`,
+`unclaimed_no_pair_intentional_zero_layer=false`,
+`claimed_partial_pair_presentation=drop-frame`, the
+same-frame/two-fresh-eye/current-serial fields above, no temporal reuse, divisor
+1, full 6DOF, and the exact refresh list. The runtime claim line is:
+
+```text
+Halo 2 C-H2-4 simultaneous stereo + 6DOF active
+```
+
+Acceptance requires a Halo 2 headset run that visibly exercises at least one
+healthy unclaimed no-pair loading/cinematic interval without a black frame, then
+reaches same-frame stereo and full headset rotation/translation without a
+half-rate cadence. The same installed DLL then requires a Halo 3 headset
+regression. Until both pass, C-H2-4 remains pending and the accepted pointer and
+C-H2-1 acceptance fields do not change.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are
-  the accepted C-H2-1 build settings; C-H2-2 and C-H2-3 change only their
-  separately gated hook/capability/heartbeat fields described above.
+  the accepted C-H2-1 build settings; C-H2-2, C-H2-3, and C-H2-4 change only
+  their separately gated hook/capability/heartbeat fields described above.
 - `runtimeSupported=false`, runtime capabilities none, admission capabilities
   none, hook plan none, heartbeat window zero.
 - Shared controller merge remains denied.
@@ -623,9 +686,9 @@ approximately 88–90 Hz after loading, but C-H2-1 owns no Halo 2 render path an
 cannot establish a render-performance cause.
 
 This accepts the Halo 2 read-only observation claim and clears its evidence for
-stereo design. That C-H2-1 result does not accept or authorize C-H2-3's
-hook/write or stereo/6DOF runtime claim; C-H2-3 still needs its own headset
-result and Halo 3 regression.
+stereo design. That C-H2-1 result did not accept C-H2-3's rejected hook/write or
+stereo/6DOF runtime claim and does not accept C-H2-4's successor claim; C-H2-4
+still needs its own headset result and Halo 3 regression.
 
 ### Required Halo 3 shared-code regression PASS
 

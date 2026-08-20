@@ -46,6 +46,7 @@
 #include "title_runtime_state.h"
 #include "view_cache_logic.h"
 #include "two_hand_ik_logic.h"
+#include "vr.h"
 
 #include <authored_reticle_logic.h>
 
@@ -5805,7 +5806,84 @@ int main()
 #if HALOMCCVR_HALO2_STEREO6DOF
     Check(Halo2Adapter_RuntimeHooksPermitted() &&
               Halo2Adapter_EngineWritesPermitted(),
-        "C-H2-3 permits its same-frame camera hooks and scoped pose writes");
+        "C-H2-4 permits its same-frame camera hooks and scoped pose writes");
+    {
+        constexpr uint32_t generation = 7;
+        constexpr uint64_t serial = 42;
+        constexpr Halo2SynchronousPresentationStamp unclaimed{};
+        constexpr Halo2SynchronousPresentationStamp claimed{
+            generation, serial, Halo2SynchronousFrameDisposition::Claimed};
+        constexpr Halo2SynchronousPresentationStamp complete{
+            generation, serial, Halo2SynchronousFrameDisposition::Complete};
+        Check(Halo2SynchronousSelectPresentation(
+                  false, false, true, false,
+                  generation, serial, claimed) ==
+                  Halo2SynchronousPresentationDecision::Drop,
+            "C-H2-4 drops a claimed H2 frame even when stereo becomes "
+            "ineligible before submission");
+        Check(Halo2SynchronousSelectPresentation(
+                  false, true, true, false,
+                  generation, serial, complete) ==
+                  Halo2SynchronousPresentationDecision::Drop,
+            "C-H2-4 retains a completed disposition across live-pair reset and "
+            "drops when late state cannot admit synchronous stereo");
+        Check(Halo2SynchronousSelectPresentation(
+                  false, false, true, false,
+                  generation, serial, unclaimed) ==
+                  Halo2SynchronousPresentationDecision::SharedDefault,
+            "C-H2-4 preserves ordinary late-ineligible screen presentation for "
+            "an H2 frame that no eye transaction claimed");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, false, false, false,
+                  generation, serial, unclaimed) ==
+                  Halo2SynchronousPresentationDecision::SharedDefault,
+            "C-H2-4 cannot change another title's stereo presentation decision");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, false, false,
+                  generation, serial, claimed) ==
+                  Halo2SynchronousPresentationDecision::Drop,
+            "C-H2-4 keeps an exact claimed H2 frame out of SharedDefault after "
+            "a late active-title transition");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, true, true,
+                  generation, serial, claimed) ==
+                  Halo2SynchronousPresentationDecision::SynchronousStereo,
+            "C-H2-4 gives an exact completed current pair precedence over a "
+            "conservative claimed stamp");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, true, false,
+                  generation, serial, unclaimed) ==
+                  Halo2SynchronousPresentationDecision::StockScreen,
+            "C-H2-4 routes an unclaimed H2 frame to the stock screen-quad path");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, false, true, false,
+                  generation, serial, unclaimed) ==
+                  Halo2SynchronousPresentationDecision::StockScreen,
+            "C-H2-4 routes an unclaimed H2 frame to the stock screen even when "
+            "stereo is requested but its projection descriptor is not ready");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, false, true, true,
+                  generation, serial, complete) ==
+                  Halo2SynchronousPresentationDecision::Drop,
+            "C-H2-4 drops a completed H2 pair when its projection descriptor "
+            "is not ready");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, true, false,
+                  generation, serial, claimed) ==
+                  Halo2SynchronousPresentationDecision::Drop,
+            "C-H2-4 drops a claimed frame whose live pair was reset instead of "
+            "sampling its unproven backbuffer");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, true, false,
+                  generation + 1, serial, claimed) ==
+                  Halo2SynchronousPresentationDecision::StockScreen,
+            "C-H2-4 rejects a durable claim from another generation");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, true, false,
+                  generation, serial + 1, claimed) ==
+                  Halo2SynchronousPresentationDecision::StockScreen,
+            "C-H2-4 rejects a durable claim from another prepared serial");
+    }
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     Check(Halo2Adapter_RuntimeHooksPermitted() &&
               Halo2Adapter_EngineWritesPermitted(),

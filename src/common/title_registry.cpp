@@ -77,7 +77,9 @@ namespace
     constexpr uint32_t kHalo4AdmissionCapabilities =
         TitleCapability_ControllerInput;
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // C-H2-3 owns same-frame binocular geometry and headset room-scale only.
+    // C-H2-4 owns same-frame binocular geometry and headset room-scale only;
+    // unclaimed frames retain stock screen presentation, while a partially
+    // claimed failed stereo transaction drops only that frame.
     // Controller input/aim, HUD, haptics and cutscene behavior remain denied.
     constexpr uint32_t kHalo2Capabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |

@@ -57,7 +57,7 @@ bool Halo2Adapter_EngineWritesPermitted()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF || \
     HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
-    // C-H2-3 permits only scoped camera pose writes; dormant C-H2-2 permitted
+    // C-H2-4 permits only scoped camera pose writes; dormant C-H2-2 permitted
     // only position. Generic draw distance remains hard-denied in either case.
     return true;
 #else
