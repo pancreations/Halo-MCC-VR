@@ -46,6 +46,12 @@
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
 #include "halo2_temporal_stereo.h"
 #endif
+#ifndef HALOMCCVR_HALO2_STEREO6DOF
+#define HALOMCCVR_HALO2_STEREO6DOF 0
+#endif
+#if HALOMCCVR_HALO2_STEREO6DOF
+#include "halo2_stereo_core.h"
+#endif
 #include "halo4_adapter.h"
 #include "halo4_cold_observation.h"
 #include "../common/odst_bringup_logic.h"
@@ -105,9 +111,10 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-2 proves only binocular position geometry and its exact temporal
-    // presentation pair. Head orientation/translation, controller input/aim,
-    // HUD, haptics, and cutscene policy remain stock and unadvertised.
+    constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
+        TitleCapability_Stereo |
+        TitleCapability_RuntimeModes |
+        TitleCapability_RoomScale;
     constexpr uint32_t kHalo2TemporalRuntimeCapabilities =
         TitleCapability_Stereo;
     constexpr uint32_t kRuntimeCapabilitiesRequiringArm =
@@ -2010,7 +2017,10 @@ namespace
         generations[TitleRuntimeSlotIndex(GameTitle::HaloReach)] =
             ReachRetainedRuntimeGeneration();
 #endif
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF
+        generations[TitleRuntimeSlotIndex(GameTitle::Halo2)] =
+            Halo2Stereo_Generation();
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
         generations[TitleRuntimeSlotIndex(GameTitle::Halo2)] =
             Halo2TemporalStereo_Generation();
 #endif
@@ -2073,6 +2083,41 @@ namespace
         if (generation == publishedGeneration && state == publishedState)
             return true;
 
+        const bool published = TitleAdapter_PublishLifecycle(
+            GameTitle::Halo2, generation, lifecycle);
+        if (published)
+        {
+            publishedGeneration = generation;
+            publishedState = state;
+        }
+        return published;
+    }
+#endif
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+    bool PublishHalo2StereoLifecycle(uint32_t generation)
+    {
+        if (!generation)
+            return false;
+        TitleRuntimeLifecycle lifecycle{};
+        lifecycle.installed = Halo2Stereo_Installed();
+        lifecycle.armed = Halo2Stereo_Armed();
+        lifecycle.teardownRequested =
+            lifecycle.installed && !lifecycle.armed;
+        lifecycle.enabledCapabilities =
+            lifecycle.installed && lifecycle.armed
+            ? kHalo2Stereo6DofRuntimeCapabilities
+            : TitleCapability_None;
+
+        static uint32_t publishedGeneration = 0;
+        static uint32_t publishedState = 0xFFFFFFFFu;
+        const uint32_t state =
+            (lifecycle.installed ? 1u : 0u) |
+            (lifecycle.armed ? 2u : 0u) |
+            (lifecycle.teardownRequested ? 4u : 0u) |
+            (lifecycle.enabledCapabilities << 3);
+        if (generation == publishedGeneration && state == publishedState)
+            return true;
         const bool published = TitleAdapter_PublishLifecycle(
             GameTitle::Halo2, generation, lifecycle);
         if (published)
@@ -35514,7 +35559,21 @@ namespace
             }
             if (!halo2Active)
                 Halo2ColdObservation_Rearm();
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF
+            {
+                const uint32_t halo2Generation =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                const bool halo2CoreReady = Halo2Stereo_Poll(
+                    halo2GateBase, halo2GateSize, halo2Generation,
+                    halo2Active && halo2GateSampled,
+                    activeLevelRunning,
+                    Halo2ColdObservation_Passed(halo2Generation));
+                PublishHalo2StereoLifecycle(halo2Generation);
+                if (halo2Generation && !halo2CoreReady)
+                    TitleAdapter_ClearHeartbeat(
+                        GameTitle::Halo2, halo2Generation);
+            }
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
             {
                 const uint32_t halo2Generation =
                     TitleAdapter_GetGeneration(GameTitle::Halo2);
@@ -36049,10 +36108,20 @@ bool Game_IsStereoGeometryOnlyBringup()
 #endif
     return false;
 }
+bool Game_UsesTitleOwnedHeadTracking()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    return TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        Halo2Stereo_Armed();
+#else
+    return false;
+#endif
+}
 bool Game_IsHeadTrackingApplied()
 {
     return g_enabled.load(std::memory_order_acquire) &&
-        !Game_IsStereoGeometryOnlyBringup();
+        (Game_UsesTitleOwnedHeadTracking() ||
+         !Game_IsStereoGeometryOnlyBringup());
 }
 bool Game_IsCameraOnlyBringup()
 {
@@ -36542,7 +36611,8 @@ void Game_OnCutsceneTheaterPresentationChanged()
 }
 bool Game_CanToggleImmersiveView()
 {
-    return Game_AllowsSharedGameplayFeatures() || Game_IsCameraOnlyBringup();
+    return Game_AllowsSharedGameplayFeatures() || Game_IsCameraOnlyBringup() ||
+        Game_UsesTitleOwnedHeadTracking();
 }
 void Game_DetachForVrRuntimeFailure()
 {
@@ -36574,12 +36644,17 @@ void Game_DetachForVrRuntimeFailure()
     if (reachOwned)
         g_reachCamera.armed.store(false, std::memory_order_release);
 #endif
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF || \
+    HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     const bool halo2Owned = activeTitle == GameTitle::Halo2 ||
         (activeTitle == GameTitle::Unknown &&
          runtime.runtime.owner == GameTitle::Halo2);
     if (halo2Owned)
+#if HALOMCCVR_HALO2_STEREO6DOF
+        Halo2Stereo_ShutdownForVrFailure();
+#else
         Halo2TemporalStereo_ShutdownForVrFailure();
+#endif
 #endif
     g_enabled.store(false, std::memory_order_release);
     g_autoVrOwned.store(false, std::memory_order_release);
@@ -36662,10 +36737,16 @@ void Game_ToggleHeadTracking()
         return;
     const bool on = !g_enabled.load();
     g_enabled = on;
-    if (!Game_IsCameraOnlyBringup())
+    if (!Game_IsCameraOnlyBringup() && !Game_UsesTitleOwnedHeadTracking())
         PublishHalo3Lifecycle(true, on, false);
     if (on)
+    {
         g_needRecenter = true;
+#if HALOMCCVR_HALO2_STEREO6DOF
+        if (Game_UsesTitleOwnedHeadTracking())
+            Halo2Stereo_RequestRecenter();
+#endif
+    }
     else
         g_autoVrUserVeto = true; // user turned VR off by hand; don't auto re-arm
     LOG("head tracking %s", on ? "ON" : "OFF");
@@ -37074,6 +37155,65 @@ void Game_AutoVrTick()
     }
 #endif
 
+#if HALOMCCVR_HALO2_STEREO6DOF
+    static bool wasHalo2Stereo6DofContext = false;
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    {
+        wasHalo2Stereo6DofContext = true;
+        const bool halo2StereoUsable = Halo2Stereo_Armed();
+
+        // Match the universal auto_vr contract. A manual F2 veto owns the
+        // remainder of this level; a config-off transition releases only the
+        // presentation that auto_vr itself armed.
+        if (!g_config.auto_vr ||
+            g_autoVrUserVeto.load(std::memory_order_acquire))
+        {
+            if (g_autoVrOwned.load(std::memory_order_acquire))
+            {
+                g_enabled.store(false, std::memory_order_release);
+                g_autoVrOwned.store(false, std::memory_order_release);
+                VR_DetachGamePresentation();
+            }
+            return;
+        }
+
+        if (halo2StereoUsable)
+        {
+            if (!g_enabled.load(std::memory_order_relaxed) ||
+                !VR_IsStereoEnabled())
+            {
+                g_enabled.store(true, std::memory_order_release);
+                g_needRecenter.store(true, std::memory_order_release);
+                Halo2Stereo_RequestRecenter();
+                g_autoVrOwned.store(true, std::memory_order_release);
+                if (!VR_IsStereoEnabled())
+                    VR_ToggleStereo();
+                LOG("Halo 2 C-H2-3 simultaneous stereo + 6DOF active: "
+                    "both eyes render fresh from one current OpenXR serial "
+                    "per game frame; no temporal eye reuse or cadence "
+                    "division");
+            }
+        }
+        else if (g_enabled.load(std::memory_order_relaxed) ||
+                 VR_IsStereoEnabled() ||
+                 g_autoVrOwned.load(std::memory_order_relaxed))
+        {
+            g_enabled.store(false, std::memory_order_release);
+            g_autoVrOwned.store(false, std::memory_order_release);
+            VR_DetachGamePresentation();
+        }
+        return;
+    }
+    if (wasHalo2Stereo6DofContext)
+    {
+        wasHalo2Stereo6DofContext = false;
+        g_enabled.store(false, std::memory_order_release);
+        g_autoVrOwned.store(false, std::memory_order_release);
+        g_autoVrUserVeto.store(false, std::memory_order_release);
+        VR_DetachGamePresentation();
+    }
+#endif
+
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     static bool wasHalo2TemporalContext = false;
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
@@ -37473,6 +37613,10 @@ void Game_Recenter()
     // origin and the OpenXR head-locked screen origin. This keeps keyboard F3,
     // the F1 button, and transition-triggered recentering behavior identical.
     g_needRecenter = true;
+#if HALOMCCVR_HALO2_STEREO6DOF
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+        Halo2Stereo_RequestRecenter();
+#endif
     VR_RequestRecenter();
 }
 void Game_FlipYaw()   { g_yawSign = -g_yawSign.load();   LOG("yaw sign %+.0f", g_yawSign.load()); }
@@ -38520,6 +38664,15 @@ bool Game_GetRenderHalfFovs(
     halfX[1] = fallbackX;
     halfY[0] = fallbackY;
     halfY[1] = fallbackY;
+#if HALOMCCVR_HALO2_STEREO6DOF
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    {
+        const uint32_t generation = Halo2Stereo_Generation();
+        return Halo2Stereo_Armed() && generation &&
+            VR_Halo2GetSynchronousHalfFovs(
+                generation, preparedFrameSerial, halfX, halfY);
+    }
+#endif
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
     {

@@ -10,6 +10,9 @@
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
 #define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
 #endif
+#ifndef HALOMCCVR_HALO2_STEREO6DOF
+#define HALOMCCVR_HALO2_STEREO6DOF 0
+#endif
 
 constexpr size_t kTitleRuntimeSlotCount = 6;
 constexpr size_t kInvalidTitleRuntimeSlot = kTitleRuntimeSlotCount;
@@ -87,7 +90,8 @@ constexpr uint64_t TitleRuntimeHeartbeatWindowMs(GameTitle title)
     case GameTitle::HaloReach: return kTitleRuntimeHeartbeatFreshMs;
     case GameTitle::Halo4: return kTitleRuntimeHeartbeatFreshMs;
     case GameTitle::Halo2:
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF || \
+    HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
         return kTitleRuntimeHeartbeatFreshMs;
 #else
         return 0;

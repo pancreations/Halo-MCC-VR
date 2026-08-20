@@ -8,6 +8,9 @@
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
 #define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
 #endif
+#ifndef HALOMCCVR_HALO2_STEREO6DOF
+#define HALOMCCVR_HALO2_STEREO6DOF 0
+#endif
 
 namespace
 {
@@ -24,7 +27,9 @@ namespace
 
 Halo2AdapterStage Halo2Adapter_GetStage()
 {
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF
+    return Halo2AdapterStage::SameFrameStereoSixDof;
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     return Halo2AdapterStage::TemporalStereoPositionOnly;
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
     return Halo2AdapterStage::ColdObservationOnly;
@@ -40,7 +45,8 @@ const Halo2EvidenceIdentity& Halo2Adapter_GetEvidenceIdentity()
 
 bool Halo2Adapter_RuntimeHooksPermitted()
 {
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF || \
+    HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     return true;
 #else
     return false;
@@ -49,11 +55,10 @@ bool Halo2Adapter_RuntimeHooksPermitted()
 
 bool Halo2Adapter_EngineWritesPermitted()
 {
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
-    // This is deliberately narrower than the historical name: C-H2-2 permits
-    // only two temporary 12-byte camera-position writes inside the proven
-    // player-window transaction. Generic draw distance remains hard-denied by
-    // TitleRegistry_AllowsGenericDrawDistance.
+#if HALOMCCVR_HALO2_STEREO6DOF || \
+    HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    // C-H2-3 permits only scoped camera pose writes; dormant C-H2-2 permitted
+    // only position. Generic draw distance remains hard-denied in either case.
     return true;
 #else
     return false;

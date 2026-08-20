@@ -558,6 +558,15 @@ const TitleDescriptor* TitleAdapter_PollLoaded(uint64_t observedAtMs)
                 detected->displayName, detected->moduleName);
         }
         else if (detected->title == GameTitle::Halo2 &&
+            Halo2Adapter_GetStage() == Halo2AdapterStage::SameFrameStereoSixDof)
+        {
+            LOG("Title adapter: detected %s (%ls); C-H2-3 same-frame stereo "
+                "+ 6DOF is build-enabled behind C-H2-1 identity/liveness "
+                "proof. Both eyes must render from the current OpenXR serial "
+                "inside one game frame; no temporal eye reuse is permitted",
+                detected->displayName, detected->moduleName);
+        }
+        else if (detected->title == GameTitle::Halo2 &&
             Halo2Adapter_GetStage() ==
                 Halo2AdapterStage::TemporalStereoPositionOnly)
         {

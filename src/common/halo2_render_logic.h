@@ -51,10 +51,17 @@ inline constexpr uint32_t kHalo2RetailRenderPlayerWindowOtherCallRva =
 inline constexpr uint32_t kHalo2KitRenderViewRva = 0x002A0160;
 inline constexpr uint32_t kHalo2RetailRenderViewRva = 0x007E30D0;
 inline constexpr uint32_t kHalo2RetailRenderViewCallRva = 0x007E2412;
+inline constexpr uint32_t kHalo2RetailRenderViewReturnRva = 0x007E2417;
+// H2EK's final postprocess helper selects the swapchain backbuffer RTV. The
+// retail homolog loads the same pointer slot here; C-H2-3 resolves it from a
+// unique full-image signature and uses only the resulting exact RTV pointer in
+// the OM hot hook.
+inline constexpr uint32_t kHalo2RetailFinalOutputRtvLoadRva = 0x00975297;
+inline constexpr uint32_t kHalo2RetailFinalOutputRtvSlotRva = 0x0197EE58;
 
 // Retail camera/window facts. The two cameras occupy adjacent 0x74-byte
-// records inside a 0x120-byte window. C-H2-2 deliberately changes only their
-// 12-byte positions around one original call; every other field is read-only.
+// records inside a 0x120-byte window. C-H2-3 owns only their three 12-byte pose
+// vectors plus the 4-byte vertical-FOV cover, restoring every field it writes.
 inline constexpr uint32_t kHalo2RetailWindowStride = 0x120;
 inline constexpr uint32_t kHalo2WindowTypeOffset = 0x00;
 inline constexpr uint32_t kHalo2WindowPlayerIndexOffset = 0x04;
@@ -89,6 +96,18 @@ inline constexpr uint32_t kHalo2WindowRenderPositionOffset =
     kHalo2RenderCameraOffset + kHalo2CameraPositionOffset;
 inline constexpr uint32_t kHalo2WindowRasterPositionOffset =
     kHalo2RasterCameraOffset + kHalo2CameraPositionOffset;
+inline constexpr uint32_t kHalo2WindowRenderForwardOffset =
+    kHalo2RenderCameraOffset + kHalo2CameraForwardOffset;
+inline constexpr uint32_t kHalo2WindowRenderUpOffset =
+    kHalo2RenderCameraOffset + kHalo2CameraUpOffset;
+inline constexpr uint32_t kHalo2WindowRasterForwardOffset =
+    kHalo2RasterCameraOffset + kHalo2CameraForwardOffset;
+inline constexpr uint32_t kHalo2WindowRasterUpOffset =
+    kHalo2RasterCameraOffset + kHalo2CameraUpOffset;
+inline constexpr uint32_t kHalo2WindowRenderVerticalFovOffset =
+    kHalo2RenderCameraOffset + kHalo2CameraVerticalFovOffset;
+inline constexpr uint32_t kHalo2WindowRasterVerticalFovOffset =
+    kHalo2RasterCameraOffset + kHalo2CameraVerticalFovOffset;
 
 static_assert(kHalo2RenderCameraOffset + kHalo2CameraBytes ==
     kHalo2RasterCameraOffset);
@@ -107,6 +126,8 @@ inline constexpr float kHalo2WorldUnitsPerMeter =
 // generous bound turns a corrupt/torn runtime pose into a stock frame instead
 // of allowing an unbounded engine-camera write.
 inline constexpr float kHalo2MaxEyeOffsetMeters = 0.5f;
+inline constexpr float kHalo2MaxHeadTranslationMeters = 4.0f;
+inline constexpr float kHalo2MaxHeadTranslationWorldUnits = 1.5f;
 inline constexpr uint32_t kHalo2KitMetersPerWorldUnitRva = 0x007AD4F8;
 inline constexpr uint32_t kHalo2RetailMetersPerWorldUnitFileOffset =
     0x00B13AF4;
@@ -119,8 +140,8 @@ inline constexpr int kHalo2LeftEye = 0;
 inline constexpr int kHalo2RightEye = 1;
 inline constexpr int kHalo2EyeCount = 2;
 
-// Exact first 0x24 bytes of either retail camera. Keeping projection fields out
-// of this POD makes position-only stereo independent from later 6DOF/FOV work.
+// Exact first 0x24 bytes of either retail camera. Projection fields remain
+// separate so the scoped restore can never overwrite the engine-owned z_far.
 struct Halo2CameraBasis
 {
     float position[3]{};
@@ -477,6 +498,294 @@ constexpr bool Halo2TemporalTransactionResultMatches(
             !result.rasterPositionRestored;
     }
     return false;
+}
+
+// C-H2-3 same-frame stereo + 6DOF. These are title-local camera operations:
+// H2EK proves position/forward/up and retail preserves those exact offsets.
+// OpenXR quaternions are expressed in +X right, +Y up, -Z forward axes.
+inline bool Halo2NormalizeQuaternion(
+    const float input[4], float output[4]) noexcept
+{
+    if (!input || !output)
+        return false;
+    float lengthSquared = 0.0f;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (!std::isfinite(input[i]))
+            return false;
+        lengthSquared += input[i] * input[i];
+    }
+    if (!std::isfinite(lengthSquared) || lengthSquared < 0.5f ||
+        lengthSquared > 1.5f)
+    {
+        return false;
+    }
+    const float inverseLength = 1.0f / std::sqrt(lengthSquared);
+    for (int i = 0; i < 4; ++i)
+        output[i] = input[i] * inverseLength;
+    return true;
+}
+
+inline void Halo2MultiplyQuaternion(
+    const float left[4], const float right[4], float output[4]) noexcept
+{
+    output[0] = left[3] * right[0] + left[0] * right[3] +
+        left[1] * right[2] - left[2] * right[1];
+    output[1] = left[3] * right[1] - left[0] * right[2] +
+        left[1] * right[3] + left[2] * right[0];
+    output[2] = left[3] * right[2] + left[0] * right[1] -
+        left[1] * right[0] + left[2] * right[3];
+    output[3] = left[3] * right[3] - left[0] * right[0] -
+        left[1] * right[1] - left[2] * right[2];
+}
+
+inline void Halo2RotateVectorByQuaternion(
+    const float quaternion[4], const float input[3], float output[3]) noexcept
+{
+    const float qx = quaternion[0], qy = quaternion[1];
+    const float qz = quaternion[2], qw = quaternion[3];
+    const float tx = 2.0f * (qy * input[2] - qz * input[1]);
+    const float ty = 2.0f * (qz * input[0] - qx * input[2]);
+    const float tz = 2.0f * (qx * input[1] - qy * input[0]);
+    output[0] = input[0] + qw * tx + (qy * tz - qz * ty);
+    output[1] = input[1] + qw * ty + (qz * tx - qx * tz);
+    output[2] = input[2] + qw * tz + (qx * ty - qy * tx);
+}
+
+inline void Halo2RotateAboutAxis(
+    float vector[3], const float axis[3], float cosine, float sine) noexcept
+{
+    const float dot = vector[0] * axis[0] + vector[1] * axis[1] +
+        vector[2] * axis[2];
+    const float cross[3] = {
+        axis[1] * vector[2] - axis[2] * vector[1],
+        axis[2] * vector[0] - axis[0] * vector[2],
+        axis[0] * vector[1] - axis[1] * vector[0]};
+    for (int i = 0; i < 3; ++i)
+        vector[i] = vector[i] * cosine + cross[i] * sine +
+            axis[i] * dot * (1.0f - cosine);
+}
+
+inline bool Halo2ApplyLocalQuaternion(
+    Halo2CameraBasis& camera, const float localQuaternion[4]) noexcept
+{
+    if (!Halo2ValidateCameraBasis(camera))
+        return false;
+    float quaternion[4]{};
+    if (!Halo2NormalizeQuaternion(localQuaternion, quaternion))
+        return false;
+    const float sineHalf = std::sqrt(
+        quaternion[0] * quaternion[0] + quaternion[1] * quaternion[1] +
+        quaternion[2] * quaternion[2]);
+    if (sineHalf < 1.0e-6f)
+        return true;
+    float angle = 2.0f * std::atan2(sineHalf, quaternion[3]);
+    constexpr float kPi = 3.14159265358979323846f;
+    if (angle > kPi)
+        angle -= 2.0f * kPi;
+    const float localAxis[3] = {
+        quaternion[0] / sineHalf,
+        quaternion[1] / sineHalf,
+        quaternion[2] / sineHalf};
+    const float right[3] = {
+        camera.forward[1] * camera.up[2] -
+            camera.forward[2] * camera.up[1],
+        camera.forward[2] * camera.up[0] -
+            camera.forward[0] * camera.up[2],
+        camera.forward[0] * camera.up[1] -
+            camera.forward[1] * camera.up[0]};
+    const float worldAxis[3] = {
+        right[0] * localAxis[0] + camera.up[0] * localAxis[1] -
+            camera.forward[0] * localAxis[2],
+        right[1] * localAxis[0] + camera.up[1] * localAxis[1] -
+            camera.forward[1] * localAxis[2],
+        right[2] * localAxis[0] + camera.up[2] * localAxis[1] -
+            camera.forward[2] * localAxis[2]};
+    const float cosine = std::cos(angle), sine = std::sin(angle);
+    Halo2RotateAboutAxis(camera.forward, worldAxis, cosine, sine);
+    Halo2RotateAboutAxis(camera.up, worldAxis, cosine, sine);
+    return Halo2ValidateCameraBasis(camera);
+}
+
+struct Halo2TrackedHeadInput
+{
+    float orientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float position[3]{};
+    float referenceOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float referencePosition[3]{};
+};
+
+// Builds a tracked center camera from the stock H2 camera. Translation is first
+// expressed in the recentered headset basis, then mapped through H2's proven
+// right=forward x up camera basis at the title-specific 1/3.048 scale.
+inline bool Halo2BuildTrackedCenterCamera(
+    const Halo2CameraBasis& stock, const Halo2TrackedHeadInput& input,
+    Halo2CameraBasis& output) noexcept
+{
+    if (!Halo2ValidateCameraBasis(stock))
+        return false;
+    float current[4]{}, reference[4]{};
+    if (!Halo2NormalizeQuaternion(input.orientation, current) ||
+        !Halo2NormalizeQuaternion(input.referenceOrientation, reference))
+    {
+        return false;
+    }
+    float rawDelta[3]{};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(input.position[axis]) ||
+            !std::isfinite(input.referencePosition[axis]))
+        {
+            return false;
+        }
+        rawDelta[axis] = input.position[axis] - input.referencePosition[axis];
+        if (!std::isfinite(rawDelta[axis]) ||
+            std::fabs(rawDelta[axis]) > kHalo2MaxHeadTranslationMeters)
+        {
+            return false;
+        }
+    }
+    const float inverseReference[4] = {
+        -reference[0], -reference[1], -reference[2], reference[3]};
+    float referenceLocalDelta[3]{};
+    Halo2RotateVectorByQuaternion(
+        inverseReference, rawDelta, referenceLocalDelta);
+
+    Halo2CameraBasis candidate = stock;
+    const float right[3] = {
+        stock.forward[1] * stock.up[2] - stock.forward[2] * stock.up[1],
+        stock.forward[2] * stock.up[0] - stock.forward[0] * stock.up[2],
+        stock.forward[0] * stock.up[1] - stock.forward[1] * stock.up[0]};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        float offset =
+            (right[axis] * referenceLocalDelta[0] +
+             stock.up[axis] * referenceLocalDelta[1] -
+             stock.forward[axis] * referenceLocalDelta[2]) *
+            kHalo2WorldUnitsPerMeter;
+        if (!std::isfinite(offset))
+            return false;
+        if (offset > kHalo2MaxHeadTranslationWorldUnits)
+            offset = kHalo2MaxHeadTranslationWorldUnits;
+        if (offset < -kHalo2MaxHeadTranslationWorldUnits)
+            offset = -kHalo2MaxHeadTranslationWorldUnits;
+        candidate.position[axis] += offset;
+    }
+
+    float relativeOrientation[4]{};
+    Halo2MultiplyQuaternion(inverseReference, current, relativeOrientation);
+    if (!Halo2ApplyLocalQuaternion(candidate, relativeOrientation))
+        return false;
+    output = candidate;
+    return true;
+}
+
+inline bool Halo2BuildSynchronousEyeCamera(
+    const Halo2CameraBasis& trackedCenter, const float eyePositionMeters[3],
+    const float eyeOrientation[4], Halo2CameraBasis& output) noexcept
+{
+    if (!eyePositionMeters || !eyeOrientation ||
+        !Halo2ValidateCameraBasis(trackedCenter))
+    {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis)
+        if (!std::isfinite(eyePositionMeters[axis]) ||
+            std::fabs(eyePositionMeters[axis]) > kHalo2MaxEyeOffsetMeters)
+            return false;
+    Halo2CameraBasis candidate = trackedCenter;
+    const float right[3] = {
+        candidate.forward[1] * candidate.up[2] -
+            candidate.forward[2] * candidate.up[1],
+        candidate.forward[2] * candidate.up[0] -
+            candidate.forward[0] * candidate.up[2],
+        candidate.forward[0] * candidate.up[1] -
+            candidate.forward[1] * candidate.up[0]};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        candidate.position[axis] +=
+            (right[axis] * eyePositionMeters[0] +
+             candidate.up[axis] * eyePositionMeters[1] -
+             candidate.forward[axis] * eyePositionMeters[2]) *
+            kHalo2WorldUnitsPerMeter;
+    }
+    if (!Halo2ApplyLocalQuaternion(candidate, eyeOrientation))
+        return false;
+    output = candidate;
+    return true;
+}
+
+enum class Halo2CameraPoseWrite : uint8_t
+{
+    Reject = 0,
+    RenderPosition,
+    RenderForward,
+    RenderUp,
+    RasterPosition,
+    RasterForward,
+    RasterUp,
+    RenderVerticalFov,
+    RasterVerticalFov,
+};
+
+constexpr Halo2CameraPoseWrite SelectHalo2CameraPoseWrite(
+    uint32_t windowRelativeOffset, size_t bytes) noexcept
+{
+    if (bytes == kHalo2CameraVectorBytes)
+    {
+        if (windowRelativeOffset == kHalo2WindowRenderPositionOffset)
+            return Halo2CameraPoseWrite::RenderPosition;
+        if (windowRelativeOffset == kHalo2WindowRenderForwardOffset)
+            return Halo2CameraPoseWrite::RenderForward;
+        if (windowRelativeOffset == kHalo2WindowRenderUpOffset)
+            return Halo2CameraPoseWrite::RenderUp;
+        if (windowRelativeOffset == kHalo2WindowRasterPositionOffset)
+            return Halo2CameraPoseWrite::RasterPosition;
+        if (windowRelativeOffset == kHalo2WindowRasterForwardOffset)
+            return Halo2CameraPoseWrite::RasterForward;
+        if (windowRelativeOffset == kHalo2WindowRasterUpOffset)
+            return Halo2CameraPoseWrite::RasterUp;
+    }
+    else if (bytes == sizeof(float))
+    {
+        if (windowRelativeOffset == kHalo2WindowRenderVerticalFovOffset)
+            return Halo2CameraPoseWrite::RenderVerticalFov;
+        if (windowRelativeOffset == kHalo2WindowRasterVerticalFovOffset)
+            return Halo2CameraPoseWrite::RasterVerticalFov;
+    }
+    return Halo2CameraPoseWrite::Reject;
+}
+
+struct Halo2SameFramePairProof
+{
+    uint32_t generation = 0;
+    uint64_t preparedSerial = 0;
+    uint64_t attemptToken = 0;
+    uint64_t eyeAttemptToken[2]{};
+    uint64_t renderSerial[2]{};
+    uint64_t captureSerial[2]{};
+    uint8_t eyeMask = 0;
+    uint8_t eyeRenderCount = 0;
+    uint8_t freshEyeCount = 0;
+    bool allPoseSpansRestored = false;
+};
+
+constexpr bool Halo2SameFramePairMatches(
+    const Halo2SameFramePairProof& proof, uint32_t activeGeneration,
+    uint64_t currentPreparedSerial) noexcept
+{
+    return activeGeneration != 0 && currentPreparedSerial != 0 &&
+        proof.generation == activeGeneration &&
+        proof.preparedSerial == currentPreparedSerial &&
+        proof.attemptToken != 0 &&
+        proof.eyeAttemptToken[0] == proof.attemptToken &&
+        proof.eyeAttemptToken[1] == proof.attemptToken &&
+        proof.renderSerial[0] == currentPreparedSerial &&
+        proof.renderSerial[1] == currentPreparedSerial &&
+        proof.captureSerial[0] == currentPreparedSerial &&
+        proof.captureSerial[1] == currentPreparedSerial &&
+        proof.eyeMask == 0x3 && proof.eyeRenderCount == 2 &&
+        proof.freshEyeCount == 2 && proof.allPoseSpansRestored;
 }
 
 struct Halo2RetailAnchor

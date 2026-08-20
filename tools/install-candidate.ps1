@@ -33,6 +33,10 @@ function Test-ExactBoolean([object]$Value, [bool]$Expected) {
     return ($Value -is [bool]) -and ($Value -eq $Expected)
 }
 
+function Test-ExactInt32([object]$Value, [int]$Expected) {
+    return ($Value -is [int]) -and ($Value -eq $Expected)
+}
+
 # The mod folder is only valid where a real MCC install sits beside it. For the
 # Store edition the install root is the package's Content folder.
 function Test-InstallRoot([string]$Root) {
@@ -132,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if ([int]$manifest.schema_version -ne 10 -or
+if (-not (Test-ExactInt32 $manifest.schema_version 11) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -143,7 +147,7 @@ if ([int]$manifest.schema_version -ne 10 -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c2-temporal-stereo-',
+            $head.Substring(0, 7) + '-halo2-c3-stereo6dof-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -157,7 +161,8 @@ if ([int]$manifest.schema_version -ne 10 -or
         $manifest.embedded_build_identity.reach -ne $true -or
         $manifest.embedded_build_identity.reach_render -ne $true -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
-        [string]$manifest.embedded_build_identity.halo2 -cne 'TEMPORAL' -or
+        [string]$manifest.embedded_build_identity.halo2 -cne
+            'SAME_FRAME_6DOF' -or
         [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-43' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
             'dd9946595511d65c9859b536e2727201c107da45' -or
@@ -195,34 +200,61 @@ if ([int]$manifest.schema_version -ne 10 -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-2' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-3' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_STEREO_VALIDATION_REQUIRED' -or
+            'HEADSET_STEREO_6DOF_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'one-stock-render-per-frame-alternating-position-only-eyes-adjacent-serial-backbuffer-pair' -or
-        [int]$manifest.halo2_candidate.identity_anchor_count -ne 6 -or
-        [int]$manifest.halo2_candidate.liveness_anchor_count -ne 2 -or
-        [int]$manifest.halo2_candidate.hook_count -ne 1 -or
-        [int]$manifest.halo2_candidate.caller_edge_count -ne 1 -or
-        [int]$manifest.halo2_candidate.renders_per_game_frame -ne 1 -or
-        [int]$manifest.halo2_candidate.temporal_eye_gap_frames -ne 1 -or
+            'same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof' -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.identity_anchor_count 6) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.liveness_anchor_count 2) -or
+        -not (Test-ExactInt32 $manifest.halo2_candidate.hook_count 2) -or
+        -not (Test-ExactInt32 $manifest.halo2_candidate.caller_edge_count 2) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.both_eye_renders_per_game_frame 2) -or
+        -not (Test-ExactInt32 $manifest.halo2_candidate.fresh_eye_count 2) -or
+        [string]$manifest.halo2_candidate.both_eye_serial_policy -cne
+            'current-prepared-serial' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.same_game_frame_pair $true) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.temporal_previous_eye_allowed $false) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.temporal_eye_gap_frames 0) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.intentional_cadence_divisor 1) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.per_eye_render_rate_equals_game_frame_rate `
+            $true) -or
+        @($manifest.halo2_candidate.supported_refresh_hz).Count -ne 5 -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.supported_refresh_hz[0] 72) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.supported_refresh_hz[1] 80) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.supported_refresh_hz[2] 90) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.supported_refresh_hz[3] 120) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.supported_refresh_hz[4] 144) -or
         [string]$manifest.halo2_candidate.expected_cold_pass_line -cne
             'Halo 2 cold observation PASS (C-H2-1)' -or
         [string]$manifest.halo2_candidate.expected_stereo_line -cne
-            'Halo 2 C-H2-2 stereo active' -or
+            'Halo 2 C-H2-3 simultaneous stereo + 6DOF active' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.controller_input $false) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.stereo $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.six_dof $false) -or
+            $manifest.halo2_candidate.six_dof $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.headset_rotation $false) -or
+            $manifest.halo2_candidate.headset_rotation $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.headset_translation $false) -or
+            $manifest.halo2_candidate.headset_translation $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.controller_aim $false) -or
         -not (Test-ExactBoolean `
@@ -232,15 +264,29 @@ if ([int]$manifest.schema_version -ne 10 -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.scene_target_redirect $false) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.native_fov_projection $false) -or
+            $manifest.halo2_candidate.native_symmetric_fov_cover $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.simultaneous_stereo $false) -or
+            $manifest.halo2_candidate.native_asymmetric_fov_writes $false) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.simultaneous_stereo $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.runtime_hooks $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.engine_writes $true) -or
         [string]$manifest.halo2_candidate.engine_write_scope -cne
-            'render-and-raster-camera-position-12-bytes-each-restored' -or
+            'render-and-raster-position-forward-up-six-12-byte-spans-plus-vertical-fov-two-4-byte-spans-restored' -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.engine_write_span_count 8) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.engine_pose_write_span_count 6) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.engine_pose_write_span_bytes 12) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.engine_vertical_fov_write_span_count 2) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.engine_vertical_fov_write_span_bytes 4) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.engine_write_restore_required $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.generic_draw_distance_write $false) -or
         -not (Test-ExactBoolean `

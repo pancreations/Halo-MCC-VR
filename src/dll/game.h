@@ -37,6 +37,10 @@ bool Game_IsHeadTracking();
 // User-visible truth: the active camera actually consumes HMD rotation/position.
 bool Game_IsHeadTrackingApplied();
 bool Game_IsStereoGeometryOnlyBringup();
+// True when the active title consumes the headset pose in its own verified
+// camera transaction. Shared presentation must not run Halo 3's positional
+// engine writes for such a title.
+bool Game_UsesTitleOwnedHeadTracking();
 bool Game_IsCameraOnlyBringup(); // private ODST camera core; no gameplay features
 // True only while the exact Reach stereo + mandatory authored-crosshair
 // transaction owns the active title. Used to admit its frame-bound authored

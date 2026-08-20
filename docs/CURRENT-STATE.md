@@ -12,9 +12,11 @@
 > installed, stereo and positional 6DOF armed, the proven scene target was
 > learned, and gameplay held 90 Hz with zero duplicate frames, frame-order
 > failures, or stalls. The user confirmed that Halo 3 worked fine. This accepts
-> only C-H2-1's read-only observation behavior; Halo 2 controller admission,
-> stereo, 6DOF, camera/render/aim/HUD/haptics ownership, engine hooks, and
-> engine writes remain disabled.
+> only C-H2-1's read-only observation behavior. In that accepted build, Halo 2
+> controller admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership,
+> engine hooks, and engine writes are disabled; the separately gated,
+> headset-pending C-H2-3 candidate described below does not alter this accepted
+> claim.
 >
 > | Accepted Halo 2 C-H2-1 identity | Value |
 > | --- | --- |
@@ -68,18 +70,37 @@
 > tool must never be used for a release**. Read `docs/V6-POSTBUILD-LAYER.md`
 > before touching anything Halo 4 HUD/helmet/pause related.
 >
-> **Active work (user-directed 2026-08-19): Halo 2 stereo 3D + 6DOF
-> bring-up.** C-H2-1 is accepted after its Halo 2 target pass and required Halo
-> 3 regression. C-H2-2's alternating-eye temporal implementation was rejected
-> before headset testing because it divided the per-eye update rate in half. It
-> is compile-disabled and retained only as dormant history; it is not accepted
-> and did not advance the pointer. The replacement must follow the working Halo
-> 3/ODST/Reach contract: render both eyes from the same OpenXR frame serial in
-> every game frame, with no previous-frame eye cache and no per-eye cadence
-> division at 72, 80, 90, 120, or 144 Hz. Controller admission, headset
-> rotation/translation, controller aim, HUD, haptics, generic draw distance, and
-> 6DOF remain disabled until their own candidates earn them.
-> See `docs/HALO2-SIGNATURE-EVIDENCE.md`.
+> **IMPLEMENTED, HEADSET-PENDING (2026-08-20): Halo 2 C-H2-3 same-frame
+> stereo + 6DOF. This is not accepted; the accepted pointer remains C-H2-1 at
+> `f8928bb`.** C-H2-2's alternating-eye temporal implementation remains
+> compile-disabled and retained only as rejected history because it divided the
+> per-eye update rate in half. C-H2-3 replaces it with two fresh eye renders and
+> captures inside one game frame. Both eyes must have render and capture serials
+> equal to the current prepared OpenXR serial; N-1, future, mixed-generation,
+> incomplete, duplicate-eye, or cross-attempt pairs are rejected. There is no
+> previous-eye cache or intentional cadence divider: each eye is intended to
+> render at the full game-frame cadence at 72, 80, 90, 120, and 144 Hz.
+>
+> C-H2-3 installs two exact Halo 2 hooks. The outer
+> `render_player_window` transaction runs once; its one exact player-path
+> `render_view` invocation is intercepted and the original inner render runs
+> twice, once per current eye. The final-output AOB
+> `48 8B 1D ?? ?? ?? ?? 48 89 B4 24 B0 00 00 00 48 8B CB 0F 29 B4 24 90 00 00 00 0F 29 BC 24 80 00 00 00`
+> is unique in both pinned retail editions at RVA `0x975297`; its disp32 at
+> `+3`, based at RIP `+7`, resolves exactly to backbuffer-RTV slot RVA
+> `0x197EE58`.
+>
+> The candidate owns full headset rotation and translation. During each eye it
+> scope-writes render/raster position, forward, and up as six independent
+> 12-byte spans, plus render/raster vertical FOV `+0x28` as two independent
+> 4-byte spans, and restores all eight. The FOV write is a title-native
+> symmetric binocular cover derived from both runtime-eye tangents; it is not a
+> claim of native asymmetric per-eye projection, and z-far/asymmetric fields
+> remain untouched. Controller admission/input, controller aim, HUD/crosshair,
+> haptics, scene-target redirection, and generic draw-distance writes remain
+> disabled. Halo 2 headset validation and then a Halo 3 shared-code regression
+> are still required before C-H2-3 can advance this pointer. See
+> `docs/HALO2-SIGNATURE-EVIDENCE.md`.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
 > it records what Halo 4 does today, what was never finished, and the six
@@ -87,7 +108,7 @@
 > remains C-H4-43; C-H4-44 supersedes the C-H4-38 support-hand presentation
 > within it.
 
-Authoritative as of 2026-08-11. This file is the only active accepted-build
+Authoritative as of 2026-08-20. This file is the only active accepted-build
 pointer. Detailed pre-cleanup experiments remain available in Git history; they
 are evidence, not instructions.
 

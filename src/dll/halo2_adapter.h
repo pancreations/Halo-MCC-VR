@@ -14,6 +14,10 @@ enum class Halo2AdapterStage : uint8_t
     // completed backbuffer is paired across adjacent prepared serials. No head
     // pose, controller, aim, HUD, haptics, or generic engine write is admitted.
     TemporalStereoPositionOnly,
+    // C-H2-3: both eyes are rendered from one current OpenXR serial inside the
+    // same game frame. Headset orientation/translation plus per-eye pose own
+    // only position/forward/up in the proven render and raster cameras.
+    SameFrameStereoSixDof,
 };
 
 struct Halo2EvidenceIdentity

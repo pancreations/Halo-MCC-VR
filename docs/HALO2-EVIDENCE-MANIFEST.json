@@ -1,11 +1,13 @@
 {
-  "schema_version": 2,
-  "status": "C_H2_1_ACCEPTED",
+  "schema_version": 3,
+  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_PENDING",
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
-  "active_candidate": null,
+  "accepted_build_pointer_source": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
+  "active_candidate": "C-H2-3",
   "accepted_build_pointer_advanced": true,
-  "remaining_gate": "A replacement same-frame two-eye candidate must be implemented and headset-tested; C-H2-1 has no remaining gate",
+  "active_candidate_accepted_build_pointer_advanced": false,
+  "remaining_gate": "C-H2-3 is implemented but requires Halo 2 headset stereo+6DOF validation and then a Halo 3 shared-code headset regression; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -90,7 +92,19 @@
     "center_x": "0x5C",
     "center_y": "0x60",
     "extent_scale": "0x64",
-    "status": "read-only in accepted C-H2-1; C-H2-2 writes/restores only each camera's 12-byte position at +0x00"
+    "status": "read-only in accepted C-H2-1; rejected C-H2-2 writes/restores only each camera's 12-byte position at +0x00; C-H2-3 writes/restores position/forward/up plus vertical FOV only"
+  },
+  "final_output_resolver": {
+    "purpose": "C-H2-3 exact swapchain-backbuffer RTV slot resolver",
+    "aob": "48 8B 1D ?? ?? ?? ?? 48 89 B4 24 B0 00 00 00 48 8B CB 0F 29 B4 24 90 00 00 00 0F 29 BC 24 80 00 00 00",
+    "match_rva": "0x975297",
+    "steam_mapped_matches": 1,
+    "store_mapped_matches": 1,
+    "disp32_offset": 3,
+    "rip_base_offset": 7,
+    "target_rva": "0x197EE58",
+    "zero_or_multiple_matches_fail_closed": true,
+    "moved_match_or_decode_fails_closed": true
   },
   "c_h2_1_runtime_contract": {
     "controller_input": false,
@@ -152,6 +166,161 @@
     "known_visual_limit": "one eye per game frame; at 90 game fps each eye updates at 45 Hz and moving content may show temporal disparity, judder, or shimmer",
     "remaining_acceptance": [
       "Halo 2 headset stereo validation",
+      "Halo 3 headset regression for shared VR/lifecycle changes"
+    ]
+  },
+  "c_h2_3_candidate": {
+    "status": "IMPLEMENTED_HEADSET_STEREO_6DOF_VALIDATION_REQUIRED",
+    "accepted": false,
+    "compiled_by_release_preset": true,
+    "accepted_build_pointer_advanced": false,
+    "build_gate": "HALOMCCVR_HALO2_STEREO6DOF",
+    "build_identity": "Halo2=SAME_FRAME_6DOF",
+    "package_manifest_schema_version": 11,
+    "package_slug": "halo2-c3-stereo6dof",
+    "module": "halo2.dll",
+    "scope": "campaign-classic-only-groundhog-excluded",
+    "behavior": "same-game-frame-two-fresh-eye-renders-current-prepared-serial-6dof",
+    "identity_anchor_count": 6,
+    "liveness_anchor_count": 2,
+    "hook_eligible_from_static_evidence": true,
+    "hook_count": 2,
+    "caller_edge_count": 2,
+    "hooks": [
+      {
+        "name": "outer-render-player-window",
+        "rva": "0x007E2130",
+        "required_call_rva": "0x007E1706",
+        "required_return_rva": "0x007E170B",
+        "required_flag": 0,
+        "primary_player_index": 0,
+        "original_calls_per_claimed_game_frame": 1
+      },
+      {
+        "name": "inner-render-view",
+        "rva": "0x007E30D0",
+        "required_call_rva": "0x007E2412",
+        "required_return_rva": "0x007E2417",
+        "original_calls_per_claimed_game_frame": 2,
+        "opaque_arguments_preserved": true
+      }
+    ],
+    "both_eye_renders_per_game_frame": 2,
+    "fresh_eye_count": 2,
+    "both_eye_serial_policy": "current-prepared-serial",
+    "both_eye_render_serials_equal_current_prepared_serial": true,
+    "both_eye_capture_serials_equal_current_prepared_serial": true,
+    "same_game_frame_pair": true,
+    "simultaneous_stereo": true,
+    "same_generation_resource_epoch_and_attempt_required": true,
+    "duplicate_or_missing_eye_allowed": false,
+    "temporal_previous_eye_allowed": false,
+    "temporal_eye_gap_frames": 0,
+    "intentional_cadence_divisor": 1,
+    "per_eye_render_rate_equals_game_frame_rate": true,
+    "supported_refresh_hz": [72, 80, 90, 120, 144],
+    "capabilities": ["Stereo", "RoomScale", "RuntimeModes"],
+    "admission_capabilities": [],
+    "hook_plan": "Halo2StereoCore",
+    "heartbeat_fresh_ms": 500,
+    "controller_input": false,
+    "stereo": true,
+    "six_dof": true,
+    "headset_rotation": true,
+    "headset_translation": true,
+    "controller_aim": false,
+    "head_relative_movement_input": false,
+    "hud": false,
+    "haptics": false,
+    "arm_ik": false,
+    "cutscene_theater": false,
+    "scene_target_redirect": false,
+    "native_symmetric_fov_cover": true,
+    "native_asymmetric_fov_writes": false,
+    "generic_draw_distance_write": false,
+    "world_units_per_meter": 0.3280839895,
+    "runtime_hooks": true,
+    "engine_writes": true,
+    "engine_write_scope": "render-and-raster-position-forward-up-six-12-byte-spans-plus-vertical-fov-two-4-byte-spans-restored",
+    "engine_write_span_count": 8,
+    "engine_pose_write_span_count": 6,
+    "engine_pose_write_span_bytes": 12,
+    "engine_vertical_fov_write_span_count": 2,
+    "engine_vertical_fov_write_span_bytes": 4,
+    "engine_write_restore_required": true,
+    "engine_write_spans": [
+      {
+        "name": "render_camera_position",
+        "window_offset": "0x0C",
+        "camera_field_offset": "0x00",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "render_camera_forward",
+        "window_offset": "0x0C",
+        "camera_field_offset": "0x0C",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "render_camera_up",
+        "window_offset": "0x0C",
+        "camera_field_offset": "0x18",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "render_camera_vertical_fov",
+        "window_offset": "0x0C",
+        "camera_field_offset": "0x28",
+        "bytes": 4,
+        "restored_before_publication": true
+      },
+      {
+        "name": "raster_camera_position",
+        "window_offset": "0x80",
+        "camera_field_offset": "0x00",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "raster_camera_forward",
+        "window_offset": "0x80",
+        "camera_field_offset": "0x0C",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "raster_camera_up",
+        "window_offset": "0x80",
+        "camera_field_offset": "0x18",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "raster_camera_vertical_fov",
+        "window_offset": "0x80",
+        "camera_field_offset": "0x28",
+        "bytes": 4,
+        "restored_before_publication": true
+      }
+    ],
+    "untouched_camera_fields": [
+      "z_near_0x40",
+      "z_far_0x44",
+      "asymmetric_enable_0x58",
+      "frustum_center_x_0x5C",
+      "frustum_center_y_0x60",
+      "frustum_extent_scale_0x64",
+      "pixel_offset_enable_0x68",
+      "pixel_offset_x_0x6C",
+      "pixel_offset_y_0x70"
+    ],
+    "failure_policy": "pre-claim-stock-once; post-claim-restore-all-dirty-spans-and-drop-only-current-pair; camera-core-and-openxr-remain-armed",
+    "halo3_regression_required": true,
+    "remaining_acceptance": [
+      "Halo 2 headset validation proving simultaneous stereo, full headset rotation/translation, and no half-rate cadence",
       "Halo 3 headset regression for shared VR/lifecycle changes"
     ]
   },

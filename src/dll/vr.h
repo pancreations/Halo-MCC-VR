@@ -5,13 +5,21 @@
 
 struct IDXGISwapChain;
 
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
-// C-H2-2 publishes only the runtime-measured eye offsets needed for binocular
-// geometry. Head orientation/translation deliberately remain stock until the
-// stereo image path has passed independently in the headset.
+#ifndef HALOMCCVR_HALO2_STEREO6DOF
+#define HALOMCCVR_HALO2_STEREO6DOF 0
+#endif
+
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO || \
+    HALOMCCVR_HALO2_STEREO6DOF
+// One immutable, exact-prepared-serial tracking sample for Halo 2's two-eye
+// render transaction. Publication is double-buffered and lock-free so the
+// render hooks never enter the tracking critical section or mix two frames.
 struct Halo2VrEyeSnapshot
 {
     float position[3]{};
+    float orientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float fov[4]{};
+    bool fovValid = false;
 };
 
 struct Halo2VrRenderSnapshot
@@ -19,7 +27,15 @@ struct Halo2VrRenderSnapshot
     uint64_t preparedSerial = 0;
     uint32_t generation = 0;
     Halo2VrEyeSnapshot eyes[2]{};
+    float headOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float headPosition[3]{};
+    bool headPoseValid = false;
 };
+#endif
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+using Halo2SynchronousVrEyeSnapshot = Halo2VrEyeSnapshot;
+using Halo2SynchronousVrRenderSnapshot = Halo2VrRenderSnapshot;
 #endif
 
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
@@ -94,6 +110,34 @@ void VR_ResetHalo2TemporalStereo();
 // Truthful raster-cover publication for the adjacent temporal pair admitted by
 // C-H2-2. Returns false for a partial, stale, non-adjacent, or foreign pair.
 bool VR_Halo2GetTemporalHalfFovs(
+    uint32_t generation, uint64_t preparedSerial,
+    float halfX[2], float halfY[2]);
+#endif
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+// Exact-current-serial tracking packet consumed by Halo 2's synchronous outer
+// owner. Every getter is lock-free and rejects a publication rollover.
+bool VR_Halo2GetSynchronousRenderSnapshot(
+    Halo2SynchronousVrRenderSnapshot& snapshot);
+// The game core resolves the title-proven final-output RTV outside its hot
+// hooks and lends that raw pointer for this synchronous render transaction.
+// No COM call, allocation, lock, scan, or log occurs in these functions.
+bool VR_Halo2BeginSynchronousPair(
+    uint32_t generation, uint64_t preparedSerial,
+    ID3D11RenderTargetView* finalRtv);
+bool VR_Halo2BeginSynchronousEye(
+    uint32_t generation, uint64_t preparedSerial, int eye);
+bool VR_Halo2CompleteSynchronousEye(
+    uint32_t generation, uint64_t preparedSerial, int eye,
+    float halfFovX, float halfFovY);
+bool VR_Halo2CompleteSynchronousPair(
+    uint32_t generation, uint64_t preparedSerial);
+void VR_Halo2InvalidateSynchronousPair(
+    uint32_t generation, uint64_t preparedSerial);
+void VR_ResetHalo2SynchronousStereo();
+// Exact pair admission and raster-cover publication. Both eyes, the pair
+// token, title generation, and cache-resource epoch must name this serial.
+bool VR_Halo2GetSynchronousHalfFovs(
     uint32_t generation, uint64_t preparedSerial,
     float halfX[2], float halfY[2]);
 #endif

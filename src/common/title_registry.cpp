@@ -11,6 +11,9 @@
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
 #define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
 #endif
+#ifndef HALOMCCVR_HALO2_STEREO6DOF
+#define HALOMCCVR_HALO2_STEREO6DOF 0
+#endif
 
 static_assert(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 0 ||
               HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 1);
@@ -73,9 +76,13 @@ namespace
         TitleCapability_Haptics;
     constexpr uint32_t kHalo4AdmissionCapabilities =
         TitleCapability_ControllerInput;
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
-    // C-H2-2 owns binocular position geometry only. It intentionally grants no
-    // head/room-scale, input, aim, HUD, haptics, or cutscene behavior.
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // C-H2-3 owns same-frame binocular geometry and headset room-scale only.
+    // Controller input/aim, HUD, haptics and cutscene behavior remain denied.
+    constexpr uint32_t kHalo2Capabilities =
+        TitleCapability_Stereo | TitleCapability_RoomScale |
+        TitleCapability_RuntimeModes;
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     constexpr uint32_t kHalo2Capabilities = TitleCapability_Stereo;
 #else
     constexpr uint32_t kHalo2Capabilities = TitleCapability_None;
@@ -157,7 +164,9 @@ TitleHookPlan TitleRegistry_HookPlan(GameTitle title)
     case GameTitle::HaloReach:
         return TitleHookPlan::ReachCameraCore;
     case GameTitle::Halo2:
-#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#if HALOMCCVR_HALO2_STEREO6DOF
+        return TitleHookPlan::Halo2StereoCore;
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
         return TitleHookPlan::Halo2TemporalStereo;
 #else
         return TitleHookPlan::None;

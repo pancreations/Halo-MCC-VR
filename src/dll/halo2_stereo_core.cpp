@@ -1,0 +1,2232 @@
+#include "halo2_stereo_core.h"
+
+#include <windows.h>
+
+#include <MinHook.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstring>
+#include <intrin.h>
+
+#include "../common/config.h"
+#include "../common/halo2_render_logic.h"
+#include "../common/log.h"
+#include "vr.h"
+
+#ifndef HALOMCCVR_HALO2_STEREO6DOF
+#define HALOMCCVR_HALO2_STEREO6DOF 0
+#endif
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+
+#pragma intrinsic(_ReturnAddress)
+
+namespace
+{
+    constexpr uint64_t kTelemetryPeriodMs = 2000;
+    constexpr unsigned kCallbackDrainLimitMs = 2000;
+    constexpr unsigned kOwnedCameraSpanCount = 8;
+    constexpr uint32_t kHeadReferenceResetSerialMask = 0x3FFFFFFFu;
+    constexpr uint32_t kHalo2RetailRenderViewReturnRva =
+        kHalo2RetailRenderViewCallRva + 5;
+
+    // E-H2-2: the final-output helper's unique load of
+    // global_d3d_surface_backbuffer. The signed disp32 at +3 is based at +7.
+    constexpr uint32_t kHalo2FinalOutputBackbufferLoadRva = 0x00975297;
+    constexpr uint32_t kHalo2BackbufferRtvSlotRva = 0x0197EE58;
+    constexpr char kHalo2BackbufferRtvLoadPattern[] =
+        "48 8B 1D ?? ?? ?? ?? 48 89 B4 24 B0 00 00 00 48 8B CB "
+        "0F 29 B4 24 90 00 00 00 0F 29 BC 24 80 00 00 00";
+
+    static_assert(kHalo2RetailRenderViewReturnRva == 0x007E2417);
+    static_assert(std::atomic<uint64_t>::is_always_lock_free);
+    static_assert(std::atomic<uintptr_t>::is_always_lock_free);
+
+    using Halo2RenderViewFn = void (__fastcall *)(
+        uint32_t, void*, void*, uint8_t,
+        uint32_t, uint32_t, uint8_t, float (*)[4],
+        uint16_t, int32_t, uint32_t, uint8_t, uint32_t,
+        void*, uint8_t, int16_t, void*, uint8_t, void*);
+
+    enum class CoreState : uint8_t
+    {
+        StockFallback = 0,
+        CleanupRequired,
+        Installed,
+    };
+
+    struct HookTelemetry
+    {
+        std::atomic<uint64_t> outerCallbacks{};
+        std::atomic<uint64_t> innerCallbacks{};
+        std::atomic<uint64_t> stockOuterCalls{};
+        std::atomic<uint64_t> stockInnerCalls{};
+        std::atomic<uint64_t> missingSnapshots{};
+        std::atomic<uint64_t> foreignOuterCallers{};
+        std::atomic<uint64_t> foreignInnerCallers{};
+        std::atomic<uint64_t> invalidWindows{};
+        std::atomic<uint64_t> duplicateSerials{};
+        std::atomic<uint64_t> claimedPairs{};
+        std::atomic<uint64_t> claimedInnerCalls{};
+        std::atomic<uint64_t> renderedEyes{};
+        std::atomic<uint64_t> completedPairs{};
+        std::atomic<uint64_t> droppedPairs{};
+        std::atomic<uint64_t> restoreFailures{};
+        std::atomic<uint64_t> transactionExceptions{};
+    };
+
+    struct TelemetrySnapshot
+    {
+        uint64_t outerCallbacks = 0;
+        uint64_t innerCallbacks = 0;
+        uint64_t stockOuterCalls = 0;
+        uint64_t stockInnerCalls = 0;
+        uint64_t missingSnapshots = 0;
+        uint64_t foreignOuterCallers = 0;
+        uint64_t foreignInnerCallers = 0;
+        uint64_t invalidWindows = 0;
+        uint64_t duplicateSerials = 0;
+        uint64_t claimedPairs = 0;
+        uint64_t claimedInnerCalls = 0;
+        uint64_t renderedEyes = 0;
+        uint64_t completedPairs = 0;
+        uint64_t droppedPairs = 0;
+        uint64_t restoreFailures = 0;
+        uint64_t transactionExceptions = 0;
+    };
+
+    struct CameraReadback
+    {
+        Halo2CameraBasis basis{};
+        float verticalFov = 0.0f;
+        Halo2CameraRectangle viewport{};
+        uint8_t asymmetricEnable = 0;
+        uint8_t pixelOffsetEnable = 0;
+    };
+
+    struct EyeCameraPair
+    {
+        Halo2CameraBasis render{};
+        Halo2CameraBasis raster{};
+    };
+
+    struct HeadReference
+    {
+        float orientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+        float position[3]{};
+    };
+
+    struct StereoScope
+    {
+        uint32_t generation = 0;
+        uint32_t headReferenceResetSerial = 0;
+        uint64_t serial = 0;
+        bool rightEyeFirst = false;
+        bool pairBegun = false;
+        bool invalidated = false;
+        bool outerReturned = false;
+        bool pairCompleted = false;
+        bool exceptionSeen = false;
+        uint32_t exactInnerInvocations = 0;
+        uint32_t renderViewCalls = 0;
+        uint32_t renderViewReturns = 0;
+        uint8_t completedEyeMask = 0;
+        void* window = nullptr;
+        void* renderCamera = nullptr;
+        void* rasterCamera = nullptr;
+        Halo2CameraBasis savedRender{};
+        Halo2CameraBasis savedRaster{};
+        float savedRenderVerticalFov = 0.0f;
+        float savedRasterVerticalFov = 0.0f;
+        float renderCoverVerticalFov = 0.0f;
+        float rasterCoverVerticalFov = 0.0f;
+        EyeCameraPair eyes[kHalo2EyeCount]{};
+        Halo2SymmetricHalfFovs halfFovs{};
+        bool dirty[kOwnedCameraSpanCount]{};
+    };
+
+    HookTelemetry g_telemetry;
+    TelemetrySnapshot g_lastTelemetry{};
+    uint64_t g_lastTelemetryMs = 0;
+
+    std::atomic<bool> g_installed{false};
+    std::atomic<bool> g_armed{false};
+    std::atomic<bool> g_stereoRequested{false};
+    std::atomic<bool> g_levelLive{false};
+    std::atomic<bool> g_coldObservationPassed{false};
+    std::atomic<bool> g_teardownRequested{false};
+    std::atomic<bool> g_rightEyeFirst{false};
+    std::atomic<uint32_t> g_generation{0};
+    std::atomic<uint32_t> g_vrFailureGeneration{0};
+    std::atomic<uintptr_t> g_moduleBase{0};
+    std::atomic<uintptr_t> g_outerOriginalAddress{0};
+    std::atomic<uintptr_t> g_innerOriginalAddress{0};
+    std::atomic<uintptr_t> g_backbufferRtvSlotAddress{0};
+    std::atomic<uint32_t> g_activeCallbacks{0};
+    std::atomic<uint64_t> g_seenSerial{0};
+
+    // Low bits: 0 empty/old, 1 writer owns publication, 2 ready. The upper
+    // bits are the module generation. Components are stored as atomic bit
+    // patterns so a worker transition cannot race an ordinary float access.
+    std::atomic<uint64_t> g_headReferenceState{0};
+    std::atomic<uint32_t> g_headReferenceBits[7]{};
+    std::atomic<uint32_t> g_headReferenceResetSerial{1};
+
+    HMODULE g_moduleReference = nullptr;
+    void* g_outerTarget = nullptr;
+    void* g_innerTarget = nullptr;
+    CoreState g_coreState = CoreState::StockFallback;
+    uint32_t g_rejectedGeneration = 0;
+    uint32_t g_pinFailureLoggedGeneration = 0;
+
+    thread_local StereoScope* g_stereoScope = nullptr;
+    thread_local uint32_t g_suppressedOuterDepth = 0;
+    thread_local uint32_t g_innerDepth = 0;
+
+    void ResetHeadReferenceAtomic() noexcept
+    {
+        g_headReferenceResetSerial.fetch_add(1, std::memory_order_acq_rel);
+        g_headReferenceState.store(0, std::memory_order_release);
+    }
+
+    Halo2RenderPlayerWindowFn OriginalPlayerWindow() noexcept
+    {
+        return reinterpret_cast<Halo2RenderPlayerWindowFn>(
+            g_outerOriginalAddress.load(std::memory_order_acquire));
+    }
+
+    Halo2RenderViewFn OriginalRenderView() noexcept
+    {
+        return reinterpret_cast<Halo2RenderViewFn>(
+            g_innerOriginalAddress.load(std::memory_order_acquire));
+    }
+
+    uint32_t FloatBits(float value) noexcept
+    {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return bits;
+    }
+
+    float BitsFloat(uint32_t bits) noexcept
+    {
+        float value = 0.0f;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+
+    bool NormalizeQuaternion(const float input[4], float output[4]) noexcept
+    {
+        if (!input || !output)
+            return false;
+        float lengthSquared = 0.0f;
+        for (int component = 0; component < 4; ++component)
+        {
+            if (!std::isfinite(input[component]))
+                return false;
+            lengthSquared += input[component] * input[component];
+        }
+        if (!std::isfinite(lengthSquared) || lengthSquared < 1.0e-8f)
+            return false;
+        const float inverseLength = 1.0f / std::sqrt(lengthSquared);
+        for (int component = 0; component < 4; ++component)
+            output[component] = input[component] * inverseLength;
+        return true;
+    }
+
+    bool ValidHeadPose(
+        const float orientation[4], const float position[3]) noexcept
+    {
+        float normalized[4]{};
+        if (!NormalizeQuaternion(orientation, normalized) || !position)
+            return false;
+        for (int axis = 0; axis < 3; ++axis)
+            if (!std::isfinite(position[axis]))
+                return false;
+        return true;
+    }
+
+    bool AcquireHeadReference(
+        uint32_t generation, const float orientation[4],
+        const float position[3], HeadReference& output,
+        uint32_t& outputResetSerial) noexcept
+    {
+        if (!generation || !ValidHeadPose(orientation, position))
+            return false;
+
+        constexpr uint64_t kPublishing = 1;
+        constexpr uint64_t kReady = 2;
+        const uint32_t resetSerial =
+            g_headReferenceResetSerial.load(std::memory_order_acquire) &
+            kHeadReferenceResetSerialMask;
+        const uint64_t referenceKey =
+            (static_cast<uint64_t>(generation) << 32) |
+            (static_cast<uint64_t>(resetSerial) << 2);
+        const uint64_t publishing = referenceKey | kPublishing;
+        const uint64_t ready = referenceKey | kReady;
+
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            uint64_t state =
+                g_headReferenceState.load(std::memory_order_acquire);
+            if (state == ready)
+            {
+                HeadReference candidate{};
+                for (int component = 0; component < 4; ++component)
+                {
+                    candidate.orientation[component] = BitsFloat(
+                        g_headReferenceBits[component].load(
+                            std::memory_order_relaxed));
+                }
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    candidate.position[axis] = BitsFloat(
+                        g_headReferenceBits[4 + axis].load(
+                            std::memory_order_relaxed));
+                }
+                if (g_headReferenceState.load(std::memory_order_acquire) !=
+                        ready ||
+                    (g_headReferenceResetSerial.load(
+                         std::memory_order_acquire) &
+                     kHeadReferenceResetSerialMask) !=
+                        resetSerial ||
+                    !ValidHeadPose(
+                        candidate.orientation, candidate.position))
+                {
+                    continue;
+                }
+                output = candidate;
+                outputResetSerial = resetSerial;
+                return true;
+            }
+            if ((state & 3u) == kPublishing)
+                return false;
+            if (!g_headReferenceState.compare_exchange_strong(
+                    state, publishing, std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                continue;
+            }
+
+            float normalized[4]{};
+            NormalizeQuaternion(orientation, normalized);
+            for (int component = 0; component < 4; ++component)
+            {
+                g_headReferenceBits[component].store(
+                    FloatBits(normalized[component]),
+                    std::memory_order_relaxed);
+                output.orientation[component] = normalized[component];
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                g_headReferenceBits[4 + axis].store(
+                    FloatBits(position[axis]), std::memory_order_relaxed);
+                output.position[axis] = position[axis];
+            }
+            if ((g_headReferenceResetSerial.load(
+                     std::memory_order_acquire) &
+                 kHeadReferenceResetSerialMask) !=
+                resetSerial)
+            {
+                uint64_t expected = publishing;
+                (void)g_headReferenceState.compare_exchange_strong(
+                    expected, 0, std::memory_order_acq_rel,
+                    std::memory_order_acquire);
+                return false;
+            }
+            uint64_t expected = publishing;
+            if (!g_headReferenceState.compare_exchange_strong(
+                    expected, ready, std::memory_order_release,
+                    std::memory_order_acquire) ||
+                (g_headReferenceResetSerial.load(
+                     std::memory_order_acquire) &
+                 kHeadReferenceResetSerialMask) != resetSerial ||
+                g_headReferenceState.load(std::memory_order_acquire) != ready)
+            {
+                return false;
+            }
+            outputResetSerial = resetSerial;
+            return true;
+        }
+        return false;
+    }
+
+    bool BuildEyeCamera(
+        const Halo2CameraBasis& stock, const HeadReference& reference,
+        const Halo2SynchronousVrRenderSnapshot& snapshot, int eye,
+        Halo2CameraBasis& output) noexcept
+    {
+        if (eye < kHalo2LeftEye || eye > kHalo2RightEye ||
+            !snapshot.headPoseValid || !Halo2ValidateCameraBasis(stock))
+        {
+            return false;
+        }
+
+        Halo2TrackedHeadInput head{};
+        std::memcpy(
+            head.orientation, snapshot.headOrientation,
+            sizeof(head.orientation));
+        std::memcpy(
+            head.position, snapshot.headPosition,
+            sizeof(head.position));
+        std::memcpy(
+            head.referenceOrientation, reference.orientation,
+            sizeof(head.referenceOrientation));
+        std::memcpy(
+            head.referencePosition, reference.position,
+            sizeof(head.referencePosition));
+
+        Halo2CameraBasis trackedCenter{};
+        return Halo2BuildTrackedCenterCamera(stock, head, trackedCenter) &&
+            Halo2BuildSynchronousEyeCamera(
+                trackedCenter, snapshot.eyes[eye].position,
+                snapshot.eyes[eye].orientation, output);
+    }
+
+    bool DeriveRuntimeCover(
+        const Halo2SynchronousVrRenderSnapshot& snapshot,
+        const Halo2CameraRectangle& rectangle,
+        float& verticalFov, Halo2SymmetricHalfFovs& halfFovs) noexcept
+    {
+        constexpr float kMaximumFovAngle = 1.56f;
+        const int width = static_cast<int>(rectangle.x1) - rectangle.x0;
+        const int height = static_cast<int>(rectangle.y1) - rectangle.y0;
+        if (width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        float requiredTanX = 0.0f;
+        float requiredTanY = 0.0f;
+        for (int eye = 0; eye < kHalo2EyeCount; ++eye)
+        {
+            const Halo2SynchronousVrEyeSnapshot& view = snapshot.eyes[eye];
+            if (!view.fovValid || !(view.fov[0] < 0.0f) ||
+                !(view.fov[1] > 0.0f) || !(view.fov[2] > 0.0f) ||
+                !(view.fov[3] < 0.0f))
+            {
+                return false;
+            }
+            for (float angle : view.fov)
+            {
+                if (!std::isfinite(angle) ||
+                    std::fabs(angle) >= kMaximumFovAngle)
+                {
+                    return false;
+                }
+            }
+            requiredTanX = (std::max)(requiredTanX,
+                (std::max)(std::fabs(std::tan(view.fov[0])),
+                           std::fabs(std::tan(view.fov[1]))));
+            requiredTanY = (std::max)(requiredTanY,
+                (std::max)(std::fabs(std::tan(view.fov[2])),
+                           std::fabs(std::tan(view.fov[3]))));
+        }
+
+        Halo2SymmetricHalfFovs stockHalfFovs{};
+        // The title's builder defines horizontal extent from vertical FOV and
+        // this rectangle. Derive its tangent aspect through the proven helper
+        // instead of assuming that pixel aspect and tangent aspect coincide.
+        if (!Halo2DeriveSymmetricHalfFovs(
+                1.0f, rectangle, stockHalfFovs))
+        {
+            return false;
+        }
+        const float stockTanY = std::tan(stockHalfFovs.vertical);
+        const float stockTanX = std::tan(stockHalfFovs.horizontal);
+        const float tangentAspect = stockTanX / stockTanY;
+        if (!std::isfinite(tangentAspect) || tangentAspect <= 1.0e-4f)
+            return false;
+        constexpr float kCoverMargin = 1.002f;
+        const float verticalTangent = (std::max)(
+            requiredTanY, requiredTanX / tangentAspect) * kCoverMargin;
+        const float candidateFov = 2.0f * std::atan(verticalTangent);
+        Halo2SymmetricHalfFovs candidateHalfFovs{};
+        if (!std::isfinite(candidateFov) ||
+            !Halo2DeriveSymmetricHalfFovs(
+                candidateFov, rectangle, candidateHalfFovs))
+        {
+            return false;
+        }
+        const float actualTanX = std::tan(candidateHalfFovs.horizontal);
+        const float actualTanY = std::tan(candidateHalfFovs.vertical);
+        constexpr float kCoverEpsilon = 1.0e-4f;
+        if (actualTanX + kCoverEpsilon < requiredTanX ||
+            actualTanY + kCoverEpsilon < requiredTanY)
+        {
+            return false;
+        }
+        verticalFov = candidateFov;
+        halfFovs = candidateHalfFovs;
+        return true;
+    }
+
+    bool ReadPlayerIndex(void* window, int32_t& playerIndex) noexcept
+    {
+        if (!window)
+            return false;
+        __try
+        {
+            std::memcpy(
+                &playerIndex,
+                static_cast<const uint8_t*>(window) +
+                    kHalo2WindowPlayerIndexOffset,
+                sizeof(playerIndex));
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool ReadCamera(
+        void* window, uint32_t cameraOffset, CameraReadback& output) noexcept
+    {
+        if (!window || reinterpret_cast<uintptr_t>(window) >
+                UINTPTR_MAX - kHalo2RetailWindowStride)
+        {
+            return false;
+        }
+        CameraReadback candidate{};
+        __try
+        {
+            const auto* camera = static_cast<const uint8_t*>(window) +
+                cameraOffset;
+            std::memcpy(
+                &candidate.basis, camera + kHalo2CameraPositionOffset,
+                sizeof(candidate.basis));
+            std::memcpy(
+                &candidate.verticalFov,
+                camera + kHalo2CameraVerticalFovOffset,
+                sizeof(candidate.verticalFov));
+            std::memcpy(
+                &candidate.viewport,
+                camera + kHalo2CameraViewportRectangleOffset,
+                sizeof(candidate.viewport));
+            std::memcpy(
+                &candidate.asymmetricEnable,
+                camera + kHalo2CameraAsymmetricEnableOffset,
+                sizeof(candidate.asymmetricEnable));
+            std::memcpy(
+                &candidate.pixelOffsetEnable,
+                camera + kHalo2CameraPixelOffsetEnableOffset,
+                sizeof(candidate.pixelOffsetEnable));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+        output = candidate;
+        return true;
+    }
+
+    bool GuardedCopyExact(
+        void* destination, const void* source, size_t bytes) noexcept
+    {
+        if (!destination || !source ||
+            (bytes != kHalo2CameraVectorBytes && bytes != sizeof(float)))
+            return false;
+        __try
+        {
+            std::memcpy(destination, source, bytes);
+            return std::memcmp(destination, source, bytes) == 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    uint32_t OwnedSpanRelativeOffset(unsigned index) noexcept
+    {
+        const uint32_t cameraOffset = index < 4
+            ? kHalo2RenderCameraOffset
+            : kHalo2RasterCameraOffset;
+        const unsigned fieldIndex = index % 4;
+        const uint32_t vectorOffset = fieldIndex == 0
+            ? kHalo2CameraPositionOffset
+            : (fieldIndex == 1
+                   ? kHalo2CameraForwardOffset
+                   : (fieldIndex == 2
+                          ? kHalo2CameraUpOffset
+                          : kHalo2CameraVerticalFovOffset));
+        return cameraOffset + vectorOffset;
+    }
+
+    void* OwnedSpanAddress(const StereoScope& scope, unsigned index) noexcept
+    {
+        return static_cast<uint8_t*>(scope.window) +
+            OwnedSpanRelativeOffset(index);
+    }
+
+    const float* SavedSpan(const StereoScope& scope, unsigned index) noexcept
+    {
+        const Halo2CameraBasis& camera =
+            index < 4 ? scope.savedRender : scope.savedRaster;
+        switch (index % 4)
+        {
+        case 0: return camera.position;
+        case 1: return camera.forward;
+        case 2: return camera.up;
+        default:
+            return index < 4
+                ? &scope.savedRenderVerticalFov
+                : &scope.savedRasterVerticalFov;
+        }
+    }
+
+    const float* EyeSpan(
+        const StereoScope& scope, int eye, unsigned index) noexcept
+    {
+        const Halo2CameraBasis& camera =
+            index < 4 ? scope.eyes[eye].render : scope.eyes[eye].raster;
+        switch (index % 4)
+        {
+        case 0: return camera.position;
+        case 1: return camera.forward;
+        case 2: return camera.up;
+        default:
+            return index < 4
+                ? &scope.renderCoverVerticalFov
+                : &scope.rasterCoverVerticalFov;
+        }
+    }
+
+    size_t OwnedSpanBytes(unsigned index) noexcept
+    {
+        return index % 4 == 3
+            ? sizeof(float)
+            : kHalo2CameraVectorBytes;
+    }
+
+    bool OwnedSpanAllowed(unsigned index) noexcept
+    {
+        Halo2CameraPoseWrite expected = Halo2CameraPoseWrite::Reject;
+        switch (index)
+        {
+        case 0: expected = Halo2CameraPoseWrite::RenderPosition; break;
+        case 1: expected = Halo2CameraPoseWrite::RenderForward; break;
+        case 2: expected = Halo2CameraPoseWrite::RenderUp; break;
+        case 3: expected = Halo2CameraPoseWrite::RenderVerticalFov; break;
+        case 4: expected = Halo2CameraPoseWrite::RasterPosition; break;
+        case 5: expected = Halo2CameraPoseWrite::RasterForward; break;
+        case 6: expected = Halo2CameraPoseWrite::RasterUp; break;
+        case 7: expected = Halo2CameraPoseWrite::RasterVerticalFov; break;
+        default: return false;
+        }
+        return SelectHalo2CameraPoseWrite(
+                   OwnedSpanRelativeOffset(index), OwnedSpanBytes(index)) ==
+            expected;
+    }
+
+    bool RestoreOwnedSpans(StereoScope& scope) noexcept
+    {
+        bool restored = true;
+        for (unsigned index = 0; index < kOwnedCameraSpanCount; ++index)
+        {
+            if (!scope.dirty[index])
+                continue;
+            if (!OwnedSpanAllowed(index))
+            {
+                restored = false;
+                continue;
+            }
+            const bool spanRestored = GuardedCopyExact(
+                OwnedSpanAddress(scope, index), SavedSpan(scope, index),
+                OwnedSpanBytes(index));
+            if (spanRestored)
+                scope.dirty[index] = false;
+            else
+                restored = false;
+        }
+        if (!restored)
+            g_telemetry.restoreFailures.fetch_add(1, std::memory_order_relaxed);
+        return restored;
+    }
+
+    bool WriteEyeSpans(StereoScope& scope, int eye) noexcept
+    {
+        for (unsigned index = 0; index < kOwnedCameraSpanCount; ++index)
+        {
+            if (!OwnedSpanAllowed(index))
+                return false;
+            // Mark before the guarded write. Even a partial fault is followed
+            // by an independent restore attempt for this and every prior span.
+            scope.dirty[index] = true;
+            if (!GuardedCopyExact(
+                    OwnedSpanAddress(scope, index), EyeSpan(scope, eye, index),
+                    OwnedSpanBytes(index)))
+            {
+                RestoreOwnedSpans(scope);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool WriteOuterCoverFovs(StereoScope& scope) noexcept
+    {
+        constexpr unsigned kRenderFovSpan = 3;
+        constexpr unsigned kRasterFovSpan = 7;
+        const unsigned spans[2] = {kRenderFovSpan, kRasterFovSpan};
+        for (unsigned index : spans)
+        {
+            if (!OwnedSpanAllowed(index))
+                return false;
+            scope.dirty[index] = true;
+            if (!GuardedCopyExact(
+                    OwnedSpanAddress(scope, index), EyeSpan(scope, 0, index),
+                    OwnedSpanBytes(index)))
+            {
+                RestoreOwnedSpans(scope);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool ClaimSerial(uint64_t serial) noexcept
+    {
+        if (!serial)
+            return false;
+        uint64_t observed = g_seenSerial.load(std::memory_order_acquire);
+        while (observed < serial)
+        {
+            if (g_seenSerial.compare_exchange_weak(
+                    observed, serial, std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void InvalidateScope(StereoScope& scope) noexcept
+    {
+        if (scope.invalidated)
+            return;
+        scope.invalidated = true;
+        scope.pairCompleted = false;
+        if (scope.generation && scope.serial)
+        {
+            __try
+            {
+                VR_Halo2InvalidateSynchronousPair(
+                    scope.generation, scope.serial);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                scope.exceptionSeen = true;
+                g_telemetry.transactionExceptions.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    bool HotStateMatches(uint32_t generation) noexcept
+    {
+        return generation &&
+            g_installed.load(std::memory_order_acquire) &&
+            g_armed.load(std::memory_order_acquire) &&
+            g_stereoRequested.load(std::memory_order_acquire) &&
+            g_levelLive.load(std::memory_order_acquire) &&
+            g_coldObservationPassed.load(std::memory_order_acquire) &&
+            !g_teardownRequested.load(std::memory_order_acquire) &&
+            g_generation.load(std::memory_order_acquire) == generation;
+    }
+
+    bool HeadReferenceIsCurrent(const StereoScope& scope) noexcept
+    {
+        return (g_headReferenceResetSerial.load(
+                    std::memory_order_acquire) &
+                kHeadReferenceResetSerialMask) ==
+            scope.headReferenceResetSerial;
+    }
+
+    bool SnapshotTokenIsCurrent(
+        uint32_t generation, uint64_t serial) noexcept
+    {
+        Halo2SynchronousVrRenderSnapshot current{};
+        if (!HotStateMatches(generation))
+            return false;
+        __try
+        {
+            return VR_Halo2GetSynchronousRenderSnapshot(current) &&
+                current.generation == generation &&
+                current.preparedSerial == serial;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool ReadCurrentBackbufferRtv(
+        ID3D11RenderTargetView*& output) noexcept
+    {
+        output = nullptr;
+        const uintptr_t slot =
+            g_backbufferRtvSlotAddress.load(std::memory_order_acquire);
+        if (!slot)
+            return false;
+        __try
+        {
+            std::memcpy(&output, reinterpret_cast<const void*>(slot),
+                        sizeof(output));
+            return output != nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            output = nullptr;
+            return false;
+        }
+    }
+
+    void RejectToken(uint32_t generation, uint64_t serial) noexcept
+    {
+        if (!generation || !serial)
+            return;
+        __try
+        {
+            VR_Halo2InvalidateSynchronousPair(generation, serial);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_telemetry.transactionExceptions.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+
+    bool GuardedBeginPair(
+        uint32_t generation, uint64_t serial,
+        ID3D11RenderTargetView* backbufferRtv) noexcept
+    {
+        __try
+        {
+            return VR_Halo2BeginSynchronousPair(
+                generation, serial, backbufferRtv);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool GuardedBeginRasterEye(
+        uint32_t generation, uint64_t serial, int eye) noexcept
+    {
+        __try
+        {
+            return VR_Halo2BeginSynchronousEye(
+                generation, serial, eye);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool GuardedEndRasterEye() noexcept
+    {
+        __try
+        {
+            VR_EndRasterEye();
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool GuardedCompleteEye(
+        uint32_t generation, uint64_t serial, int eye,
+        const Halo2SymmetricHalfFovs& halfFovs) noexcept
+    {
+        __try
+        {
+            return VR_Halo2CompleteSynchronousEye(
+                generation, serial, eye,
+                halfFovs.horizontal, halfFovs.vertical);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool GuardedCompletePair(
+        uint32_t generation, uint64_t serial) noexcept
+    {
+        __try
+        {
+            return VR_Halo2CompleteSynchronousPair(generation, serial);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    int NoteClaimedTransactionException() noexcept
+    {
+        g_telemetry.transactionExceptions.fetch_add(
+            1, std::memory_order_relaxed);
+        if (g_stereoScope)
+        {
+            g_stereoScope->exceptionSeen = true;
+            InvalidateScope(*g_stereoScope);
+            return EXCEPTION_EXECUTE_HANDLER;
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    void CallStockInner(
+        Halo2RenderViewFn original,
+        uint32_t argument01, void* argument02, void* argument03,
+        uint8_t argument04, uint32_t argument05, uint32_t argument06,
+        uint8_t argument07, float (*argument08)[4], uint16_t argument09,
+        int32_t argument10, uint32_t argument11, uint8_t argument12,
+        uint32_t argument13, void* argument14, uint8_t argument15,
+        int16_t argument16, void* argument17, uint8_t argument18,
+        void* argument19)
+    {
+        if (!original)
+            return;
+        g_telemetry.stockInnerCalls.fetch_add(1, std::memory_order_relaxed);
+        original(
+            argument01, argument02, argument03, argument04,
+            argument05, argument06, argument07, argument08,
+            argument09, argument10, argument11, argument12, argument13,
+            argument14, argument15, argument16, argument17, argument18,
+            argument19);
+    }
+
+    void Halo2RenderViewDetourBody(
+        uintptr_t callerReturn,
+        uint32_t argument01, void* argument02, void* argument03,
+        uint8_t argument04, uint32_t argument05, uint32_t argument06,
+        uint8_t argument07, float (*argument08)[4], uint16_t argument09,
+        int32_t argument10, uint32_t argument11, uint8_t argument12,
+        uint32_t argument13, void* argument14, uint8_t argument15,
+        int16_t argument16, void* argument17, uint8_t argument18,
+        void* argument19)
+    {
+        g_telemetry.innerCallbacks.fetch_add(1, std::memory_order_relaxed);
+        Halo2RenderViewFn original = OriginalRenderView();
+        if (!original)
+            return;
+
+        StereoScope* scope = g_stereoScope;
+        if (!scope || g_suppressedOuterDepth || g_innerDepth)
+        {
+            CallStockInner(
+                original, argument01, argument02, argument03, argument04,
+                argument05, argument06, argument07, argument08, argument09,
+                argument10, argument11, argument12, argument13, argument14,
+                argument15, argument16, argument17, argument18, argument19);
+            return;
+        }
+
+        const uintptr_t moduleBase =
+            g_moduleBase.load(std::memory_order_acquire);
+        const bool exactCaller = moduleBase &&
+            callerReturn == moduleBase + kHalo2RetailRenderViewReturnRva;
+        if (!exactCaller)
+        {
+            g_telemetry.foreignInnerCallers.fetch_add(
+                1, std::memory_order_relaxed);
+            CallStockInner(
+                original, argument01, argument02, argument03, argument04,
+                argument05, argument06, argument07, argument08, argument09,
+                argument10, argument11, argument12, argument13, argument14,
+                argument15, argument16, argument17, argument18, argument19);
+            return;
+        }
+
+        const bool argumentsMatch = argument01 == 0 && argument04 == 0 &&
+            argument02 == scope->renderCamera &&
+            argument03 == scope->rasterCamera;
+        if (!argumentsMatch)
+        {
+            InvalidateScope(*scope);
+            if (RestoreOwnedSpans(*scope))
+            {
+                CallStockInner(
+                    original, argument01, argument02, argument03, argument04,
+                    argument05, argument06, argument07, argument08, argument09,
+                    argument10, argument11, argument12, argument13, argument14,
+                    argument15, argument16, argument17, argument18, argument19);
+            }
+            return;
+        }
+
+        ++scope->exactInnerInvocations;
+        if (scope->exactInnerInvocations != 1)
+        {
+            // The proven player edge contains one render_view call. Suppress a
+            // duplicate instead of creating a third game render, and revoke
+            // any pair the first invocation may already have completed.
+            InvalidateScope(*scope);
+            return;
+        }
+        g_telemetry.claimedInnerCalls.fetch_add(
+            1, std::memory_order_relaxed);
+
+        if (!scope->pairBegun || scope->invalidated ||
+            !HeadReferenceIsCurrent(*scope) ||
+            !SnapshotTokenIsCurrent(scope->generation, scope->serial))
+        {
+            InvalidateScope(*scope);
+            if (RestoreOwnedSpans(*scope))
+            {
+                CallStockInner(
+                    original, argument01, argument02, argument03, argument04,
+                    argument05, argument06, argument07, argument08, argument09,
+                    argument10, argument11, argument12, argument13, argument14,
+                    argument15, argument16, argument17, argument18, argument19);
+            }
+            return;
+        }
+
+        bool finalSpansRestored = false;
+        bool rasterScopesClosed = true;
+        ++g_innerDepth;
+        __try
+        {
+            const int firstEye = scope->rightEyeFirst
+                ? kHalo2RightEye
+                : kHalo2LeftEye;
+            for (int pass = 0; pass < kHalo2EyeCount; ++pass)
+            {
+                const int eye = pass == 0 ? firstEye : 1 - firstEye;
+                if (scope->invalidated ||
+                    !HeadReferenceIsCurrent(*scope) ||
+                    !SnapshotTokenIsCurrent(
+                        scope->generation, scope->serial) ||
+                    !WriteEyeSpans(*scope, eye))
+                {
+                    InvalidateScope(*scope);
+                    break;
+                }
+
+                bool rasterEyeBegun = false;
+                bool rasterEyeAttempted = false;
+                bool originalReturned = false;
+                bool rasterEyeEnded = false;
+                bool spansRestored = false;
+                __try
+                {
+                    rasterEyeAttempted = true;
+                    rasterEyeBegun = GuardedBeginRasterEye(
+                        scope->generation, scope->serial, eye);
+                    if (rasterEyeBegun)
+                    {
+                        ++scope->renderViewCalls;
+                        __try
+                        {
+                            original(
+                                argument01, argument02, argument03, argument04,
+                                argument05, argument06, argument07, argument08,
+                                argument09, argument10, argument11, argument12,
+                                argument13, argument14, argument15, argument16,
+                                argument17, argument18, argument19);
+                            originalReturned = true;
+                            ++scope->renderViewReturns;
+                        }
+                        __except (NoteClaimedTransactionException())
+                        {
+                        }
+                    }
+                }
+                __finally
+                {
+                    // End plus all six vector and two FOV restores are
+                    // independently SEH-contained; one bad destination cannot
+                    // strand the other camera or projection input.
+                    if (rasterEyeAttempted)
+                        rasterEyeEnded = GuardedEndRasterEye();
+                    rasterScopesClosed = rasterScopesClosed &&
+                        (!rasterEyeAttempted || rasterEyeEnded);
+                    spansRestored = RestoreOwnedSpans(*scope);
+                }
+
+                if (!rasterEyeBegun || !originalReturned || !rasterEyeEnded ||
+                    !spansRestored || scope->invalidated ||
+                    !HeadReferenceIsCurrent(*scope) ||
+                    !SnapshotTokenIsCurrent(
+                        scope->generation, scope->serial) ||
+                    !GuardedCompleteEye(
+                        scope->generation, scope->serial, eye,
+                        scope->halfFovs))
+                {
+                    InvalidateScope(*scope);
+                    break;
+                }
+
+                scope->completedEyeMask = static_cast<uint8_t>(
+                    scope->completedEyeMask | (1u << eye));
+                g_telemetry.renderedEyes.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        __finally
+        {
+            finalSpansRestored = RestoreOwnedSpans(*scope);
+            --g_innerDepth;
+        }
+
+        // If no eye original ran, preserve the engine's one required
+        // render_view transaction only after every owned field is stock again.
+        // Once either eye has run, failure drops this VR pair; it never adds a
+        // third replay.
+        if (scope->renderViewCalls == 0 && finalSpansRestored &&
+            rasterScopesClosed)
+        {
+            InvalidateScope(*scope);
+            CallStockInner(
+                original, argument01, argument02, argument03, argument04,
+                argument05, argument06, argument07, argument08, argument09,
+                argument10, argument11, argument12, argument13, argument14,
+                argument15, argument16, argument17, argument18, argument19);
+        }
+    }
+
+    __declspec(noinline) void __fastcall Halo2RenderViewDetour(
+        uint32_t argument01, void* argument02, void* argument03,
+        uint8_t argument04, uint32_t argument05, uint32_t argument06,
+        uint8_t argument07, float (*argument08)[4], uint16_t argument09,
+        int32_t argument10, uint32_t argument11, uint8_t argument12,
+        uint32_t argument13, void* argument14, uint8_t argument15,
+        int16_t argument16, void* argument17, uint8_t argument18,
+        void* argument19)
+    {
+        const uintptr_t callerReturn =
+            reinterpret_cast<uintptr_t>(_ReturnAddress());
+        g_activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            __try
+            {
+                Halo2RenderViewDetourBody(
+                    callerReturn,
+                    argument01, argument02, argument03, argument04,
+                    argument05, argument06, argument07, argument08,
+                    argument09, argument10, argument11, argument12,
+                    argument13, argument14, argument15, argument16,
+                    argument17, argument18, argument19);
+            }
+            __except (NoteClaimedTransactionException())
+            {
+            }
+        }
+        __finally
+        {
+            g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
+
+    bool BuildStereoScope(
+        void* window, uint32_t generation, bool rightEyeFirst,
+        const Halo2SynchronousVrRenderSnapshot& snapshot,
+        StereoScope& scope) noexcept
+    {
+        CameraReadback render{};
+        CameraReadback raster{};
+        if (!ReadCamera(window, kHalo2RenderCameraOffset, render) ||
+            !ReadCamera(window, kHalo2RasterCameraOffset, raster) ||
+            !Halo2ValidateCameraBasis(render.basis) ||
+            !Halo2ValidateCameraBasis(raster.basis) ||
+            !Halo2StockProjectionIsSymmetric(
+                render.asymmetricEnable, render.pixelOffsetEnable,
+                raster.asymmetricEnable, raster.pixelOffsetEnable))
+        {
+            return false;
+        }
+
+        float renderCoverVerticalFov = 0.0f;
+        float rasterCoverVerticalFov = 0.0f;
+        Halo2SymmetricHalfFovs renderHalfFovs{};
+        Halo2SymmetricHalfFovs rasterHalfFovs{};
+        if (!DeriveRuntimeCover(
+                snapshot, render.viewport,
+                renderCoverVerticalFov, renderHalfFovs) ||
+            !DeriveRuntimeCover(
+                snapshot, raster.viewport,
+                rasterCoverVerticalFov, rasterHalfFovs))
+        {
+            return false;
+        }
+
+        HeadReference reference{};
+        uint32_t headReferenceResetSerial = 0;
+        if (!snapshot.headPoseValid ||
+            !AcquireHeadReference(
+                generation, snapshot.headOrientation,
+                snapshot.headPosition, reference,
+                headReferenceResetSerial))
+        {
+            return false;
+        }
+
+        EyeCameraPair eyes[kHalo2EyeCount]{};
+        for (int eye = 0; eye < kHalo2EyeCount; ++eye)
+        {
+            if (!BuildEyeCamera(
+                    render.basis, reference, snapshot, eye,
+                    eyes[eye].render) ||
+                !BuildEyeCamera(
+                    raster.basis, reference, snapshot, eye,
+                    eyes[eye].raster))
+            {
+                return false;
+            }
+        }
+
+        StereoScope candidate{};
+        candidate.generation = generation;
+        candidate.headReferenceResetSerial = headReferenceResetSerial;
+        candidate.serial = snapshot.preparedSerial;
+        candidate.rightEyeFirst = rightEyeFirst;
+        candidate.window = window;
+        candidate.renderCamera = static_cast<uint8_t*>(window) +
+            kHalo2RenderCameraOffset;
+        candidate.rasterCamera = static_cast<uint8_t*>(window) +
+            kHalo2RasterCameraOffset;
+        candidate.savedRender = render.basis;
+        candidate.savedRaster = raster.basis;
+        candidate.savedRenderVerticalFov = render.verticalFov;
+        candidate.savedRasterVerticalFov = raster.verticalFov;
+        candidate.renderCoverVerticalFov = renderCoverVerticalFov;
+        candidate.rasterCoverVerticalFov = rasterCoverVerticalFov;
+        candidate.halfFovs = rasterHalfFovs;
+        for (int eye = 0; eye < kHalo2EyeCount; ++eye)
+            candidate.eyes[eye] = eyes[eye];
+        scope = candidate;
+        return true;
+    }
+
+    void CallStockOuter(
+        Halo2RenderPlayerWindowFn original, void* window, uint8_t flag)
+    {
+        if (!original)
+            return;
+        g_telemetry.stockOuterCalls.fetch_add(1, std::memory_order_relaxed);
+        original(window, flag);
+    }
+
+    void RejectCurrentSnapshotIfAny() noexcept
+    {
+        Halo2SynchronousVrRenderSnapshot snapshot{};
+        __try
+        {
+            if (VR_Halo2GetSynchronousRenderSnapshot(snapshot))
+            {
+                RejectToken(snapshot.generation, snapshot.preparedSerial);
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_telemetry.transactionExceptions.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+
+    void Halo2PlayerWindowDetourBody(
+        void* window, uint8_t flag, uintptr_t callerReturn)
+    {
+        g_telemetry.outerCallbacks.fetch_add(1, std::memory_order_relaxed);
+        Halo2RenderPlayerWindowFn original = OriginalPlayerWindow();
+        if (!original)
+            return;
+
+        // Preserve a nested stock player transaction without letting its
+        // render_view invocation borrow the outer transaction's cameras/token.
+        if (g_stereoScope)
+        {
+            ++g_suppressedOuterDepth;
+            __try
+            {
+                CallStockOuter(original, window, flag);
+            }
+            __finally
+            {
+                --g_suppressedOuterDepth;
+            }
+            return;
+        }
+
+        const uint32_t generation =
+            g_generation.load(std::memory_order_acquire);
+        const uintptr_t moduleBase =
+            g_moduleBase.load(std::memory_order_acquire);
+        const bool exactCaller = moduleBase &&
+            callerReturn ==
+                moduleBase + kHalo2RetailRenderPlayerWindowReturnRva;
+        if (!HotStateMatches(generation) || !exactCaller)
+        {
+            if (HotStateMatches(generation) && !exactCaller)
+            {
+                g_telemetry.foreignOuterCallers.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            CallStockOuter(original, window, flag);
+            return;
+        }
+
+        int32_t playerIndex = -1;
+        if (flag != 0 || !ReadPlayerIndex(window, playerIndex) ||
+            playerIndex != 0)
+        {
+            g_telemetry.invalidWindows.fetch_add(
+                1, std::memory_order_relaxed);
+            RejectCurrentSnapshotIfAny();
+            CallStockOuter(original, window, flag);
+            return;
+        }
+
+        Halo2SynchronousVrRenderSnapshot snapshot{};
+        bool snapshotReady = false;
+        __try
+        {
+            snapshotReady =
+                VR_Halo2GetSynchronousRenderSnapshot(snapshot);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            snapshotReady = false;
+        }
+        if (!snapshotReady || !snapshot.preparedSerial ||
+            snapshot.generation != generation)
+        {
+            g_telemetry.missingSnapshots.fetch_add(
+                1, std::memory_order_relaxed);
+            RejectToken(snapshot.generation, snapshot.preparedSerial);
+            CallStockOuter(original, window, flag);
+            return;
+        }
+
+        StereoScope scope{};
+        ID3D11RenderTargetView* exactBackbufferRtv = nullptr;
+        if (!BuildStereoScope(
+                window, generation,
+                g_rightEyeFirst.load(std::memory_order_acquire),
+                snapshot, scope) ||
+            !ReadCurrentBackbufferRtv(exactBackbufferRtv))
+        {
+            g_telemetry.invalidWindows.fetch_add(
+                1, std::memory_order_relaxed);
+            RejectToken(generation, snapshot.preparedSerial);
+            CallStockOuter(original, window, flag);
+            return;
+        }
+
+        if (!ClaimSerial(snapshot.preparedSerial))
+        {
+            g_telemetry.duplicateSerials.fetch_add(
+                1, std::memory_order_relaxed);
+            RejectToken(generation, snapshot.preparedSerial);
+            CallStockOuter(original, window, flag);
+            return;
+        }
+        if (!SnapshotTokenIsCurrent(generation, snapshot.preparedSerial) ||
+            !GuardedBeginPair(
+                generation, snapshot.preparedSerial, exactBackbufferRtv))
+        {
+            RejectToken(generation, snapshot.preparedSerial);
+            CallStockOuter(original, window, flag);
+            return;
+        }
+
+        scope.pairBegun = true;
+        g_telemetry.claimedPairs.fetch_add(1, std::memory_order_relaxed);
+        if (!WriteOuterCoverFovs(scope))
+        {
+            const bool restored = RestoreOwnedSpans(scope);
+            RejectToken(generation, snapshot.preparedSerial);
+            if (restored)
+                CallStockOuter(original, window, flag);
+            else
+                g_telemetry.droppedPairs.fetch_add(
+                    1, std::memory_order_relaxed);
+            return;
+        }
+        g_stereoScope = &scope;
+        __try
+        {
+            __try
+            {
+                CallStockOuter(original, window, flag);
+                scope.outerReturned = true;
+            }
+            __except (NoteClaimedTransactionException())
+            {
+            }
+        }
+        __finally
+        {
+            if (!RestoreOwnedSpans(scope))
+                InvalidateScope(scope);
+            g_stereoScope = nullptr;
+        }
+
+        const bool completeShape = !scope.invalidated &&
+            !scope.exceptionSeen && scope.outerReturned &&
+            HeadReferenceIsCurrent(scope) &&
+            scope.exactInnerInvocations == 1 &&
+            scope.renderViewCalls == kHalo2EyeCount &&
+            scope.renderViewReturns == kHalo2EyeCount &&
+            scope.completedEyeMask ==
+                ((1u << kHalo2EyeCount) - 1u) &&
+            SnapshotTokenIsCurrent(generation, snapshot.preparedSerial);
+        if (completeShape &&
+            GuardedCompletePair(generation, snapshot.preparedSerial))
+        {
+            scope.pairCompleted = true;
+            g_telemetry.completedPairs.fetch_add(
+                1, std::memory_order_relaxed);
+            return;
+        }
+
+        RejectToken(generation, snapshot.preparedSerial);
+        g_telemetry.droppedPairs.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    __declspec(noinline) void __fastcall Halo2PlayerWindowDetour(
+        void* window, uint8_t flag)
+    {
+        const uintptr_t callerReturn =
+            reinterpret_cast<uintptr_t>(_ReturnAddress());
+        g_activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            __try
+            {
+                Halo2PlayerWindowDetourBody(window, flag, callerReturn);
+            }
+            __except (NoteClaimedTransactionException())
+            {
+            }
+        }
+        __finally
+        {
+            g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
+
+    TelemetrySnapshot ReadTelemetry() noexcept
+    {
+        TelemetrySnapshot out{};
+#define H2_READ_TELEMETRY(field) \
+        out.field = g_telemetry.field.load(std::memory_order_relaxed)
+        H2_READ_TELEMETRY(outerCallbacks);
+        H2_READ_TELEMETRY(innerCallbacks);
+        H2_READ_TELEMETRY(stockOuterCalls);
+        H2_READ_TELEMETRY(stockInnerCalls);
+        H2_READ_TELEMETRY(missingSnapshots);
+        H2_READ_TELEMETRY(foreignOuterCallers);
+        H2_READ_TELEMETRY(foreignInnerCallers);
+        H2_READ_TELEMETRY(invalidWindows);
+        H2_READ_TELEMETRY(duplicateSerials);
+        H2_READ_TELEMETRY(claimedPairs);
+        H2_READ_TELEMETRY(claimedInnerCalls);
+        H2_READ_TELEMETRY(renderedEyes);
+        H2_READ_TELEMETRY(completedPairs);
+        H2_READ_TELEMETRY(droppedPairs);
+        H2_READ_TELEMETRY(restoreFailures);
+        H2_READ_TELEMETRY(transactionExceptions);
+#undef H2_READ_TELEMETRY
+        return out;
+    }
+
+    bool TelemetryChanged(
+        const TelemetrySnapshot& left,
+        const TelemetrySnapshot& right) noexcept
+    {
+        return std::memcmp(&left, &right, sizeof(left)) != 0;
+    }
+
+    void ReportTelemetry() noexcept
+    {
+        if (!g_installed.load(std::memory_order_acquire))
+            return;
+        const uint64_t now = GetTickCount64();
+        if (g_lastTelemetryMs && now - g_lastTelemetryMs < kTelemetryPeriodMs)
+            return;
+        const TelemetrySnapshot current = ReadTelemetry();
+        if (TelemetryChanged(current, g_lastTelemetry))
+        {
+            LOG("Halo 2 stereo core: outer=%llu inner=%llu stockOuter=%llu "
+                "stockInner=%llu snapshotMiss=%llu foreignOuter=%llu "
+                "foreignInner=%llu invalid=%llu duplicate=%llu claimed=%llu "
+                "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
+                "restoreFail=%llu exception=%llu",
+                static_cast<unsigned long long>(current.outerCallbacks),
+                static_cast<unsigned long long>(current.innerCallbacks),
+                static_cast<unsigned long long>(current.stockOuterCalls),
+                static_cast<unsigned long long>(current.stockInnerCalls),
+                static_cast<unsigned long long>(current.missingSnapshots),
+                static_cast<unsigned long long>(current.foreignOuterCallers),
+                static_cast<unsigned long long>(current.foreignInnerCallers),
+                static_cast<unsigned long long>(current.invalidWindows),
+                static_cast<unsigned long long>(current.duplicateSerials),
+                static_cast<unsigned long long>(current.claimedPairs),
+                static_cast<unsigned long long>(current.claimedInnerCalls),
+                static_cast<unsigned long long>(current.renderedEyes),
+                static_cast<unsigned long long>(current.completedPairs),
+                static_cast<unsigned long long>(current.droppedPairs),
+                static_cast<unsigned long long>(current.restoreFailures),
+                static_cast<unsigned long long>(current.transactionExceptions));
+            g_lastTelemetry = current;
+        }
+        g_lastTelemetryMs = now;
+    }
+
+    bool IsReadableProtection(DWORD protection) noexcept
+    {
+        if ((protection & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+            return false;
+        switch (protection & 0xFFu)
+        {
+        case PAGE_READONLY:
+        case PAGE_READWRITE:
+        case PAGE_WRITECOPY:
+        case PAGE_EXECUTE_READ:
+        case PAGE_EXECUTE_READWRITE:
+        case PAGE_EXECUTE_WRITECOPY:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool IsExecutableProtection(DWORD protection) noexcept
+    {
+        if ((protection & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+            return false;
+        switch (protection & 0xFFu)
+        {
+        case PAGE_EXECUTE:
+        case PAGE_EXECUTE_READ:
+        case PAGE_EXECUTE_READWRITE:
+        case PAGE_EXECUTE_WRITECOPY:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    struct ParsedPattern
+    {
+        uint8_t bytes[96]{};
+        bool wildcard[96]{};
+        size_t length = 0;
+    };
+
+    int HexDigit(char value) noexcept
+    {
+        if (value >= '0' && value <= '9')
+            return value - '0';
+        if (value >= 'a' && value <= 'f')
+            return value - 'a' + 10;
+        if (value >= 'A' && value <= 'F')
+            return value - 'A' + 10;
+        return -1;
+    }
+
+    bool ParsePattern(const char* text, ParsedPattern& output) noexcept
+    {
+        if (!text)
+            return false;
+        ParsedPattern parsed{};
+        const char* cursor = text;
+        while (*cursor)
+        {
+            while (*cursor == ' ' || *cursor == '\t')
+                ++cursor;
+            if (!*cursor)
+                break;
+            if (parsed.length >= sizeof(parsed.bytes))
+                return false;
+            if (cursor[0] == '?' && cursor[1] == '?')
+            {
+                parsed.wildcard[parsed.length++] = true;
+                cursor += 2;
+            }
+            else
+            {
+                const int high = HexDigit(cursor[0]);
+                const int low = HexDigit(cursor[1]);
+                if (high < 0 || low < 0)
+                    return false;
+                parsed.bytes[parsed.length++] = static_cast<uint8_t>(
+                    (high << 4) | low);
+                cursor += 2;
+            }
+            if (*cursor && *cursor != ' ' && *cursor != '\t')
+                return false;
+        }
+        if (!parsed.length)
+            return false;
+        output = parsed;
+        return true;
+    }
+
+    bool PatternMatches(
+        const uint8_t* bytes, const ParsedPattern& pattern) noexcept
+    {
+        for (size_t index = 0; index < pattern.length; ++index)
+        {
+            if (!pattern.wildcard[index] &&
+                bytes[index] != pattern.bytes[index])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool CountPattern(
+        uintptr_t base, size_t size, const char* text,
+        uintptr_t& first, uint32_t& count) noexcept
+    {
+        first = 0;
+        count = 0;
+        ParsedPattern pattern{};
+        if (!ParsePattern(text, pattern) || !base ||
+            base > UINTPTR_MAX - size || size < pattern.length)
+        {
+            return false;
+        }
+
+        const uintptr_t imageEnd = base + size;
+        uintptr_t cursor = base;
+        __try
+        {
+            while (cursor < imageEnd)
+            {
+                MEMORY_BASIC_INFORMATION info{};
+                if (!VirtualQuery(
+                        reinterpret_cast<const void*>(cursor), &info,
+                        sizeof(info)) || !info.RegionSize)
+                {
+                    return false;
+                }
+                const uintptr_t regionBase =
+                    reinterpret_cast<uintptr_t>(info.BaseAddress);
+                if (regionBase > UINTPTR_MAX - info.RegionSize)
+                    return false;
+                const uintptr_t rawRegionEnd = regionBase + info.RegionSize;
+                const uintptr_t regionEnd =
+                    rawRegionEnd < imageEnd ? rawRegionEnd : imageEnd;
+                if (regionEnd <= cursor)
+                    return false;
+
+                if (info.State == MEM_COMMIT &&
+                    reinterpret_cast<uintptr_t>(info.AllocationBase) == base &&
+                    IsReadableProtection(info.Protect) &&
+                    regionEnd - cursor >= pattern.length)
+                {
+                    const auto* bytes =
+                        reinterpret_cast<const uint8_t*>(cursor);
+                    const size_t last = static_cast<size_t>(
+                        regionEnd - cursor - pattern.length);
+                    for (size_t offset = 0; offset <= last; ++offset)
+                    {
+                        if (!PatternMatches(bytes + offset, pattern))
+                            continue;
+                        if (!first)
+                            first = cursor + offset;
+                        if (++count >= 2)
+                            return true;
+                    }
+                }
+                cursor = regionEnd;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            first = 0;
+            count = 0;
+            return false;
+        }
+        return true;
+    }
+
+    bool VerifyPeIdentity(uintptr_t base, size_t size) noexcept
+    {
+        if (!base || size != kHalo2RetailImageSize)
+            return false;
+        __try
+        {
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+            if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+                static_cast<size_t>(dos->e_lfanew) >
+                    size - sizeof(IMAGE_NT_HEADERS64))
+            {
+                return false;
+            }
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+                base + static_cast<uint32_t>(dos->e_lfanew));
+            return nt->Signature == IMAGE_NT_SIGNATURE &&
+                nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
+                nt->FileHeader.TimeDateStamp == kHalo2RetailPeTimestamp &&
+                nt->OptionalHeader.SizeOfImage == kHalo2RetailImageSize;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool VerifyExecutableTarget(
+        uintptr_t base, size_t size, uint32_t targetRva) noexcept
+    {
+        if (!base || targetRva >= size || base > UINTPTR_MAX - size)
+            return false;
+        const uintptr_t target = base + targetRva;
+        MEMORY_BASIC_INFORMATION info{};
+        if (!VirtualQuery(
+                reinterpret_cast<const void*>(target), &info, sizeof(info)) ||
+            info.State != MEM_COMMIT ||
+            reinterpret_cast<uintptr_t>(info.AllocationBase) != base ||
+            !IsExecutableProtection(info.Protect))
+        {
+            return false;
+        }
+        const uintptr_t regionBase =
+            reinterpret_cast<uintptr_t>(info.BaseAddress);
+        return regionBase <= target &&
+            regionBase <= UINTPTR_MAX - info.RegionSize &&
+            target < regionBase + info.RegionSize;
+    }
+
+    bool VerifyCallEdge(
+        uintptr_t base, size_t size, uint32_t callRva,
+        uint32_t targetRva) noexcept
+    {
+        if (!base || callRva > size || size - callRva < 5)
+            return false;
+        __try
+        {
+            const auto* call = reinterpret_cast<const uint8_t*>(
+                base + callRva);
+            if (call[0] != 0xE8)
+                return false;
+            int32_t displacement = 0;
+            std::memcpy(&displacement, call + 1, sizeof(displacement));
+            const uintptr_t returnAddress = base + callRva + 5;
+            const uintptr_t decoded = static_cast<uintptr_t>(
+                static_cast<intptr_t>(returnAddress) + displacement);
+            return decoded == base + targetRva;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool VerifyUniqueAnchor(
+        uintptr_t base, size_t size, size_t anchorIndex) noexcept
+    {
+        const Halo2RetailAnchor& anchor = kHalo2RetailAnchors[anchorIndex];
+        uintptr_t first = 0;
+        uint32_t count = 0;
+        return CountPattern(base, size, anchor.pattern, first, count) &&
+            count == 1 && first == base + anchor.rva;
+    }
+
+    bool VerifyBackbufferRtvSlot(
+        uintptr_t base, size_t size, uintptr_t& slotAddress) noexcept
+    {
+        slotAddress = 0;
+        uintptr_t first = 0;
+        uint32_t count = 0;
+        if (!CountPattern(
+                base, size, kHalo2BackbufferRtvLoadPattern,
+                first, count) ||
+            count != 1 ||
+            first != base + kHalo2FinalOutputBackbufferLoadRva)
+        {
+            return false;
+        }
+        __try
+        {
+            int32_t displacement = 0;
+            std::memcpy(
+                &displacement, reinterpret_cast<const void*>(first + 3),
+                sizeof(displacement));
+            const uintptr_t decoded = static_cast<uintptr_t>(
+                static_cast<intptr_t>(first + 7) + displacement);
+            if (decoded != base + kHalo2BackbufferRtvSlotRva ||
+                kHalo2BackbufferRtvSlotRva > size ||
+                size - kHalo2BackbufferRtvSlotRva < sizeof(void*))
+            {
+                return false;
+            }
+            MEMORY_BASIC_INFORMATION info{};
+            if (!VirtualQuery(
+                    reinterpret_cast<const void*>(decoded), &info,
+                    sizeof(info)) ||
+                info.State != MEM_COMMIT ||
+                reinterpret_cast<uintptr_t>(info.AllocationBase) != base ||
+                !IsReadableProtection(info.Protect))
+            {
+                return false;
+            }
+            slotAddress = decoded;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            slotAddress = 0;
+            return false;
+        }
+    }
+
+    bool DisableStatusIsSafe(MH_STATUS status) noexcept
+    {
+        return status == MH_OK || status == MH_ERROR_DISABLED ||
+            status == MH_ERROR_NOT_CREATED;
+    }
+
+    bool RemoveStatusIsSafe(MH_STATUS status) noexcept
+    {
+        return status == MH_OK || status == MH_ERROR_NOT_CREATED;
+    }
+
+    bool DrainCallbacks() noexcept
+    {
+        const uint64_t deadline = GetTickCount64() + kCallbackDrainLimitMs;
+        while (g_activeCallbacks.load(std::memory_order_acquire) != 0 &&
+               GetTickCount64() < deadline)
+        {
+            Sleep(1);
+        }
+        return g_activeCallbacks.load(std::memory_order_acquire) == 0;
+    }
+
+    bool RemoveCore(const char* reason) noexcept
+    {
+        g_stereoRequested.store(false, std::memory_order_release);
+        g_teardownRequested.store(true, std::memory_order_release);
+        g_armed.store(false, std::memory_order_release);
+        ResetHeadReferenceAtomic();
+        VR_ResetHalo2SynchronousStereo();
+
+        const MH_STATUS outerDisabled = g_outerTarget
+            ? MH_DisableHook(g_outerTarget)
+            : MH_ERROR_NOT_CREATED;
+        const MH_STATUS innerDisabled = g_innerTarget
+            ? MH_DisableHook(g_innerTarget)
+            : MH_ERROR_NOT_CREATED;
+        if (!DisableStatusIsSafe(outerDisabled) ||
+            !DisableStatusIsSafe(innerDisabled))
+        {
+            g_coreState = CoreState::CleanupRequired;
+            LOG("Halo 2 stereo cleanup REQUIRED (%s): disable outer=%d "
+                "inner=%d; module pin and hook records retained",
+                reason ? reason : "unspecified",
+                static_cast<int>(outerDisabled),
+                static_cast<int>(innerDisabled));
+            return false;
+        }
+
+        if (!DrainCallbacks())
+        {
+            g_coreState = CoreState::CleanupRequired;
+            LOG("Halo 2 stereo cleanup REQUIRED (%s): %u callbacks did not "
+                "drain within %u ms; module pin and trampolines retained",
+                reason ? reason : "unspecified",
+                g_activeCallbacks.load(std::memory_order_relaxed),
+                kCallbackDrainLimitMs);
+            return false;
+        }
+
+        bool removed = true;
+        if (g_innerTarget)
+        {
+            const MH_STATUS status = MH_RemoveHook(g_innerTarget);
+            if (RemoveStatusIsSafe(status))
+            {
+                g_innerTarget = nullptr;
+                g_innerOriginalAddress.store(0, std::memory_order_release);
+            }
+            else
+            {
+                removed = false;
+                LOG("Halo 2 stereo cleanup REQUIRED (%s): inner remove=%d",
+                    reason ? reason : "unspecified",
+                    static_cast<int>(status));
+            }
+        }
+        if (g_outerTarget)
+        {
+            const MH_STATUS status = MH_RemoveHook(g_outerTarget);
+            if (RemoveStatusIsSafe(status))
+            {
+                g_outerTarget = nullptr;
+                g_outerOriginalAddress.store(0, std::memory_order_release);
+            }
+            else
+            {
+                removed = false;
+                LOG("Halo 2 stereo cleanup REQUIRED (%s): outer remove=%d",
+                    reason ? reason : "unspecified",
+                    static_cast<int>(status));
+            }
+        }
+        if (!removed || g_innerTarget || g_outerTarget)
+        {
+            g_coreState = CoreState::CleanupRequired;
+            return false;
+        }
+
+        g_installed.store(false, std::memory_order_release);
+        g_generation.store(0, std::memory_order_release);
+        g_moduleBase.store(0, std::memory_order_release);
+        g_backbufferRtvSlotAddress.store(0, std::memory_order_release);
+        g_seenSerial.store(0, std::memory_order_release);
+        g_coreState = CoreState::StockFallback;
+        if (g_moduleReference)
+        {
+            FreeLibrary(g_moduleReference);
+            g_moduleReference = nullptr;
+        }
+        LOG("Halo 2 stereo core removed (%s); stock rendering restored",
+            reason ? reason : "unspecified");
+        return true;
+    }
+
+    bool RetainFailedCreateForCleanup(
+        HMODULE module, uintptr_t base, uint32_t generation,
+        void* target, bool innerTarget) noexcept
+    {
+        g_moduleReference = module;
+        g_moduleBase.store(base, std::memory_order_release);
+        g_generation.store(generation, std::memory_order_release);
+        g_installed.store(true, std::memory_order_release);
+        g_teardownRequested.store(true, std::memory_order_release);
+        g_coreState = CoreState::CleanupRequired;
+        g_rejectedGeneration = generation;
+        if (innerTarget)
+            g_innerTarget = target;
+        else
+            g_outerTarget = target;
+        return false;
+    }
+
+    bool InstallCore(
+        uintptr_t base, size_t size, uint32_t generation) noexcept
+    {
+        HMODULE module = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                reinterpret_cast<LPCWSTR>(base), &module) ||
+            reinterpret_cast<uintptr_t>(module) != base)
+        {
+            if (g_pinFailureLoggedGeneration != generation)
+            {
+                LOG("Halo 2 stereo install WITHHELD: module pin failed for "
+                    "generation %u", generation);
+                g_pinFailureLoggedGeneration = generation;
+            }
+            if (module)
+                FreeLibrary(module);
+            g_rejectedGeneration = generation;
+            return false;
+        }
+
+        uintptr_t backbufferSlot = 0;
+        const bool peIdentity = VerifyPeIdentity(base, size);
+        const bool playerAnchor = VerifyUniqueAnchor(
+            base, size, kHalo2AnchorPlayerWindow);
+        const bool renderViewAnchor = VerifyUniqueAnchor(
+            base, size, kHalo2AnchorRenderView);
+        const bool playerEdge = VerifyCallEdge(
+            base, size, kHalo2RetailRenderPlayerWindowCallRva,
+            kHalo2RetailRenderPlayerWindowRva);
+        const bool renderViewEdge = VerifyCallEdge(
+            base, size, kHalo2RetailRenderViewCallRva,
+            kHalo2RetailRenderViewRva);
+        const bool playerExecutable = VerifyExecutableTarget(
+            base, size, kHalo2RetailRenderPlayerWindowRva);
+        const bool renderViewExecutable = VerifyExecutableTarget(
+            base, size, kHalo2RetailRenderViewRva);
+        const bool backbufferProof = VerifyBackbufferRtvSlot(
+            base, size, backbufferSlot);
+        if (!peIdentity || !playerAnchor || !renderViewAnchor ||
+            !playerEdge || !renderViewEdge || !playerExecutable ||
+            !renderViewExecutable || !backbufferProof)
+        {
+            LOG("Halo 2 stereo install WITHHELD: generation %u proof "
+                "pe=%d playerAnchor=%d viewAnchor=%d playerEdge=%d "
+                "viewEdge=%d playerExec=%d viewExec=%d backbuffer=%d",
+                generation, peIdentity ? 1 : 0, playerAnchor ? 1 : 0,
+                renderViewAnchor ? 1 : 0, playerEdge ? 1 : 0,
+                renderViewEdge ? 1 : 0, playerExecutable ? 1 : 0,
+                renderViewExecutable ? 1 : 0,
+                backbufferProof ? 1 : 0);
+            FreeLibrary(module);
+            g_rejectedGeneration = generation;
+            return false;
+        }
+        if (g_outerTarget || g_innerTarget || g_moduleReference ||
+            g_outerOriginalAddress.load(std::memory_order_acquire) ||
+            g_innerOriginalAddress.load(std::memory_order_acquire))
+        {
+            LOG("Halo 2 stereo install WITHHELD: prior hook ownership remains; "
+                "worker cleanup must finish first");
+            FreeLibrary(module);
+            g_coreState = CoreState::CleanupRequired;
+            return false;
+        }
+
+        void* const innerTarget = reinterpret_cast<void*>(
+            base + kHalo2RetailRenderViewRva);
+        void* const outerTarget = reinterpret_cast<void*>(
+            base + kHalo2RetailRenderPlayerWindowRva);
+        void* innerTrampoline = nullptr;
+        MH_STATUS createdInner = MH_CreateHook(
+            innerTarget, reinterpret_cast<void*>(&Halo2RenderViewDetour),
+            &innerTrampoline);
+        if (createdInner != MH_OK || !innerTrampoline)
+        {
+            MH_STATUS rollback = MH_ERROR_NOT_CREATED;
+            if (createdInner == MH_OK)
+                rollback = MH_RemoveHook(innerTarget);
+            if (createdInner == MH_OK && !RemoveStatusIsSafe(rollback))
+            {
+                LOG("Halo 2 stereo install: inner create returned no "
+                    "trampoline and rollback failed (%d); retaining pin",
+                    static_cast<int>(rollback));
+                return RetainFailedCreateForCleanup(
+                    module, base, generation, innerTarget, true);
+            }
+            LOG("Halo 2 stereo install WITHHELD: inner create=%d rollback=%d",
+                static_cast<int>(createdInner), static_cast<int>(rollback));
+            FreeLibrary(module);
+            g_rejectedGeneration = generation;
+            return false;
+        }
+
+        void* outerTrampoline = nullptr;
+        MH_STATUS createdOuter = MH_CreateHook(
+            outerTarget, reinterpret_cast<void*>(&Halo2PlayerWindowDetour),
+            &outerTrampoline);
+        if (createdOuter != MH_OK || !outerTrampoline)
+        {
+            MH_STATUS outerRollback = MH_ERROR_NOT_CREATED;
+            if (createdOuter == MH_OK)
+                outerRollback = MH_RemoveHook(outerTarget);
+            const MH_STATUS innerRollback = MH_RemoveHook(innerTarget);
+            if ((createdOuter == MH_OK &&
+                 !RemoveStatusIsSafe(outerRollback)) ||
+                !RemoveStatusIsSafe(innerRollback))
+            {
+                g_moduleReference = module;
+                g_moduleBase.store(base, std::memory_order_release);
+                g_generation.store(generation, std::memory_order_release);
+                g_installed.store(true, std::memory_order_release);
+                g_teardownRequested.store(true, std::memory_order_release);
+                if (!RemoveStatusIsSafe(outerRollback))
+                    g_outerTarget = outerTarget;
+                if (!RemoveStatusIsSafe(innerRollback))
+                    g_innerTarget = innerTarget;
+                g_coreState = CoreState::CleanupRequired;
+                g_rejectedGeneration = generation;
+                LOG("Halo 2 stereo install cleanup REQUIRED: outer create=%d "
+                    "outer rollback=%d inner rollback=%d",
+                    static_cast<int>(createdOuter),
+                    static_cast<int>(outerRollback),
+                    static_cast<int>(innerRollback));
+                return false;
+            }
+            LOG("Halo 2 stereo install WITHHELD: outer create=%d rollback=%d",
+                static_cast<int>(createdOuter),
+                static_cast<int>(outerRollback));
+            FreeLibrary(module);
+            g_rejectedGeneration = generation;
+            return false;
+        }
+
+        g_moduleReference = module;
+        g_innerTarget = innerTarget;
+        g_outerTarget = outerTarget;
+        g_innerOriginalAddress.store(
+            reinterpret_cast<uintptr_t>(innerTrampoline),
+            std::memory_order_release);
+        g_outerOriginalAddress.store(
+            reinterpret_cast<uintptr_t>(outerTrampoline),
+            std::memory_order_release);
+        g_moduleBase.store(base, std::memory_order_release);
+        g_generation.store(generation, std::memory_order_release);
+        g_backbufferRtvSlotAddress.store(
+            backbufferSlot, std::memory_order_release);
+        g_seenSerial.store(0, std::memory_order_release);
+        g_teardownRequested.store(false, std::memory_order_release);
+        g_installed.store(true, std::memory_order_release);
+        g_coreState = CoreState::CleanupRequired;
+
+        const MH_STATUS queuedInner = MH_QueueEnableHook(innerTarget);
+        const MH_STATUS queuedOuter = queuedInner == MH_OK
+            ? MH_QueueEnableHook(outerTarget)
+            : MH_ERROR_NOT_CREATED;
+        const MH_STATUS applied =
+            queuedInner == MH_OK && queuedOuter == MH_OK
+                ? MH_ApplyQueued()
+                : MH_ERROR_NOT_CREATED;
+        if (queuedInner != MH_OK || queuedOuter != MH_OK || applied != MH_OK)
+        {
+            LOG("Halo 2 stereo install: enable failed inner=%d outer=%d "
+                "apply=%d; rolling back",
+                static_cast<int>(queuedInner),
+                static_cast<int>(queuedOuter), static_cast<int>(applied));
+            if (!RemoveCore("install rollback"))
+                g_coreState = CoreState::CleanupRequired;
+            g_rejectedGeneration = generation;
+            return false;
+        }
+
+        g_lastTelemetry = {};
+        g_lastTelemetryMs = 0;
+        g_coreState = CoreState::Installed;
+        ResetHeadReferenceAtomic();
+        g_armed.store(true, std::memory_order_release);
+        LOG("Halo 2 stereo installed: outer +0x%X/return +0x%X, inner "
+            "+0x%X/return +0x%X, exact backbuffer RTV slot +0x%X; one "
+            "player scope, two same-serial render_view calls; six independent "
+            "12-byte position/forward/up spans plus two independent 4-byte "
+            "vertical-FOV +0x28 cover fields are restored; z_far stays owned "
+            "by H2",
+            static_cast<unsigned>(kHalo2RetailRenderPlayerWindowRva),
+            static_cast<unsigned>(kHalo2RetailRenderPlayerWindowReturnRva),
+            static_cast<unsigned>(kHalo2RetailRenderViewRva),
+            static_cast<unsigned>(kHalo2RetailRenderViewReturnRva),
+            static_cast<unsigned>(kHalo2BackbufferRtvSlotRva));
+        return true;
+    }
+}
+
+bool Halo2Stereo_Poll(
+    uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
+    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept
+{
+    const uint32_t ownedGeneration =
+        g_generation.load(std::memory_order_acquire);
+    uint32_t vrFailureGeneration =
+        g_vrFailureGeneration.load(std::memory_order_acquire);
+    if (vrFailureGeneration && generation != vrFailureGeneration && generation)
+    {
+        g_vrFailureGeneration.compare_exchange_strong(
+            vrFailureGeneration, 0, std::memory_order_acq_rel,
+            std::memory_order_acquire);
+        vrFailureGeneration =
+            g_vrFailureGeneration.load(std::memory_order_acquire);
+    }
+
+    const bool identityValid = moduleBase && generation &&
+        moduleSize == kHalo2RetailImageSize;
+    const bool vrAvailable = !vrFailureGeneration ||
+        generation != vrFailureGeneration;
+    const bool desired = identityValid && activeAndRange && levelRunning &&
+        coldPassed && vrAvailable;
+    const bool ownsDifferentModule = (g_outerTarget || g_innerTarget) &&
+        (ownedGeneration != generation ||
+         g_moduleBase.load(std::memory_order_acquire) != moduleBase);
+    const bool hotEligible = desired && !ownsDifferentModule &&
+        g_coreState == CoreState::Installed;
+
+    g_levelLive.store(levelRunning, std::memory_order_release);
+    g_coldObservationPassed.store(coldPassed, std::memory_order_release);
+    g_rightEyeFirst.store(
+        g_config.right_eye_first, std::memory_order_release);
+    g_stereoRequested.store(hotEligible, std::memory_order_release);
+    ReportTelemetry();
+
+    if ((g_outerTarget || g_innerTarget) &&
+        (!desired || ownsDifferentModule ||
+         g_coreState == CoreState::CleanupRequired))
+    {
+        const char* reason = ownsDifferentModule
+            ? "module generation changed"
+            : (!vrAvailable
+                   ? "OpenXR runtime failed"
+                   : (!activeAndRange
+                          ? "Halo 2 is no longer uniquely active"
+                          : (!levelRunning
+                                 ? "level liveness closed"
+                                 : (!coldPassed
+                                        ? "cold proof was revoked"
+                                        : "cleanup retry"))));
+        if (!RemoveCore(reason))
+            return false;
+    }
+
+    if (!desired || g_rejectedGeneration == generation)
+        return false;
+    if (!g_outerTarget && !g_innerTarget &&
+        !InstallCore(moduleBase, moduleSize, generation))
+    {
+        return false;
+    }
+    const bool armed = g_coreState == CoreState::Installed &&
+        g_installed.load(std::memory_order_acquire) &&
+        g_armed.load(std::memory_order_acquire) &&
+        g_generation.load(std::memory_order_acquire) == generation;
+    g_stereoRequested.store(armed, std::memory_order_release);
+    return armed;
+}
+
+bool Halo2Stereo_Installed() noexcept
+{
+    return g_installed.load(std::memory_order_acquire);
+}
+
+bool Halo2Stereo_Armed() noexcept
+{
+    return g_armed.load(std::memory_order_acquire);
+}
+
+uint32_t Halo2Stereo_Generation() noexcept
+{
+    return g_generation.load(std::memory_order_acquire);
+}
+
+void Halo2Stereo_ShutdownForVrFailure() noexcept
+{
+    const uint32_t generation =
+        g_generation.load(std::memory_order_acquire);
+    if (generation)
+        g_vrFailureGeneration.store(generation, std::memory_order_release);
+    g_stereoRequested.store(false, std::memory_order_release);
+    g_teardownRequested.store(true, std::memory_order_release);
+    g_armed.store(false, std::memory_order_release);
+    ResetHeadReferenceAtomic();
+    VR_ResetHalo2SynchronousStereo();
+}
+
+void Halo2Stereo_RequestRecenter() noexcept
+{
+    ResetHeadReferenceAtomic();
+}
+
+#else
+
+bool Halo2Stereo_Poll(
+    uintptr_t, size_t, uint32_t, bool, bool, bool) noexcept
+{
+    return false;
+}
+
+bool Halo2Stereo_Installed() noexcept { return false; }
+bool Halo2Stereo_Armed() noexcept { return false; }
+uint32_t Halo2Stereo_Generation() noexcept { return 0; }
+void Halo2Stereo_ShutdownForVrFailure() noexcept {}
+void Halo2Stereo_RequestRecenter() noexcept {}
+
+#endif

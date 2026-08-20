@@ -3,8 +3,9 @@
 Status: **C-H2-1 is headset-accepted on Steam as of 2026-08-20. Its required
 Halo 3 shared-code regression also passed, advancing the accepted development
 pointer to `f8928bb`. C-H2-2's alternating-eye implementation was rejected
-before headset testing and is compile-disabled; it is not accepted and did not
-advance that pointer.** C-H2-1 remains the accepted read-only behavior. The
+before headset testing and is compile-disabled. C-H2-3 same-frame stereo +
+6DOF is implemented and package-gated, but remains headset-pending and has not
+advanced that pointer.** C-H2-1 remains the accepted read-only behavior. The
 machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
@@ -23,11 +24,13 @@ layout, or hook boundary from another title.
 - A kit RVA is never a retail RVA. Cross-architecture matching requires
   semantics, layout, call topology, and unique retail bytes to agree.
 - Zero/multiple runtime matches or a moved decode fail the affected stage
-  closed. C-H2-1 installs no hook either way.
-- Accepted C-H2-1 writes no H2 engine field. C-H2-2 admits only the render and
-  raster cameras' 12-byte position spans inside one scoped transaction and
-  restores both before publication. The shared `render_far_clip_distance`
-  scanner/writer is not a Halo 2 binding and remains hard-denied.
+  closed. C-H2-1 installs no hook either way; C-H2-3 withholds its camera core.
+- Accepted C-H2-1 writes no H2 engine field. Rejected C-H2-2 admitted only the
+  render and raster cameras' 12-byte position spans. C-H2-3 owns six 12-byte
+  position/forward/up spans and two 4-byte vertical-FOV spans, restores every
+  owned span, and never writes z-far or the asymmetric/pixel-offset fields. The
+  shared `render_far_clip_distance` scanner/writer is not a Halo 2 binding and
+  remains hard-denied.
 
 ## Pinned identities (measured 2026-08-19)
 
@@ -196,10 +199,10 @@ The existing 23-byte entry AOB
 matches once in both complete mapped images and once in both raw retail files.
 The ordinary render-frame call is `0x7E1706`, returning to `0x7E170B`; its
 H2EK source edge is `0x29E133`. Retail also calls the function from
-`0x7F0A60`. That second stock caller is an explicit exclusion: C-H2-2 owns only
-the exact `base+0x7E170B` return edge, and only the primary player
-(`window+0x04 == 0`). Entry uniqueness alone does not identify the transaction
-instance.
+`0x7F0A60`. That second stock caller is an explicit exclusion: C-H2-2 and the
+C-H2-3 outer hook own only the exact `base+0x7E170B` return edge, and only the
+primary player (`window+0x04 == 0`). Entry uniqueness alone does not identify
+the transaction instance.
 
 ### Window and camera layout
 
@@ -287,8 +290,10 @@ EDI, EBP, SIL, &frustum, 0, [window+0x08], R12D, R15B, local32,
 
 The widths, locations, and pass-through values are exact. Names and semantics
 for the opaque non-camera arguments are not proven and must remain unnamed.
-This prototype documents the existing transaction; it does not authorize a
-direct call or duplicate replay.
+This prototype documents the existing transaction. Static evidence alone did
+not authorize replay; C-H2-3 isolates the one exact player-path invocation and
+its headset-pending inner hook calls the original with the same 19 arguments
+twice, once for each current eye.
 
 ### Native asymmetric projection route
 
@@ -301,11 +306,14 @@ before render view. Those fields are read-only through the transaction, which
 supports restoring only the eye-overwritten fields afterward.
 
 A blind 0x74-byte restore is unsafe: the player transaction may legitimately
-update render-camera `z_far` at camera `+0x44`. Replaying the entire player
-transaction twice is also not yet authorized. `render_view` increments counters
-and runs visibility, scene, interface/HUD, and debug lifecycle work. Static
-evidence does not prove that duplicate execution is side-effect safe; this is a
-runtime question for the next isolated candidate.
+update render-camera `z_far` at camera `+0x44`. C-H2-3 therefore never replays
+the entire player transaction: the outer original runs once. Its inner hook
+intercepts the one exact player-path `render_view` invocation and calls that
+original twice with unchanged opaque arguments while substituting only the
+scoped camera fields. `render_view` also runs visibility, scene, interface/HUD,
+and debug lifecycle work, so this outer-once/inner-twice behavior remains a
+headset-pending runtime candidate rather than an accepted inference from static
+evidence.
 
 ### Static final-swapchain-backbuffer chain
 
@@ -326,9 +334,20 @@ Halo 2 scene texture has the UAV bit. Postprocess first obtains the primary and
 resolved resources and copies primary to resolved, runs the post effects, then
 calls the final-output helper. In its normal path the H2EK helper selects
 `global_d3d_surface_backbuffer`; an alternate screenshot-target condition also
-exists. Retail preserves that choice. Instruction `0x975297` is
-`48 8B 1D BA 9B 00 01` and resolves to the backbuffer-RTV slot
-`0x197EE58`.
+exists. Retail preserves that choice. The C-H2-3 final-output resolver is:
+
+| Fact | Exact value |
+| --- | --- |
+| Runtime AOB | `48 8B 1D ?? ?? ?? ?? 48 89 B4 24 B0 00 00 00 48 8B CB 0F 29 B4 24 90 00 00 00 0F 29 BC 24 80 00 00 00` |
+| Pinned match RVA | `0x975297` |
+| Steam complete mapped-image matches | 1 |
+| Store complete mapped-image matches | 1 |
+| Decode | signed disp32 at `+3`, based at RIP `+7` |
+| Required decoded slot RVA | `0x197EE58` |
+
+The fixed instruction bytes at the match begin
+`48 8B 1D BA 9B 00 01`; the decode lands on the exact swapchain-backbuffer RTV
+slot established independently from H2EK semantics.
 
 Retail target binder `0x965610` calls the D3D11 context vtable at `+0x108`,
 the `ID3D11DeviceContext::OMSetRenderTargets` slot. The retail player path is:
@@ -345,14 +364,11 @@ After postprocess returns, `render_view` binds that same backbuffer RTV twice
 more for late/interface work before returning to `render_player_window`.
 Therefore, on the ordinary non-screenshot path, the swapchain backbuffer holds
 the postprocessed scene plus late/interface output when the original
-player-window call returns. This is sufficient for a copy-only temporal
-experiment at the established Present boundary; it is not proof that an
-internal scene target can be redirected safely.
-
-The final-helper instruction has not yet been promoted to a runtime resolver:
-no new wildcard AOB has been proven unique across both complete mapped images
-and raw files. The pinned RVA/slot and H2EK-to-retail static chain are evidence,
-not authorization to dereference or hook that global at runtime.
+player-window call returns. C-H2-2 used that fact for its rejected Present-side
+temporal copy. C-H2-3 instead proves the unique resolver above at install time,
+borrows the exact final backbuffer RTV, and redirects each inner eye render into
+its preallocated eye cache. This is not proof that an internal scene target can
+be redirected safely, and C-H2-3 does not attempt one.
 
 #### Explicit Halo 3 shape exclusion
 
@@ -361,7 +377,8 @@ Halo 3's learned scene-target rule requires a full-size
 `RTV | SRV | UAV = 0xA8`. That rule is Halo 3 evidence only. Halo 2's proven
 primary and resolved textures use `0x28` and have no UAV binding, so they do
 not match it. Halo 2 must never fall through the generic Halo 3 exact-shape
-discovery path. C-H2-2 avoids scene-target discovery and redirection entirely.
+discovery path. C-H2-2 and C-H2-3 both avoid scene-target discovery and
+redirection entirely.
 
 ## Rejected C-H2-2 implementation: temporal stereo
 
@@ -414,11 +431,118 @@ This rejected proof candidate started presentation automatically whenever the
 exact Halo 2 hook owned a live level; it did not honor `auto_vr` or the manual
 presentation veto.
 
+## Implemented C-H2-3 candidate: same-frame stereo + 6DOF
+
+**C-H2-3 is implemented and headset-pending. It is not accepted, and the
+accepted pointer remains C-H2-1 at `f8928bb`.** The release gate is
+`HALOMCCVR_HALO2_STEREO6DOF=ON`; the rejected temporal gate must remain OFF.
+The registry advertises exactly `Stereo | RoomScale | RuntimeModes`, uses hook
+plan `Halo2StereoCore`, and retains zero controller admission.
+
+### Two-hook outer-once/inner-twice transaction
+
+C-H2-3 installs exactly two MinHook targets only after C-H2-1 liveness and all
+runtime evidence checks succeed:
+
+| Hook | Entry RVA | Claimed return edge | Runtime role |
+| --- | ---: | ---: | --- |
+| outer `render_player_window` | `0x7E2130` | `0x7E170B` after call `0x7E1706` | validate primary-player window/current snapshot and call the outer original exactly once |
+| inner `render_view` | `0x7E30D0` | `0x7E2417` after call `0x7E2412` | intercept the outer transaction's one exact player render and call the inner original exactly twice, once per current eye |
+
+The inner hook additionally requires argument 1/player index 0, argument 4/flag
+0, and the exact render/raster camera pointers from the live outer window.
+Foreign callers and nested player transactions stay stock. A second exact inner
+invocation inside the same outer attempt invalidates the attempt rather than
+creating a third render.
+
+The outer scope borrows only the exact swapchain-backbuffer RTV resolved by the
+unique final-output AOB above. Preallocated per-eye RTVs receive the two final
+inner outputs. The code does not discover or redirect either Halo 2 scene
+texture and never uses Halo 3's incompatible `0xA8` target-shape rule.
+
+### Mechanical same-frame/current-serial contract
+
+One published pair must satisfy all of the following at once:
+
+- The module generation, OpenXR resource epoch, outer-attempt token, and current
+  prepared serial remain unchanged through the transaction.
+- The left and right **render serials both equal the current prepared serial**.
+- The left and right **capture serials both equal the current prepared serial**.
+- Eye render count is exactly 2, fresh-eye count is exactly 2, and the completed
+  eye mask is exactly left+right. Missing or duplicate eyes are rejected.
+- Both inner originals return, both redirected outputs complete, and all owned
+  camera spans are restored before pair publication.
+- An N-1 eye, future eye, mixed generation/resource epoch/attempt, incomplete
+  pair, stale snapshot, or repeated prepared serial drops only that frame.
+
+Temporal pairing is forbidden: `temporal_previous_eye_allowed=false`, the eye
+gap is zero, and no previous-frame eye cache can satisfy the pair. There is no
+intentional cadence division. Both fresh eyes are rendered within every claimed
+game frame, so each eye's intended render cadence equals the game-frame cadence
+at 72, 80, 90, 120, and 144 Hz (`intentional_cadence_divisor=1`). This is the
+same player-visible same-frame rule used by Halo 3, ODST, and Reach, implemented
+through Halo 2's own two-hook transaction.
+
+### Headset pose and exact engine-write scope
+
+C-H2-3 owns full headset rotation and translation. A generation/reset-stable
+head reference converts the current head orientation and displacement plus the
+current eye orientation/offset into each Halo 2 render and raster camera. The
+title-specific mapping remains:
+
+```text
+delta_world =
+    (cross(forward, up) * x + up * y - forward * z) / 3.048
+```
+
+All quaternion, translation, eye-offset, basis, and bounds checks fail closed
+for that frame. The only engine fields C-H2-3 may write are:
+
+| Camera | Field | Window-relative offset | Bytes |
+| --- | --- | ---: | ---: |
+| render (`window+0x0C`) | position | `0x0C+0x00` | 12 |
+| render | forward | `0x0C+0x0C` | 12 |
+| render | up | `0x0C+0x18` | 12 |
+| render | vertical FOV | `0x0C+0x28` | 4 |
+| raster (`window+0x80`) | position | `0x80+0x00` | 12 |
+| raster | forward | `0x80+0x0C` | 12 |
+| raster | up | `0x80+0x18` | 12 |
+| raster | vertical FOV | `0x80+0x28` | 4 |
+
+Thus the write scope is exactly six independent 12-byte pose spans plus two
+independent 4-byte vertical-FOV spans. Each is marked dirty before its guarded
+write and restored independently. A whole-camera restore is forbidden because
+it could overwrite the engine's legitimate render-camera z-far update.
+
+The FOV transaction derives a finite symmetric binocular cover from the widest
+left/right/up/down runtime-eye tangents, each camera's proven stock tangent
+aspect, and a small finite margin. It writes only full vertical FOV `+0x28`.
+This is a title-native **symmetric cover**, not exact native asymmetric per-eye
+projection: `+0x58/+0x5C/+0x60/+0x64` and pixel-offset
+`+0x68/+0x6C/+0x70` remain untouched, as does z-far `+0x44`.
+
+### Explicit nonclaims and acceptance debt
+
+C-H2-3 claims stereo, headset rotation, and headset translation/room scale. It
+does **not** claim controller input/admission, controller aim, head-relative
+movement input, HUD/crosshair behavior, haptics, arm IK, cutscene theatre,
+scene-target redirection, native asymmetric per-eye projection, or generic
+draw-distance writes. Before a pair is claimed, failure calls stock once. After
+scoped writes begin, failure restores every dirty span, invalidates/drops only
+the current pair, and keeps the camera core and OpenXR session armed.
+
+Acceptance still requires a Halo 2 headset run recording edition, runtime,
+headset, refresh rate, source/package identity, installed DLL SHA-256, and logs
+that prove two current-serial eye renders/captures per game frame with no
+half-rate cadence. The same exact DLL then requires a Halo 3 headset regression.
+Until both results pass, no accepted-build pointer or C-H2-1 acceptance field
+may advance.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are
-  the accepted C-H2-1 build settings; C-H2-2 changes only the separately gated
-  hook/capability/heartbeat fields described above.
+  the accepted C-H2-1 build settings; C-H2-2 and C-H2-3 change only their
+  separately gated hook/capability/heartbeat fields described above.
 - `runtimeSupported=false`, runtime capabilities none, admission capabilities
   none, hook plan none, heartbeat window zero.
 - Shared controller merge remains denied.
@@ -473,8 +597,9 @@ approximately 88–90 Hz after loading, but C-H2-1 owns no Halo 2 render path an
 cannot establish a render-performance cause.
 
 This accepts the Halo 2 read-only observation claim and clears its evidence for
-stereo design. It does not authorize any Halo 2 hook/write or stereo/6DOF
-claim.
+stereo design. That C-H2-1 result does not accept or authorize C-H2-3's
+hook/write or stereo/6DOF runtime claim; C-H2-3 still needs its own headset
+result and Halo 3 regression.
 
 ### Required Halo 3 shared-code regression PASS
 
