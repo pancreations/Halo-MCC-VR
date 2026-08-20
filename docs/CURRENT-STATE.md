@@ -1,29 +1,32 @@
 # Current state
 
-> **TARGET-TITLE PASS 2026-08-20 — Halo 2 C-H2-1, source `f8928bb`;
-> accepted-build pointer NOT advanced.** A Steam headset/log sitting on
-> SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 90 Hz exercised Halo 2
+> **CURRENT ACCEPTED DEVELOPMENT POINTER — 2026-08-20: Halo 2 C-H2-1
+> read-only cold observation, source `f8928bb`.** A Steam headset/log sitting
+> on SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 90 Hz exercised Halo 2
 > generations 1 and 3. Both independently armed the two lifecycle anchors and
 > PASSed PE identity, all six unique anchors at their pinned RVAs, and both
 > decodes to slot RVA `0x15FE008`. Explicit dispose closed liveness and
 > same-generation reopen reused the cached one-shot result. No C-H2-1 failure
-> signature occurred. This accepts C-H2-1's target-title read-only observation
-> claim only. Because the candidate changes shared title-worker/lifecycle code,
-> a Halo 3 headset regression is still required before the authoritative
-> accepted-build pointer may move from `8ee18fd` to `f8928bb`. Halo 2 controller
-> admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership, engine
-> hooks, and engine writes remain disabled.
+> signature occurred. The required shared-code regression then exercised Halo
+> 3 on the same installed DLL: its level gate opened, the camera/FP/render core
+> installed, stereo and positional 6DOF armed, the proven scene target was
+> learned, and gameplay held 90 Hz with zero duplicate frames, frame-order
+> failures, or stalls. The user confirmed that Halo 3 worked fine. This accepts
+> only C-H2-1's read-only observation behavior; Halo 2 controller admission,
+> stereo, 6DOF, camera/render/aim/HUD/haptics ownership, engine hooks, and
+> engine writes remain disabled.
 >
-> | Halo 2 C-H2-1 target-title PASS identity | Value |
+> | Accepted Halo 2 C-H2-1 identity | Value |
 > | --- | --- |
 > | Source | `f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1` |
 > | Package | `f8928bb-halo2-c1-cold-observation-20260820-035247738Z` |
 > | `HaloMCCVR.dll` | `A9F384F26FE2E313AA7037A3A8C250839AE0D9950FD3A1D4414268225EAD5CF9` |
 > | `HaloMCCVRLauncher.exe` | `DC18587C6A7CBC6FF9A274703057C299AB2334CFD0E22C5CF7702D66AF9813BC` |
-> | Steam `HaloMCCVR.log` | `FDEEC3D8A2C68C05BCFEE07D54E0E4B41EE7AED72E99575DD7FF109F1EC09896` |
+> | Halo 2 target-pass log | `FDEEC3D8A2C68C05BCFEE07D54E0E4B41EE7AED72E99575DD7FF109F1EC09896` |
+> | Halo 3 regression log | `9F4DD986C09DA3CFA8A3691E1D2B770BDFEF4003A9E0BDCE2C922955C58B0813` |
 > | Target-title run | Steam, SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 90 Hz |
 > | Store edition | same artifact installed and hash-verified; not headset-run |
-> | Remaining acceptance gate | Halo 3 headset regression on `f8928bb` |
+> | Halo 3 regression | PASS; user confirmed stereo/6DOF worked fine |
 >
 > **ACCEPTED 2026-08-19: the V6/two-hand integration, source `8ee18fd`.** The
 > external contributors' V6 source drop (base `7da8f7c`) was reviewed,
@@ -66,13 +69,11 @@
 > before touching anything Halo 4 HUD/helmet/pause related.
 >
 > **Active work (user-directed 2026-08-19): Halo 2 stereo 3D + 6DOF
-> bring-up.** C-H2-1's deliberately read-only Halo 2 claim passed in the
-> headset/log on 2026-08-20: both exercised module generations verified the
-> official-H2EK-derived lifecycle proof and all six unique Steam/Store
-> `halo2.dll` anchors. The shared-code Halo 3 regression debt remains, so the
-> first isolated stereo implementation must not be stacked until `f8928bb` is
-> globally accepted. Halo 2 still has no controller admission, hook,
-> capability, heartbeat, or engine write; stereo and 6DOF remain unimplemented.
+> bring-up.** C-H2-1 is accepted after its Halo 2 target pass and required Halo
+> 3 regression. The next step is the smallest isolated H2 render-transaction
+> proof needed before enabling stereo geometry. Halo 2 still has no controller
+> admission, hook, capability, heartbeat, or engine write; stereo and 6DOF
+> remain unimplemented until that candidate earns them independently.
 > See `docs/HALO2-SIGNATURE-EVIDENCE.md`.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:

@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "status": "C_H2_1_TARGET_HEADSET_PASS_HALO3_REGRESSION_PENDING",
+  "status": "C_H2_1_ACCEPTED",
   "hook_eligible": false,
-  "accepted_build_pointer_advanced": false,
-  "remaining_gate": "Halo 3 headset regression on f8928bb",
+  "accepted_build_pointer_advanced": true,
+  "remaining_gate": "none for C-H2-1; future hooks and stereo require their own evidence and acceptance",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -121,5 +121,24 @@
     "same_generation_reopen_without_rescan_count": 2,
     "store_artifact_installed_and_hash_verified": true,
     "store_headset_validated": false
+  },
+  "halo3_shared_code_regression": {
+    "accepted": true,
+    "user_result": "worked fine",
+    "date": "2026-08-20",
+    "edition": "Steam",
+    "openxr_runtime": "SteamVR/OpenXR 2.17.7",
+    "headset": "SteamVR/OpenXR : oculus",
+    "refresh_hz": 90.0,
+    "source_commit": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
+    "dll_sha256": "A9F384F26FE2E313AA7037A3A8C250839AE0D9950FD3A1D4414268225EAD5CF9",
+    "log_sha256": "9F4DD986C09DA3CFA8A3691E1D2B770BDFEF4003A9E0BDCE2C922955C58B0813",
+    "log_size_bytes": 177832,
+    "stereo_armed": true,
+    "six_dof_armed": true,
+    "steady_gameplay_fps": 90,
+    "duplicate_frames": 0,
+    "frame_order_failures": 0,
+    "stalls_after_stereo_armed": 0
   }
 }

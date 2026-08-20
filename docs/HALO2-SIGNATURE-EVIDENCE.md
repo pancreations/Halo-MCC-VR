@@ -1,8 +1,8 @@
 # Halo 2 signature evidence
 
-Status: **C-H2-1 passed Steam target-title headset/log validation on
-2026-08-20; the accepted-build pointer remains `8ee18fd` pending the required
-Halo 3 regression of `f8928bb`'s shared title-worker/lifecycle changes.**
+Status: **C-H2-1 is headset-accepted on Steam as of 2026-08-20. Its required
+Halo 3 shared-code regression also passed, advancing the accepted development
+pointer to `f8928bb`.**
 It is a read-only cold-observation candidate. It does not claim stereo, 6DOF,
 head tracking, controller input, aim, HUD, haptics, or any engine hook/write.
 The machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
@@ -265,8 +265,27 @@ cannot establish a render-performance cause.
 
 This accepts the Halo 2 read-only observation claim and clears its evidence for
 stereo design. It does not authorize any Halo 2 hook/write or stereo/6DOF
-claim, and it does not advance the repository accepted-build pointer until the
-required Halo 3 regression passes.
+claim.
+
+### Required Halo 3 shared-code regression PASS
+
+The same installed source and DLL were subsequently exercised in Halo 3 in a
+Steam run whose complete log SHA-256 is
+`9F4DD986C09DA3CFA8A3691E1D2B770BDFEF4003A9E0BDCE2C922955C58B0813`
+(177,832 bytes, `00:54:33`–`00:58:22` local). The build identity remained
+source `f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1`, DLL SHA-256
+`A9F384F26FE2E313AA7037A3A8C250839AE0D9950FD3A1D4414268225EAD5CF9`,
+SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, and 90 Hz.
+
+Halo 3 became the unique title at `00:54:50.280`. Its proven level gate opened,
+all camera/FP/render hooks installed, Runtime mode entered gameplay, positional
+6DOF and stereo armed at `00:54:58.758`, and the exact-shape Halo 3 scene target
+was learned. From `00:55:03` through title teardown the log repeatedly reports
+90 fps / 90 Hz stereo, 89.9–90.0 HMD pose samples per second, zero duplicate
+frames, zero frame-order failures, and zero stalls. Stereo disarmed normally on
+the title transition at `00:56:00.146`. The user reported that Halo 3 worked
+fine. This closes the shared title-worker/lifecycle regression debt and advances
+the accepted development pointer to `f8928bb`.
 
 ## Offline verification method
 
