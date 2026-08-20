@@ -1104,6 +1104,11 @@ namespace
     {
         bool armed = false;
         bool centerRootValid = false;
+        // Latched once at arming: the asynchronous two-hand global can flip
+        // between the two eye solves of one pair, and it participates in the
+        // palette cache key, so a per-eye resample would let the eyes solve
+        // different arm-IK modes for one presented frame.
+        bool twoHandAimActive = false;
         BoneMatrix centerRoot{};
         FpStereoPaletteCache palettes[4]{};
     };
@@ -4362,7 +4367,9 @@ namespace
             sizeof(BoneMatrix);
         const bool twoHandAimActive = explicitTargets
             ? explicitTargets->twoHandAimActive
-            : VR_IsTwoHandAiming();
+            : (g_fpStereoSolveScope.armed
+                   ? g_fpStereoSolveScope.twoHandAimActive
+                   : VR_IsTwoHandAiming());
         const bool armIkActive = ShouldApplyArmIk(
             g_config.arm_ik, twoHandAimActive);
 
@@ -8895,6 +8902,7 @@ namespace
         // changed animation pass on the existing full-solve path.
         g_fpStereoSolveScope = {};
         g_fpStereoSolveScope.armed = true;
+        g_fpStereoSolveScope.twoHandAimActive = VR_IsTwoHandAiming();
         const int firstEye = g_config.right_eye_first ? 1 : 0;
         for (int pass = 0; pass < 2; ++pass)
         {
@@ -12455,6 +12463,7 @@ namespace
         // second eye reprojects the cached center-root solve into its own root.
         g_fpStereoSolveScope = {};
         g_fpStereoSolveScope.armed = true;
+        g_fpStereoSolveScope.twoHandAimActive = VR_IsTwoHandAiming();
         const int firstEye = g_config.right_eye_first ? 1 : 0;
         for (int pass = 0; pass < 2; ++pass)
         {
