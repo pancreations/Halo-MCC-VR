@@ -142,7 +142,7 @@ Both the Steam and the Microsoft Store (Xbox app / Game Pass) editions are
 supported and **every candidate installs to both, every time**. The user
 alternates between them, so never deploy to only one.
 
-- Ask which edition a result came from, or read it: `halo3xr.log` names it on
+- Ask which edition a result came from, or read it: `HaloMCCVR.log` names it on
   the `MCC edition:` line, right under the build identity, alongside the
   `OpenXR runtime:` and `headset:` lines. A report that does not identify the
   edition, runtime and headset is not reproducible.
@@ -167,5 +167,5 @@ build on 2026-07-26 passed all three. Advance `docs/CURRENT-STATE.md` only after
 explicit headset acceptance.
 
 When a runtime failure is being diagnosed, compare the new log against the
-preserved log in `out/deploy-backups/<hash>-before-<hash>/halo3xr.log`. Do not
+preserved log in `out/deploy-backups/<hash>-before-<hash>/HaloMCCVR.log`. Do not
 theorize past a log that disagrees.

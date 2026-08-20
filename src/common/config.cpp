@@ -828,7 +828,7 @@ void ConfigSave()
     fprintf(f, "#  * resolution_scale needs a full game restart. Everything else\n");
     fprintf(f, "#    takes effect the next time you launch, or live in the F1 menu.\n");
     fprintf(f, "#  * A line the mod does not recognize, or a value that is not a\n");
-    fprintf(f, "#    number, is ignored and noted in halo3xr.log. It cannot break\n");
+    fprintf(f, "#    number, is ignored and noted in HaloMCCVR.log. It cannot break\n");
     fprintf(f, "#    the mod, and out-of-range numbers are pulled back into range.\n");
     fprintf(f, "# ===================================================================\n\n");
     fprintf(f, "config_version = %d\n\n", g_config.config_version);
@@ -1314,7 +1314,7 @@ void ConfigSave()
     fprintf(f, "# washed-out picture in a headset. They drive the game's own switch\n");
     fprintf(f, "# for each effect and apply live, no restart. Halo: Reach is the\n");
     fprintf(f, "# game that honours these today; a game with no proven switch for an\n");
-    fprintf(f, "# effect just leaves it alone and says so in halo3xr.log.\n");
+    fprintf(f, "# effect just leaves it alone and says so in HaloMCCVR.log.\n");
     fprintf(f, "#\n");
     fprintf(f, "# Rain: the streaks the rain renderer draws across your view.\n");
     fprintf(f, "# 1 = the game's normal rain, 0 = no rain.\n");

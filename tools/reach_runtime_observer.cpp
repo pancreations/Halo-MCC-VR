@@ -40,7 +40,10 @@ namespace
 {
     constexpr wchar_t kMccExecutable[] = L"MCC-Win64-Shipping.exe";
     constexpr wchar_t kReachModule[] = L"haloreach.dll";
-    constexpr wchar_t kInjectedModModule[] = L"halo3xr.dll";
+    // The mod DLL was renamed to HaloMCCVR.dll; the contamination guard must
+    // keep refusing under either name or it silently stops guarding.
+    constexpr wchar_t kInjectedModModule[] = L"HaloMCCVR.dll";
+    constexpr wchar_t kLegacyInjectedModModule[] = L"halo3xr.dll";
     constexpr DWORD kProcessAccess =
         PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
     static_assert(
@@ -1007,11 +1010,12 @@ namespace
         }
         if (!finalReach || !SameModule(module, *finalReach) ||
             finalTitleCount != 1 ||
-            FindModule(finalModules, kInjectedModModule))
+            FindModule(finalModules, kInjectedModModule) ||
+            FindModule(finalModules, kLegacyInjectedModModule))
         {
             report.Line(
                 "REACH OBSERVER preflight FAIL: mapping changed or "
-                "sole-title/halo3xr state changed during validation");
+                "sole-title/mod-DLL state changed during validation");
             return false;
         }
 
@@ -1944,7 +1948,7 @@ int wmain(int argc, wchar_t** argv)
     CloseHandle(observerFile);
     report.Line(
         "REACH OBSERVER contract: stock anti-cheat-disabled MCC only; "
-        "halo3xr.dll or ambiguous title residency causes refusal; "
+        "a loaded mod DLL or ambiguous title residency causes refusal; "
         "missed short pulses are inconclusive, never negative "
         "proof");
 
@@ -2021,10 +2025,11 @@ int wmain(int argc, wchar_t** argv)
                 }
             }
 
-            if (FindModule(modules, kInjectedModModule))
+            if (FindModule(modules, kInjectedModModule) ||
+                FindModule(modules, kLegacyInjectedModModule))
             {
                 report.Line(
-                    "REACH OBSERVER REFUSED: halo3xr.dll is loaded; "
+                    "REACH OBSERVER REFUSED: the mod DLL is loaded; "
                     "stock-process evidence is contaminated");
                 contaminated = true;
                 break;

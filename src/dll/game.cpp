@@ -2455,7 +2455,12 @@ namespace
         const uint64_t t0 = GetTickCount64();
         uintptr_t selfBase = 0;
         size_t selfSize = 0;
-        sig::ModuleRange(L"halo3xr.dll", selfBase, selfSize);
+        // By address, not by file name: the DLL was renamed to HaloMCCVR.dll
+        // and a name lookup would silently return no range, letting the scan
+        // accept hits inside our own image.
+        if (!sig::SelfModuleRange(selfBase, selfSize))
+            LOG("HUD safe-frame scan: own module range unavailable; "
+                "self-exclusion is disabled for this scan");
 
         uintptr_t acceptedSlots[kMaxSafeFrameHits]{};
         uint32_t acceptedBaselines[kMaxSafeFrameHits]{};

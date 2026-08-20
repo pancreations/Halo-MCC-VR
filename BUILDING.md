@@ -31,7 +31,7 @@ There is a single `release` preset. It always builds Release x64 with Halo 3,
 ODST, and Halo: Reach compiled in permanently. `camscan` is excluded: it is an
 opt-in diagnostic with process-memory write modes, not a product target. The
 standalone Reach runtime observer is also excluded and must be selected by name;
-it is never linked into `halo3xr.dll`. The build identity line reports
+it is never linked into `HaloMCCVR.dll`. The build identity line reports
 `ODST=ON, Reach=ON, ReachRender=ON`.
 
 ## How the permanent Reach camera core behaves

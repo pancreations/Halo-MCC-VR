@@ -73,6 +73,31 @@ function Assert-FileIdentity(
     return $actual
 }
 
+# The binaries were renamed from halo3xr.* to HaloMCCVR.*. A game folder that
+# keeps the old pair next to the new one lets an old launcher inject a stale
+# DLL while a hash-verified candidate looks like it is under test, so obsolete
+# legacy files are moved (never deleted) into the deploy-backup area, loudly.
+function Move-LegacyModFiles([string]$GamePath, [string]$QuarantineDir) {
+    $moved = @()
+    foreach ($name in @(
+            'halo3xr.dll', 'halo3xr_launcher.exe',
+            'halo3xr.log', 'halo3xr.log.prev', 'halo3xr_launcher.log')) {
+        $path = Join-Path $GamePath $name
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            if (-not (Test-Path -LiteralPath $QuarantineDir -PathType Container)) {
+                New-Item -ItemType Directory -Path $QuarantineDir | Out-Null
+            }
+            Move-Item -LiteralPath $path `
+                -Destination (Join-Path $QuarantineDir $name)
+            $moved += $name
+        }
+    }
+    if ($moved.Count -ne 0) {
+        Write-Host ("  quarantined obsolete legacy files ({0}) into {1}" -f `
+            ($moved -join ', '), $QuarantineDir)
+    }
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $candidateRoot = [IO.Path]::GetFullPath(
     (Join-Path $repoRoot 'out\candidates'))
@@ -333,6 +358,9 @@ foreach ($target in $targets) {
         }
         Write-Host "  installed DLL:      $newDllHash"
         Write-Host "  installed launcher: $newLauncherHash"
+        Move-LegacyModFiles $gamePath (Join-Path $backupRoot `
+            ('legacy-{0}-{1}' -f $target.Edition,
+                $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")))
         $results += [pscustomobject]@{
             GameDir = $gamePath; Edition = $target.Edition
             Action = 'first-install'; Backup = $null
@@ -345,6 +373,9 @@ foreach ($target in $targets) {
     if ($priorDllHash -ceq $dllHash -and
             $priorLauncherHash -ceq $launcherHash) {
         Write-Host ("Already installed for the {0} edition: {1}" -f $target.Edition, $gamePath)
+        Move-LegacyModFiles $gamePath (Join-Path $backupRoot `
+            ('legacy-{0}-{1}' -f $target.Edition,
+                $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")))
         $results += [pscustomobject]@{
             GameDir = $gamePath; Edition = $target.Edition
             Action = 'already-installed'; Backup = $null
@@ -423,6 +454,7 @@ foreach ($target in $targets) {
             (Get-Sha256 $configPath) -cne $configHashBefore) {
         throw 'Shared configuration changed during deployment.'
     }
+    Move-LegacyModFiles $gamePath (Join-Path $backupDir 'legacy')
 
     $deployment = [ordered]@{
         schema_version = 2

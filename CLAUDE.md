@@ -56,7 +56,7 @@ deploy/restore scripts remain forbidden.
   semantics are not ODST proof.
 - Support both the Steam and Microsoft Store (Xbox app / Game Pass) editions.
   Install every candidate to both, every time — the user alternates between
-  them. `halo3xr.log` names the edition, the OpenXR runtime and the headset;
+  them. `HaloMCCVR.log` names the edition, the OpenXR runtime and the headset;
   ask which one a result came from rather than assuming. See
   `docs/MCC-EDITIONS-EVIDENCE.md`, and note that the game modules are
   byte-identical across editions, so a game-code difference never explains an

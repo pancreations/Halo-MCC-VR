@@ -27,4 +27,8 @@ namespace sig
 
     // Base address and size of a loaded module's image, for bounding a scan.
     bool ModuleRange(const wchar_t* moduleName, uintptr_t& base, size_t& size);
+
+    // Base address and size of the module containing this code, resolved by
+    // address rather than file name, so it survives the DLL being renamed.
+    bool SelfModuleRange(uintptr_t& base, size_t& size);
 }

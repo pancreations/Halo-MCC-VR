@@ -116,6 +116,22 @@ namespace sig
         return true;
     }
 
+    bool SelfModuleRange(uintptr_t& base, size_t& size)
+    {
+        HMODULE mod = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(&SelfModuleRange), &mod))
+            return false;
+        MODULEINFO mi{};
+        if (!GetModuleInformation(GetCurrentProcess(), mod, &mi, sizeof(mi)))
+            return false;
+        base = reinterpret_cast<uintptr_t>(mi.lpBaseOfDll);
+        size = mi.SizeOfImage;
+        return true;
+    }
+
     uintptr_t FindInModule(const wchar_t* moduleName, const char* pattern)
     {
         uintptr_t base = 0;
