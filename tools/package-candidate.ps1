@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c6-stereo6dof-session-fix',
+        'halo2-c7-live-renderer-mode-gate',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 15
+        schema_version = 16
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -187,7 +187,7 @@ try {
             reach = $true
             reach_render = $true
             halo4 = $true
-            halo2 = 'SAME_FRAME_6DOF_SESSION_FIX'
+            halo2 = 'LIVE_RENDERER_REPORT_MODE_GATED_STEREO'
         }
         deployment_policy = [ordered]@{
             automatic_after_package = $true
@@ -253,12 +253,24 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-6'
-            status = 'HEADSET_STEREO_6DOF_SESSION_FIX_VALIDATION_REQUIRED'
+            id = 'C-H2-7'
+            status = 'HEADSET_LIVE_RENDERER_REPORT_AND_MODE_GATED_STEREO_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
-                'dual-cadence-witness-consecutive-prepared-serial-same-game-frame-two-fresh-eye-6dof-path-aware-pre-stereo-screen-validation'
+                'read-only-live-renderer-report-plus-classic-mode-gated-same-frame-two-fresh-eye-stereo-6dof'
+            # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
+            # resolved read-only from a unique signature and reported, and the
+            # classic stereo core arms only where its hooks can actually fire.
+            live_renderer_report = $true
+            live_renderer_source = 'unique-signature-decoded-classic-render-gate'
+            classic_render_gate_rva = '0x00E70CF8'
+            applied_render_mode_rva = '0x00E21280'
+            observer_result_rva = '0x015F297C'
+            observer_stride = '0x368'
+            stereo_arms_only_when_classic_render_tree_runs = $true
+            remastered_mode_stereo_presentation = 'stock-screen'
+            remastered_mode_engine_writes = $false
             identity_anchor_count = 6
             liveness_anchor_count = 2
             hook_count = 2

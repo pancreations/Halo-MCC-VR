@@ -1092,3 +1092,296 @@ private:
     bool m_open = false;
     Decision m_lastDecision = Decision::Hold;
 };
+
+// ---------------------------------------------------------------------------
+// E-H2-3: Halo 2 ships two renderers in one module, and the classic Blam tree
+// is gated off whole while the remastered (Saber GroundHog) renderer owns the
+// frame. Every constant below is byte-proven against the pinned retail module;
+// see docs/HALO2-SIGNATURE-EVIDENCE.md. Nothing here reads memory - these are
+// pure descriptions plus pure decision logic so the policy stays testable.
+// ---------------------------------------------------------------------------
+
+enum class Halo2GraphicsMode : uint8_t
+{
+    Unknown = 0,
+    Classic,
+    Remastered,
+};
+
+// The classic per-frame driver 0x95FEC0 bails on its second instruction when
+// this byte is non-zero. The mode dword is written by the render-mode applier
+// 0x511E0, which passes (appliedMode == 0) to the Saber SSL argument named
+// "isLegacy" - that is what proves the polarity.
+inline constexpr uint32_t kHalo2ClassicRenderDriverRva = 0x0095FEC0;
+inline constexpr uint32_t kHalo2ClassicRenderDisabledByteRva = 0x00E70CF8;
+inline constexpr uint32_t kHalo2AppliedRenderModeRva = 0x00E21280;
+inline constexpr uint32_t kHalo2RequestedRenderModeRva = 0x00E21278;
+inline constexpr uint32_t kHalo2RenderModeApplierRva = 0x000511E0;
+
+// Unique in the complete mapped image of both pinned retail editions.
+// Bytes: push rbx / sub rsp,0x20 / cmp byte [rip+disp32],0 / jne / call.
+// The cmp disp32 sits at +8 and is based at +13.
+inline constexpr char kHalo2ClassicRenderGatePattern[] =
+    "40 53 48 83 EC 20 80 3D ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? E8";
+inline constexpr uint32_t kHalo2ClassicRenderGateDispOffset = 8;
+inline constexpr uint32_t kHalo2ClassicRenderGateNextOffset = 13;
+
+constexpr Halo2GraphicsMode Halo2GraphicsModeFromAppliedMode(
+    int32_t appliedMode) noexcept
+{
+    return appliedMode == 0 ? Halo2GraphicsMode::Classic
+                            : Halo2GraphicsMode::Remastered;
+}
+
+// The gate byte is the render-side truth: it is what the classic driver
+// actually tests. A candidate must agree with it, not with the mode dword
+// alone, because the applier writes the dword and the byte in that order.
+constexpr bool Halo2ClassicRenderTreeRuns(
+    uint8_t classicDisabledByte) noexcept
+{
+    return classicDisabledByte == 0;
+}
+
+constexpr bool Halo2GraphicsModeIsCoherent(
+    int32_t appliedMode, uint8_t classicDisabledByte) noexcept
+{
+    return Halo2ClassicRenderTreeRuns(classicDisabledByte) ==
+        (Halo2GraphicsModeFromAppliedMode(appliedMode) ==
+         Halo2GraphicsMode::Classic);
+}
+
+// A classic-path render hook receiving zero callbacks is expected, not broken,
+// while the remastered renderer owns the frame. This is the decision that four
+// earlier candidates lacked.
+constexpr bool Halo2ClassicRenderHookCanFire(
+    Halo2GraphicsMode mode, uint8_t classicDisabledByte) noexcept
+{
+    return mode == Halo2GraphicsMode::Classic &&
+        Halo2ClassicRenderTreeRuns(classicDisabledByte);
+}
+
+// ---------------------------------------------------------------------------
+// E-H2-4: the observer is the one camera root upstream of BOTH renderers.
+// ---------------------------------------------------------------------------
+
+inline constexpr uint32_t kHalo2ObserverArrayRva = 0x015F28B8;
+inline constexpr uint32_t kHalo2ObserverStride = 0x368;
+inline constexpr uint32_t kHalo2ObserverCount = 4;
+inline constexpr uint32_t kHalo2ObserverResultOffset = 0xC4;
+inline constexpr uint32_t kHalo2ObserverResultArrayRva = 0x015F297C;
+inline constexpr uint32_t kHalo2ObserverHeaderSignature = 0x72616421;
+inline constexpr uint32_t kHalo2ObserverTrailerOffset = 0x360;
+inline constexpr uint32_t kHalo2ObserverUpdatedForFrameOffset = 0xC0;
+
+// observer_get_result(user): imul rax,rbx,0x368 / lea rcx,[rip+disp32] /
+// add rax,rcx. Unique in the complete mapped image; the stride is inside the
+// signature itself, so a moved array cannot silently change the element size.
+inline constexpr char kHalo2ObserverResultAccessorPattern[] =
+    "48 69 C3 68 03 00 00 48 8D 0D ?? ?? ?? ?? 48 03 C1";
+inline constexpr uint32_t kHalo2ObserverResultAccessorRva = 0x006F0E79;
+inline constexpr uint32_t kHalo2ObserverResultAccessorDispOffset = 10;
+inline constexpr uint32_t kHalo2ObserverResultAccessorNextOffset = 14;
+inline constexpr uint32_t kHalo2ObserverResultAccessorStrideOffset = 3;
+
+// s_observer_result. The camera builder 0x7DF5A0 copies exactly these fields.
+inline constexpr uint32_t kHalo2ObserverResultPositionOffset = 0x00;
+inline constexpr uint32_t kHalo2ObserverResultForwardOffset = 0x20;
+inline constexpr uint32_t kHalo2ObserverResultUpOffset = 0x2C;
+inline constexpr uint32_t kHalo2ObserverResultHorizontalFovOffset = 0x38;
+inline constexpr uint32_t kHalo2ObserverResultAspectOffset = 0x3C;
+inline constexpr uint32_t kHalo2ObserverResultVerticalFovOffset = 0x4C;
+inline constexpr uint32_t kHalo2ObserverResultFovRatioOffset = 0x50;
+inline constexpr uint32_t kHalo2ObserverResultOwnedBytes = 0x54;
+
+// The last per-frame writer of position/forward/up. Injecting after this
+// function returns is the only point where no engine code overwrites the pose
+// again before either renderer consumes it.
+inline constexpr uint32_t kHalo2ObserverFinalTransformRva = 0x006F0250;
+inline constexpr uint32_t kHalo2ObserverUpdateAllRva = 0x006F1A60;
+inline constexpr uint32_t kHalo2ObserverResultDeriveRva = 0x006F10E0;
+
+constexpr uint64_t Halo2ObserverRecordOffset(uint32_t user) noexcept
+{
+    return static_cast<uint64_t>(user) * kHalo2ObserverStride;
+}
+
+constexpr uint64_t Halo2ObserverResultOffsetForUser(uint32_t user) noexcept
+{
+    return Halo2ObserverRecordOffset(user) + kHalo2ObserverResultOffset;
+}
+
+constexpr bool Halo2ObserverUserValid(uint32_t user) noexcept
+{
+    return user < kHalo2ObserverCount;
+}
+
+// The three owned observer spans, expressed exactly as the engine stores them.
+// They are NOT contiguous, so a whole-struct copy is forbidden: fields between
+// them belong to the engine.
+enum class Halo2ObserverSpan : uint8_t
+{
+    Position = 0,
+    Forward,
+    Up,
+};
+inline constexpr uint32_t kHalo2ObserverOwnedSpanCount = 3;
+
+constexpr uint32_t Halo2ObserverSpanOffset(Halo2ObserverSpan span) noexcept
+{
+    return span == Halo2ObserverSpan::Position
+        ? kHalo2ObserverResultPositionOffset
+        : (span == Halo2ObserverSpan::Forward
+               ? kHalo2ObserverResultForwardOffset
+               : kHalo2ObserverResultUpOffset);
+}
+
+constexpr uint32_t Halo2ObserverSpanBytes(Halo2ObserverSpan) noexcept
+{
+    return kHalo2CameraVectorBytes;
+}
+
+// Only the three pose vectors may ever be written. Field of view, aspect,
+// cluster/leaf indices and velocity remain engine-owned: the vertical FOV at
+// +0x4C is derived by 0x6F1700 from +0x38 and +0x3C, so writing one without
+// the other produces an incoherent projection.
+constexpr bool Halo2ObserverSpanWriteAllowed(
+    uint32_t resultRelativeOffset, size_t bytes) noexcept
+{
+    if (bytes != kHalo2CameraVectorBytes)
+        return false;
+    return resultRelativeOffset == kHalo2ObserverResultPositionOffset ||
+        resultRelativeOffset == kHalo2ObserverResultForwardOffset ||
+        resultRelativeOffset == kHalo2ObserverResultUpOffset;
+}
+
+// ---------------------------------------------------------------------------
+// The Blam to Saber camera hand-off, replicated exactly from halo2.dll
+// 0x5F510 so no conversion is invented. Saber works in metres and swaps axes:
+//   saber(v) = (v.x, v.z, -v.y)
+// row0 = saber(forward) x saber(up), row1 = saber(up), row2 = saber(forward),
+// row3 = saber(position) * 3.048 + offsets + forwardScale * saber(forward).
+// ---------------------------------------------------------------------------
+
+inline constexpr uint32_t kHalo2SaberCameraBridgeRva = 0x0005F510;
+inline constexpr uint32_t kHalo2SaberCameraPushRva = 0x00051510;
+inline constexpr uint32_t kHalo2SaberFrameDriverRva = 0x000515E0;
+inline constexpr uint32_t kHalo2SaberSceneSlotRva = 0x01E91210;
+inline constexpr uint32_t kHalo2SaberSceneCameraListOffset = 0x100;
+inline constexpr uint32_t kHalo2SaberSceneCameraCountOffset = 0x108;
+inline constexpr uint32_t kHalo2SaberCameraMatrixOffset = 0x00;
+inline constexpr uint32_t kHalo2SaberCameraFovChangedOffset = 0x14C;
+inline constexpr uint32_t kHalo2SaberCameraVerticalFovDegreesOffset = 0x150;
+inline constexpr uint32_t kHalo2SaberCameraHorizontalFovDegreesOffset = 0x154;
+inline constexpr uint32_t kHalo2SaberCameraAspectOffset = 0x158;
+inline constexpr uint32_t kHalo2SaberCameraSetFovRva = 0x000BC560;
+inline constexpr uint32_t kHalo2SaberCameraCommitRva = 0x000BC2B0;
+
+// Saber render thread: frame entry -> view loop -> scene render. The view loop
+// already runs the scene render more than once per frame, which is why a
+// per-eye second pass is native rather than a replay.
+inline constexpr uint32_t kHalo2SaberFrameRenderRva = 0x002DC3D0;
+inline constexpr uint32_t kHalo2SaberViewLoopRva = 0x002DEC00;
+inline constexpr uint32_t kHalo2SaberSceneRenderRva = 0x002DF190;
+
+// Engine-owned translation constants read by 0x5F510. They are module globals,
+// not literals, so a candidate must read them rather than bake them in.
+inline constexpr uint32_t kHalo2SaberOffsetXRva = 0x01E8D058;
+inline constexpr uint32_t kHalo2SaberOffsetZRva = 0x01E8D05C;
+inline constexpr uint32_t kHalo2SaberOffsetYRva = 0x01E8D060;
+inline constexpr uint32_t kHalo2SaberForwardScaleRva = 0x01E8D08C;
+
+struct Halo2SaberViewMatrix
+{
+    float m[16]{};
+};
+
+struct Halo2SaberCameraConstants
+{
+    float offsetX = 0.0f;
+    float offsetZ = 0.0f;
+    float offsetY = 0.0f;
+    float forwardScale = 0.0f;
+};
+
+inline bool Halo2SaberCameraConstantsFinite(
+    const Halo2SaberCameraConstants& constants) noexcept
+{
+    return std::isfinite(constants.offsetX) &&
+        std::isfinite(constants.offsetZ) &&
+        std::isfinite(constants.offsetY) &&
+        std::isfinite(constants.forwardScale);
+}
+
+inline bool Halo2BuildSaberViewMatrix(
+    const Halo2CameraBasis& basis,
+    const Halo2SaberCameraConstants& constants,
+    Halo2SaberViewMatrix& out) noexcept
+{
+    if (!Halo2ValidateCameraBasis(basis) ||
+        !Halo2SaberCameraConstantsFinite(constants))
+    {
+        return false;
+    }
+
+    const float forward[3] = {
+        basis.forward[0], basis.forward[2], -basis.forward[1]};
+    const float up[3] = {basis.up[0], basis.up[2], -basis.up[1]};
+    const float right[3] = {
+        forward[1] * up[2] - forward[2] * up[1],
+        forward[2] * up[0] - forward[0] * up[2],
+        forward[0] * up[1] - forward[1] * up[0]};
+
+    Halo2SaberViewMatrix candidate{};
+    candidate.m[0] = right[0];
+    candidate.m[1] = right[1];
+    candidate.m[2] = right[2];
+    candidate.m[3] = 0.0f;
+    candidate.m[4] = up[0];
+    candidate.m[5] = up[1];
+    candidate.m[6] = up[2];
+    candidate.m[7] = 0.0f;
+    candidate.m[8] = forward[0];
+    candidate.m[9] = forward[1];
+    candidate.m[10] = forward[2];
+    candidate.m[11] = 0.0f;
+    candidate.m[12] = basis.position[0] * kHalo2MetersPerWorldUnit +
+        constants.offsetX + constants.forwardScale * forward[0];
+    candidate.m[13] = basis.position[2] * kHalo2MetersPerWorldUnit +
+        constants.offsetZ + constants.forwardScale * forward[1];
+    candidate.m[14] = (constants.offsetY -
+                       basis.position[1] * kHalo2MetersPerWorldUnit) +
+        constants.forwardScale * forward[2];
+    candidate.m[15] = 1.0f;
+
+    for (int index = 0; index < 16; ++index)
+        if (!std::isfinite(candidate.m[index]))
+            return false;
+    out = candidate;
+    return true;
+}
+
+// 0xBC560 derives the vertical FOV from the horizontal one and the aspect
+// ratio, so only a symmetric frustum is expressible through the engine's own
+// setter. This mirrors that derivation exactly; degrees, as the engine stores.
+inline bool Halo2SaberVerticalFovDegrees(
+    float horizontalFovDegrees, float aspect,
+    float& outVerticalDegrees) noexcept
+{
+    constexpr float kPi = 3.14159265f;
+    if (!std::isfinite(horizontalFovDegrees) || !std::isfinite(aspect) ||
+        horizontalFovDegrees <= 0.0f || horizontalFovDegrees >= 180.0f ||
+        aspect <= 0.0f)
+    {
+        return false;
+    }
+    const float halfRadians = horizontalFovDegrees * 0.5f * kPi / 180.0f;
+    const float tangent = std::tan(halfRadians);
+    if (!std::isfinite(tangent) || tangent <= 0.0f)
+        return false;
+    const float vertical = std::atan(tangent / aspect);
+    if (!std::isfinite(vertical) || vertical <= 0.0f)
+        return false;
+    outVerticalDegrees = (vertical + vertical) * 180.0f / kPi;
+    return std::isfinite(outVerticalDegrees) && outVerticalDegrees > 0.0f &&
+        outVerticalDegrees < 180.0f;
+}

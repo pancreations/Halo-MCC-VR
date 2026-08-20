@@ -9,7 +9,7 @@
     {
       "name": "release",
       "displayName": "Halo MCC VR cumulative Release",
-      "description": "x64 cumulative build: accepted titles plus Halo 4 and Halo 2 C-H2-6 same-frame stereo + 6DOF session fix",
+      "description": "x64 cumulative build: accepted titles plus Halo 4 and Halo 2 C-H2-7 live-renderer report with mode-gated classic stereo + 6DOF",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/release",

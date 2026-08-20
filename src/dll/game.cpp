@@ -35570,7 +35570,9 @@ namespace
                     halo2GateBase, halo2GateSize, halo2Generation,
                     halo2Active && halo2GateSampled && halo2VrRuntimeAvailable,
                     activeLevelRunning,
-                    Halo2ColdObservation_Passed(halo2Generation));
+                    Halo2ColdObservation_Passed(halo2Generation),
+                    Halo2ColdObservation_ClassicRenderTreeRuns(
+                        halo2Generation));
                 PublishHalo2StereoLifecycle(halo2Generation);
                 if (halo2Generation && !halo2CoreReady)
                     TitleAdapter_ClearHeartbeat(

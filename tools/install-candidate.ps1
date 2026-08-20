@@ -136,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 15) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 16) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 15) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c6-stereo6dof-session-fix-',
+            $head.Substring(0, 7) + '-halo2-c7-live-renderer-mode-gate-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -162,7 +162,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 15) -or
         $manifest.embedded_build_identity.reach_render -ne $true -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
         [string]$manifest.embedded_build_identity.halo2 -cne
-            'SAME_FRAME_6DOF_SESSION_FIX' -or
+            'LIVE_RENDERER_REPORT_MODE_GATED_STEREO' -or
         [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-43' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
             'dd9946595511d65c9859b536e2727201c107da45' -or
@@ -200,14 +200,29 @@ if (-not (Test-ExactInt32 $manifest.schema_version 15) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-6' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-7' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_STEREO_6DOF_SESSION_FIX_VALIDATION_REQUIRED' -or
+            'HEADSET_LIVE_RENDERER_REPORT_AND_MODE_GATED_STEREO_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'dual-cadence-witness-consecutive-prepared-serial-same-game-frame-two-fresh-eye-6dof-path-aware-pre-stereo-screen-validation' -or
+            'read-only-live-renderer-report-plus-classic-mode-gated-same-frame-two-fresh-eye-stereo-6dof' -or
+        $manifest.halo2_candidate.live_renderer_report -ne $true -or
+        [string]$manifest.halo2_candidate.live_renderer_source -cne
+            'unique-signature-decoded-classic-render-gate' -or
+        [string]$manifest.halo2_candidate.classic_render_gate_rva -cne
+            '0x00E70CF8' -or
+        [string]$manifest.halo2_candidate.applied_render_mode_rva -cne
+            '0x00E21280' -or
+        [string]$manifest.halo2_candidate.observer_result_rva -cne
+            '0x015F297C' -or
+        [string]$manifest.halo2_candidate.observer_stride -cne '0x368' -or
+        $manifest.halo2_candidate.stereo_arms_only_when_classic_render_tree_runs -ne
+            $true -or
+        [string]$manifest.halo2_candidate.remastered_mode_stereo_presentation -cne
+            'stock-screen' -or
+        $manifest.halo2_candidate.remastered_mode_engine_writes -ne $false -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.identity_anchor_count 6) -or
         -not (Test-ExactInt32 `

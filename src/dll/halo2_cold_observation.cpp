@@ -31,6 +31,15 @@ namespace
     bool g_passed = false;
     uint32_t g_pinFailLoggedGeneration = 0;
 
+    // E-H2-3 / E-H2-4 read-only graphics-mode state, reset with the gate.
+    Halo2GraphicsMode g_graphicsMode = Halo2GraphicsMode::Unknown;
+    uint32_t g_graphicsModeGeneration = 0;
+    bool g_graphicsModeValid = false;
+    uint8_t g_classicRenderDisabledByte = 0;
+    int32_t g_appliedRenderMode = 0;
+    bool g_appliedRenderModeValid = false;
+    uintptr_t g_observerResultArray = 0;
+
     int HexNibble(char c) noexcept
     {
         if (c >= '0' && c <= '9') return c - '0';
@@ -347,6 +356,13 @@ namespace
         g_gateOpenLogged = false;
         g_lastGateLogMs = 0;
         g_gateLogic.Reset();
+        g_graphicsMode = Halo2GraphicsMode::Unknown;
+        g_graphicsModeGeneration = 0;
+        g_graphicsModeValid = false;
+        g_classicRenderDisabledByte = 0;
+        g_appliedRenderMode = 0;
+        g_appliedRenderModeValid = false;
+        g_observerResultArray = 0;
     }
 
     bool PrepareGate() noexcept
@@ -493,6 +509,227 @@ namespace
         HMODULE m_module = nullptr;
     };
 
+    // -----------------------------------------------------------------
+    // E-H2-3 / E-H2-4 read-only graphics-mode observation.
+    //
+    // halo2.dll ships two renderers. The classic Blam tree is skipped whole
+    // when the byte the classic driver tests is non-zero, which is why every
+    // classic-path render hook can install correctly and still receive zero
+    // callbacks. Reporting the live mode costs one guarded read and turns an
+    // otherwise unattributable "nothing hooked" result into a named one.
+    //
+    // This stays inside C-H2-1's accepted contract: bounded reads of already
+    // pinned code plus two module globals. No hook, no engine write.
+    // -----------------------------------------------------------------
+
+    // DecodeRelativeTarget assumes the displacement is the final field of the
+    // instruction. The classic gate is `cmp byte [rip+disp32], imm8`, whose
+    // trailing immediate makes the next instruction one byte further on, so
+    // the caller states both offsets explicitly rather than relying on that.
+    bool DecodeRipRelative(
+        uintptr_t match, uint32_t dispOffset, uint32_t nextOffset,
+        uintptr_t& target) noexcept
+    {
+        if (!match || !dispOffset || nextOffset <= dispOffset)
+            return false;
+        __try
+        {
+            const int32_t displacement =
+                *reinterpret_cast<const int32_t*>(match + dispOffset);
+            target = match + nextOffset + displacement;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool ReadGuardedByte(uintptr_t address, uint8_t& value) noexcept
+    {
+        if (!address || !IsReadableRange(address, sizeof(uint8_t)))
+            return false;
+        __try
+        {
+            value = *reinterpret_cast<const volatile uint8_t*>(address);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool ReadGuardedInt32(uintptr_t address, int32_t& value) noexcept
+    {
+        if (!address || !IsReadableRange(address, sizeof(int32_t)))
+            return false;
+        __try
+        {
+            value = *reinterpret_cast<const volatile int32_t*>(address);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // Resolves a unique signature and requires it to sit at its pinned RVA.
+    // Zero or multiple matches fail closed and are logged by name.
+    bool ResolveUniqueAnchor(
+        uintptr_t base, size_t size, const char* pattern, uint32_t pinnedRva,
+        const char* name, uintptr_t& match) noexcept
+    {
+        match = 0;
+        uint32_t matchCount = 0;
+        if (!CountPatternMatches(base, size, pattern, match, matchCount))
+        {
+            LOG("Halo 2 graphics mode: guarded image scan failed for %s; the "
+                "live renderer is not reported this generation", name);
+            return false;
+        }
+        if (matchCount != 1)
+        {
+            LOG("Halo 2 graphics mode: %s matched %u times, not once; the "
+                "live renderer is not reported this generation",
+                name, matchCount);
+            match = 0;
+            return false;
+        }
+        if (match != base + pinnedRva)
+        {
+            LOG("Halo 2 graphics mode: %s moved from pinned RVA 0x%X to "
+                "0x%llX; the live renderer is not reported this generation",
+                name, pinnedRva,
+                static_cast<unsigned long long>(match - base));
+            match = 0;
+            return false;
+        }
+        return true;
+    }
+
+    void ObserveGraphicsMode(uintptr_t base, size_t size) noexcept
+    {
+        g_graphicsMode = Halo2GraphicsMode::Unknown;
+        g_graphicsModeValid = false;
+        g_appliedRenderModeValid = false;
+        g_observerResultArray = 0;
+
+        uintptr_t gateMatch = 0;
+        if (!ResolveUniqueAnchor(
+                base, size, kHalo2ClassicRenderGatePattern,
+                kHalo2ClassicRenderDriverRva, "classic render gate",
+                gateMatch))
+        {
+            return;
+        }
+
+        uintptr_t gateByteAddress = 0;
+        if (!DecodeRipRelative(
+                gateMatch, kHalo2ClassicRenderGateDispOffset,
+                kHalo2ClassicRenderGateNextOffset, gateByteAddress) ||
+            gateByteAddress != base + kHalo2ClassicRenderDisabledByteRva)
+        {
+            LOG("Halo 2 graphics mode: the classic render gate decoded to "
+                "RVA 0x%llX instead of the pinned 0x%X; the live renderer is "
+                "not reported this generation",
+                gateByteAddress
+                    ? static_cast<unsigned long long>(gateByteAddress - base)
+                    : 0ull,
+                kHalo2ClassicRenderDisabledByteRva);
+            return;
+        }
+
+        uint8_t classicDisabled = 0;
+        if (!ReadGuardedByte(gateByteAddress, classicDisabled))
+        {
+            LOG("Halo 2 graphics mode: the classic-disabled byte at RVA 0x%X "
+                "was not readable; the live renderer is not reported",
+                kHalo2ClassicRenderDisabledByteRva);
+            return;
+        }
+
+        // The mode dword is corroboration only. The byte above is what the
+        // classic driver actually tests, so it decides, and a disagreement is
+        // reported rather than silently resolved.
+        int32_t appliedMode = 0;
+        const bool appliedModeRead = ReadGuardedInt32(
+            base + kHalo2AppliedRenderModeRva, appliedMode);
+
+        // The observer accessor carries its own 0x368 stride inside the
+        // signature, so a moved array cannot silently change the element size.
+        uintptr_t observerMatch = 0;
+        uintptr_t observerResultArray = 0;
+        if (ResolveUniqueAnchor(
+                base, size, kHalo2ObserverResultAccessorPattern,
+                kHalo2ObserverResultAccessorRva, "observer result accessor",
+                observerMatch))
+        {
+            if (DecodeRipRelative(
+                    observerMatch, kHalo2ObserverResultAccessorDispOffset,
+                    kHalo2ObserverResultAccessorNextOffset,
+                    observerResultArray) &&
+                observerResultArray == base + kHalo2ObserverResultArrayRva)
+            {
+                g_observerResultArray = observerResultArray;
+            }
+            else
+            {
+                LOG("Halo 2 graphics mode: the observer result accessor "
+                    "decoded to RVA 0x%llX instead of the pinned 0x%X",
+                    observerResultArray
+                        ? static_cast<unsigned long long>(
+                              observerResultArray - base)
+                        : 0ull,
+                    kHalo2ObserverResultArrayRva);
+            }
+        }
+
+        g_classicRenderDisabledByte = classicDisabled;
+        g_appliedRenderMode = appliedMode;
+        g_appliedRenderModeValid = appliedModeRead;
+        g_graphicsMode = Halo2ClassicRenderTreeRuns(classicDisabled)
+            ? Halo2GraphicsMode::Classic
+            : Halo2GraphicsMode::Remastered;
+        g_graphicsModeValid = true;
+        g_graphicsModeGeneration = g_gateGeneration;
+
+        const bool coherent = appliedModeRead &&
+            Halo2GraphicsModeIsCoherent(appliedMode, classicDisabled);
+        if (g_graphicsMode == Halo2GraphicsMode::Classic)
+        {
+            LOG("Halo 2 live renderer: CLASSIC (legacy Blam). The classic "
+                "render tree runs, so its proven hooks can fire. Gate byte "
+                "RVA 0x%X = 0, mode dword RVA 0x%X = %d (%s), observer "
+                "results at RVA 0x%X stride 0x%X",
+                kHalo2ClassicRenderDisabledByteRva,
+                kHalo2AppliedRenderModeRva,
+                appliedModeRead ? appliedMode : 0,
+                appliedModeRead
+                    ? (coherent ? "coherent" : "DISAGREES with the gate byte")
+                    : "unreadable",
+                kHalo2ObserverResultArrayRva, kHalo2ObserverStride);
+        }
+        else
+        {
+            LOG("Halo 2 live renderer: REMASTERED (Anniversary / Saber). The "
+                "classic render tree is skipped whole at the driver's second "
+                "instruction, so a classic-path render hook installs cleanly "
+                "and receives ZERO callbacks by design - that is not a broken "
+                "signature. Gate byte RVA 0x%X = %u, mode dword RVA 0x%X = %d "
+                "(%s), observer results at RVA 0x%X stride 0x%X",
+                kHalo2ClassicRenderDisabledByteRva,
+                static_cast<unsigned>(classicDisabled),
+                kHalo2AppliedRenderModeRva,
+                appliedModeRead ? appliedMode : 0,
+                appliedModeRead
+                    ? (coherent ? "coherent" : "DISAGREES with the gate byte")
+                    : "unreadable",
+                kHalo2ObserverResultArrayRva, kHalo2ObserverStride);
+        }
+    }
+
     void RunColdObservation() noexcept
     {
         Halo2ModulePin pin;
@@ -585,6 +822,7 @@ namespace
                 kHalo2RetailPeTimestamp,
                 static_cast<uint32_t>(kHalo2RetailImageSize),
                 kHalo2RetailAnchorCount, kHalo2GameTimeSlotRva);
+            ObserveGraphicsMode(g_gateBase, g_gateSize);
         }
         else
         {
@@ -722,4 +960,43 @@ bool Halo2ColdObservation_Pending(uint32_t generation) noexcept
 bool Halo2ColdObservation_Passed(uint32_t generation) noexcept
 {
     return generation && g_passed && g_passedGeneration == generation;
+}
+
+Halo2GraphicsMode Halo2ColdObservation_GraphicsMode(
+    uint32_t generation) noexcept
+{
+#if !HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
+    (void)generation;
+    return Halo2GraphicsMode::Unknown;
+#else
+    if (!generation || !g_graphicsModeValid ||
+        g_graphicsModeGeneration != generation)
+    {
+        return Halo2GraphicsMode::Unknown;
+    }
+    return g_graphicsMode;
+#endif
+}
+
+bool Halo2ColdObservation_ClassicRenderTreeRuns(
+    uint32_t generation) noexcept
+{
+    return Halo2ColdObservation_GraphicsMode(generation) ==
+        Halo2GraphicsMode::Classic;
+}
+
+uintptr_t Halo2ColdObservation_ObserverResultArray(
+    uint32_t generation) noexcept
+{
+#if !HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
+    (void)generation;
+    return 0;
+#else
+    if (!generation || !g_graphicsModeValid ||
+        g_graphicsModeGeneration != generation)
+    {
+        return 0;
+    }
+    return g_observerResultArray;
+#endif
 }

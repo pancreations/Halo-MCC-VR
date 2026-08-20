@@ -10,8 +10,8 @@ fail-open for every ordinary unclaimed missing exact-current pair, but a fresh
 static audit found persistent post-Claim and inherited-pause black paths; it is
 also compile-disabled. C-H2-5 was headset-rejected after its own pre-stereo
 screen check terminated a healthy OpenXR session, and is compile-disabled.
-C-H2-6 corrects that one false RTV/session-fatal condition and requires headset
-validation.** C-H2-1 remains the accepted read-only behavior. The
+C-H2-6 corrected that false RTV/session-fatal condition but was headset-rejected
+because neither installed render detour executed, and is compile-disabled.** C-H2-1 remains the accepted read-only behavior. The
 machine-readable subset is
 `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
@@ -789,17 +789,32 @@ same-frame stereo, full headset rotation/translation, no 45/60-Hz H2 stereo,
 and actual 72–144 Hz. The same exact DLL then requires a Halo 3 headset
 regression before any accepted pointer advances.
 
-## C-H2-6 successor: path-aware pre-stereo validation without session teardown
+## Headset-rejected C-H2-6 successor: session survived, render hooks stayed cold
 
-**C-H2-6 requires Halo 2 headset validation and is not accepted. The accepted
-pointer remains C-H2-1 at `f8928bb`.** It inherits C-H2-5's engine evidence,
+**C-H2-6 is headset-rejected and compile-disabled. The accepted pointer remains
+C-H2-1 at `f8928bb`.** It inherited C-H2-5's engine evidence,
 two hook sites, caller edges, camera layout, eight restored write spans, pose
-mapping, and pair/cadence/quarantine rules without change. In particular, one
-outer game-frame transaction still produces exactly two fresh left/right eye
-renders and captures. Both eyes must use the exact current prepared OpenXR
+mapping, and pair/cadence/quarantine rules without change. Its intended
+transaction had one outer game-frame scope produce exactly two fresh left/right
+eye renders and captures. Both eyes had to use the exact current prepared OpenXR
 serial; temporal, previous-frame, and N-1 eye reuse remain forbidden. Full
 headset quaternion rotation and translation are applied independently to both
 render and raster cameras. The intentional cadence divisor remains 1.
+
+The Steam run used source `628c37bd9a5437ed35a7a1696e266fc8612452ab`,
+DLL SHA-256 `86AE0540F60064E6C86F1551D71AF878F0CF62E2BD1FD5CD42C26425C8256E2C`,
+SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, and a 90 Hz panel. The C-H2-5
+session-kill defect was fixed: OpenXR stayed focused and continued submitting a
+screen layer. C-H2-1 cold observation passed and C-H2-6 installed its outer and
+inner hooks twice, then armed. Nevertheless, every hook telemetry sample stayed
+at `outer=0 inner=0 claimed=0 eyes=0 complete=0`. No pair or 6DOF transaction
+began and the active line was never emitted. The user reported that nothing
+hooked. The preserved log is
+`out/test-runs/628c37b-halo2-c6-zero-hook-20260820-1638/HaloMCCVR.log`, SHA-256
+`0D654E1071E7870068E72E9B615A1896EAAB67BB97C512151E1AA89BF431F498`.
+This result rejects the selected runtime binding, not the headset or OpenXR
+session. A successor must identify the live player render route before claiming
+stereo ownership.
 
 The two current-frame cadence witnesses remain exact: both
 `xrWaitFrame.predictedDisplayPeriod` and that prepared serial's delta from the
@@ -869,6 +884,292 @@ left/right output, full headset rotation and translation work, and actual
 application cadence remains within 72–144 Hz. The same DLL must then pass the
 Halo 3 headset regression before any accepted pointer advances.
 
+## E-H2-3: Halo 2 ships TWO renderers, and the classic tree is gated OFF
+
+**This is the proven root cause of every zero-callback Halo 2 render hook,
+including the headset-rejected C-H2-6 result.** It was established on
+2026-08-20 by offline static analysis of the pinned retail module only. The
+classic addresses recorded in E-H2-2 are all correct; the code they name is
+simply not executed in the graphics mode the player was using.
+
+### The gate
+
+`0x95FEC0` is the classic per-frame render driver. Its second instruction is a
+whole-tree bail-out:
+
+```text
+0095FEC6  80 3D 2B 0E 51 00 00   cmp byte ptr [rip+0x510E2B], 0   ; -> RVA 0xE70CF8
+0095FECD  0F 85 48 01 00 00      jne 0x96001B                     ; skip the classic render
+```
+
+`0x95FECD + 0x510E2B = 0xE70CF8` exactly. When that byte is nonzero, control
+never reaches `0x95FF09`, so the entire chain below it is dormant: setup
+`0x960230`, `render_frame 0x7E1600`, `render_player_window 0x7E2130` and
+`render_view 0x7E30D0`.
+
+### The render-mode globals
+
+The render-mode applier at `0x511E0` writes that byte. Decompilation shows:
+
+```c
+iVar6 = DAT_180e21278;                       /* requested mode  */
+if (FUN_180821eb0() != 0) iVar6 = 0;
+if (iVar6 != DAT_180e21280) {                /* applied mode    */
+    DAT_180e70cf8 = iVar6 != 0;              /* classic-disabled flag */
+    DAT_180e21280 = iVar6;
+    ...
+    local_res8[0] = DAT_180e21280 == 0;      /* argument named "isLegacy" */
+    ... FUN_180077490(uVar5, local_res20, "isLegacy"); ...
+}
+```
+
+The meaning of `+0xE21280` is not inferred: the same function passes
+`DAT_0xE21280 == 0` as the Saber SSL argument literally named `isLegacy`.
+
+| Global RVA | Width | Proven meaning |
+| ---: | --- | --- |
+| `0xE21278` | int32 | requested render mode; the in-game toggle performs `x = 1 - x` inside `0x515E0` |
+| `0xE21280` | int32 | applied render mode. **0 = legacy/classic, nonzero = remastered/Anniversary** |
+| `0xE70CF8` | byte | 1 when the classic Blam render tree is skipped at `0x95FECD` |
+
+`0x515E0` also calls the SSL script function `switch_render_mode` and maintains
+`0xE21288`/`0xE2127C`/`0xE21274` around the transition.
+
+### The host relationship
+
+`halo2.dll` embeds Saber's SSL (Saber Scripting Language) bridge
+`ssl.halo_manager` / `HaloMng`. Its method-name strings sit contiguously in
+`.rdata` at `0xBE2BC0`-`0xBE2E18` and name the two-renderer design outright:
+`switch_render_mode` (`0xBE2EB0`), `OnRenderModeSwitched` (`0xBE2ED8`),
+`isLegacy` (`0xBE2EC8`), `SetRenderModeSwitchEnabled` (`0xBE2C58`),
+`IsRemastered` (`0xBE2CA8`), `StartedInRemasteredMode` (`0xBE2DE8`),
+`ToggleForcedLegacyFading` (`0xBE2DC8`).
+
+Saber's GroundHog engine is the **host**; the Blam classic engine is embedded
+inside it. The classic renderer `0x95FEC0` is reached through a thunk at
+`0x4DC70` (`jmp 0x95FEC0`) whose pointer lives in an SSL binding vtable at
+`.rdata:0xBE3078`. A depth-5 direct-call reachability sweep from all 48 slots of
+the exported game-engine vtable at `0xBE3480` (obtained from `CreateGameEngine`,
+export ordinal 2, `0x54730`) reaches none of `0x95FEC0`, `0x960230`, `0x7E1600`,
+`0x7E2130` or `0x7E30D0`. The classic render is dispatched indirectly, as a
+registered callback.
+
+### Scope correction
+
+`groundhog.dll` is **not** the remastered campaign renderer and is not part of
+this problem. It contains zero Halo 2 campaign level names
+(`01a_tutorial`, `03a_oldmombasa`, `05a_deltaapproach` all absent) and zero
+Saber renderer strings. The remastered renderer is inside `halo2.dll`, evidenced
+by `C:/SaberTools/tools`, `SceneBrowser64.dll`, `s3dprs`, `Saber Integ`,
+`UUI Saber Preload thread`, and a render-target name table near `0xBE76F4`
+holding `Frame buffer 1`, `Lightshafts radial blur quarter`, `DOF blurred`,
+`Postproc half FP16` and `Fog vol. backface depth`.
+
+### Consequence for candidates
+
+A Halo 2 candidate must read `+0xE21280` and bind to whichever renderer is
+live. Zero render-hook callbacks is not evidence that a signature is wrong.
+Forcing the mode is not an acceptable substitute for binding: it would change
+the player's chosen graphics without being asked.
+
+### Recovered Halo 2 symbol assets
+
+Halo 2 previously had no symbol source outside H2EK. Two named tables were
+decoded from retail `.rdata` and are kept under ignored `out/ghidra/`:
+
+- `h2_named_fns.txt` - 934 named HaloScript engine functions with their
+  implementation RVAs, from the script registration records (each record holds a
+  name pointer plus `.text` pointers at `+0x10`/`+0x18`). Examples:
+  `camera_set_field_of_view` -> `0x788F20`, `camera_set_first_person` ->
+  `0x788EC0`, `pvs_set_camera` -> `0x789090`, `player_camera_control` ->
+  `0x7891C0`, `texture_camera_off` -> `0x784CF0`.
+- `h2_globals.txt` - 1082 named engine globals from a `{name, type, storage}`
+  table of stride `0x18` spanning RVA `0xE08750`-`0xE0ECA8`; 87 carry live
+  storage, including `camera_fov_scale` -> `.data:0xDFF4F8` and
+  `texture_camera_scale` -> `.data:0xE13678`.
+
+RTTI is not a discovery route for this module: only 186 type descriptors exist
+and all are Havok `hk*` classes.
+
+## E-H2-4: the shared camera root, and the Blam->Saber camera hand-off
+
+Established 2026-08-20 by offline static analysis of the pinned retail module,
+cross-checked against H2EK symbols and assert text. **This is the lever that
+reaches both renderers.**
+
+### The observer, and its result
+
+The classic engine's camera originates in `camera/observer.cpp`. H2EK proves
+the shape (observer array RVA `0xB552EC`, stride `0x35C`, 4 users; `result` at
+observer `+0xBC`; `observer_update_all 0x448B0` -> per-user `0x433E0` ->
+`0x44390`). Retail preserves it with a grown stride:
+
+| Retail fact | Value |
+| --- | --- |
+| observer array base | RVA `0x15F28B8`, stride `0x368`, 4 users |
+| header / trailer signature | `'!dar'` (`0x72616421`) at observer `+0x00` and `+0x360` |
+| `observer_result` accessor | `0x6F0E60(user)` returns `0x15F297C + user * 0x368` |
+| therefore `result` offset | observer `+0xC4` (H2EK `+0xBC`; the x64 stride grew by `0xC`) |
+
+`0x6F0E60` is byte-proven: `48 69 C3 68 03 00 00` (`imul rax, rbx, 0x368`) then
+`48 8D 0D F5 1A F0 00` (`lea rcx, [rip+0xF01AF5]`), and
+`0x6F0E87 + 0xF01AF5 = 0x15F297C`.
+
+The `observer_result` field layout is byte-proven on **retail** from the camera
+builder `0x7DF5A0`, which copies it field by field into the `0x74`-byte camera:
+
+| `observer_result` | Bytes | Copied to camera |
+| ---: | ---: | --- |
+| `+0x00` position | 12 | `+0x00` |
+| `+0x20` forward | 12 | `+0x0C` |
+| `+0x2C` up | 12 | `+0x18` |
+| `+0x38` horizontal FOV | 4 | (consumed) |
+| `+0x3C` aspect ratio | 4 | (consumed; default `0x3FAAAAAB` = 4/3) |
+| `+0x4C` vertical FOV | 4 | `+0x28`, after a global FOV scale |
+| `+0x50` FOV ratio | 4 | `+0x2C`, after the same scale |
+
+The three global render FOV scales are at RVA `0xE13470`, `0xE13474` and
+`0xE13478`; `0x7DF5A0` selects the third for a 2:1-aspect split-screen with more
+than one player. This exactly matches H2EK `render_camera_build 0x2A5FB0`
+(`render/render_cameras.cpp`), whose assert text names the camera fields.
+
+### The classic window array is at a fixed address
+
+`0x960230(char useAlternateEntry)` builds the windows and then branches:
+
+```c
+if (useAlternateEntry) { FUN_1807E1990(); return; }
+FUN_1807E1600(3, count, index, flags, &DAT_1819976E0);   /* render_frame */
+```
+
+The window array is therefore **RVA `0x19976E0`, stride `0x120`**, and
+`0x960780` writes `type +0x00`, `player index +0x04`, `output user +0x08`,
+builds the rasterizer camera at `window+0x80` via `0x7DF5A0`, then copies
+`0x74` bytes to the render camera at `window+0x0C`. `0x960230` is reached only
+from `0x95FF09` (the classic driver, dead in remastered mode) and from
+`0x695E0`, a nested render-to-texture path that temporarily swaps the RTV slots
+`0x197EE58`/`0x197EE60`/`0x197EE70` - consistent with the classic/remastered
+cross-fade behind `ToggleForcedLegacyFading`. **The window array must not be
+assumed live while the remastered renderer owns the frame.**
+
+### The Blam -> Saber camera hand-off (the shared lever)
+
+`FUN_0x5F510(user_index, splitScreenFlag)` is the bridge. It reads
+`observer_result` through `0x6F0E60(user)` - position `+0x00`, forward `+0x20`,
+up `+0x2C`, vertical FOV `+0x4C`, horizontal FOV `+0x38` - and writes a full
+4x4 row-major matrix plus a field of view into Saber's per-user camera object:
+
+```text
+saberScene = *(void**)(halo2 + 0x1E91210)
+cameraList = *(float***)(saberScene + 0x100)
+cameraCount = *(int*)(saberScene + 0x108)
+camera     = cameraList[user_index]
+
+camera[3] = camera[7] = camera[11] = 0.0f;  camera[15] = 1.0f
+camera[12..14] = position * 3.048 + offsets   /* WORLD UNITS -> METRES */
+basis rows built from forward/up with two components negated
+FUN_0xBC2B0(camera)                    /* commit */
+FUN_0xBC560(camera, fovRadians * 57.29578)   /* set FOV in DEGREES */
+camera[0x53] = (bool)(fabs(oldFov - camera[0x55]) > 1e-6)
+```
+
+The literal `3.048` confirms Halo 2's metre-per-world-unit scale independently,
+and shows Saber's renderer works in metres while Blam works in world units.
+
+Its only caller is `FUN_0x51510`, the per-frame camera push: gated by the flag
+`0x1E8CF94`, it calls `0x2CEFF0(*(void**)0x1E91260, split)`, then
+`0x5F510(0, split)` and `0x5F510(1, split)` for split-screen, and finally
+`SetEvent` - **the Saber scene renders on another thread.**
+
+`0x51510`'s caller is `FUN_0x515E0`, the top-level frame driver, which also
+calls the Blam frame `0x67A220` (at `0x51C89`) before pushing the camera (at
+`0x51CC8`). `0x515E0` is the same function that calls the SSL script function
+`switch_render_mode`.
+
+**Consequence: `observer_result` is upstream of BOTH renderers.** The classic
+path consumes it through `0x7DF5A0` into the window cameras; the remastered path
+consumes it through `0x5F510` into the Saber camera matrix. A headset pose
+written into `observer_result` therefore reaches whichever renderer is live.
+This is a static-analysis conclusion; it has not yet been observed at runtime.
+
+### The remastered renderer's own surface
+
+| Fact | Value |
+| --- | --- |
+| Saber renderer code region | approx. RVA `0x1CB000` - `0x2E2000` |
+| render-target name array | RVA `0xBE9010`, 98 `const char*` entries, indexed by RT id |
+| render-target getter | `0xF87E0(?, rtIndex, ?, ?)`, ~70 call sites, referenced by `0xF87F1`/`0xF8802` |
+| scene render entry | `0x2DC3D0` -> `0x2DEC00` -> `0x2DF190` (`0x2995` bytes, the pass list) |
+| `0x2DC3D0` dispatch | indirect only; its pointer sits in a handler table at `.rdata:0xBFEDC0` |
+
+Selected render-target ids: `[31] Color FP16`, `[32] GBuf pixel normals`,
+`[34] Frame buffer 0`, `[35] Frame buffer 1`, `[70] Depth buffer`,
+`[95] Frame after gamma correction`, `[96] FSR destination texture`. Entries
+`[95]`/`[96]` are the candidate per-eye capture sources; this is **not** yet
+proven and must be confirmed against the live bind order.
+
+### The Saber camera object layout
+
+Byte-proven from `0x5F510` (which fills it) and `0xBC560` (the FOV setter,
+whose only non-data caller is `0x5F510`):
+
+| Saber camera offset | Meaning |
+| ---: | --- |
+| `+0x00` .. `+0x3F` | 4x4 row-major matrix, 16 floats |
+| `+0x0C`, `+0x1C`, `+0x2C` | homogeneous column: `0, 0, 0` |
+| `+0x30`, `+0x34`, `+0x38` | translation, **in metres** (`worldUnits * 3.048`) |
+| `+0x3C` | `1.0f` |
+| `+0x14C` | bool: field of view changed this frame |
+| `+0x150` | vertical field of view, **degrees** |
+| `+0x154` | horizontal field of view, **degrees** |
+| `+0x158` | aspect ratio |
+
+`FUN_0xBC560(camera, horizontalFovDegrees)` writes `+0x154`, derives
+`+0x150 = 2 * atan(tan(hfov/2) / aspect) * 180/pi`, and calls `0xBC380` to
+rebuild the projection. Because the vertical FOV is *derived* from the
+horizontal FOV and the aspect ratio, this entry point can only express a
+**symmetric** frustum; native asymmetric per-eye projection would require
+`0xBC380`'s internals and is not established.
+
+`FUN_0xBC2B0(camera)` commits the matrix and has 20+ callers across the
+remastered renderer, so it is the general "camera updated" path rather than
+anything specific to the Blam bridge.
+
+Reaching the object at runtime:
+
+```text
+saberScene  = *(void**)(halo2 + 0x1E91210)
+cameraList  = *(void***)(saberScene + 0x100)
+cameraCount =  *(int*) (saberScene + 0x108)
+camera      = cameraList[user_index]        /* user_index < cameraCount */
+```
+
+### The remastered renderer is view-driven, and it carries temporal history
+
+`0x2DEC00` does not render one scene. It walks a **view list** - count at
+`*(void**)(halo2+0x1A250F8) + 0x148`, entries from `+0x150` - and calls the
+scene render `0x2DF190(view)` once per view whose flag bits pass (bit 6, bit 3,
+and a `0x4C` mask test at three separate sites). The engine therefore already
+renders the scene several times per frame, which is direct evidence that
+`0x2DF190` is re-entrant and that a per-eye second pass is architecturally
+natural rather than a replay hack.
+
+**Temporal warning, recorded before any candidate is written.** The
+render-target table at `0xBE9010` contains `[66] IBR half prev. frame`,
+`[67] IBR SSR` and `[68] IBR SSR alpha`. A previous-frame history buffer plus
+screen-space reflections is exactly the construct that cost this project the
+Reach effects/bloom eye-desync: a temporal pass blends the OTHER eye's history
+and produces per-eye disagreement that looks like ghosting or shimmer rather
+than like a camera bug. Any Halo 2 stereo candidate must decide up front
+whether to give each eye its own history or to disable the IBR/SSR passes while
+stereo is active. This must be settled before the first headset run, not
+diagnosed afterwards.
+
+`groundhog.dll` is not involved (E-H2-3). H2EK contains none of this renderer,
+so the "discover semantics from H2EK" rule cannot apply to it; H2EK remains
+authoritative for the classic engine and for the shared upstream
+camera/observer system, which is where E-H2-4's lever lives.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are
@@ -930,9 +1231,9 @@ cannot establish a render-performance cause.
 This accepts the Halo 2 read-only observation claim and clears its evidence for
 stereo design. That C-H2-1 result did not accept C-H2-3's rejected hook/write or
 stereo/6DOF runtime claim, C-H2-4's audit-rejected fallback successor, or the
-C-H2-5 false-RTV-fatal candidate, or C-H2-6's untested correction. C-H2-5 was
-headset-rejected and compile-disabled; C-H2-6 still needs its own headset result
-and Halo 3 regression.
+C-H2-5 false-RTV-fatal candidate, or C-H2-6's zero-hook correction. C-H2-5 and
+C-H2-6 were both headset-rejected and compile-disabled; a successor must bind
+the live player render route before its own headset result and Halo 3 regression.
 
 ### Required Halo 3 shared-code regression PASS
 

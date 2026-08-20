@@ -18,9 +18,14 @@ enum class Halo2StereoQuarantineReason : uint32_t
 // Dormant until the title worker deliberately selects the synchronous Halo 2
 // route. The temporal C-H2-2 core remains separate and must never be polled at
 // the same time: both own render_player_window.
+// `classicRenderTreeRuns` is E-H2-3: halo2.dll ships two renderers and the
+// classic Blam tree this core hooks is skipped whole while the remastered
+// Anniversary renderer owns the frame. Arming there would install hooks that
+// can never fire, so the core stays stock and says so instead.
 bool Halo2Stereo_Poll(
     uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
-    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept;
+    bool activeAndRange, bool levelRunning, bool coldPassed,
+    bool classicRenderTreeRuns) noexcept;
 
 bool Halo2Stereo_Installed() noexcept;
 bool Halo2Stereo_Armed() noexcept;

@@ -1,13 +1,13 @@
 {
   "schema_version": 7,
-  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_REJECTED_C_H2_4_AUDIT_REJECTED_C_H2_5_HEADSET_REJECTED_DISABLED_C_H2_6_HEADSET_VALIDATION_REQUIRED",
+  "status": "C_H2_1_ACCEPTED_C_H2_6_ZERO_HOOK_ROOT_CAUSE_PROVEN_TWO_RENDERERS_C_H2_7_HEADSET_VALIDATION_REQUIRED",
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
   "accepted_build_pointer_source": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
-  "active_candidate": "C-H2-6",
+  "active_candidate": "C-H2-7",
   "accepted_build_pointer_advanced": true,
   "active_candidate_accepted_build_pointer_advanced": false,
-  "remaining_gate": "C-H2-6 corrects only C-H2-5's false pre-stereo RTV prerequisite and local-D3D session termination; it must prove true same-frame two-fresh-eye stereo, full rotation and translation, and actual 72-144 Hz in headset before a Halo 3 regression; C-H2-1 has no remaining gate",
+  "remaining_gate": "the C-H2-6 zero-callback result is explained: halo2.dll ships two renderers and the classic Blam tree is skipped whole at 0x95FEC0 when the byte at RVA 0xE70CF8 is non-zero, set from the render mode dword at RVA 0xE21280 whose zero value the engine itself calls isLegacy; C-H2-7 reports the live renderer read-only and arms the classic stereo core only when the classic tree runs; Anniversary stereo still needs the Saber render binding and one runtime fact about which render target holds the finished remastered frame; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -553,9 +553,9 @@
     ]
   },
   "c_h2_6_candidate": {
-    "status": "HEADSET_STEREO_6DOF_SESSION_FIX_VALIDATION_REQUIRED",
+    "status": "HEADSET_REJECTED_ZERO_RENDER_HOOK_CALLBACKS_COMPILE_DISABLED",
     "accepted": false,
-    "compiled_by_release_preset": true,
+    "compiled_by_release_preset": false,
     "accepted_build_pointer_advanced": false,
     "inherits_engine_contract_from": "C-H2-5",
     "behavioral_delta": "the pre-stereo equal-size equal-format-family single-sample CopyResource path requires valid source and destination textures but no RTV; the shader blit path also requires an RTV; a local pre-stereo D3D validation failure drops only that frame, keeps OpenXR alive, and permits the next frame to retry; an unresolved XR transaction does not retry in the same session",
@@ -675,11 +675,29 @@
     "active_line_requires_complete_exact_current_pair_survived_xr_end_frame": true,
     "failure_policy": "dual-cadence-and-consecutive-serial-preclaim-screen-post-claim-drop-generation-quarantine-local-d3d-failure-keeps-openxr-xr-transaction-failure-enters-session-recovery",
     "halo3_regression_required": true,
+    "headset_result": {
+      "accepted": false,
+      "result": "HEADSET_REJECTED_ZERO_OUTER_AND_INNER_RENDER_HOOK_CALLBACKS",
+      "source_commit": "628c37bd9a5437ed35a7a1696e266fc8612452ab",
+      "dll_sha256": "86AE0540F60064E6C86F1551D71AF878F0CF62E2BD1FD5CD42C26425C8256E2C",
+      "log_sha256": "0D654E1071E7870068E72E9B615A1896EAAB67BB97C512151E1AA89BF431F498",
+      "edition": "Steam",
+      "openxr_runtime": "SteamVR/OpenXR 2.17.7",
+      "headset": "SteamVR/OpenXR : oculus",
+      "panel_hz": 90.0,
+      "openxr_session_survived_title_transition": true,
+      "outer_hook_callbacks": 0,
+      "inner_hook_callbacks": 0,
+      "eye_render_count": 0,
+      "exact_pair_count": 0,
+      "active_line_count": 0,
+      "user_result": "nothing hooked"
+    },
     "remaining_acceptance": [
-      "Halo 2 headset validation proving the OpenXR session remains alive across the title transition",
-      "Halo 2 headset validation proving true same-frame simultaneous stereo and full headset rotation/translation",
-      "Halo 2 headset validation proving actual 72-144 Hz app cadence with both predicted-period and delivered-delta witnesses and consecutive completed serials",
-      "the same DLL must then pass the Halo 3 headset regression for shared VR/lifecycle changes"
+      "successor must identify and bind the live Halo 2 player render route",
+      "successor must prove true same-frame simultaneous stereo and full headset rotation/translation",
+      "successor must prove actual 72-144 Hz app cadence with both predicted-period and delivered-delta witnesses and consecutive completed serials",
+      "accepted successor must then pass the Halo 3 headset regression for shared VR/lifecycle changes"
     ]
   },
   "headset_validation": {

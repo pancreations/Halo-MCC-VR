@@ -195,6 +195,7 @@ namespace
     CoreState g_coreState = CoreState::StockFallback;
     uint32_t g_rejectedGeneration = 0;
     uint32_t g_pinFailureLoggedGeneration = 0;
+    uint32_t g_remasteredNoticeGeneration = 0;
 
     thread_local StereoScope* g_stereoScope = nullptr;
     thread_local uint32_t g_suppressedOuterDepth = 0;
@@ -2369,7 +2370,8 @@ namespace
 
 bool Halo2Stereo_Poll(
     uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
-    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept
+    bool activeAndRange, bool levelRunning, bool coldPassed,
+    bool classicRenderTreeRuns) noexcept
 {
     const uint32_t ownedGeneration =
         g_generation.load(std::memory_order_acquire);
@@ -2402,8 +2404,23 @@ bool Halo2Stereo_Poll(
         moduleSize == kHalo2RetailImageSize;
     const bool vrAvailable = !vrFailureGeneration ||
         generation != vrFailureGeneration;
+    // E-H2-3: this core owns render_player_window / render_view, which the
+    // engine skips entirely while the remastered renderer is live. Without
+    // this gate the hooks install, arm, take over presentation, and then
+    // receive zero callbacks - exactly the headset-rejected C-H2-6 result.
     const bool desired = identityValid && activeAndRange && levelRunning &&
-        coldPassed && vrAvailable;
+        coldPassed && vrAvailable && classicRenderTreeRuns;
+    if (identityValid && activeAndRange && levelRunning && coldPassed &&
+        vrAvailable && !classicRenderTreeRuns &&
+        g_remasteredNoticeGeneration != generation)
+    {
+        g_remasteredNoticeGeneration = generation;
+        LOG("Halo 2 stereo stays STOCK this generation: the remastered "
+            "Anniversary renderer owns the frame, so the classic "
+            "render_player_window/render_view transaction this core hooks "
+            "is never executed. Switch Halo 2 to Classic graphics to use "
+            "this stereo path; Anniversary stereo needs its own binding");
+    }
     const bool runtimeQuarantined = generation &&
         RuntimeQuarantineGeneration(runtimeQuarantine) == generation;
     const bool ownsDifferentModule = (g_outerTarget || g_innerTarget) &&
@@ -2540,7 +2557,7 @@ void Halo2Stereo_RequestRecenter() noexcept
 #else
 
 bool Halo2Stereo_Poll(
-    uintptr_t, size_t, uint32_t, bool, bool, bool) noexcept
+    uintptr_t, size_t, uint32_t, bool, bool, bool, bool) noexcept
 {
     return false;
 }

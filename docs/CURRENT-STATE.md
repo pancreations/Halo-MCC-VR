@@ -16,8 +16,8 @@
 > controller admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership,
 > engine hooks, and engine writes are disabled. The headset-rejected C-H2-3
 > candidate and its audit-rejected C-H2-4, headset-rejected C-H2-5, and
-> headset-pending C-H2-6 successors described below do not alter this accepted
-> claim.
+> headset-rejected C-H2-6 successors described below do not alter this accepted
+> claim, and neither does the headset-pending C-H2-7 live-renderer report.
 >
 > | Accepted Halo 2 C-H2-1 identity | Value |
 > | --- | --- |
@@ -198,9 +198,9 @@
 > 72–144 Hz in headset before the same DLL's Halo 3 regression and any pointer
 > advance.
 >
-> **HEADSET VALIDATION REQUIRED (2026-08-20): Halo 2 C-H2-6 true same-frame
+> **HEADSET-REJECTED AND COMPILE-DISABLED (2026-08-20): Halo 2 C-H2-6 true same-frame
 > stereo + full headset 6DOF session fix. This is not accepted; the accepted
-> pointer remains C-H2-1 at `f8928bb`.** C-H2-6 preserves C-H2-5's actual
+> pointer remains C-H2-1 at `f8928bb`.** C-H2-6 preserved C-H2-5's actual
 > stereo transaction unchanged: one outer game-frame transaction performs two
 > fresh eye renders and captures, both use the exact current prepared OpenXR
 > serial, temporal/N-1 eye reuse is forbidden, and full headset quaternion
@@ -232,6 +232,81 @@
 > frame, full rotation and translation work, and actual cadence remains
 > 72–144 Hz. The same DLL then requires a Halo 3 headset regression before any
 > pointer advance.
+>
+> The Steam headset run used source `628c37b`, DLL SHA-256
+> `86AE0540F60064E6C86F1551D71AF878F0CF62E2BD1FD5CD42C26425C8256E2C`,
+> SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, and a 90 Hz panel. C-H2-6
+> fixed C-H2-5's self-terminated OpenXR session: the session stayed focused and
+> submitted one screen layer. Cold observation passed, the stereo core installed
+> twice, and the second install armed. However, its outer and inner detour
+> counters remained exactly zero throughout the run, so no eye render, capture,
+> pair, stereo heartbeat, or 6DOF transaction occurred. The user reported that
+> nothing hooked. The active line was never emitted. The preserved log is
+> `out/test-runs/628c37b-halo2-c6-zero-hook-20260820-1638/HaloMCCVR.log`
+> (SHA-256 `0D654E1071E7870068E72E9B615A1896EAAB67BB97C512151E1AA89BF431F498`).
+> C-H2-6 is compile-disabled before the render binding is changed.
+>
+> **HEADSET VALIDATION REQUIRED (2026-08-20): Halo 2 C-H2-7 live-renderer
+> report with mode-gated classic stereo + 6DOF. This is not accepted; the
+> accepted pointer remains C-H2-1 at `f8928bb`.** C-H2-7 exists because the
+> root cause of every zero-callback Halo 2 render hook is now proven, and it is
+> not a signature error.
+>
+> `halo2.dll` ships **two** renderers: the classic Blam tree and the remastered
+> Anniversary renderer (Saber GroundHog, inside the same module - `groundhog.dll`
+> is not involved and contains no campaign level names or Saber renderer
+> strings). The classic per-frame driver `0x95FEC0` bails on its **second
+> instruction** when the byte at RVA `0xE70CF8` is non-zero, which the render-mode
+> applier `0x511E0` sets as `(appliedMode != 0)` from the mode dword at RVA
+> `0xE21280`. The polarity is not inferred: the same function passes
+> `appliedMode == 0` to the Saber SSL argument literally named `isLegacy`.
+> So while Anniversary graphics are selected, `0x960230`, `render_frame`
+> `0x7E1600`, `render_player_window` `0x7E2130` and `render_view` `0x7E30D0`
+> never execute at all. C-H2-3 through C-H2-6 hooked correct addresses in a
+> dormant tree. See `docs/HALO2-SIGNATURE-EVIDENCE.md` E-H2-3 and E-H2-4.
+>
+> C-H2-7's player-visible deltas are exactly two:
+>
+> 1. **The live renderer is reported.** After the accepted C-H2-1 cold
+>    observation passes, one unique signature
+>    (`40 53 48 83 EC 20 80 3D ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? E8`, one match in
+>    the complete mapped image, disp32 at `+8` based at `+13`) decodes the gate
+>    byte, and a second unique signature
+>    (`48 69 C3 68 03 00 00 48 8D 0D ?? ?? ?? ?? 48 03 C1`, one match, disp32 at
+>    `+10` based at `+14`) decodes observer result 0 at RVA `0x15F297C` with the
+>    `0x368` stride carried inside the signature itself. The log then names the
+>    live renderer. Zero or multiple matches, a moved anchor, a bad decode, or an
+>    unreadable byte fail closed and report; no hook and no engine write depends
+>    on this. This stays inside C-H2-1's read-only contract.
+> 2. **The classic stereo core arms only where its hooks can fire.** The
+>    C-H2-6 transaction is otherwise unchanged - one outer game-frame scope, two
+>    fresh same-serial eye renders, no temporal reuse, cadence divisor 1, full
+>    headset rotation and translation, eight restored camera spans. It is now
+>    additionally gated on the proven classic render tree actually running. In
+>    Anniversary mode it stays stock, writes nothing, and logs why once per
+>    module generation instead of installing hooks that cannot fire.
+>
+> **What a headset run proves.** In **Classic** graphics this is the first Halo 2
+> build whose stereo binding can execute, so it must be judged on stereo, 6DOF
+> and cadence exactly as C-H2-6 would have been. In **Anniversary** graphics the
+> expected and correct result is stock flat presentation plus the
+> `Halo 2 live renderer: REMASTERED` line - that is a PASS for this candidate,
+> not a failure, and it is the evidence needed to bind the Anniversary renderer
+> next.
+>
+> **What C-H2-7 does not claim.** No Anniversary stereo, no Anniversary engine
+> write, no controller admission, aim, HUD, haptics, scene-target redirection or
+> native asymmetric projection. Anniversary stereo needs the Saber render binding
+> and one runtime fact that static analysis cannot supply: which render target
+> holds the finished remastered frame. `0x2DC3D0` reaches no Present across a
+> depth-10 direct-and-tail-jump sweep of 732 functions, and the only pre-Present
+> backbuffer copies belong to the classic drivers, so that fact must come from a
+> run rather than a guess.
+>
+> Packaging advances in lockstep to manifest schema 16, slug
+> `halo2-c7-live-renderer-mode-gate`, and build identity
+> `Halo2=LIVE_RENDERER_REPORT_MODE_GATED_STEREO`. The same DLL still requires a
+> Halo 3 headset regression before any pointer advance.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
 > it records what Halo 4 does today, what was never finished, and the six

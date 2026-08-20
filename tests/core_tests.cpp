@@ -6696,6 +6696,198 @@ int main()
             "and two 4-byte vertical-FOV cover fields while rejecting partial, "
             "overlapping, asymmetric-projection, z-far, or whole-camera writes");
 
+        // -------------------------------------------------------------
+        // E-H2-3: two renderers, and which one is live.
+        // -------------------------------------------------------------
+        Check(Halo2GraphicsModeFromAppliedMode(0) ==
+                  Halo2GraphicsMode::Classic &&
+                  Halo2GraphicsModeFromAppliedMode(1) ==
+                      Halo2GraphicsMode::Remastered &&
+                  Halo2GraphicsModeFromAppliedMode(2) ==
+                      Halo2GraphicsMode::Remastered &&
+                  Halo2GraphicsModeFromAppliedMode(-1) ==
+                      Halo2GraphicsMode::Remastered,
+            "E-H2-3 reads the applied render mode with the polarity the "
+            "engine itself passes to the Saber isLegacy argument: zero is "
+            "classic, anything else is remastered");
+
+        Check(Halo2ClassicRenderTreeRuns(0) &&
+                  !Halo2ClassicRenderTreeRuns(1) &&
+                  !Halo2ClassicRenderTreeRuns(0xFF),
+            "E-H2-3 treats the classic-disabled byte as the render-side "
+            "truth that 0x95FEC0 actually tests");
+
+        Check(Halo2GraphicsModeIsCoherent(0, 0) &&
+                  Halo2GraphicsModeIsCoherent(1, 1) &&
+                  !Halo2GraphicsModeIsCoherent(0, 1) &&
+                  !Halo2GraphicsModeIsCoherent(1, 0),
+            "E-H2-3 detects a torn read between the mode dword and the "
+            "classic-disabled byte instead of trusting either alone");
+
+        Check(Halo2ClassicRenderHookCanFire(Halo2GraphicsMode::Classic, 0) &&
+                  !Halo2ClassicRenderHookCanFire(
+                      Halo2GraphicsMode::Remastered, 1) &&
+                  !Halo2ClassicRenderHookCanFire(
+                      Halo2GraphicsMode::Unknown, 0) &&
+                  !Halo2ClassicRenderHookCanFire(
+                      Halo2GraphicsMode::Classic, 1),
+            "E-H2-3 knows a classic render hook cannot fire while the "
+            "remastered renderer owns the frame, which is why C-H2-6 saw "
+            "zero callbacks with correct addresses");
+
+        // -------------------------------------------------------------
+        // E-H2-4: the observer is the shared camera root.
+        // -------------------------------------------------------------
+        static_assert(kHalo2ObserverResultArrayRva ==
+            kHalo2ObserverArrayRva + kHalo2ObserverResultOffset);
+        Check(Halo2ObserverRecordOffset(0) == 0 &&
+                  Halo2ObserverRecordOffset(1) == kHalo2ObserverStride &&
+                  Halo2ObserverRecordOffset(3) == 3ull * kHalo2ObserverStride &&
+                  Halo2ObserverResultOffsetForUser(0) ==
+                      kHalo2ObserverResultOffset &&
+                  Halo2ObserverResultOffsetForUser(2) ==
+                      2ull * kHalo2ObserverStride +
+                          kHalo2ObserverResultOffset,
+            "E-H2-4 addresses the observer result exactly as the engine "
+            "accessor does: base + user * 0x368 + 0xC4");
+
+        Check(Halo2ObserverUserValid(0) && Halo2ObserverUserValid(3) &&
+                  !Halo2ObserverUserValid(4) &&
+                  !Halo2ObserverUserValid(0xFFFFFFFFu),
+            "E-H2-4 refuses an out-of-range observer user rather than "
+            "indexing past the four-record array");
+
+        Check(Halo2ObserverSpanOffset(Halo2ObserverSpan::Position) ==
+                  kHalo2ObserverResultPositionOffset &&
+                  Halo2ObserverSpanOffset(Halo2ObserverSpan::Forward) ==
+                      kHalo2ObserverResultForwardOffset &&
+                  Halo2ObserverSpanOffset(Halo2ObserverSpan::Up) ==
+                      kHalo2ObserverResultUpOffset &&
+                  Halo2ObserverSpanBytes(Halo2ObserverSpan::Position) ==
+                      kHalo2CameraVectorBytes,
+            "E-H2-4 keeps the three observer pose spans at their proven, "
+            "non-contiguous offsets");
+
+        Check(Halo2ObserverSpanWriteAllowed(
+                  kHalo2ObserverResultPositionOffset,
+                  kHalo2CameraVectorBytes) &&
+                  Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultForwardOffset,
+                      kHalo2CameraVectorBytes) &&
+                  Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultUpOffset,
+                      kHalo2CameraVectorBytes) &&
+                  !Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultHorizontalFovOffset,
+                      kHalo2CameraVectorBytes) &&
+                  !Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultVerticalFovOffset, sizeof(float)) &&
+                  !Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultAspectOffset, sizeof(float)) &&
+                  !Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultPositionOffset, sizeof(float)) &&
+                  !Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultPositionOffset + sizeof(float),
+                      kHalo2CameraVectorBytes) &&
+                  !Halo2ObserverSpanWriteAllowed(
+                      kHalo2ObserverResultOffset,
+                      kHalo2ObserverResultOwnedBytes),
+            "E-H2-4 owns exactly the three 12-byte observer pose vectors and "
+            "never the engine-derived field of view, aspect, or a whole-"
+            "struct copy");
+
+        // -------------------------------------------------------------
+        // The Blam to Saber hand-off, replicated from 0x5F510.
+        // -------------------------------------------------------------
+        Halo2CameraBasis saberSource{};
+        saberSource.position[0] = 10.0f;
+        saberSource.position[1] = 20.0f;
+        saberSource.position[2] = 30.0f;
+        saberSource.forward[0] = 1.0f;
+        saberSource.up[2] = 1.0f;
+
+        Halo2SaberCameraConstants zeroConstants{};
+        Halo2SaberViewMatrix saberMatrix{};
+        const bool saberBuilt =
+            Halo2BuildSaberViewMatrix(
+                saberSource, zeroConstants, saberMatrix);
+        Check(saberBuilt && saberMatrix.m[8] == 1.0f &&
+                  saberMatrix.m[9] == 0.0f && saberMatrix.m[10] == 0.0f &&
+                  saberMatrix.m[4] == 0.0f && saberMatrix.m[5] == 1.0f &&
+                  saberMatrix.m[6] == 0.0f && saberMatrix.m[0] == 0.0f &&
+                  saberMatrix.m[1] == 0.0f && saberMatrix.m[2] == 1.0f &&
+                  saberMatrix.m[3] == 0.0f && saberMatrix.m[7] == 0.0f &&
+                  saberMatrix.m[11] == 0.0f && saberMatrix.m[15] == 1.0f,
+            "The Saber view matrix swaps axes exactly as 0x5F510 does: row1 "
+            "is saber(up), row2 is saber(forward), row0 is their cross, and "
+            "the homogeneous column stays 0/0/0/1");
+
+        Check(saberBuilt &&
+                  std::fabs(saberMatrix.m[12] -
+                      10.0f * kHalo2MetersPerWorldUnit) < 1.0e-3f &&
+                  std::fabs(saberMatrix.m[13] -
+                      30.0f * kHalo2MetersPerWorldUnit) < 1.0e-3f &&
+                  std::fabs(saberMatrix.m[14] +
+                      20.0f * kHalo2MetersPerWorldUnit) < 1.0e-3f,
+            "The Saber translation converts Halo 2 world units to metres at "
+            "3.048 and maps (x, y, z) to (x, z, -y) exactly as the engine "
+            "bridge does");
+
+        Halo2SaberCameraConstants offsetConstants{};
+        offsetConstants.offsetX = 1.0f;
+        offsetConstants.offsetZ = 2.0f;
+        offsetConstants.offsetY = 3.0f;
+        offsetConstants.forwardScale = 4.0f;
+        Halo2SaberViewMatrix offsetMatrix{};
+        Check(Halo2BuildSaberViewMatrix(
+                  saberSource, offsetConstants, offsetMatrix) &&
+                  std::fabs(offsetMatrix.m[12] -
+                      (10.0f * kHalo2MetersPerWorldUnit + 1.0f + 4.0f)) <
+                      1.0e-3f &&
+                  std::fabs(offsetMatrix.m[13] -
+                      (30.0f * kHalo2MetersPerWorldUnit + 2.0f)) < 1.0e-3f &&
+                  std::fabs(offsetMatrix.m[14] -
+                      (3.0f - 20.0f * kHalo2MetersPerWorldUnit)) < 1.0e-3f,
+            "The Saber translation adds the engine-owned offsets and pushes "
+            "the camera along saber(forward) by the engine's forward scale");
+
+        Halo2CameraBasis degenerateBasis{};
+        Halo2SaberViewMatrix untouched{};
+        untouched.m[0] = 42.0f;
+        Halo2SaberCameraConstants infiniteConstants{};
+        infiniteConstants.offsetX =
+            std::numeric_limits<float>::infinity();
+        Check(!Halo2BuildSaberViewMatrix(
+                  degenerateBasis, zeroConstants, untouched) &&
+                  !Halo2BuildSaberViewMatrix(
+                      saberSource, infiniteConstants, untouched) &&
+                  untouched.m[0] == 42.0f,
+            "A degenerate camera basis or a non-finite engine constant "
+            "leaves the Saber matrix untouched instead of writing garbage "
+            "into the renderer");
+
+        float saberVertical = 0.0f;
+        Check(Halo2SaberVerticalFovDegrees(90.0f, 1.0f, saberVertical) &&
+                  std::fabs(saberVertical - 90.0f) < 1.0e-2f,
+            "At a 1:1 aspect the Saber vertical field of view equals the "
+            "horizontal one, matching 0xBC560");
+
+        float wideVertical = 0.0f;
+        Check(Halo2SaberVerticalFovDegrees(90.0f, 2.0f, wideVertical) &&
+                  wideVertical > 0.0f && wideVertical < 90.0f,
+            "A wider aspect narrows the derived Saber vertical field of "
+            "view, so only a symmetric frustum is expressible");
+
+        float rejectedVertical = 7.0f;
+        Check(!Halo2SaberVerticalFovDegrees(0.0f, 1.0f, rejectedVertical) &&
+                  !Halo2SaberVerticalFovDegrees(180.0f, 1.0f,
+                      rejectedVertical) &&
+                  !Halo2SaberVerticalFovDegrees(90.0f, 0.0f,
+                      rejectedVertical) &&
+                  rejectedVertical == 7.0f,
+            "An out-of-range Saber field of view is refused without "
+            "changing the caller's value");
+
         constexpr uint32_t sameFrameGeneration = 17;
         constexpr uint64_t sameFrameSerial = 41;
         Halo2SameFramePairProof sameFrame{};
