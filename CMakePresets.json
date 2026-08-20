@@ -9,7 +9,7 @@
     {
       "name": "release",
       "displayName": "Halo MCC VR cumulative Release",
-      "description": "x64 cumulative build: accepted titles plus Halo 4 and Halo 2 same-frame stereo + 6DOF with no-pair screen fallback",
+      "description": "x64 cumulative build: accepted titles plus Halo 4 and Halo 2 read-only cold observation",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/release",
@@ -22,7 +22,7 @@
         "HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP": "ON",
         "HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION": "ON",
         "HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO": "OFF",
-        "HALOMCCVR_HALO2_STEREO6DOF": "ON"
+        "HALOMCCVR_HALO2_STEREO6DOF": "OFF"
       }
     }
   ],

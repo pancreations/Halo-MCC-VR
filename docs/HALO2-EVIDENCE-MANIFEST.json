@@ -1,13 +1,13 @@
 {
   "schema_version": 4,
-  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_REJECTED_C_H2_4_HEADSET_PENDING",
+  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_REJECTED_C_H2_4_AUDIT_REJECTED_DISABLED",
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
   "accepted_build_pointer_source": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
-  "active_candidate": "C-H2-4",
+  "active_candidate": "none",
   "accepted_build_pointer_advanced": true,
   "active_candidate_accepted_build_pointer_advanced": false,
-  "remaining_gate": "C-H2-4 implements stock-screen fail-open on every healthy unclaimed missing exact-current pair while a partially claimed failed-eye transaction remains a frame drop, but requires Halo 2 headset stereo+6DOF/fallback validation and then a Halo 3 shared-code headset regression; C-H2-3 remains headset-rejected and C-H2-1 has no remaining gate",
+  "remaining_gate": "C-H2-4 was static-audit-rejected and compile-disabled because inherited pause or a systematic post-Claim failure could repeatedly drop all world frames; a successor must quarantine H2 stereo after the touched frame and return later untouched frames to stock, then pass Halo 2 and Halo 3 headset validation; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -343,9 +343,9 @@
     }
   },
   "c_h2_4_candidate": {
-    "status": "IMPLEMENTED_HEADSET_STEREO_6DOF_FAIL_OPEN_VALIDATION_REQUIRED",
+    "status": "STATIC_AUDIT_REJECTED_PERSISTENT_CLAIM_DROP_DISABLED",
     "accepted": false,
-    "compiled_by_release_preset": true,
+    "compiled_by_release_preset": false,
     "accepted_build_pointer_advanced": false,
     "inherits_engine_contract_from": "C-H2-3",
     "behavioral_delta": "an unclaimed missing complete exact-current pair takes the stock screen-quad path instead of intentionally suppressing both world paths; a claimed partial pair remains a frame drop",
@@ -414,6 +414,7 @@
     "failure_policy": "unclaimed-no-pair-stock-screen; pre-claim-stock-once; post-claim-restore-all-dirty-spans-and-drop-only-current-pair; camera-core-and-openxr-remain-armed",
     "halo3_regression_required": true,
     "remaining_acceptance": [
+      "successor must clear inherited pause state and quarantine H2 stereo for the module generation after one post-Claim structural failure",
       "Halo 2 headset validation proving visible stock-screen fallback during a healthy unclaimed missing-pair interval",
       "Halo 2 headset validation proving simultaneous stereo, full headset rotation/translation, and no half-rate cadence",
       "Halo 3 headset regression for shared VR/lifecycle changes"

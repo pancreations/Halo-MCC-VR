@@ -15,7 +15,7 @@
 > only C-H2-1's read-only observation behavior. In that accepted build, Halo 2
 > controller admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership,
 > engine hooks, and engine writes are disabled. The headset-rejected C-H2-3
-> candidate and its implemented, headset-pending C-H2-4 successor described
+> candidate and its audit-rejected, compile-disabled C-H2-4 successor described
 > below do not alter this accepted claim.
 >
 > | Accepted Halo 2 C-H2-1 identity | Value |
@@ -105,15 +105,15 @@
 > and a Halo 3 shared-code regression before advancing this pointer. See
 > `docs/HALO2-SIGNATURE-EVIDENCE.md`.
 >
-> **IMPLEMENTED, HEADSET-PENDING (2026-08-20): Halo 2 C-H2-4 same-frame
+> **STATIC-AUDIT-REJECTED AND COMPILE-DISABLED (2026-08-20): Halo 2 C-H2-4 same-frame
 > stereo + 6DOF with no-pair stock-screen fail-open. This is not accepted; the
-> accepted pointer remains C-H2-1 at `f8928bb`.** C-H2-4 retains the C-H2-3
+> accepted pointer remains C-H2-1 at `f8928bb`.** C-H2-4 retained the C-H2-3
 > pair contract: exactly two fresh eyes from one game frame, with both render
 > and capture serials equal to the current prepared OpenXR serial. Temporal eye
 > reuse remains forbidden, the intentional cadence divisor remains 1, and the
 > supported refresh contract remains 72, 80, 90, 120, and 144 Hz.
 >
-> C-H2-4's single player-visible change is the fail-open presentation decision.
+> C-H2-4's single player-visible change was the fail-open presentation decision.
 > Every unclaimed Halo 2 stereo frame without a complete exact-current pair takes the
 > stock screen-quad path (`unclaimed_no_pair_presentation=stock-screen`) and
 > does not intentionally suppress both world paths
@@ -126,12 +126,18 @@
 > and never becomes a stale stereo eye pair. Ordinary XR screen-chain/resource
 > failure remains outside this admission guarantee and follows shared recovery.
 >
-> The package contract is manifest schema 12 with slug
+> A fresh multi-agent audit blocked its headset run. H2 could inherit another
+> title's active pause presentation and repeatedly drop otherwise complete
+> pairs. More importantly, any systematic failure after the first eye render
+> was claimed could claim and drop every later frame indefinitely. C-H2-4 is
+> therefore disabled before testing. Its successor must keep the current
+> touched frame as a drop, quarantine H2 stereo for that module generation, and
+> return later untouched frames to the stock screen; it must also prevent claims
+> while inherited pause presentation is clearing.
+>
+> The rejected package contract was manifest schema 12 with slug
 > `halo2-c4-no-pair-fail-open` and the runtime claim line `Halo 2 C-H2-4
-> simultaneous stereo + 6DOF active`. C-H2-4 still requires explicit Halo 2
-> headset confirmation of visible fallback, same-frame stereo, full rotation
-> and translation, and full-rate behavior. The same installed DLL then requires
-> a Halo 3 headset regression before this pointer may advance.
+> simultaneous stereo + 6DOF active`. No C-H2-4 headset result is accepted.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
 > it records what Halo 4 does today, what was never finished, and the six

@@ -5,9 +5,10 @@ Halo 3 shared-code regression also passed, advancing the accepted development
 pointer to `f8928bb`. C-H2-2's alternating-eye implementation was rejected
 before headset testing and is compile-disabled. C-H2-3 same-frame stereo +
 6DOF was headset-rejected for a zero-layer black screen and is now also
-compile-disabled; it did not advance that pointer. C-H2-4 adds a stock-screen
-fail-open for every ordinary unclaimed missing exact-current pair and is implemented but
-headset-pending.** C-H2-1 remains the accepted read-only behavior. The
+compile-disabled; it did not advance that pointer. C-H2-4 added a stock-screen
+fail-open for every ordinary unclaimed missing exact-current pair, but a fresh
+static audit found persistent post-Claim and inherited-pause black paths; it is
+also compile-disabled.** C-H2-1 remains the accepted read-only behavior. The
 machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
@@ -570,10 +571,10 @@ half-rate cadence. The same exact DLL then requires a Halo 3 headset regression.
 Until both results pass, no accepted-build pointer or C-H2-1 acceptance field
 may advance.
 
-## Implemented C-H2-4 successor: no-pair stock-screen fail-open
+## Audit-rejected C-H2-4 successor: no-pair stock-screen fail-open
 
-**C-H2-4 is implemented and headset-pending. It is not accepted, and the
-accepted pointer remains C-H2-1 at `f8928bb`.** It retains C-H2-3's two proven
+**C-H2-4 is static-audit-rejected and compile-disabled. It is not accepted, and
+the accepted pointer remains C-H2-1 at `f8928bb`.** It retained C-H2-3's two proven
 hook targets, exact write/restore allow-list, headset pose mapping, and
 same-frame pair validator. It adds no Halo 2 binding, engine write, controller
 feature, or temporal eye cache.
@@ -599,9 +600,13 @@ The only player-visible delta is the ordinary missing-pair presentation choice:
   revoked. Without a live complete pair, either exact disposition remains
   `drop-frame`: it cannot borrow the unclaimed flat fallback or promote a prior
   eye cache into stereo.
-- Screen-chain creation/acquire/wait failure and a later XR upload/projection
-  failure retain the shared exact-title recovery policy. C-H2-4 does not claim
-  that an unavailable OpenXR resource can still produce a layer.
+- The audit found two blockers before a headset run: an inherited foreign pause
+  presentation could repeatedly force complete H2 frames to Drop, and a
+  systematic failure after the first eye original was claimed could repeat the
+  claimed-frame Drop indefinitely. A successor must let the touched frame drop,
+  quarantine only H2 stereo for that module generation, and return later
+  untouched frames to the stock screen. It must also prevent H2 claims until
+  inherited pause target/current state has cleared.
 
 The simultaneous path remains refresh-invariant: two fresh eyes per game frame,
 `temporal_previous_eye_allowed=false`, `temporal_eye_gap_frames=0`, and
@@ -620,12 +625,9 @@ same-frame/two-fresh-eye/current-serial fields above, no temporal reuse, divisor
 Halo 2 C-H2-4 simultaneous stereo + 6DOF active
 ```
 
-Acceptance requires a Halo 2 headset run that visibly exercises at least one
-healthy unclaimed no-pair loading/cinematic interval without a black frame, then
-reaches same-frame stereo and full headset rotation/translation without a
-half-rate cadence. The same installed DLL then requires a Halo 3 headset
-regression. Until both pass, C-H2-4 remains pending and the accepted pointer and
-C-H2-1 acceptance fields do not change.
+No C-H2-4 headset result is accepted. Its successor must pass the fallback,
+same-frame stereo, full headset rotation/translation, and full-rate headset
+checks, followed by the Halo 3 shared-code regression.
 
 ## Accepted C-H2-1 runtime contract
 
