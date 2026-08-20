@@ -43,6 +43,7 @@
 #include "../common/odst_bringup_logic.h"
 #include "../common/odst_vehicle_logic.h"
 #include "../common/scope_logic.h"
+#include "../common/two_hand_ik_logic.h"
 
 #ifndef HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
 #define HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP 0
@@ -1037,6 +1038,9 @@ namespace
         bool centerRootValid = false;
         bool rightWristValid = false;
         bool leftWristValid = false;
+        // Reach supplies this from the same immutable prepared-frame snapshot
+        // as both controller targets. H3/ODST use VR_IsTwoHandAiming() instead.
+        bool twoHandAimActive = false;
     };
     // One context per held-weapon slot: slot 0 is the primary (right-hand)
     // weapon, slot 1 is the dual-wield secondary (left-hand) weapon. The
@@ -4351,6 +4355,11 @@ namespace
             : g_fpUnmodifiedInterpolations[context.slot];
         const size_t paletteBytes = static_cast<size_t>(context.count) *
             sizeof(BoneMatrix);
+        const bool twoHandAimActive = explicitTargets
+            ? explicitTargets->twoHandAimActive
+            : VR_IsTwoHandAiming();
+        const bool armIkActive = ShouldApplyArmIk(
+            g_config.arm_ik, twoHandAimActive);
 
         auto cacheMatches = [&](const FpStereoPaletteCache& cache) {
             return cache.valid && cache.tag == tag &&
@@ -4364,7 +4373,7 @@ namespace
                 cache.lElbow == context.lElbow &&
                 cache.lShoulder == context.lShoulder &&
                 cache.lWristDescendants == context.lWristDescendants &&
-                cache.armIk == g_config.arm_ik &&
+                cache.armIk == armIkActive &&
                 memcmp(cache.original, unmodified, paletteBytes) == 0;
         };
         if (g_fpStereoSolveScope.armed)
@@ -4421,7 +4430,7 @@ namespace
                 cache.lElbow = context.lElbow;
                 cache.lShoulder = context.lShoulder;
                 cache.lWristDescendants = context.lWristDescendants;
-                cache.armIk = g_config.arm_ik;
+                cache.armIk = armIkActive;
                 cache.root = root;
                 memcpy(cache.original, unmodified, paletteBytes);
                 memcpy(cache.solved, solved, paletteBytes);
@@ -4561,7 +4570,7 @@ namespace
                context.lWrist>=0 && context.lWrist<context.count)
             : (context.shoulder>=0 && context.shoulder<context.count &&
                context.elbow>=0 && context.elbow<context.count);
-        if (g_config.arm_ik && carrierChainValid)
+        if (armIkActive && carrierChainValid)
         {
             const BoneMatrix* unmod=unmodified;
             memcpy(g_fpPaletteScratch,unmod,
@@ -4955,7 +4964,7 @@ namespace
         }
 
         // M = rootEye^-1 * T * rootCenter applied per record: the WORLD result
-        else if (g_config.arm_ik && !dual)
+        else if (armIkActive && !dual)
         {
             g_armFailurePublished.store("right-chain-indices",std::memory_order_relaxed);
             g_armFailureSide.store(1,std::memory_order_release);
@@ -22171,12 +22180,17 @@ namespace
                     tag,fp,*root,source,replacement,&targets,
                     context.untouchedLive);
                 selectedSource=replacement;
-                const bool leftHandBound=reconstructed &&
-                    selectedSource==g_fpPaletteScratch &&
-                    ReachBindFloatingLeftHandToController(
+                bool leftHandBound=reconstructed &&
+                    selectedSource==g_fpPaletteScratch;
+                if (leftHandBound &&
+                    ReachShouldBindVisibleLeftHandToController(
+                        targets.twoHandAimActive))
+                {
+                    leftHandBound=ReachBindFloatingLeftHandToController(
                         *root,fp,
                         context.layout.leftControllerOwnedSourceBranch,
                         targets);
+                }
                 bool outputFinite=reconstructed && leftHandBound;
                 for (int i=0;outputFinite && i<fp.count;++i)
                     outputFinite=ReachBoneMatrixFinite(g_fpPaletteScratch[i]);
@@ -24340,6 +24354,7 @@ namespace
                 tracking,true,candidate.gameplayBasePosition,
                 candidate.fpTargets.leftWrist,
                 candidate.fpTargets.leftScale);
+        candidate.fpTargets.twoHandAimActive=tracking.twoHandAimActive;
         candidate.renderAccess = &access;
         candidate.active = true;
         g_reachOwnerScope = candidate;
@@ -29224,11 +29239,13 @@ namespace
         std::atomic<uint64_t> vrikWeaponRecordsCarried{0};
         std::atomic<uint64_t> vrikWeaponRecordsRefused{0};
         // C-H4-43 aligns Halo 4's official left_hand marker to the same direct
-        // controller mount H3/ODST/Reach target. Optional marker failure keeps
-        // the C-H4-38 reroot while right/gun carry continues.
+        // controller mount H3/ODST/Reach target. C-H4-44 keeps the authored
+        // support grip inside the right-hand/weapon rigid transform. Optional
+        // marker failure keeps the C-H4-38 free reroot while right/gun carry
+        // continues.
         std::atomic<uint64_t> vrikMarkerParityFallbacks{0};
         std::atomic<uint64_t> vrikMarkerParityApplications{0};
-        std::atomic<uint64_t> vrikTwoHandLeftAimRotationParents{0};
+        std::atomic<uint64_t> vrikTwoHandRigidSupportLocks{0};
         // The producer flag is not an anatomy classifier. C-H4-34's headset
         // log proved flag 1 contains both the 80-node storm_fp hands and the
         // held gun, while flag 0 is the separate 120-node native body/legs.
@@ -31318,21 +31335,26 @@ namespace
                 g_halo4FloatingPair.rightTargetWorld,eyeRoot,stockRight,
                 desiredRight))
             return Halo4VrikStage::RightPoseFailed;
-        if (!Halo4BuildFloatingControllerRerootTarget(
-                g_halo4FloatingPair.leftTargetWorld,eyeRoot,stockLeft,
-                desiredLeft))
-            return Halo4VrikStage::LeftPoseFailed;
         bool markerParityApplied=false;
-        bool supportAimRotationParentApplied=false;
+        bool rigidSupportLockApplied=false;
         bool markerParityFallback=false;
         if (g_halo4FloatingPair.twoHandAimActive)
         {
-            // The user judged this exact C-H4-38 support grip perfect. Do not
-            // even inspect free-hand anatomy or presentation dependencies.
-            supportAimRotationParentApplied=true;
+            // Match Halo 3's accepted support lock. The left controller still
+            // owns the two-hand aim solve, but the visible hand takes the same
+            // rigid world delta as the right hand and held model so it cannot
+            // slide away from Halo 4's authored weapon grip.
+            if (!Halo4BuildFloatingRigidSupportTarget(
+                    desiredRight,stockRight,stockLeft,desiredLeft))
+                return Halo4VrikStage::LeftPoseFailed;
+            rigidSupportLockApplied=true;
         }
         else
         {
+            if (!Halo4BuildFloatingControllerRerootTarget(
+                    g_halo4FloatingPair.leftTargetWorld,eyeRoot,stockLeft,
+                    desiredLeft))
+                return Halo4VrikStage::LeftPoseFailed;
             // Reach's official left_hand marker is identity on its wrist.
             // Halo 4's marker is this H4EK quaternion on identity child node54.
             // Align the marker frames; never equate the wrist bone axes again.
@@ -31426,8 +31448,8 @@ namespace
         if (markerParityApplied)
             g_halo4Camera.vrikMarkerParityApplications.fetch_add(
                 1,std::memory_order_relaxed);
-        else if (supportAimRotationParentApplied)
-            g_halo4Camera.vrikTwoHandLeftAimRotationParents.fetch_add(
+        else if (rigidSupportLockApplied)
+            g_halo4Camera.vrikTwoHandRigidSupportLocks.fetch_add(
                 1,std::memory_order_relaxed);
         else if (markerParityFallback)
             g_halo4Camera.vrikMarkerParityFallbacks.fetch_add(
@@ -32915,7 +32937,7 @@ namespace
             0,std::memory_order_relaxed);
         g_halo4Camera.vrikMarkerParityApplications.store(
             0,std::memory_order_relaxed);
-        g_halo4Camera.vrikTwoHandLeftAimRotationParents.store(
+        g_halo4Camera.vrikTwoHandRigidSupportLocks.store(
             0,std::memory_order_relaxed);
         g_halo4Camera.vrikBodyFillRecords.store(0,std::memory_order_relaxed);
         g_halo4Camera.vrikWeaponFillRecords.store(0,std::memory_order_relaxed);
@@ -34037,7 +34059,7 @@ namespace
             g_halo4Camera.floatingHandsEpoch.store(
                 epoch,std::memory_order_release);
         }
-        LOG("Halo 4 C-H4-43 cross-title marker-parity free hand: final palette 0x%X hooked; only "
+        LOG("Halo 4 C-H4-43/C-H4-44 marker-parity free / rigid two-hand support: final palette 0x%X hooked; only "
             "return 0x%X is admitted; %d bank transforms are privately copied "
             "and argument 7 is never treated as a node count; H4EK/retail "
             "render-model checksum/nodes.count is read exactly; epoch %u has "
@@ -35103,18 +35125,18 @@ namespace
         const uint64_t markerParityApplications=
             g_halo4Camera.vrikMarkerParityApplications.exchange(
                 0,std::memory_order_relaxed);
-        const uint64_t twoHandLeftAimRotationParents=
-            g_halo4Camera.vrikTwoHandLeftAimRotationParents.exchange(
+        const uint64_t twoHandRigidSupportLocks=
+            g_halo4Camera.vrikTwoHandRigidSupportLocks.exchange(
                 0,std::memory_order_relaxed);
         const uint64_t stormCandidates=
             g_halo4Camera.vrikStormRecordCandidates.exchange(
                 0,std::memory_order_relaxed);
-        LOG("Halo 4 C-H4-43 cross-title marker-parity free hand: palette %s, halo4_hands=%d; "
+        LOG("Halo 4 C-H4-43/C-H4-44 marker-parity free / rigid two-hand support: palette %s, halo4_hands=%d; "
             "%llu Storm hand palettes committed / %llu refused, %llu held records committed / %llu "
             "refused, %llu exact first-person calls "
             "in 2s; no IK, forced floaty mask, world scale %.3f, current stock-"
             "to-controller right-wrist distance %.4f; current-eye same-frame "
-            "Storm candidates %llu; left modes: marker-parity free %llu / exact C-H4-38 support "
+            "Storm candidates %llu; left modes: marker-parity free %llu / rigid support lock "
             "%llu / C-H4-38 free fallback %llu",
             g_halo4Camera.modelSkinningTarget?"hooked":"UNAVAILABLE - stock",
             g_config.halo4_hands?1:0,
@@ -35127,9 +35149,9 @@ namespace
             g_halo4Camera.vrikTargetMiss.load(std::memory_order_relaxed),
             static_cast<unsigned long long>(stormCandidates),
             static_cast<unsigned long long>(markerParityApplications),
-            static_cast<unsigned long long>(twoHandLeftAimRotationParents),
+            static_cast<unsigned long long>(twoHandRigidSupportLocks),
             static_cast<unsigned long long>(markerParityFallbacks));
-        LOG("Halo 4 C-H4-43 floating-hand refusals in 2s: count=%llu copy=%llu basis=%llu "
+        LOG("Halo 4 C-H4-43/C-H4-44 floating-hand refusals in 2s: count=%llu copy=%llu basis=%llu "
             "range=%llu eye/root=%llu link=%llu side=%llu right-pose=%llu left-pose=%llu "
             "right-rigid=%llu left-rigid=%llu; %llu stock/non-owned palettes",
             static_cast<unsigned long long>(
@@ -36310,14 +36332,12 @@ bool Game_AllowsSharedControllerInput()
 }
 bool Game_AllowsPauseToggleInput()
 {
-    bool titleSpecificPauseOwner = false;
+    bool odstCameraOnly = false;
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
-    titleSpecificPauseOwner = OdstCameraOnlyContext();
+    odstCameraOnly = OdstCameraOnlyContext();
 #endif
-#if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
-    titleSpecificPauseOwner = titleSpecificPauseOwner ||
-        TitleAdapter_GetActiveTitle() == GameTitle::HaloReach;
-#endif
+    const bool titleSpecificPauseOwner = TitleSpecificPauseToggleOwner(
+        TitleAdapter_GetActiveTitle(), odstCameraOnly);
     return PauseToggleInputAllowed(
         Game_AllowsSharedGameplayFeatures(), titleSpecificPauseOwner);
 }

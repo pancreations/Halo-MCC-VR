@@ -1303,7 +1303,7 @@ namespace
         snprintf(popupText, sizeof(popupText),
                  "Halo MCC VR mod could not start VR:\n\n%s\n\n"
                  "The game will keep running flat on the monitor.\n"
-                 "Details are in halo3xr.log next to the mod DLL.", msg);
+                 "Details are in HaloMCCVR.log next to the mod DLL.", msg);
         CreateThread(nullptr, 0,
                      [](LPVOID p) -> DWORD {
                          MessageBoxA(nullptr, (const char*)p, "Halo MCC VR mod", MB_OK | MB_ICONWARNING | MB_TOPMOST);
@@ -7005,6 +7005,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             rightPoseFresh, g_rightAimPose,
             leftPoseFresh, g_leftAimPose));
         next.rightAimValid = aim.valid;
+        next.twoHandAimActive = aim.valid && aim.twoHandActive;
         if (aim.valid)
         {
             next.rightAimOrientation[0] = aim.pose.orientation.x;

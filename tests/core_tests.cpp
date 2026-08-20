@@ -43,6 +43,7 @@
 #include "title_registry.h"
 #include "title_runtime_state.h"
 #include "view_cache_logic.h"
+#include "two_hand_ik_logic.h"
 
 #include <authored_reticle_logic.h>
 
@@ -169,6 +170,18 @@ namespace
 
 int main()
 {
+    Check(!ShouldApplyArmIk(false, false),
+          "Arm IK remains off when disabled in config");
+    Check(!ShouldApplyArmIk(false, true),
+          "Two-hand state cannot enable disabled arm IK");
+    Check(ShouldApplyArmIk(true, false),
+          "Configured arm IK returns outside a two-hand grab");
+    Check(!ShouldApplyArmIk(true, true),
+          "Two-hand grab suppresses competing arm IK");
+    Check(ReachShouldBindVisibleLeftHandToController(false) &&
+              !ReachShouldBindVisibleLeftHandToController(true),
+          "Reach binds the visible glove to the left controller only in free-hand mode and keeps the authored weapon grip during two-hand aim");
+
     {
         // sig::Find is memchr-anchored for speed (it is the dominant cost of
         // every hook install: ODST resolves four optional features, each
@@ -5214,9 +5227,15 @@ int main()
         Check(PauseToggleInputAllowed(true, false),
             "Halo 3 ownership admits the Y+B pause fallback");
         Check(PauseToggleInputAllowed(false, true),
-            "ODST or Reach ownership admits the Y+B pause fallback");
+            "ODST, Reach, or Halo 4 ownership admits the Y+B pause fallback");
         Check(!PauseToggleInputAllowed(false, false),
             "Y+B cannot inject Start without supported title ownership");
+        Check(TitleSpecificPauseToggleOwner(GameTitle::Unknown, true) &&
+                  TitleSpecificPauseToggleOwner(GameTitle::HaloReach, false) &&
+                  TitleSpecificPauseToggleOwner(GameTitle::Halo4, false) &&
+                  !TitleSpecificPauseToggleOwner(GameTitle::Halo3, false) &&
+                  !TitleSpecificPauseToggleOwner(GameTitle::Unknown, false),
+            "the title-specific Y+B admission includes Halo 4 without broadening unsupported ownership");
         Check(OdstMustClearForeignPause(true, true, false) &&
                   OdstMustClearForeignPause(true, false, true),
             "private ODST entry clears either pending or active foreign pause state");
@@ -7816,6 +7835,33 @@ int main()
                     1.0e-5f;
         Check(heldMatches,
             "Hands and gun share one same-eye rigid motion and preserve the authored grip relation");
+
+        Halo4FloatingTransform rigidSupportTarget{};
+        Check(Halo4BuildFloatingRigidSupportTarget(
+                  targetWorld,stockEye0,heldWorld,rigidSupportTarget),
+            "Halo 4 two-hand support accepts the right-hand rigid world motion");
+        bool rigidSupportMatchesHeld=true;
+        for (int i=0;i<9;++i)
+            rigidSupportMatchesHeld=rigidSupportMatchesHeld &&
+                fabsf(rigidSupportTarget.rotation[i]-
+                      expectedHeld.rotation[i])<1.0e-5f;
+        for (int i=0;i<3;++i)
+            rigidSupportMatchesHeld=rigidSupportMatchesHeld &&
+                fabsf(rigidSupportTarget.translation[i]-
+                      expectedHeld.translation[i])<1.0e-5f;
+        Check(rigidSupportMatchesHeld &&
+                  fabsf(rigidSupportTarget.scale-expectedHeld.scale)<1.0e-5f,
+            "Halo 4 two-hand support preserves the authored hand-to-weapon relation instead of following left-controller translation");
+        Halo4FloatingTransform invalidRigidSupport=stockEye0;
+        invalidRigidSupport.translation[1]=
+            std::numeric_limits<float>::quiet_NaN();
+        Halo4FloatingTransform untouchedRigidSupport{};
+        untouchedRigidSupport.translation[0]=71.0f;
+        Check(!Halo4BuildFloatingRigidSupportTarget(
+                  targetWorld,invalidRigidSupport,heldWorld,
+                  untouchedRigidSupport) &&
+                  untouchedRigidSupport.translation[0]==71.0f,
+            "an invalid Halo 4 rigid support relation publishes no partial target");
 
         // C-H4-36: replace only the current eye's orientation parent.  The
         // live eye-local wrist relation is the title's own authored mount; a
