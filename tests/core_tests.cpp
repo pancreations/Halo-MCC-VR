@@ -5856,7 +5856,29 @@ int main()
               GameTitle::HaloReach, false, true, false,
               reachControllerAdmission),
         "Camera-only ownership cannot leak controller input into Reach");
-    // ---- Halo 2 staged evidence, C-H2-2 temporal, and C-H2-3 6DOF ----
+    Check(VrBlitCanUseDirectCopy(
+              2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM, 1,
+              2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) &&
+              !VrBlitCanUseDirectCopy(
+                  2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM, 1,
+                  2911, 2100, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) &&
+              !VrBlitCanUseDirectCopy(
+                  2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM, 1,
+                  2912, 2100, DXGI_FORMAT_B8G8R8A8_UNORM) &&
+              !VrBlitCanUseDirectCopy(
+                  2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM, 4,
+                  2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB),
+        "Blit direct-copy admission exactly requires equal dimensions, "
+        "matching format families, and an unmultisampled source");
+    Check(VrBlitResourcesReady(true, true, false, true) &&
+              !VrBlitResourcesReady(false, true, true, true) &&
+              !VrBlitResourcesReady(true, false, true, true) &&
+              !VrBlitResourcesReady(true, true, false, false) &&
+              VrBlitResourcesReady(true, true, true, false),
+        "A direct copy requires both textures but no RTV, while the shader "
+        "path additionally requires its destination RTV");
+
+    // ---- Halo 2 staged evidence, C-H2-2 temporal, and C-H2-6 6DOF ----
     const TitleDescriptor* halo2Row = TitleRegistry_Find(GameTitle::Halo2);
     const Halo2EvidenceIdentity& halo2Identity =
         Halo2Adapter_GetEvidenceIdentity();
@@ -5869,7 +5891,7 @@ int main()
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
     Check(Halo2Adapter_GetStage() ==
               Halo2AdapterStage::SameFrameStereoSixDof,
-        "C-H2-3 stages Halo 2 at same-frame stereo with tracked 6DOF");
+        "C-H2-6 stages Halo 2 at same-frame stereo with tracked 6DOF");
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     constexpr uint32_t halo2ExpectedCapabilities = TitleCapability_Stereo;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
@@ -5894,7 +5916,18 @@ int main()
 #if HALOMCCVR_HALO2_STEREO6DOF
     Check(Halo2Adapter_RuntimeHooksPermitted() &&
               Halo2Adapter_EngineWritesPermitted(),
-        "C-H2-5 permits its same-frame camera hooks and scoped pose writes");
+        "C-H2-6 permits its same-frame camera hooks and scoped pose writes");
+    Check(!Halo2StockScreenNeedsFatalDrain(
+              Halo2StockScreenXrOwnership::None) &&
+              Halo2StockScreenNeedsFatalDrain(
+                  Halo2StockScreenXrOwnership::AcquiredUnresolved) &&
+              !Halo2StockScreenNeedsFatalDrain(
+                  Halo2StockScreenXrOwnership::Released) &&
+              Halo2StockScreenNeedsFatalDrain(
+                  Halo2StockScreenXrOwnership::
+                      FrameSubmissionUnresolved),
+        "C-H2-6 reserves fatal drain for unresolved XR image or frame "
+        "ownership");
     {
         constexpr uint32_t generation = 7;
         constexpr uint64_t serial = 42;
@@ -5907,70 +5940,70 @@ int main()
                   false, false, true, false,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-5 drops a claimed H2 frame even when stereo becomes "
+            "C-H2-6 drops a claimed H2 frame even when stereo becomes "
             "ineligible before submission");
         Check(Halo2SynchronousSelectPresentation(
                   false, true, true, false,
                   generation, serial, complete) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-5 retains a completed disposition across live-pair reset and "
+            "C-H2-6 retains a completed disposition across live-pair reset and "
             "drops when late state cannot admit synchronous stereo");
         Check(Halo2SynchronousSelectPresentation(
                   false, false, true, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::SharedDefault,
-            "C-H2-5 preserves ordinary late-ineligible screen presentation for "
+            "C-H2-6 preserves ordinary late-ineligible screen presentation for "
             "an H2 frame that no eye transaction claimed");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, false, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::SharedDefault,
-            "C-H2-5 cannot change another title's stereo presentation decision");
+            "C-H2-6 cannot change another title's stereo presentation decision");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, false, false,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-5 keeps an exact claimed H2 frame out of SharedDefault after "
+            "C-H2-6 keeps an exact claimed H2 frame out of SharedDefault after "
             "a late active-title transition");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, true,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::SynchronousStereo,
-            "C-H2-5 gives an exact completed current pair precedence over a "
+            "C-H2-6 gives an exact completed current pair precedence over a "
             "conservative claimed stamp");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-5 routes an unclaimed H2 frame to the stock screen-quad path");
+            "C-H2-6 routes an unclaimed H2 frame to the stock screen-quad path");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, true, false,
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-5 routes an unclaimed H2 frame to the stock screen even when "
+            "C-H2-6 routes an unclaimed H2 frame to the stock screen even when "
             "stereo is requested but its projection descriptor is not ready");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, true, true,
                   generation, serial, complete) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-5 drops a completed H2 pair when its projection descriptor "
+            "C-H2-6 drops a completed H2 pair when its projection descriptor "
             "is not ready");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::Drop,
-            "C-H2-5 drops a claimed frame whose live pair was reset instead of "
+            "C-H2-6 drops a claimed frame whose live pair was reset instead of "
             "sampling its unproven backbuffer");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation + 1, serial, claimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-5 rejects a durable claim from another generation");
+            "C-H2-6 rejects a durable claim from another generation");
         Check(Halo2SynchronousSelectPresentation(
                   true, true, true, false,
                   generation, serial + 1, claimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
-            "C-H2-5 rejects a durable claim from another prepared serial");
+            "C-H2-6 rejects a durable claim from another prepared serial");
         Check(Halo2SynchronousDropRequiresQuarantine(
                   generation, serial, claimed,
                   Halo2SynchronousPresentationDecision::Drop) &&

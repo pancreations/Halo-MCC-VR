@@ -9,8 +9,10 @@ compile-disabled; it did not advance that pointer. C-H2-4 added a stock-screen
 fail-open for every ordinary unclaimed missing exact-current pair, but a fresh
 static audit found persistent post-Claim and inherited-pause black paths; it is
 also compile-disabled. C-H2-5 was headset-rejected after its own pre-stereo
-screen check terminated a healthy OpenXR session, and is compile-disabled.** C-H2-1 remains
-the accepted read-only behavior. The machine-readable subset is
+screen check terminated a healthy OpenXR session, and is compile-disabled.
+C-H2-6 corrects that one false RTV/session-fatal condition and requires headset
+validation.** C-H2-1 remains the accepted read-only behavior. The
+machine-readable subset is
 `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
@@ -29,10 +31,10 @@ layout, or hook boundary from another title.
 - A kit RVA is never a retail RVA. Cross-architecture matching requires
   semantics, layout, call topology, and unique retail bytes to agree.
 - Zero/multiple runtime matches or a moved decode fail the affected stage
-  closed. C-H2-1 installs no hook either way; C-H2-3/C-H2-4/C-H2-5 withhold
+  closed. C-H2-1 installs no hook either way; C-H2-3/C-H2-4/C-H2-5/C-H2-6 withhold
   their camera core.
 - Accepted C-H2-1 writes no H2 engine field. Rejected C-H2-2 admitted only the
-  render and raster cameras' 12-byte position spans. C-H2-3/C-H2-4/C-H2-5 own
+  render and raster cameras' 12-byte position spans. C-H2-3/C-H2-4/C-H2-5/C-H2-6 own
   six 12-byte position/forward/up spans and two 4-byte vertical-FOV spans,
   restore every owned span, and never write z-far or the asymmetric/pixel-offset
   fields. The shared `render_far_clip_distance` scanner/writer is not a Halo 2
@@ -787,10 +789,90 @@ same-frame stereo, full headset rotation/translation, no 45/60-Hz H2 stereo,
 and actual 72–144 Hz. The same exact DLL then requires a Halo 3 headset
 regression before any accepted pointer advances.
 
+## C-H2-6 successor: path-aware pre-stereo validation without session teardown
+
+**C-H2-6 requires Halo 2 headset validation and is not accepted. The accepted
+pointer remains C-H2-1 at `f8928bb`.** It inherits C-H2-5's engine evidence,
+two hook sites, caller edges, camera layout, eight restored write spans, pose
+mapping, and pair/cadence/quarantine rules without change. In particular, one
+outer game-frame transaction still produces exactly two fresh left/right eye
+renders and captures. Both eyes must use the exact current prepared OpenXR
+serial; temporal, previous-frame, and N-1 eye reuse remain forbidden. Full
+headset quaternion rotation and translation are applied independently to both
+render and raster cameras. The intentional cadence divisor remains 1.
+
+The two current-frame cadence witnesses remain exact: both
+`xrWaitFrame.predictedDisplayPeriod` and that prepared serial's delta from the
+prior `predictedDisplayTime` must fall within
+`6,944,444..13,888,889 ns` (nominal inclusive 72–144 Hz). There is no
+tolerance band. After the first complete pair, the prepared serial must equal
+the previous completed serial plus one before either eye renders. Nothing in
+C-H2-6 introduces alternating eyes, a stale-eye cache, or a below-72-Hz stereo
+mode.
+
+### Only behavioral delta: consume an RTV only on the path that needs it
+
+The C-H2-5 run established an equal-size, equal-format-family, single-sample
+screen copy. `Blit` selects its direct `CopyResource` branch for that shape and
+never consumes the destination RTV. C-H2-5 incorrectly rejected the otherwise
+valid transaction because `GetRtv` returned null. C-H2-6 makes the validation
+match the selected D3D operation:
+
+- the source and destination textures are required on both paths;
+- the equal-size/equal-format-family/single-sample direct `CopyResource` path
+  does not require a destination RTV;
+- the shader-blit path requires a valid destination RTV;
+- a local pre-stereo D3D validation failure drops only the current frame and
+  keeps the OpenXR session alive, and the next frame may retry.
+
+The OpenXR transaction contract itself is unchanged: acquire, wait, release,
+and `xrEndFrame` must each return exact `XR_SUCCESS`, `Blit` must succeed, and
+an actual XR transaction failure may enter `EnterFrameWaitFatalDrain` without
+retrying that unresolved XR transaction in the same session. The local D3D rule
+is failure isolation, not permission to ignore a failed XR operation.
+The loading/shell screen presentation is not an eye, never publishes the H2
+stereo or gameplay heartbeat, and cannot satisfy this candidate's acceptance.
+
+### C-H2-6 package and acceptance contract
+
+Packaging advances in lockstep to manifest schema 15, evidence schema 7, slug
+`halo2-c6-stereo6dof-session-fix`, and exact embedded build identity
+`Halo2=SAME_FRAME_6DOF_SESSION_FIX`. The inherited typed same-frame and cadence
+fields remain mandatory. The path-specific delta is represented as:
+
+```text
+strict_unclaimed_stock_screen_transaction.source_texture_required=true
+strict_unclaimed_stock_screen_transaction.destination_texture_required=true
+strict_unclaimed_stock_screen_transaction.end_frame_result=XR_SUCCESS
+strict_unclaimed_stock_screen_transaction.fast_copy_resource.eligibility=equal-size-equal-format-family-single-sample
+strict_unclaimed_stock_screen_transaction.fast_copy_resource.target_rtv_required=false
+strict_unclaimed_stock_screen_transaction.shader_blit.target_rtv_required=true
+strict_unclaimed_stock_screen_transaction.local_d3d_validation_failure_terminates_openxr=false
+strict_unclaimed_stock_screen_transaction.local_d3d_validation_failure_presentation=drop-current-frame-keep-session
+strict_unclaimed_stock_screen_transaction.local_d3d_next_frame_retry_allowed=true
+strict_unclaimed_stock_screen_transaction.unresolved_xr_transaction_repeated_same_session_retry=false
+pre_stereo_screen_path_counts_as_eye=false
+pre_stereo_screen_path_counts_as_stereo_success=false
+pre_stereo_screen_path_publishes_stereo_or_gameplay_heartbeat=false
+```
+
+The exact active line is:
+
+```text
+Halo 2 C-H2-6 simultaneous stereo + 6DOF active
+```
+
+It may be emitted only after a complete exact-current two-eye pair survives
+`xrEndFrame`. The target-title headset run must prove the OpenXR session stays
+alive across the H2 transition, the active line is backed by fresh same-frame
+left/right output, full headset rotation and translation work, and actual
+application cadence remains within 72–144 Hz. The same DLL must then pass the
+Halo 3 headset regression before any accepted pointer advances.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are
-  the accepted C-H2-1 behavior settings; C-H2-2 through C-H2-5 change only
+  the accepted C-H2-1 behavior settings; C-H2-2 through C-H2-6 change only
   their separately gated hook/capability/heartbeat fields described above.
 - `runtimeSupported=false`, runtime capabilities none, admission capabilities
   none, hook plan none, heartbeat window zero.
@@ -848,9 +930,9 @@ cannot establish a render-performance cause.
 This accepts the Halo 2 read-only observation claim and clears its evidence for
 stereo design. That C-H2-1 result did not accept C-H2-3's rejected hook/write or
 stereo/6DOF runtime claim, C-H2-4's audit-rejected fallback successor, or the
-C-H2-5 false-RTV-fatal candidate. C-H2-5 was headset-rejected and
-compile-disabled; a corrected successor still needs its own headset result and
-Halo 3 regression.
+C-H2-5 false-RTV-fatal candidate, or C-H2-6's untested correction. C-H2-5 was
+headset-rejected and compile-disabled; C-H2-6 still needs its own headset result
+and Halo 3 regression.
 
 ### Required Halo 3 shared-code regression PASS
 

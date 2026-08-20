@@ -82,7 +82,7 @@ else()
 endif()
 
 # Halo 2 C-H2-1 is the independently isolatable read-only identity/liveness
-# prerequisite. Rejected C-H2-2 remains dormant behind its own gate. C-H2-5
+# prerequisite. Rejected C-H2-2 remains dormant behind its own gate. C-H2-6
 # separately owns same-frame stereo and headset 6DOF. An unclaimed frame keeps
 # stock screen presentation; a partially claimed failed frame is dropped and
 # the title core is quarantined for that module generation.
@@ -92,7 +92,7 @@ option(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
 option(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     "Enable rejected Halo 2 temporal position stereo (C-H2-2, dormant)" OFF)
 option(HALOMCCVR_HALO2_STEREO6DOF
-    "Enable Halo 2 black-safe same-frame stereo and headset 6DOF (C-H2-5)" ON)
+    "Enable Halo 2 same-frame stereo and headset 6DOF (C-H2-6)" ON)
 if(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO AND
    NOT HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
     message(FATAL_ERROR
@@ -101,7 +101,7 @@ endif()
 if(HALOMCCVR_HALO2_STEREO6DOF AND
    NOT HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
     message(FATAL_ERROR
-        "Halo 2 C-H2-5 requires C-H2-1 cold observation")
+        "Halo 2 C-H2-6 requires C-H2-1 cold observation")
 endif()
 if(HALOMCCVR_HALO2_STEREO6DOF AND
    HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO)
@@ -109,9 +109,9 @@ if(HALOMCCVR_HALO2_STEREO6DOF AND
         "Halo 2 same-frame and rejected temporal stereo cannot both be enabled")
 endif()
 if(HALOMCCVR_HALO2_STEREO6DOF)
-    set(HALOMCCVR_BUILD_HALO2 "SAME_FRAME_6DOF_FAIL_OPEN")
+    set(HALOMCCVR_BUILD_HALO2 "SAME_FRAME_6DOF_SESSION_FIX")
     message(STATUS
-        "Halo MCC VR: Halo 2 black-safe same-frame stereo + 6DOF enabled (C-H2-5)")
+        "Halo MCC VR: Halo 2 same-frame stereo + 6DOF enabled (C-H2-6)")
 elseif(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO)
     set(HALOMCCVR_BUILD_HALO2 "TEMPORAL")
     message(STATUS

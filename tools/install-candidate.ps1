@@ -136,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 15) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c5-black-safe-stereo6dof-',
+            $head.Substring(0, 7) + '-halo2-c6-stereo6dof-session-fix-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -162,7 +162,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
         $manifest.embedded_build_identity.reach_render -ne $true -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
         [string]$manifest.embedded_build_identity.halo2 -cne
-            'SAME_FRAME_6DOF_FAIL_OPEN' -or
+            'SAME_FRAME_6DOF_SESSION_FIX' -or
         [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-43' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
             'dd9946595511d65c9859b536e2727201c107da45' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-5' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-6' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_STEREO_6DOF_BLACK_SAFE_VALIDATION_REQUIRED' -or
+            'HEADSET_STEREO_6DOF_SESSION_FIX_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'dual-cadence-witness-consecutive-prepared-serial-same-game-frame-two-fresh-eye-6dof-strict-stock-screen-recovery' -or
+            'dual-cadence-witness-consecutive-prepared-serial-same-game-frame-two-fresh-eye-6dof-path-aware-pre-stereo-screen-validation' -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.identity_anchor_count 6) -or
         -not (Test-ExactInt32 `
@@ -317,6 +317,15 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
             $manifest.halo2_candidate.unclaimed_no_pair_fallback_publishes_stereo_or_gameplay_heartbeat `
             $false) -or
         -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.pre_stereo_screen_path_counts_as_eye `
+            $false) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.pre_stereo_screen_path_counts_as_stereo_success `
+            $false) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.pre_stereo_screen_path_publishes_stereo_or_gameplay_heartbeat `
+            $false) -or
+        -not (Test-ExactBoolean `
             $manifest.halo2_candidate.post_claim_failure_quarantine $true) -or
         [string]$manifest.halo2_candidate.quarantine_scope -cne
             'module-generation' -or
@@ -335,8 +344,29 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
             'XR_SUCCESS' -or
         [string]$manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.release_result -cne
             'XR_SUCCESS' -or
+        [string]$manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.end_frame_result -cne
+            'XR_SUCCESS' -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.valid_resource_and_rtv_required `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.source_texture_required `
+            $true) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.destination_texture_required `
+            $true) -or
+        [string]$manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.fast_copy_resource.eligibility -cne
+            'equal-size-equal-format-family-single-sample' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.fast_copy_resource.target_rtv_required `
+            $false) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.shader_blit.target_rtv_required `
+            $true) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.local_d3d_validation_failure_terminates_openxr `
+            $false) -or
+        [string]$manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.local_d3d_validation_failure_presentation -cne
+            'drop-current-frame-keep-session' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.local_d3d_next_frame_retry_allowed `
             $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.blit_success_required `
@@ -344,12 +374,15 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
         [string]$manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.named_session_recovery -cne
             'EnterFrameWaitFatalDrain' -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.repeated_same_session_retry `
+            $manifest.halo2_candidate.strict_unclaimed_stock_screen_transaction.unresolved_xr_transaction_repeated_same_session_retry `
             $false) -or
         [string]$manifest.halo2_candidate.expected_cold_pass_line -cne
             'Halo 2 cold observation PASS (C-H2-1)' -or
         [string]$manifest.halo2_candidate.expected_stereo_line -cne
-            'Halo 2 C-H2-5 simultaneous stereo + 6DOF active' -or
+            'Halo 2 C-H2-6 simultaneous stereo + 6DOF active' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.active_line_requires_complete_exact_current_pair_survived_xr_end_frame `
+            $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.controller_input $false) -or
         -not (Test-ExactBoolean `
@@ -397,7 +430,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 14) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.halo3_regression_required $true) -or
         [string]$manifest.halo2_candidate.failure_policy -cne
-            'dual-cadence-and-consecutive-serial-preclaim-stock-screen-post-claim-drop-generation-quarantine-strict-stock-screen-xr-failure-enters-session-recovery' -or
+            'dual-cadence-and-consecutive-serial-preclaim-screen-post-claim-drop-generation-quarantine-local-d3d-failure-keeps-openxr-xr-transaction-failure-enters-session-recovery' -or
         [string]$manifest.halo2_candidate.evidence -cne
             'docs/HALO2-SIGNATURE-EVIDENCE.md' -or
         $manifest.deployment_policy.automatic_after_package -ne $true -or

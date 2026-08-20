@@ -1703,7 +1703,7 @@ namespace
         // zero: it distinguishes an installed hook that has not been reached
         // yet (for example, a loading/cinematic path) from a camera transaction
         // that entered and failed later. Subsequent quiet zero samples stay
-        // silent; the shared VR worker reports the active stock-screen fallback.
+        // silent; the shared VR worker reports the active unclaimed screen path.
         if (!g_lastTelemetryMs || TelemetryChanged(current, g_lastTelemetry))
         {
             LOG("Halo 2 stereo core: outer=%llu inner=%llu stockOuter=%llu "
@@ -2433,7 +2433,7 @@ bool Halo2Stereo_Poll(
                 LOG("Halo 2 stereo generation %u QUARANTINED (%s): expected "
                     "prepared serial %llu after the first complete pair, saw "
                     "%llu; no eye rendered for the gap frame and later frames "
-                    "use stock-screen fallback",
+                    "use stock screen presentation",
                     generation, reason,
                     static_cast<unsigned long long>(
                         g_serialGapExpected.load(std::memory_order_acquire)),
@@ -2444,7 +2444,7 @@ bool Halo2Stereo_Poll(
             {
                 LOG("Halo 2 stereo generation %u QUARANTINED (%s): the current "
                     "claimed frame remains dropped; later frames use "
-                    "stock-screen fallback until a new module generation",
+                    "stock screen presentation until a new module generation",
                     generation, reason);
             }
         }

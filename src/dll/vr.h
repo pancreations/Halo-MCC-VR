@@ -9,6 +9,58 @@ struct IDXGISwapChain;
 #define HALOMCCVR_HALO2_STEREO6DOF 0
 #endif
 
+// Keep the direct-copy decision shared by resource validation and Blit(). The
+// predicate is deliberately data-only so a caller can decide whether an XR
+// image needs an RTV before touching D3D state.
+constexpr DXGI_FORMAT VrBlitFormatFamily(DXGI_FORMAT format) noexcept
+{
+    switch (format)
+    {
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_R8G8B8A8_UINT:
+    case DXGI_FORMAT_R8G8B8A8_SNORM:
+    case DXGI_FORMAT_R8G8B8A8_SINT:
+        return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        return DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UINT:
+        return DXGI_FORMAT_R10G10B10A2_TYPELESS;
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case DXGI_FORMAT_R16G16B16A16_UNORM:
+        return DXGI_FORMAT_R16G16B16A16_TYPELESS;
+    default:
+        return format;
+    }
+}
+
+constexpr bool VrBlitCanUseDirectCopy(
+    uint32_t srcWidth, uint32_t srcHeight, DXGI_FORMAT srcFormat,
+    uint32_t srcSampleCount, uint32_t dstWidth, uint32_t dstHeight,
+    DXGI_FORMAT dstFormat) noexcept
+{
+    return srcWidth == dstWidth && srcHeight == dstHeight &&
+        VrBlitFormatFamily(srcFormat) == VrBlitFormatFamily(dstFormat) &&
+        srcSampleCount <= 1;
+}
+
+// Source and destination textures are mandatory for both paths. Only the
+// shader path consumes an RTV; CopyResource must not be rejected for lacking
+// a view it never uses.
+constexpr bool VrBlitResourcesReady(
+    bool sourceTexture, bool destinationTexture, bool destinationRtv,
+    bool directCopy) noexcept
+{
+    return sourceTexture && destinationTexture &&
+        (directCopy || destinationRtv);
+}
+
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO || \
     HALOMCCVR_HALO2_STEREO6DOF
 // One immutable, exact-prepared-serial tracking sample for Halo 2's two-eye
@@ -41,6 +93,27 @@ struct Halo2VrRenderSnapshot
 #if HALOMCCVR_HALO2_STEREO6DOF
 using Halo2SynchronousVrEyeSnapshot = Halo2VrEyeSnapshot;
 using Halo2SynchronousVrRenderSnapshot = Halo2VrRenderSnapshot;
+
+enum class Halo2StockScreenXrOwnership : uint8_t
+{
+    None = 0,
+    AcquiredUnresolved,
+    Released,
+    FrameSubmissionUnresolved,
+};
+
+// A title-local validation failure may drop the current screen layer, but it
+// cannot end OpenXR. Fatal drain is reserved for unresolved XR ownership: an
+// acquired swapchain image that cannot safely be released, or a submitted
+// frame whose exact xrEndFrame completion is unknown.
+constexpr bool Halo2StockScreenNeedsFatalDrain(
+    Halo2StockScreenXrOwnership ownership) noexcept
+{
+    return ownership ==
+            Halo2StockScreenXrOwnership::AcquiredUnresolved ||
+        ownership ==
+            Halo2StockScreenXrOwnership::FrameSubmissionUnresolved;
+}
 
 struct Halo2PreparedCadenceSnapshot
 {
@@ -88,7 +161,7 @@ enum class Halo2SynchronousPresentationDecision : uint8_t
     Drop,
 };
 
-// C-H2-5 presentation admission is exact and frame-local. A currently live
+// C-H2-6 presentation admission is exact and frame-local. A currently live
 // complete pair wins; otherwise only the durable stamp carrying this exact
 // generation+serial has authority. A stale/foreign stamp is Unclaimed.
 constexpr Halo2SynchronousFrameDisposition
@@ -138,7 +211,8 @@ Halo2SynchronousSelectPresentation(
     default:
         // No original eye render ran, so ordinary late-ineligible behavior may
         // still present the untouched stock backbuffer. When stereo remains
-        // eligible, identify the intentional C-H2-5 fallback for diagnostics.
+        // eligible, identify the intentional C-H2-6 pre-stereo screen path for
+        // diagnostics.
         return stereoRequested
             ? Halo2SynchronousPresentationDecision::StockScreen
             : Halo2SynchronousPresentationDecision::SharedDefault;
@@ -147,7 +221,7 @@ Halo2SynchronousSelectPresentation(
 
 // A Drop is allowed to consume the current claimed frame, but it must also
 // quarantine that H2 generation before another render callback can claim the
-// next frame. Foreign/stale stamps and ordinary unclaimed screen fallback do
+// next frame. Foreign/stale stamps and the ordinary unclaimed screen path do
 // not own the current transaction and therefore cannot quarantine anything.
 constexpr bool Halo2SynchronousDropRequiresQuarantine(
     uint32_t generation, uint64_t preparedSerial,
@@ -159,7 +233,8 @@ constexpr bool Halo2SynchronousDropRequiresQuarantine(
             generation, preparedSerial, presentation);
 }
 
-// Only H2's ordinary unclaimed fallback opts into the strict screen-swapchain
+// Only H2's ordinary unclaimed pre-stereo path opts into the strict
+// screen-swapchain
 // transaction. Claimed/complete frames remain drops or synchronous stereo, and
 // every other title retains the established shared screen delivery behavior.
 constexpr bool Halo2SynchronousRequiresStrictStockScreen(
@@ -274,7 +349,8 @@ bool VR_Halo2CompleteSynchronousEye(
 bool VR_Halo2CompleteSynchronousPair(
     uint32_t generation, uint64_t preparedSerial);
 // Claim immediately before the first original eye render_view call. A failed
-// publication must take the zero-eye stock fallback; once published, this
+// publication must take the zero-eye pre-stereo screen path; once published,
+// this
 // resource-free identity survives reset until its exact serial is submitted.
 bool VR_Halo2ClaimSynchronousPairForPresentation(
     uint32_t generation, uint64_t preparedSerial);

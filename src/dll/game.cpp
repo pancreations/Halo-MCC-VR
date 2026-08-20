@@ -35564,9 +35564,11 @@ namespace
             {
                 const uint32_t halo2Generation =
                     TitleAdapter_GetGeneration(GameTitle::Halo2);
+                const bool halo2VrRuntimeAvailable =
+                    !g_vrRuntimeFailureLatched.load(std::memory_order_acquire);
                 const bool halo2CoreReady = Halo2Stereo_Poll(
                     halo2GateBase, halo2GateSize, halo2Generation,
-                    halo2Active && halo2GateSampled,
+                    halo2Active && halo2GateSampled && halo2VrRuntimeAvailable,
                     activeLevelRunning,
                     Halo2ColdObservation_Passed(halo2Generation));
                 PublishHalo2StereoLifecycle(halo2Generation);
@@ -37290,7 +37292,7 @@ void Game_AutoVrTick()
                 g_autoVrOwned.store(true, std::memory_order_release);
                 if (!VR_IsStereoEnabled())
                     VR_ToggleStereo();
-                LOG("Halo 2 C-H2-5 camera core armed: a complete exact-current "
+                LOG("Halo 2 C-H2-6 camera core armed: a complete exact-current "
                     "pair will use simultaneous stereo + 6DOF; an unclaimed "
                     "no-pair frame keeps the stock screen-quad path, while a "
                     "partially claimed failure drops that frame and quarantines "

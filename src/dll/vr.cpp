@@ -1429,34 +1429,6 @@ namespace
                      popupText, 0, nullptr);
     }
 
-    DXGI_FORMAT FormatFamily(DXGI_FORMAT f)
-    {
-        switch (f)
-        {
-        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-        case DXGI_FORMAT_R8G8B8A8_UNORM:
-        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-        case DXGI_FORMAT_R8G8B8A8_UINT:
-        case DXGI_FORMAT_R8G8B8A8_SNORM:
-        case DXGI_FORMAT_R8G8B8A8_SINT:
-            return DXGI_FORMAT_R8G8B8A8_TYPELESS;
-        case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-        case DXGI_FORMAT_B8G8R8A8_UNORM:
-        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-            return DXGI_FORMAT_B8G8R8A8_TYPELESS;
-        case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-        case DXGI_FORMAT_R10G10B10A2_UNORM:
-        case DXGI_FORMAT_R10G10B10A2_UINT:
-            return DXGI_FORMAT_R10G10B10A2_TYPELESS;
-        case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-        case DXGI_FORMAT_R16G16B16A16_FLOAT:
-        case DXGI_FORMAT_R16G16B16A16_UNORM:
-            return DXGI_FORMAT_R16G16B16A16_TYPELESS;
-        default:
-            return f;
-        }
-    }
-
     bool IsSrgb(DXGI_FORMAT f)
     {
         return f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
@@ -1468,7 +1440,7 @@ namespace
     // wider format is reported low rather than wrongly precise.
     uint32_t DxgiBytesPerPixel(DXGI_FORMAT f)
     {
-        switch (FormatFamily(f))
+        switch (VrBlitFormatFamily(f))
         {
         case DXGI_FORMAT_R16G16B16A16_TYPELESS:
             return 8;
@@ -1835,9 +1807,19 @@ float4 ps_pass(VSOut i) : SV_Target
               ID3D11Texture2D* dst, uint32_t dstW, uint32_t dstH,
               ID3D11RenderTargetView* dstRtv)
     {
-        const bool sameSize = srcDesc.Width == dstW && srcDesc.Height == dstH;
-        const bool sameFamily = FormatFamily(srcDesc.Format) == FormatFamily((DXGI_FORMAT)g_xrFormat);
-        const bool fastPath = sameSize && sameFamily && srcDesc.SampleDesc.Count <= 1;
+        const bool fastPath = VrBlitCanUseDirectCopy(
+            srcDesc.Width, srcDesc.Height, srcDesc.Format,
+            srcDesc.SampleDesc.Count, dstW, dstH,
+            static_cast<DXGI_FORMAT>(g_xrFormat));
+        if (!g_context || !VrBlitResourcesReady(
+                src != nullptr, dst != nullptr, dstRtv != nullptr, fastPath))
+        {
+            LOG("blit: missing %s resource (context=%p src=%p dst=%p rtv=%p)",
+                fastPath ? "direct-copy" : "shader-path",
+                static_cast<void*>(g_context), static_cast<void*>(src),
+                static_cast<void*>(dst), static_cast<void*>(dstRtv));
+            return false;
+        }
         // One-time: confirm the cheap CopyResource path is taken (the slow path
         // makes an intermediate texture + full-screen draw every eye blit).
         // Log every TRANSITION, not just the first blit. Logging once meant the
@@ -4933,26 +4915,37 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     }
 
 #if HALOMCCVR_HALO2_STEREO6DOF
-    void AbortHalo2StockScreenTransaction(
-        const char* failureReason) noexcept
+    void HandleHalo2StockScreenFailure(
+        const char* failureReason,
+        Halo2StockScreenXrOwnership ownership) noexcept
     {
-        LOG("Halo 2 stock-screen fallback FATAL: %s; entering OpenXR "
-            "session recovery instead of retrying a possibly poisoned "
-            "swapchain transaction",
-            failureReason ? failureReason : "unspecified failure");
-        g_abortFrameForSwapchainFailure = true;
-        EnterFrameWaitFatalDrain(failureReason);
+        const char* reason = failureReason
+            ? failureReason : "unspecified failure";
+        if (Halo2StockScreenNeedsFatalDrain(ownership))
+        {
+            LOG("Halo 2 stock-screen transaction FATAL: %s; XR image/frame "
+                "ownership is unresolved, entering OpenXR session recovery",
+                reason);
+            g_abortFrameForSwapchainFailure = true;
+            EnterFrameWaitFatalDrain(failureReason);
+            return;
+        }
+        LOG("Halo 2 stock-screen transaction dropped: %s; no XR image "
+            "ownership is unresolved, keeping the OpenXR session active",
+            reason);
     }
 
     bool RequireHalo2StockScreenCompletion(
         XrResult result, const char* stage,
-        const char* failureReason) noexcept
+        const char* failureReason,
+        Halo2StockScreenXrOwnership ownershipOnFailure) noexcept
     {
         if (result == XR_SUCCESS)
             return true;
-        LOG("Halo 2 stock-screen fallback %s did not complete: %s",
+        LOG("Halo 2 stock-screen transaction %s did not complete: %s",
             stage ? stage : "OpenXR operation", XrStr(result));
-        AbortHalo2StockScreenTransaction(failureReason);
+        HandleHalo2StockScreenFailure(
+            failureReason, ownershipOnFailure);
         return false;
     }
 #endif
@@ -7162,7 +7155,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 if (decision ==
                     Halo2SynchronousPresentationDecision::StockScreen)
                 {
-                    LOG("Halo 2 C-H2-5 frame-local fallback: prepared serial "
+                    LOG("Halo 2 C-H2-6 pre-stereo screen: prepared serial "
                         "%llu was not claimed by an eye render transaction; "
                         "submitting the stock screen-quad path from the "
                         "available game backbuffer (no stale/N-1 stereo-pair "
@@ -7171,7 +7164,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 }
                 else
                 {
-                    LOG("Halo 2 C-H2-5 frame-local drop: prepared serial %llu "
+                    LOG("Halo 2 C-H2-6 frame-local drop: prepared serial %llu "
                         "was claimed immediately before its original eye render "
                         "and did not produce a live admissible pair; submitting "
                         "no world layer and not sampling "
@@ -7198,14 +7191,14 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         {
             if (previous == Halo2SynchronousPresentationDecision::Drop)
             {
-                LOG("Halo 2 C-H2-5 frame-local drop ended: prepared serial "
+                LOG("Halo 2 C-H2-6 frame-local drop ended: prepared serial "
                     "%llu has a projection-ready exact-current-serial pair; "
                     "resuming synchronous stereo",
                     static_cast<unsigned long long>(preparedSerial));
             }
             else
             {
-                LOG("Halo 2 C-H2-5 frame-local fallback ended: prepared serial "
+                LOG("Halo 2 C-H2-6 pre-stereo screen ended: prepared serial "
                     "%llu has a projection-ready exact-current-serial pair; "
                     "resuming synchronous stereo",
                     static_cast<unsigned long long>(preparedSerial));
@@ -7213,10 +7206,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         }
         else
         {
-            LOG("Halo 2 C-H2-5 frame-local %s ended: synchronous Halo 2 "
+            LOG("Halo 2 C-H2-6 %s ended: synchronous Halo 2 "
                 "presentation is no longer active",
                 previous == Halo2SynchronousPresentationDecision::Drop
-                    ? "drop" : "fallback");
+                    ? "drop" : "pre-stereo screen");
         }
         previous = decision;
         lastStateLogMs = 0;
@@ -9555,8 +9548,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     {
                         if (!EnsureScreenChain(bd.Width, bd.Height))
                         {
-                            AbortHalo2StockScreenTransaction(
-                                "screen swapchain creation failed");
+                            HandleHalo2StockScreenFailure(
+                                "screen swapchain creation failed",
+                                Halo2StockScreenXrOwnership::None);
                         }
                         else
                         {
@@ -9574,27 +9568,42 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                                     g_screenChain, &ai, &idx);
                             if (RequireHalo2StockScreenCompletion(
                                     acquireResult, "acquire",
-                                    "screen swapchain acquire did not complete"))
+                                    "screen swapchain acquire did not complete",
+                                    Halo2StockScreenXrOwnership::
+                                        AcquiredUnresolved))
                             {
                                 const XrResult waitResult =
                                     xrWaitSwapchainImage(g_screenChain, &wi2);
                                 if (RequireHalo2StockScreenCompletion(
                                         waitResult, "wait",
-                                        "screen swapchain wait did not complete"))
+                                        "screen swapchain wait did not complete",
+                                        Halo2StockScreenXrOwnership::
+                                            AcquiredUnresolved))
                                 {
                                     const bool indexValid =
                                         g_device && g_context &&
-                                        idx < g_screenImages.size() &&
-                                        idx < g_screenRtvs.size();
+                                        idx < g_screenImages.size();
+                                    const bool directCopy =
+                                        VrBlitCanUseDirectCopy(
+                                            bd.Width, bd.Height, bd.Format,
+                                            bd.SampleDesc.Count,
+                                            g_screenW, g_screenH,
+                                            static_cast<DXGI_FORMAT>(
+                                                g_xrFormat));
                                     ID3D11RenderTargetView* targetRtv =
-                                        indexValid
+                                        indexValid && !directCopy &&
+                                            idx < g_screenRtvs.size()
                                         ? GetRtv(
                                               g_screenImages,
                                               g_screenRtvs, idx)
                                         : nullptr;
                                     const bool resourcesValid =
                                         indexValid &&
-                                        g_screenImages[idx] && targetRtv;
+                                        VrBlitResourcesReady(
+                                            backbuffer != nullptr,
+                                            g_screenImages[idx] != nullptr,
+                                            targetRtv != nullptr,
+                                            directCopy);
                                     bool blitComplete = false;
                                     if (resourcesValid)
                                     {
@@ -9612,17 +9621,27 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                                         RequireHalo2StockScreenCompletion(
                                             releaseResult, "release",
                                             "screen swapchain release did not "
-                                            "complete");
+                                            "complete",
+                                            Halo2StockScreenXrOwnership::
+                                                AcquiredUnresolved);
                                     if (releaseComplete && !resourcesValid)
                                     {
-                                        AbortHalo2StockScreenTransaction(
-                                            "screen swapchain returned an "
-                                            "invalid image or RTV");
+                                        HandleHalo2StockScreenFailure(
+                                            directCopy
+                                                ? "direct-copy path has no valid "
+                                                  "source or destination texture"
+                                                : "shader path has no valid "
+                                                  "source, destination texture, "
+                                                  "or RTV",
+                                            Halo2StockScreenXrOwnership::
+                                                Released);
                                     }
                                     else if (releaseComplete && !blitComplete)
                                     {
-                                        AbortHalo2StockScreenTransaction(
-                                            "stock backbuffer blit failed");
+                                        HandleHalo2StockScreenFailure(
+                                            "stock backbuffer blit failed",
+                                            Halo2StockScreenXrOwnership::
+                                                Released);
                                     }
                                     else if (releaseComplete)
                                     {
@@ -9635,10 +9654,12 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                                             ? g_viewSpace : g_localSpace;
                                         if (screenSpace == XR_NULL_HANDLE)
                                         {
-                                            AbortHalo2StockScreenTransaction(
+                                            HandleHalo2StockScreenFailure(
                                                 headLock
                                                     ? "VIEW space is unavailable"
-                                                    : "LOCAL space is unavailable");
+                                                    : "LOCAL space is unavailable",
+                                                Halo2StockScreenXrOwnership::
+                                                    Released);
                                         }
                                         else
                                         {
@@ -9814,12 +9835,13 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 }
                 else if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
                 {
-                    LOG("Halo 2 stock-screen fallback GetBuffer(0) failed: "
+                    LOG("Halo 2 pre-stereo screen GetBuffer(0) failed: "
                         "HRESULT 0x%08X, backbuffer=%p",
                         static_cast<unsigned>(backbufferResult),
                         static_cast<void*>(backbuffer));
-                    AbortHalo2StockScreenTransaction(
-                        "DXGI GetBuffer(0) returned no stock backbuffer");
+                    HandleHalo2StockScreenFailure(
+                        "DXGI GetBuffer(0) returned no stock backbuffer",
+                        Halo2StockScreenXrOwnership::None);
                     EndPreparedFrameWithoutLayers(
                         "Halo 2 stock-screen backbuffer unavailable");
                     return;
@@ -9876,10 +9898,12 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 #if HALOMCCVR_HALO2_STEREO6DOF
         if (halo2StrictStockScreenQueued && r != XR_SUCCESS)
         {
-            LOG("Halo 2 stock-screen fallback xrEndFrame did not complete: %s",
+            LOG("Halo 2 stock-screen transaction xrEndFrame did not complete: %s",
                 XrStr(r));
-            AbortHalo2StockScreenTransaction(
-                "stock-screen xrEndFrame did not complete");
+            HandleHalo2StockScreenFailure(
+                "stock-screen xrEndFrame did not complete",
+                Halo2StockScreenXrOwnership::
+                    FrameSubmissionUnresolved);
         }
         if (halo2ProjectionQueued && r != XR_SUCCESS)
         {
@@ -9901,7 +9925,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (halo2ProjectionQueued && r == XR_SUCCESS)
         {
 #if HALOMCCVR_HALO2_STEREO6DOF
-            // C-H2-5 runtime ownership is earned by a headset-admitted pair,
+            // C-H2-6 runtime ownership is earned by a headset-admitted pair,
             // not by locating/installing/arming the title hook. Revalidate the
             // exact current serial after xrEndFrame so a concurrent reset or
             // title-generation transition cannot resurrect Gameplay.
@@ -9926,8 +9950,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 if (!g_halo2FirstPairAccepted.exchange(
                         true, std::memory_order_acq_rel))
                 {
-                    LOG("Halo 2 C-H2-5 simultaneous stereo + 6DOF active");
-                    LOG("Halo 2 C-H2-5 first exact-current-serial two-eye pair "
+                    LOG("Halo 2 C-H2-6 simultaneous stereo + 6DOF active");
+                    LOG("Halo 2 C-H2-6 first exact-current-serial two-eye pair "
                         "accepted by xrEndFrame; no temporal eye reuse or "
                         "cadence division");
                 }
@@ -10227,7 +10251,8 @@ namespace
 
         // Writers are only expected on H2's render thread. Keep the bounded CAS
         // nevertheless: failure to acquire the slot makes the first-eye path
-        // take its zero-eye stock fallback, while a failed Complete publication
+        // take its zero-eye pre-stereo screen path, while a failed Complete
+        // publication
         // leaves the already-published conservative Claim in force.
         uint64_t sequence =
             g_halo2SynchronousPresentationSequence.load(
@@ -11244,7 +11269,7 @@ void VR_FramePacingWorkerPoll()
             TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         {
 #if HALOMCCVR_HALO2_STEREO6DOF
-            LOG("Halo 2 C-H2-5 synchronous XR publish: %llu exact-current-"
+            LOG("Halo 2 C-H2-6 synchronous XR publish: %llu exact-current-"
                 "serial pairs submitted, %llu recoverable frame drops in 2s; "
                 "last drop: %s (two renders/frame; no temporal reuse; drops "
                 "keep the core/session armed)",
@@ -11571,7 +11596,7 @@ void VR_ToggleStereo()
             "one render per frame, adjacent-eye pair)");
 #if HALOMCCVR_HALO2_STEREO6DOF
     else if (on && Game_UsesTitleOwnedHeadTracking())
-        LOG("Halo 2 C-H2-5 synchronous stereo+6DOF presentation ON "
+        LOG("Halo 2 C-H2-6 synchronous stereo+6DOF presentation ON "
             "(title-owned headset pose; exact-current-serial eye pair)");
 #endif
     else

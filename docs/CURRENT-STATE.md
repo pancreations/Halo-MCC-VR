@@ -15,8 +15,9 @@
 > only C-H2-1's read-only observation behavior. In that accepted build, Halo 2
 > controller admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership,
 > engine hooks, and engine writes are disabled. The headset-rejected C-H2-3
-> candidate and its audit-rejected C-H2-4 and headset-rejected C-H2-5
-> successors described below do not alter this accepted claim.
+> candidate and its audit-rejected C-H2-4, headset-rejected C-H2-5, and
+> headset-pending C-H2-6 successors described below do not alter this accepted
+> claim.
 >
 > | Accepted Halo 2 C-H2-1 identity | Value |
 > | --- | --- |
@@ -196,6 +197,41 @@
 > then prove simultaneous stereo, full rotation/translation, and actual
 > 72–144 Hz in headset before the same DLL's Halo 3 regression and any pointer
 > advance.
+>
+> **HEADSET VALIDATION REQUIRED (2026-08-20): Halo 2 C-H2-6 true same-frame
+> stereo + full headset 6DOF session fix. This is not accepted; the accepted
+> pointer remains C-H2-1 at `f8928bb`.** C-H2-6 preserves C-H2-5's actual
+> stereo transaction unchanged: one outer game-frame transaction performs two
+> fresh eye renders and captures, both use the exact current prepared OpenXR
+> serial, temporal/N-1 eye reuse is forbidden, and full headset quaternion
+> rotation plus translation are applied to both render and raster cameras.
+> The intentional cadence divisor remains 1. Both the current predicted display
+> period and the same prepared serial's predicted-time delta must remain inside
+> `6,944,444..13,888,889 ns` (nominal inclusive 72–144 Hz), and completed
+> serials must be consecutive after the first pair.
+>
+> Its only player-visible behavioral delta corrects the C-H2-5 title-transition
+> fault. Valid source and XR destination textures are always required. The
+> equal-size, equal-format-family, single-sample `CopyResource` path does not
+> require an RTV because it never consumes one; the shader-blit path still
+> requires an RTV. A
+> local pre-stereo D3D validation failure drops only that current frame and does
+> not terminate OpenXR, and the next frame may retry. Actual non-success
+> acquire/wait/release/`xrEndFrame` XR results retain the named OpenXR recovery
+> path and never retry an unresolved XR transaction in that session. This
+> pre-stereo screen presentation is not an eye, does
+> not publish stereo or gameplay heartbeat, and is not evidence that stereo or
+> 6DOF works.
+>
+> Packaging advances in lockstep to manifest schema 15, evidence schema 7,
+> slug `halo2-c6-stereo6dof-session-fix`, and build identity
+> `Halo2=SAME_FRAME_6DOF_SESSION_FIX`. The active line is `Halo 2 C-H2-6
+> simultaneous stereo + 6DOF active` and may be emitted only after a complete
+> exact-current two-eye pair survives `xrEndFrame`. A Halo 2 headset run must
+> prove the session survives title transition, both eyes are fresh in the same
+> frame, full rotation and translation work, and actual cadence remains
+> 72–144 Hz. The same DLL then requires a Halo 3 headset regression before any
+> pointer advance.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
 > it records what Halo 4 does today, what was never finished, and the six
