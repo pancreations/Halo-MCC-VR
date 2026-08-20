@@ -1,13 +1,55 @@
 # Current state
 
-> **WORK SUSPENDED 2026-08-14.** Halo 4 bring-up on `feature/halo4-bringup`
-> stopped at the head commit `47fa631`. **No release was cut for any of it** -
-> the published release is still MCC VR Alpha 0.3.3 (`94dc09f`), Halo 3, ODST
-> and Reach. The accepted Halo 4 pointer remains C-H4-43; the build currently
-> *installed* on this machine is the untested C-H4-D1 diagnostic, which is
-> newer than that pointer. Read `docs/HALO4-BRINGUP-WRAPUP.md` first: it
-> records what Halo 4 does today, what was never finished, and the six dead
-> ends that must not be restarted.
+> **ACCEPTED 2026-08-19: the V6/two-hand integration, source `8ee18fd`.** The
+> external contributors' V6 source drop (base `7da8f7c`) was reviewed,
+> adopted, and repaired on `feature/halo4-bringup`, and the resulting
+> candidate was headset-accepted as a whole in one Steam sitting (SteamVR/
+> OpenXR 2.17.7, Oculus headset, 90 Hz; the log shows two-handed aim was
+> engaged). The binaries are now **`HaloMCCVR.dll` / `HaloMCCVRLauncher.exe` /
+> `HaloMCCVR.log`**; the automated installer quarantines the old `halo3xr.*`
+> pair into `out/deploy-backups/legacy-*`. This supersedes both the 2026-08-14
+> suspension note and the C-H4-D1 diagnostic as the installed build. **No
+> release was cut** - the published release is still MCC VR Alpha 0.3.3
+> (`94dc09f`), Halo 3, ODST and Reach.
+>
+> | Accepted V6/two-hand identity | Value |
+> | --- | --- |
+> | Source | `8ee18fd94babbbef58b20bccacfc0d60d176c348` |
+> | Package | `8ee18fd-halo4-d1-parity-diagnostic-20260820-005427815Z` |
+> | `HaloMCCVR.dll` | `EDC494B34308A213165931134B70A84D14033E661D905CE73C62335AE2E95893` |
+> | `HaloMCCVRLauncher.exe` | `DC18587C6A7CBC6FF9A274703057C299AB2334CFD0E22C5CF7702D66AF9813BC` |
+> | Log build stamp | verified: `source 8ee18fd...`, compiled Aug 19 2026 19:54:17 |
+> | Accepted on | Steam, SteamVR/OpenXR 2.17.7, Oculus headset, 90 Hz |
+> | Store edition | same bytes installed and hash-verified; not separately run |
+>
+> What the acceptance covers: C-H4-44 (Halo 4 rigid two-hand support lock -
+> the support hand no longer slides off the grip), the Reach two-hand visible
+> glove keeping the authored grip, the shared two-hand arm-IK suppression on
+> H3/ODST (a deliberate behavior change vs the old baseline: arm IK yields for
+> the duration of a two-hand grab), the Halo 4 Y+B pause chord, the binary
+> rename, and the three repair fixes (address-based safe-frame self-exclusion,
+> per-stereo-pair two-hand latch, legacy-file quarantine). Accepted as a
+> whole, not per item, per the one-smoke-sitting policy.
+>
+> **The V6 post-build layer is NOT part of this acceptance.** The
+> contributors' released V6 DLL carried five sourceless binary PE sections
+> (`.h4fx .h4fd .h4hs .h4hp .h4pb`: Halo 4 effects, HUD scale, helmet, pause,
+> muzzle, curvature). Their source does not exist in the drop, and a locally
+> built DLL matches neither profile of `tools/merge_v6_postbuild_layer.py`,
+> so **no build from this repository contains that behavior and the merge
+> tool must never be used for a release**. Read `docs/V6-POSTBUILD-LAYER.md`
+> before touching anything Halo 4 HUD/helmet/pause related.
+>
+> **Next planned work (user-directed 2026-08-19): Halo 2 stereo 3D + 6DOF
+> bring-up.** Follow the title bring-up discipline: title-specific evidence
+> first (Halo 3/ODST/Reach/H4 offsets are not Halo 2 proof), cold observation
+> before any engine write, assert strings may be compiled out of retail.
+>
+> The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
+> it records what Halo 4 does today, what was never finished, and the six
+> dead ends that must not be restarted. The accepted Halo 4 camera pointer
+> remains C-H4-43; C-H4-44 supersedes the C-H4-38 support-hand presentation
+> within it.
 
 Authoritative as of 2026-08-11. This file is the only active accepted-build
 pointer. Detailed pre-cleanup experiments remain available in Git history; they
