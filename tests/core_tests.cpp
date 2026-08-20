@@ -25,6 +25,8 @@
 #include "odst_bringup_logic.h"
 #include "sigscan.h"
 #include "odst_vehicle_logic.h"
+#include "halo2_adapter.h"
+#include "halo2_render_logic.h"
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
 #include "halo4_hud_logic.h"
@@ -5759,6 +5761,274 @@ int main()
               GameTitle::HaloReach, false, true, false,
               reachControllerAdmission),
         "Camera-only ownership cannot leak controller input into Reach");
+    // ---- C-H2-1: identity, liveness gate, and read-only cold observation ----
+    const TitleDescriptor* halo2Row = TitleRegistry_Find(GameTitle::Halo2);
+    const Halo2EvidenceIdentity& halo2Identity =
+        Halo2Adapter_GetEvidenceIdentity();
+#if HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
+    Check(Halo2Adapter_GetStage() == Halo2AdapterStage::ColdObservationOnly,
+        "C-H2-1 stages Halo 2 at read-only cold observation only");
+#else
+    Check(Halo2Adapter_GetStage() == Halo2AdapterStage::Disabled,
+        "A build without C-H2-1 leaves the Halo 2 adapter disabled");
+#endif
+    Check(!Halo2Adapter_RuntimeHooksPermitted(),
+        "C-H2-1 permits no Halo 2 runtime hook");
+    Check(!Halo2Adapter_EngineWritesPermitted(),
+        "C-H2-1 forbids every Halo 2 engine write, including the generic "
+        "draw-distance path");
+    Check(!TitleRegistry_AllowsGenericDrawDistance(
+                  GameTitle::Halo2, true) &&
+              !TitleRegistry_AllowsGenericDrawDistance(
+                  GameTitle::Halo2, false) &&
+              !TitleRegistry_AllowsGenericDrawDistance(
+                  GameTitle::Unknown, true) &&
+              TitleRegistry_AllowsGenericDrawDistance(
+                  GameTitle::Halo3, true) &&
+              !TitleRegistry_AllowsGenericDrawDistance(
+                  GameTitle::Halo3, false),
+        "The worker's shared draw-distance predicate hard-denies Halo 2 even "
+        "after its read-only level gate opens");
+    Check(halo2Row && !halo2Row->runtimeSupported &&
+              halo2Row->capabilities == TitleCapability_None &&
+              halo2Row->admissionCapabilities == TitleCapability_None &&
+              TitleRegistry_HookPlan(GameTitle::Halo2) ==
+                  TitleHookPlan::None &&
+              TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2) == 0 &&
+              std::wstring_view(halo2Row->moduleName) == L"halo2.dll" &&
+              std::wstring_view(halo2Identity.moduleName) ==
+                  std::wstring_view(halo2Row->moduleName),
+        "The existing Halo 2 registry row remains inert and shares the "
+        "adapter's exact module identity");
+    Check(!TitleRegistry_AllowsSharedControllerInput(
+              GameTitle::Halo2, false, false, true, false),
+        "C-H2-1 does not admit the shared virtual controller");
+    Check(TitleRegistry_FromModuleName(
+              L"C:\\games\\MCC\\halo2\\HALO2.DLL") == halo2Row,
+        "Halo 2 lookup accepts a case-insensitive full module path");
+    Check(std::string_view(halo2Identity.moduleSha256Steam) ==
+              "DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946" &&
+          std::string_view(halo2Identity.moduleSha256Store) ==
+              "81E5F41A7F8409D27A5454A28BFBECB8CD273E389366FB9865DD1D01E6BE689D" &&
+          halo2Identity.peTimestamp == 0x68A0F0F2u &&
+          halo2Identity.sizeOfImage == 0x02A38000u &&
+          kHalo2RetailFileSize == 15807960u &&
+          std::string_view(halo2Identity.h2ekBuild) ==
+              "2023.06.20.176294.1-Release" &&
+          std::string_view(halo2Identity.h2ekTagTestSha256) ==
+              "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36",
+        "The Halo 2 adapter pins both retail editions and the official H2EK "
+        "identity");
+
+    Check(kHalo2RetailAnchorCount == 6,
+        "C-H2-1 pins two liveness and four render/camera anchors");
+    const uint32_t expectedHalo2AnchorRvas[] = {
+        0x7067F0u, 0x706910u, 0x7E1600u,
+        0x7E2130u, 0x7E30D0u, 0x7DFCD0u,
+    };
+    const size_t expectedHalo2AnchorBytes[] = {
+        11u, 73u, 37u, 23u, 44u, 34u,
+    };
+    size_t halo2AnchorIndex = 0;
+    for (const Halo2RetailAnchor& anchor : kHalo2RetailAnchors)
+    {
+        size_t tokenBytes = 0;
+        bool tokensValid = true;
+        const char* p = anchor.pattern;
+        while (*p)
+        {
+            if (*p == ' ') { ++p; continue; }
+            const char a = p[0];
+            const char b = p[1];
+            const bool wild = a == '?' && b == '?';
+            const bool hex =
+                ((a >= '0' && a <= '9') || (a >= 'A' && a <= 'F')) &&
+                ((b >= '0' && b <= '9') || (b >= 'A' && b <= 'F'));
+            if ((!wild && !hex) || (p[2] != ' ' && p[2] != '\0'))
+            {
+                tokensValid = false;
+                break;
+            }
+            ++tokenBytes;
+            p += 2;
+        }
+        Check(anchor.name && anchor.name[0] && anchor.pattern &&
+                  anchor.pattern[0] != '?' && tokensValid &&
+                  tokenBytes >= 11 && anchor.rva != 0 &&
+                  anchor.rva < kHalo2RetailImageSize &&
+                  tokenBytes <= kHalo2RetailImageSize - anchor.rva,
+            "Every Halo 2 anchor has strict AOB grammar and an in-image span");
+        Check(halo2AnchorIndex <
+                      sizeof(expectedHalo2AnchorRvas) /
+                          sizeof(expectedHalo2AnchorRvas[0]) &&
+                  anchor.rva == expectedHalo2AnchorRvas[halo2AnchorIndex] &&
+                  tokenBytes == expectedHalo2AnchorBytes[halo2AnchorIndex],
+            "Every Halo 2 anchor retains its independently verified RVA and "
+            "exact byte length");
+        Check(anchor.relativeDispOffset == 0 ||
+                  (static_cast<size_t>(anchor.relativeDispOffset) + 4 <=
+                       tokenBytes &&
+                   anchor.relativeTargetRva != 0 &&
+                   anchor.relativeTargetRva < kHalo2RetailImageSize),
+            "Every Halo 2 relative decode stays inside its match and targets "
+            "the pinned image");
+        ++halo2AnchorIndex;
+    }
+    Check(kHalo2RetailAnchorRelativeTargets == 2 &&
+              kHalo2RetailAnchors[kHalo2AnchorGameTimeIncrement]
+                      .relativeDispOffset == 0x03 &&
+              kHalo2RetailAnchors[kHalo2AnchorGameTimeInit]
+                      .relativeDispOffset == 0x07 &&
+              kHalo2RetailAnchors[kHalo2AnchorGameTimeIncrement]
+                      .relativeTargetRva == kHalo2GameTimeSlotRva &&
+              kHalo2RetailAnchors[kHalo2AnchorGameTimeInit]
+                      .relativeTargetRva == kHalo2GameTimeSlotRva,
+        "The two independent Halo 2 lifecycle anchors decode the same "
+        "game-time pointer slot");
+    Check(kHalo2GameTimeSlotRva + sizeof(uintptr_t) <=
+              kHalo2RetailImageSize &&
+              kHalo2GameTimeGlobalsSize == 0x2Cu &&
+              kHalo2GameTimeInitializedOffset == 0 &&
+              kHalo2GameTimeTickRateOffset == 2 &&
+              kHalo2GameTimeSecondsPerTickOffset == 4 &&
+              kHalo2GameTimeCurrentTickOffset == 8,
+        "The H2EK-proven game-time object and retail pointer slot are bounded");
+    Check(kHalo2RetailWindowStride == 0x120u &&
+              kHalo2RenderCameraOffset == 0x0Cu &&
+              kHalo2RasterCameraOffset == 0x80u &&
+              kHalo2CameraBytes == 0x74u &&
+              kHalo2CameraAsymmetricEnableOffset == 0x58u &&
+              kHalo2CameraFrustumCenterXOffset == 0x5Cu &&
+              kHalo2CameraFrustumCenterYOffset == 0x60u &&
+              kHalo2CameraFrustumExtentScaleOffset == 0x64u &&
+              kHalo2CameraPixelOffsetEnableOffset == 0x68u &&
+              kHalo2CameraPixelOffsetXOffset == 0x6Cu &&
+              kHalo2CameraPixelOffsetYOffset == 0x70u &&
+              kHalo2CameraPixelOffsetYOffset + sizeof(float) <=
+                  kHalo2CameraBytes,
+        "The retail Halo 2 window/camera layout retains the native "
+        "asymmetric-frustum controls for the future stereo candidate");
+
+    Halo2ColdObservationResult halo2Cold{};
+    halo2Cold.moduleRangeValid = true;
+    halo2Cold.peIdentity = true;
+    halo2Cold.anchorsMatchedOnce =
+        static_cast<uint32_t>(kHalo2RetailAnchorCount);
+    halo2Cold.anchorsAtPinnedRva =
+        static_cast<uint32_t>(kHalo2RetailAnchorCount);
+    halo2Cold.relativeTargetsAtPinnedRva =
+        kHalo2RetailAnchorRelativeTargets;
+    halo2Cold.postInitializationTickObserved = true;
+    halo2Cold.mappingStable = true;
+    Check(Halo2ColdObservationPass(halo2Cold),
+        "A complete Halo 2 cold observation passes");
+    Check(!Halo2ColdObservationNeedsImageScan(true) &&
+              Halo2ColdObservationNeedsImageScan(false),
+        "A completed Halo 2 module instance never repeats its image scan");
+    {
+        Halo2ColdObservationResult broken = halo2Cold;
+        broken.moduleRangeValid = false;
+        Check(!Halo2ColdObservationPass(broken),
+            "A wrong Halo 2 module range fails cold observation closed");
+        broken = halo2Cold;
+        broken.peIdentity = false;
+        Check(!Halo2ColdObservationPass(broken),
+            "A wrong Halo 2 PE identity fails cold observation closed");
+        broken = halo2Cold;
+        --broken.anchorsMatchedOnce;
+        Check(!Halo2ColdObservationPass(broken),
+            "A missing or duplicate Halo 2 anchor fails cold observation closed");
+        broken = halo2Cold;
+        --broken.anchorsAtPinnedRva;
+        Check(!Halo2ColdObservationPass(broken),
+            "A moved Halo 2 anchor fails cold observation closed");
+        broken = halo2Cold;
+        --broken.relativeTargetsAtPinnedRva;
+        Check(!Halo2ColdObservationPass(broken),
+            "A wrong Halo 2 data decode fails cold observation closed");
+        broken = halo2Cold;
+        broken.postInitializationTickObserved = false;
+        Check(!Halo2ColdObservationPass(broken),
+            "A Halo 2 image scan without an active-level tick fails closed");
+        broken = halo2Cold;
+        broken.mappingStable = false;
+        Check(!Halo2ColdObservationPass(broken),
+            "A remapped halo2.dll fails cold observation closed");
+    }
+
+    {
+        using Decision = Halo2GameTimeGateLogic::Decision;
+        Halo2GameTimeGateLogic gate;
+        Check(gate.Observe(false, 0) == Decision::Hold,
+            "An uninitialized Halo 2 clock supplies frozen evidence but holds");
+        Check(gate.Observe(true, 40) == Decision::Hold,
+            "The Halo 2 initialization transition establishes a baseline only");
+        Check(gate.Observe(true, 41) ==
+                  Decision::OpenAfterBoundaryThenTick,
+            "The first real post-initialization tick opens the Halo 2 gate");
+        Check(gate.Observe(false, 0) == Decision::Hold && !gate.IsOpen() &&
+                  gate.Observe(true, 50) == Decision::Hold &&
+                  gate.Observe(true, 51) ==
+                      Decision::OpenAfterBoundaryThenTick,
+            "An explicit Halo 2 dispose closes a previously open gate and a "
+            "later level must earn a new baseline and tick");
+        gate.InvalidateSample();
+        Check(!gate.IsOpen() &&
+                  gate.Observe(true, 60) == Decision::Hold &&
+                  gate.Observe(true, 61) ==
+                      Decision::OpenAfterBoundaryThenTick,
+            "An invalid sample closes an open Halo 2 gate and forces a fresh "
+            "baseline before preserved genuine lifecycle evidence may reopen");
+
+        gate.Reset();
+        Check(gate.Observe(true, 1000) == Decision::Hold,
+            "An already-running Halo 2 clock begins with a baseline");
+        for (uint32_t i = 1;
+             i < Halo2GameTimeGateLogic::kAlreadyRunningSamples; ++i)
+        {
+            Check(gate.Observe(true, 1000 + i) == Decision::Hold,
+                "The Halo 2 already-running gate holds before 120 changes");
+        }
+        Check(gate.Observe(
+                  true, 1000 + Halo2GameTimeGateLogic::kAlreadyRunningSamples) ==
+                  Decision::OpenAlreadyRunning,
+            "120 consecutive Halo 2 clock changes prove an already-running level");
+
+        gate.Reset();
+        Check(gate.Observe(true, 2000) == Decision::Hold &&
+                  gate.Observe(true, 2000) == Decision::Hold &&
+                  gate.Observe(true, 2001) == Decision::Hold &&
+                  !gate.SawUninitialized() && gate.ChangeRun() == 1,
+            "An unchanged but initialized Halo 2 clock cannot manufacture the "
+            "fast uninitialized-then-tick path");
+
+        gate.Reset();
+        gate.Observe(false, 0);
+        gate.Observe(true, 10);
+        gate.InvalidateSample();
+        Check(gate.Observe(true, 11) == Decision::Hold &&
+                  gate.Observe(true, 12) ==
+                      Decision::OpenAfterBoundaryThenTick,
+            "A racy/unreadable Halo 2 sample cannot fabricate a tick; the next "
+            "coherent value is only a new baseline");
+
+        gate.Reset();
+        gate.Observe(true, 3000);
+        for (uint32_t i = 1;
+             i < Halo2GameTimeGateLogic::kAlreadyRunningSamples; ++i)
+        {
+            Check(gate.Observe(true, 3000 + i) == Decision::Hold,
+                "The Halo 2 gate remains closed through 119 changes");
+        }
+        gate.InvalidateSample();
+        Check(gate.ChangeRun() == 0 &&
+                  gate.Observe(true, 4000) == Decision::Hold &&
+                  gate.Observe(true, 4001) == Decision::Hold &&
+                  gate.ChangeRun() == 1,
+            "An invalid Halo 2 sample breaks the consecutive already-running "
+            "proof and forces a fresh baseline");
+    }
+
     const Halo4EvidenceIdentity& halo4Identity =
         Halo4Adapter_GetEvidenceIdentity();
     Check(Halo4ParityCommandFitsBucket(0x00) &&

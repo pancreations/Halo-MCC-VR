@@ -36,6 +36,8 @@ bool TitleRegistry_AllowsSharedControllerInput(
     GameTitle activeTitle, bool resolvedOwnerAllowsControllerInput,
     bool cameraOnlyOwned,
     bool allowAmbiguousFrontend, bool explicitTitleAllowsControllerInput);
+bool TitleRegistry_AllowsGenericDrawDistance(
+    GameTitle activeTitle, bool activeLevelRunning);
 bool TitleRegistry_Halo3CameraOwnsAmbiguousState(
     uint64_t now, uint64_t lastCamera, uint64_t titleTransition);
 const char* RuntimeModeName(RuntimeMode mode);

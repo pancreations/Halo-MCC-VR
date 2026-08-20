@@ -81,8 +81,21 @@ else()
     set(HALOMCCVR_BUILD_HALO4 "OFF")
 endif()
 
+# Halo 2 C-H2-1: read-only identity/liveness/anchor observation. This is an
+# independently isolatable bring-up stage: it grants no controller admission,
+# runtime hook, camera write, or other engine write.
+option(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
+    "Enable Halo 2 read-only cold observation (C-H2-1)" ON)
+if(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
+    set(HALOMCCVR_BUILD_HALO2 "COLD")
+    message(STATUS
+        "Halo MCC VR: Halo 2 read-only cold observation enabled (C-H2-1)")
+else()
+    set(HALOMCCVR_BUILD_HALO2 "OFF")
+endif()
+
 message(STATUS
-    "Halo MCC VR build identity: ${HALOMCCVR_BUILD_COMMIT}, ODST=${HALOMCCVR_BUILD_ODST}, Reach=${HALOMCCVR_BUILD_REACH}, ReachRender=${HALOMCCVR_BUILD_REACH_RENDER}, Halo4=${HALOMCCVR_BUILD_HALO4}")
+    "Halo MCC VR build identity: ${HALOMCCVR_BUILD_COMMIT}, ODST=${HALOMCCVR_BUILD_ODST}, Reach=${HALOMCCVR_BUILD_REACH}, ReachRender=${HALOMCCVR_BUILD_REACH_RENDER}, Halo4=${HALOMCCVR_BUILD_HALO4}, Halo2=${HALOMCCVR_BUILD_HALO2}")
 
 # Exact dependency commits used by the accepted release source. Shallow clones
 # avoid pulling entire third-party histories into the ignored build tree.
@@ -202,6 +215,8 @@ add_library(halo3xr SHARED
     src/dll/input.cpp
     src/dll/title_adapter.cpp
     src/dll/reach_adapter.cpp
+    src/dll/halo2_adapter.cpp
+    src/dll/halo2_cold_observation.cpp
     src/dll/halo4_adapter.cpp
     src/dll/halo4_cold_observation.cpp)
 set_target_properties(halo3xr PROPERTIES OUTPUT_NAME "HaloMCCVR")
@@ -221,11 +236,13 @@ target_compile_definitions(halo3xr PRIVATE
     HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP}>
     HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE}>
     HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA}>
+    HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION}>
     HALOMCCVR_BUILD_COMMIT="${HALOMCCVR_BUILD_COMMIT}"
     HALOMCCVR_BUILD_ODST="${HALOMCCVR_BUILD_ODST}"
     HALOMCCVR_BUILD_REACH="${HALOMCCVR_BUILD_REACH}"
     HALOMCCVR_BUILD_REACH_RENDER="${HALOMCCVR_BUILD_REACH_RENDER}"
-    HALOMCCVR_BUILD_HALO4="${HALOMCCVR_BUILD_HALO4}")
+    HALOMCCVR_BUILD_HALO4="${HALOMCCVR_BUILD_HALO4}"
+    HALOMCCVR_BUILD_HALO2="${HALOMCCVR_BUILD_HALO2}")
 target_link_libraries(halo3xr PRIVATE
     openxr_loader minhook imgui_lib
     d3d11 dxgi d3dcompiler)
@@ -272,6 +289,7 @@ if(BUILD_TESTING)
         src/common/log.cpp
         src/dll/sigscan.cpp
         src/dll/reach_adapter.cpp
+        src/dll/halo2_adapter.cpp
         src/dll/halo4_adapter.cpp)
     if(HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE)
         target_sources(halomccvr_core_tests PRIVATE
@@ -285,7 +303,8 @@ if(BUILD_TESTING)
         HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP}>
         HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP}>
         HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE}>
-        HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA}>)
+        HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA}>
+        HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION}>)
     add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
 endif()
 

@@ -178,6 +178,19 @@ bool TitleRegistry_AllowsSharedControllerInput(
     return explicitTitleAllowsControllerInput;
 }
 
+bool TitleRegistry_AllowsGenericDrawDistance(
+    GameTitle activeTitle, bool activeLevelRunning)
+{
+    if (!activeLevelRunning)
+        return false;
+    // C-H2-1 is a strictly read-only observation stage. The generic draw-
+    // distance helper scans the active image and may write a debug variable,
+    // so it must remain unreachable even after H2's read-only level gate opens.
+    return activeTitle != GameTitle::None &&
+        activeTitle != GameTitle::Unknown &&
+        activeTitle != GameTitle::Halo2;
+}
+
 bool TitleRegistry_Halo3CameraOwnsAmbiguousState(
     uint64_t now, uint64_t lastCamera, uint64_t titleTransition)
 {

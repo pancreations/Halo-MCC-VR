@@ -38,6 +38,8 @@
 #include "../common/halo4_hud_logic.h"
 #include "../common/halo4_parity_trace_logic.h"
 #include "../common/level_load_gate_logic.h"
+#include "halo2_adapter.h"
+#include "halo2_cold_observation.h"
 #include "halo4_adapter.h"
 #include "halo4_cold_observation.h"
 #include "../common/odst_bringup_logic.h"
@@ -35367,7 +35369,13 @@ namespace
             // this tick reads IsOpen()/g_activeTitleLevelRunning instead, so no
             // path double-consumes a sample. See the gate declaration for why
             // the invariant is "touch nothing", not merely "install nothing".
-            bool activeLevelRunning = true;
+            const bool halo2Active = activeTitle &&
+                activeTitle->title == GameTitle::Halo2;
+            // H2 is the first title whose initial bring-up stage is explicitly
+            // no-write. A missing module range or disabled cold-observation
+            // build must therefore publish HOLD, never inherit the historical
+            // fail-open true used by titles with established runtime paths.
+            bool activeLevelRunning = !halo2Active;
             // Captured by the Halo 4 gate case so the cold observation below
             // reuses the SAME module range and only ever runs on a tick the
             // gate actually sampled: if the range query failed, the gate
@@ -35413,10 +35421,8 @@ namespace
                         // halo4.dll even during its loading screens - the
                         // exact touch the load-bounce rule forbids. Gating
                         // Halo 4 closes that pre-existing hole; hooks remain
-                        // hard-off regardless. (Halo CE and Halo 2 still take
-                        // the default and keep the pre-existing behavior;
-                        // they have no adapter work and are out of C-H4-2's
-                        // scope.)
+                        // hard-off regardless. (Halo CE still takes the
+                        // default and keeps the pre-existing behavior.)
                         activeLevelRunning =
                             g_halo4LevelLoadGate.AllowsInstall(
                                 gateGeneration, gateBase, gateSize,
@@ -35425,17 +35431,28 @@ namespace
                         halo4GateSize = gateSize;
                         halo4GateSampled = true;
                         break;
+                    case GameTitle::Halo2:
+                        // C-H2-1 reads only two bounded code anchors and the
+                        // official game-time singleton until a coherent active
+                        // update opens the gate. The observer itself performs
+                        // the full scan only after that proof.
+                        activeLevelRunning = Halo2ColdObservation_Poll(
+                            gateBase, gateSize, gateGeneration);
+                        break;
                     default:
                         break;
                     }
                     // The draw-distance reassert resolves a debug var by a
                     // whole-module name scan and WRITES it. Both are module
                     // touches, so they wait for the level exactly like hooks.
-                    if (activeLevelRunning)
+                    if (TitleRegistry_AllowsGenericDrawDistance(
+                            activeTitle->title, activeLevelRunning))
                         Game_ApplyDrawDistance(
                             gateBase, gateSize, gateGeneration);
                 }
             }
+            if (!halo2Active)
+                Halo2ColdObservation_Rearm();
             g_activeTitleLevelRunning.store(
                 activeLevelRunning, std::memory_order_release);
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE

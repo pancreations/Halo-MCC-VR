@@ -44,6 +44,19 @@ on two harmless Halo 4 script functions. Halo 3, ODST, and Reach facts are
 not Halo 4 evidence. Halo 4 has no CHUD tag classes at all
 (`docs/HALO4-CUI-EVIDENCE.md`); no CHUD-derived construct may be assumed.
 
+## Halo 2 mod-tools-first rule (2026-08-19)
+
+New Halo 2 bindings begin with the official H2EK executables, retained source
+paths/asserts, and tags. Retail `halo2.dll` is only the cross-architecture match
+and uniqueness target. The pinned kit/retail identities, game-time lifecycle,
+render transaction, camera layout, and native asymmetric-frustum path are in
+`docs/HALO2-SIGNATURE-EVIDENCE.md` and
+`docs/HALO2-EVIDENCE-MANIFEST.json`.
+
+`groundhog.dll` (H2A multiplayer) is a separate scope. A `halo2.dll` offset or
+layout is not evidence for it, and it must not be added as a second descriptor
+aliasing the existing Halo 2 runtime slot.
+
 ## Reach mod-tools-only rule (2026-07-26)
 
 New Halo: Reach feature evidence must come from the official HREK executables,

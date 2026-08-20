@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "status": "C_H2_1_OFFLINE_PASS_HEADSET_LOG_PENDING",
+  "hook_eligible": false,
+  "scope": {
+    "title": "Halo 2 Anniversary campaign/classic",
+    "module": "halo2.dll",
+    "excluded_module": "groundhog.dll"
+  },
+  "retail_identity": {
+    "file_size": 15807960,
+    "size_of_image": "0x02A38000",
+    "pe_timestamp": "0x68A0F0F2",
+    "steam_sha256": "DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946",
+    "store_sha256": "81E5F41A7F8409D27A5454A28BFBECB8CD273E389366FB9865DD1D01E6BE689D",
+    "text_sha256": "973245E6898940B98BECC0F16BAB116B4A544B43DFAB041DB378279B8504C0DA",
+    "edition_code_identity": "all executable bytes identical; file differences confined to checksum and Authenticode"
+  },
+  "h2ek_identity": {
+    "build": "2023.06.20.176294.1-Release",
+    "halo2_tag_test_sha256": "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36",
+    "role": "semantic/layout discovery; kit RVAs are never retail RVAs"
+  },
+  "game_time": {
+    "retail_pointer_slot_rva": "0x015FE008",
+    "object_size": "0x2C",
+    "initialized_offset": "0x00",
+    "current_tick_offset": "0x08",
+    "proof": "official H2EK game_update increments only after active update-result bit 0; retail sole-caller homolog preserves that tail",
+    "sampling": "continuous coherent slot-initialized-tick-initialized-slot read; false-to-true initializes a baseline and never counts as a tick; invalid samples close liveness and reset the consecutive run"
+  },
+  "anchors": [
+    {
+      "name": "game-time-increment",
+      "rva": "0x007067F0",
+      "aob": "48 8B 05 ?? ?? ?? ?? FF 40 08 C3",
+      "steam_mapped_matches": 1,
+      "store_mapped_matches": 1,
+      "disp32_offset": 3,
+      "target_rva": "0x015FE008"
+    },
+    {
+      "name": "game-time-level-init",
+      "rva": "0x00706910",
+      "aob": "48 83 EC 28 48 8B 05 ?? ?? ?? ?? 33 C9 48 89 08 48 89 48 08 48 89 48 10 48 89 48 18 48 89 48 20 89 48 28 E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? F3 0F 10 0D ?? ?? ?? ?? 0F BF 48 08 66 89 4A 02 C7 42 0C 00 00 80 3F C6 02 01",
+      "steam_mapped_matches": 1,
+      "store_mapped_matches": 1,
+      "disp32_offset": 7,
+      "target_rva": "0x015FE008"
+    },
+    {
+      "name": "render-frame",
+      "rva": "0x007E1600",
+      "aob": "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 41 8B F9 48 63 EA 41 8B F0 8B D9",
+      "steam_mapped_matches": 1,
+      "store_mapped_matches": 1
+    },
+    {
+      "name": "render-player-window",
+      "rva": "0x007E2130",
+      "aob": "48 89 5C 24 10 55 56 57 41 54 41 55 41 56 41 57 48 81 EC 00 02 00 00",
+      "steam_mapped_matches": 1,
+      "store_mapped_matches": 1
+    },
+    {
+      "name": "render-view",
+      "rva": "0x007E30D0",
+      "aob": "48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 44 88 4C 24 20 55 41 54 41 55 41 56 41 57 48 8D AC 24 B0 FD FF FF 48 81 EC 50 03 00 00",
+      "steam_mapped_matches": 1,
+      "store_mapped_matches": 1
+    },
+    {
+      "name": "asymmetric-frustum-helper",
+      "rva": "0x007DFCD0",
+      "aob": "48 89 5C 24 08 57 48 83 EC 40 0F BF 41 3A 48 8B F9 44 0F BF 49 3C 48 8B DA 0F BF 51 32 44 0F BF 41 3E",
+      "steam_mapped_matches": 1,
+      "store_mapped_matches": 1
+    }
+  ],
+  "camera_route_for_future_candidate": {
+    "window_stride": "0x120",
+    "render_camera_offset": "0x0C",
+    "raster_camera_offset": "0x80",
+    "camera_size": "0x74",
+    "asymmetric_enable": "0x58",
+    "center_x": "0x5C",
+    "center_y": "0x60",
+    "extent_scale": "0x64",
+    "status": "read-only evidence; no field is writable in C-H2-1"
+  },
+  "c_h2_1_runtime_contract": {
+    "controller_input": false,
+    "stereo": false,
+    "six_dof": false,
+    "hooks": false,
+    "engine_writes": false,
+    "generic_draw_distance_write": false,
+    "full_image_scan": "once per generation and only after level liveness",
+    "level_liveness": "continuously sampled; explicit dispose or invalid sample closes the latch even while halo2.dll remains resident",
+    "failure_policy": "log-only stock fallback"
+  }
+}

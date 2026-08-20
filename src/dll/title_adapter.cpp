@@ -9,6 +9,7 @@
 #include "../common/coop_probe_logic.h"
 #include "../common/log.h"
 #include "d3d11_hook.h"
+#include "halo2_adapter.h"
 #include "halo4_adapter.h"
 #include "reach_adapter.h"
 
@@ -555,6 +556,30 @@ const TitleDescriptor* TitleAdapter_PollLoaded(uint64_t observedAtMs)
                 "transforms, HUD, haptics, lifecycle, and runtime hooks remain "
                 "disabled",
                 detected->displayName, detected->moduleName);
+        }
+        else if (detected->title == GameTitle::Halo2 &&
+            Halo2Adapter_GetStage() ==
+                Halo2AdapterStage::ColdObservationOnly)
+        {
+            // Detection itself reads no game bytes. The worker first validates
+            // two bounded liveness anchors at their pinned RVAs, then waits for
+            // a coherent active-map tick before taking a short module pin and
+            // running the one-shot full-image observation.
+            const Halo2EvidenceIdentity& identity =
+                Halo2Adapter_GetEvidenceIdentity();
+            LOG("Title adapter: detected %s (%ls); C-H2-1 read-only cold "
+                "observation is armed. Shared controller input, stereo, 6DOF, "
+                "camera/render/aim/HUD/haptics, Halo 2 engine hooks, and all "
+                "Halo 2 engine writes remain disabled",
+                detected->displayName, detected->moduleName);
+            LOG("Halo 2 offline evidence identity (loaded PE fields and anchors "
+                "will be verified after an active level tick; file hashes are "
+                "pinned provenance, not runtime-hashed): PE timestamp 0x%08X, "
+                "SizeOfImage 0x%08X, H2EK build %s, H2EK tag-test SHA-256 %s, "
+                "retail SHA-256 Steam %s, Store %s",
+                identity.peTimestamp, identity.sizeOfImage,
+                identity.h2ekBuild, identity.h2ekTagTestSha256,
+                identity.moduleSha256Steam, identity.moduleSha256Store);
         }
         else if (detected->title == GameTitle::Halo4 &&
             Halo4Adapter_GetStage() ==

@@ -35,6 +35,19 @@ tag meaning verified against a Steam module is equally valid on the Store
 module. One cumulative build serves both editions, and an edition difference is
 never an explanation for a signature or offset failing to match.
 
+### Halo 2 exact edition comparison (2026-08-19)
+
+Both `halo2.dll` files are 15,807,960 bytes, share PE timestamp `0x68A0F0F2`,
+SizeOfImage `0x02A38000`, and `.text` SHA-256
+`973245E6898940B98BECC0F16BAB116B4A544B43DFAB041DB378279B8504C0DA`.
+Steam SHA-256 is
+`DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`;
+Store SHA-256 is
+`81E5F41A7F8409D27A5454A28BFBECB8CD273E389366FB9865DD1D01E6BE689D`.
+There are 835 differing bytes in 16 clusters and none outside the PE checksum
+and Authenticode certificate. Complete mapped-image scans found the six C-H2-1
+anchors exactly once at identical RVAs in both editions.
+
 ## What actually differs
 
 Only the shipping executable and the surrounding install layout.

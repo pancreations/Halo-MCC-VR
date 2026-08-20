@@ -24,6 +24,14 @@
 #define HALOMCCVR_BUILD_REACH_RENDER "unknown"
 #endif
 
+#ifndef HALOMCCVR_BUILD_HALO4
+#define HALOMCCVR_BUILD_HALO4 "unknown"
+#endif
+
+#ifndef HALOMCCVR_BUILD_HALO2
+#define HALOMCCVR_BUILD_HALO2 "unknown"
+#endif
+
 // Entry point of the injected DLL. DllMain itself must do almost nothing
 // (Windows holds a global "loader lock" while it runs), so we immediately
 // spawn a thread that does the real setup.
@@ -64,10 +72,11 @@ static DWORD WINAPI InitThread(LPVOID)
     // Commit + compile option identify source/configuration. The timestamp is
     // context only; verify the installed DLL's SHA-256 separately.
     LOG("HaloMCCVR loaded into pid %lu (source %s, ODST %s, Reach %s, "
-        "ReachRender %s, compiled "
+        "ReachRender %s, Halo4 %s, Halo2 %s, compiled "
         __DATE__ " " __TIME__ ")", GetCurrentProcessId(),
         HALOMCCVR_BUILD_COMMIT, HALOMCCVR_BUILD_ODST,
-        HALOMCCVR_BUILD_REACH, HALOMCCVR_BUILD_REACH_RENDER);
+        HALOMCCVR_BUILD_REACH, HALOMCCVR_BUILD_REACH_RENDER,
+        HALOMCCVR_BUILD_HALO4, HALOMCCVR_BUILD_HALO2);
     wchar_t hostExe[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, hostExe, MAX_PATH);
     LOG("MCC edition: %s (%ls)", DetectMccEdition(hostExe), hostExe);

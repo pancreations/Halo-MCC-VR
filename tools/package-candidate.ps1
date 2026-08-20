@@ -7,7 +7,8 @@ param(
     [switch]$Clean
 )
 
-# Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4.
+# Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4,
+# with Halo 2 C-H2-1's read-only cold-observation stage.
 # Reach's camera core is permanent while Halo 4 is still an explicitly
 # unaccepted bring-up line. Optional player-visible features fail open
 # independently. This stages one unaccepted local candidate under out/candidates
@@ -86,6 +87,13 @@ try {
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
         throw 'Refusing to package C-H4-D1: the Halo 4 camera core is not ON.'
     }
+    if ($cache -notmatch
+            '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
+        throw 'Refusing to package C-H2-1: Halo 2 cold observation is not ON.'
+    }
+    if ($cache -notmatch '(?m)^BUILD_TESTING:BOOL=ON\r?$') {
+        throw 'Refusing to package: BUILD_TESTING is not ON.'
+    }
 
     # Incremental. A clean rebuild was recompiling the whole tree for every
     # candidate, which is minutes per iteration for no safety: the packaged
@@ -122,7 +130,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo4-d1-parity-diagnostic',
+        'halo2-c1-cold-observation',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -154,20 +162,23 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 8
+        schema_version = 9
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
         created_utc = $createdUtc.ToString('o')
         source_commit = $commit
         package_preset = $packagePreset
-        titles = @('Halo 3', 'Halo 3: ODST', 'Halo: Reach', 'Halo 4')
+        titles = @(
+            'Halo 3', 'Halo 3: ODST', 'Halo: Reach', 'Halo 4',
+            'Halo 2 Anniversary')
         embedded_build_identity = [ordered]@{
             source_commit = $commit
             odst = $true
             reach = $true
             reach_render = $true
             halo4 = $true
+            halo2 = 'COLD'
         }
         deployment_policy = [ordered]@{
             automatic_after_package = $true
@@ -231,6 +242,25 @@ try {
                 'pre-claim-stock-post-claim-frame-drop-core-remains-armed'
             vrik_failure_policy =
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
+        }
+        halo2_candidate = [ordered]@{
+            id = 'C-H2-1'
+            status = 'HEADSET_LOG_VALIDATION_REQUIRED'
+            module = 'halo2.dll'
+            scope = 'campaign-classic-only-groundhog-excluded'
+            behavior =
+                'coherent-game-time-level-gate-plus-generation-tagged-read-only-loaded-image-preflight'
+            identity_anchor_count = 6
+            liveness_anchor_count = 2
+            expected_pass_line = 'Halo 2 cold observation PASS (C-H2-1)'
+            controller_input = $false
+            stereo = $false
+            six_dof = $false
+            runtime_hooks = $false
+            engine_writes = $false
+            generic_draw_distance_write = $false
+            failure_policy = 'log-only-stock-fallback'
+            evidence = 'docs/HALO2-SIGNATURE-EVIDENCE.md'
         }
         # Reach support is permanent, while player-visible optional features
         # fail open independently and never disarm the working camera core.
@@ -305,7 +335,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H4-D1 keeps C-H4-49 player-visible behavior unchanged and adds a log-only bounded census at the existing H4EK-proven gameplay-CUI dispatcher. It records every byte-range command type and every distinct type-0x28 transform identity, split by replay/normal observations, using only hot-path reads and atomics. The worker emits H4DIAG summaries. Vehicle, cutscene/theater, and native HUD-layout semantics remain explicitly unbound and stock; the diagnostic does not guess them. This does not advance accepted C-H4-43 or accept C-H4-49.'
+        note = 'C-H2-1 begins Halo 2 bring-up with read-only identity and liveness proof. It performs no controller admission, stereo, 6DOF, hook, or engine write, and explicitly blocks the generic draw-distance writer for Halo 2. Existing accepted title behavior and the carried Halo 4 D1 diagnostic are unchanged. A headset log PASS is required before the first stereo candidate.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

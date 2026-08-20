@@ -40,10 +40,15 @@
 > tool must never be used for a release**. Read `docs/V6-POSTBUILD-LAYER.md`
 > before touching anything Halo 4 HUD/helmet/pause related.
 >
-> **Next planned work (user-directed 2026-08-19): Halo 2 stereo 3D + 6DOF
-> bring-up.** Follow the title bring-up discipline: title-specific evidence
-> first (Halo 3/ODST/Reach/H4 offsets are not Halo 2 proof), cold observation
-> before any engine write, assert strings may be compiled out of retail.
+> **Active work (user-directed 2026-08-19): Halo 2 stereo 3D + 6DOF
+> bring-up.** C-H2-1 is the first, deliberately read-only candidate: official
+> H2EK semantics were matched to six unique Steam/Store `halo2.dll` anchors;
+> the worker waits for the engine's own coherent active-map tick before its
+> one-shot loaded-image scan. Halo 2 still has no controller admission, hook,
+> capability, heartbeat, or engine write, and the pre-existing generic
+> draw-distance write exposure is now explicitly closed. Headset/log validation
+> of the cold PASS is pending; stereo and 6DOF have not started writing yet.
+> See `docs/HALO2-SIGNATURE-EVIDENCE.md`.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:
 > it records what Halo 4 does today, what was never finished, and the six
