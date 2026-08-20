@@ -1,9 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "C_H2_1_ACCEPTED",
-  "hook_eligible": false,
+  "accepted_stage": "C-H2-1",
+  "accepted_stage_hook_eligible": false,
+  "active_candidate": "C-H2-2",
   "accepted_build_pointer_advanced": true,
-  "remaining_gate": "none for C-H2-1; future hooks and stereo require their own evidence and acceptance",
+  "remaining_gate": "C-H2-2 requires a Halo 2 headset stereo result and then a Halo 3 shared-code regression; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -79,7 +81,7 @@
       "store_mapped_matches": 1
     }
   ],
-  "camera_route_for_future_candidate": {
+  "camera_route": {
     "window_stride": "0x120",
     "render_camera_offset": "0x0C",
     "raster_camera_offset": "0x80",
@@ -88,7 +90,7 @@
     "center_x": "0x5C",
     "center_y": "0x60",
     "extent_scale": "0x64",
-    "status": "read-only evidence; no field is writable in C-H2-1"
+    "status": "read-only in accepted C-H2-1; C-H2-2 writes/restores only each camera's 12-byte position at +0x00"
   },
   "c_h2_1_runtime_contract": {
     "controller_input": false,
@@ -100,6 +102,55 @@
     "full_image_scan": "once per generation and only after level liveness",
     "level_liveness": "continuously sampled; explicit dispose or invalid sample closes the latch even while halo2.dll remains resident",
     "failure_policy": "log-only stock fallback"
+  },
+  "c_h2_2_candidate": {
+    "status": "IMPLEMENTED_HEADSET_VALIDATION_PENDING",
+    "accepted": false,
+    "accepted_build_pointer_advanced": false,
+    "hook_eligible_from_static_evidence": true,
+    "hook_count": 1,
+    "hook_rva": "0x007E2130",
+    "required_caller_rva": "0x007E1706",
+    "required_return_rva": "0x007E170B",
+    "required_flag": 0,
+    "primary_player_index": 0,
+    "renders_per_game_frame": 1,
+    "temporal_eye_gap_frames": 1,
+    "world_units_per_meter": 0.3280839895,
+    "engine_write_spans": [
+      {
+        "name": "render_camera_position",
+        "window_offset": "0x0C",
+        "camera_field_offset": "0x00",
+        "bytes": 12,
+        "restored_before_publication": true
+      },
+      {
+        "name": "raster_camera_position",
+        "window_offset": "0x80",
+        "camera_field_offset": "0x00",
+        "bytes": 12,
+        "restored_before_publication": true
+      }
+    ],
+    "capabilities": ["Stereo"],
+    "controller_input": false,
+    "six_dof": false,
+    "headset_rotation": false,
+    "headset_translation": false,
+    "controller_aim": false,
+    "hud": false,
+    "haptics": false,
+    "scene_target_redirect": false,
+    "native_fov_projection": false,
+    "simultaneous_stereo": false,
+    "generic_draw_distance_write": false,
+    "failure_policy": "before claim call stock once; after scoped writes begin restore both positions, drop only that temporal frame, keep the hook core and OpenXR armed",
+    "known_visual_limit": "one eye per game frame; at 90 game fps each eye updates at 45 Hz and moving content may show temporal disparity, judder, or shimmer",
+    "remaining_acceptance": [
+      "Halo 2 headset stereo validation",
+      "Halo 3 headset regression for shared VR/lifecycle changes"
+    ]
   },
   "headset_validation": {
     "accepted": true,

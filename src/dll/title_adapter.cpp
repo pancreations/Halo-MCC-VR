@@ -559,6 +559,17 @@ const TitleDescriptor* TitleAdapter_PollLoaded(uint64_t observedAtMs)
         }
         else if (detected->title == GameTitle::Halo2 &&
             Halo2Adapter_GetStage() ==
+                Halo2AdapterStage::TemporalStereoPositionOnly)
+        {
+            LOG("Title adapter: detected %s (%ls); C-H2-2 temporal stereo is "
+                "build-enabled behind C-H2-1 identity/liveness proof. It "
+                "alternates position-only eyes across adjacent frames and "
+                "keeps Halo 2 head pose/6DOF, controller input/aim, HUD, "
+                "haptics, and generic engine writes stock",
+                detected->displayName, detected->moduleName);
+        }
+        else if (detected->title == GameTitle::Halo2 &&
+            Halo2Adapter_GetStage() ==
                 Halo2AdapterStage::ColdObservationOnly)
         {
             // Detection itself reads no game bytes. The worker first validates

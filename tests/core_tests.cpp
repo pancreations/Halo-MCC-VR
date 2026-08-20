@@ -4251,7 +4251,11 @@ int main()
                   TitleRuntimeHeartbeatWindowMs(GameTitle::HaloReach) == 500 &&
                   TitleRuntimeHeartbeatWindowMs(GameTitle::Halo4) == 500 &&
                   TitleRuntimeHeartbeatWindowMs(GameTitle::HaloCE) == 0 &&
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+                  TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2) == 500 &&
+#else
                   TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2) == 0 &&
+#endif
                   TitleRuntimeHeartbeatWindowMs(GameTitle::Unknown) == 0,
             "heartbeat windows pin H3/ODST/Reach byte-for-byte and every runtime title is nonzero because a zero window silently disqualifies ownership");
         const TitleRuntimeHeartbeatPolicy windowPolicy =
@@ -5761,22 +5765,32 @@ int main()
               GameTitle::HaloReach, false, true, false,
               reachControllerAdmission),
         "Camera-only ownership cannot leak controller input into Reach");
-    // ---- C-H2-1: identity, liveness gate, and read-only cold observation ----
+    // ---- Halo 2 C-H2-1 evidence gate + isolated C-H2-2 temporal stereo ----
     const TitleDescriptor* halo2Row = TitleRegistry_Find(GameTitle::Halo2);
     const Halo2EvidenceIdentity& halo2Identity =
         Halo2Adapter_GetEvidenceIdentity();
-#if HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    Check(Halo2Adapter_GetStage() ==
+              Halo2AdapterStage::TemporalStereoPositionOnly,
+        "C-H2-2 stages Halo 2 at position-only temporal stereo");
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
     Check(Halo2Adapter_GetStage() == Halo2AdapterStage::ColdObservationOnly,
         "C-H2-1 stages Halo 2 at read-only cold observation only");
 #else
     Check(Halo2Adapter_GetStage() == Halo2AdapterStage::Disabled,
         "A build without C-H2-1 leaves the Halo 2 adapter disabled");
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    Check(Halo2Adapter_RuntimeHooksPermitted() &&
+              Halo2Adapter_EngineWritesPermitted(),
+        "C-H2-2 permits its one hook and temporary camera-position writes");
+#else
     Check(!Halo2Adapter_RuntimeHooksPermitted(),
         "C-H2-1 permits no Halo 2 runtime hook");
     Check(!Halo2Adapter_EngineWritesPermitted(),
         "C-H2-1 forbids every Halo 2 engine write, including the generic "
         "draw-distance path");
+#endif
     Check(!TitleRegistry_AllowsGenericDrawDistance(
                   GameTitle::Halo2, true) &&
               !TitleRegistry_AllowsGenericDrawDistance(
@@ -5790,19 +5804,77 @@ int main()
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
     Check(halo2Row && !halo2Row->runtimeSupported &&
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+              halo2Row->capabilities == TitleCapability_Stereo &&
+#else
               halo2Row->capabilities == TitleCapability_None &&
+#endif
               halo2Row->admissionCapabilities == TitleCapability_None &&
               TitleRegistry_HookPlan(GameTitle::Halo2) ==
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+                  TitleHookPlan::Halo2TemporalStereo &&
+              TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2) == 500 &&
+#else
                   TitleHookPlan::None &&
               TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2) == 0 &&
+#endif
               std::wstring_view(halo2Row->moduleName) == L"halo2.dll" &&
               std::wstring_view(halo2Identity.moduleName) ==
                   std::wstring_view(halo2Row->moduleName),
-        "The existing Halo 2 registry row remains inert and shares the "
-        "adapter's exact module identity");
+        "The existing Halo 2 registry row exposes only its exact staged "
+        "capability and shares the adapter's module identity");
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    {
+        constexpr size_t halo2Slot =
+            TitleRuntimeSlotIndex(GameTitle::Halo2);
+        TitleRuntimeState halo2Runtime;
+        TitleRuntimeModuleSet modules{};
+        modules.availabilityMask =
+            TitleRuntimeAvailabilityBit(GameTitle::Halo2);
+        modules.moduleBases[halo2Slot] = 0x180000000ull;
+        Check(halo2Runtime.PublishModuleSet(modules, 100),
+            "C-H2-2 establishes a generation-tagged Halo 2 runtime slot");
+        const uint32_t generation =
+            halo2Runtime.Generation(GameTitle::Halo2);
+        const TitleRuntimeLifecycle armed{
+            true, true, false, TitleCapability_Stereo};
+        TitleRuntimeHeartbeatPolicy policy{};
+        policy.freshForMs[halo2Slot] =
+            TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2);
+        Check(generation != 0 &&
+                  halo2Runtime.PublishLifecycle(
+                      GameTitle::Halo2, generation, armed) &&
+                  halo2Runtime.PublishMode(
+                      GameTitle::Halo2, generation, RuntimeMode::Gameplay) &&
+                  halo2Runtime.PublishHeartbeat(
+                      GameTitle::Halo2, generation, 101),
+            "An armed C-H2-2 lifecycle admits one fresh exact-generation "
+            "heartbeat");
+        const TitleRuntimeSnapshot owner = halo2Runtime.Resolve(101, policy);
+        Check(owner.owner == GameTitle::Halo2 && owner.generation == generation &&
+                  owner.installed && owner.armed &&
+                  owner.mode == RuntimeMode::Gameplay &&
+                  owner.enabledCapabilities == TitleCapability_Stereo &&
+                  TitleRuntimeMaskUnarmedCapabilities(
+                      owner, TitleCapability_Stereo) ==
+                      TitleCapability_Stereo,
+            "A fresh armed H2 generation resolves with exactly Stereo and no "
+            "controller, room-scale, HUD, aim, or haptics capability");
+        const TitleRuntimeLifecycle unarmed{
+            true, false, false, TitleCapability_Stereo};
+        Check(halo2Runtime.PublishLifecycle(
+                  GameTitle::Halo2, generation, unarmed) &&
+                  TitleRuntimeMaskUnarmedCapabilities(
+                      halo2Runtime.Resolve(101, policy),
+                      TitleCapability_Stereo) == TitleCapability_None &&
+                  halo2Runtime.Resolve(602, policy).owner == GameTitle::None,
+            "An unarmed or stale H2 generation cannot retain stereo ownership");
+    }
+#endif
     Check(!TitleRegistry_AllowsSharedControllerInput(
               GameTitle::Halo2, false, false, true, false),
-        "C-H2-1 does not admit the shared virtual controller");
+        "Halo 2 does not admit the shared virtual controller in either C-H2-1 "
+        "or C-H2-2");
     Check(TitleRegistry_FromModuleName(
               L"C:\\games\\MCC\\halo2\\HALO2.DLL") == halo2Row,
         "Halo 2 lookup accepts a case-insensitive full module path");
@@ -5894,9 +5966,18 @@ int main()
               kHalo2GameTimeCurrentTickOffset == 8,
         "The H2EK-proven game-time object and retail pointer slot are bounded");
     Check(kHalo2RetailWindowStride == 0x120u &&
+              kHalo2RetailRenderPlayerWindowRva == 0x7E2130u &&
+              kHalo2RetailRenderPlayerWindowCallRva == 0x7E1706u &&
+              kHalo2RetailRenderPlayerWindowReturnRva == 0x7E170Bu &&
+              kHalo2RetailRenderPlayerWindowOtherCallRva == 0x7F0A60u &&
               kHalo2RenderCameraOffset == 0x0Cu &&
               kHalo2RasterCameraOffset == 0x80u &&
               kHalo2CameraBytes == 0x74u &&
+              kHalo2CameraPositionOffset == 0x00u &&
+              kHalo2CameraForwardOffset == 0x0Cu &&
+              kHalo2CameraUpOffset == 0x18u &&
+              kHalo2CameraVerticalFovOffset == 0x28u &&
+              kHalo2CameraZFarOffset == 0x44u &&
               kHalo2CameraAsymmetricEnableOffset == 0x58u &&
               kHalo2CameraFrustumCenterXOffset == 0x5Cu &&
               kHalo2CameraFrustumCenterYOffset == 0x60u &&
@@ -5907,7 +5988,194 @@ int main()
               kHalo2CameraPixelOffsetYOffset + sizeof(float) <=
                   kHalo2CameraBytes,
         "The retail Halo 2 window/camera layout retains the native "
-        "asymmetric-frustum controls for the future stereo candidate");
+        "asymmetric-frustum controls while C-H2-2 leaves them stock");
+
+    {
+        constexpr float pi = 3.14159265358979323846f;
+        const auto nearlyEqual = [](
+                                     float a, float b,
+                                     float tolerance = 1.0e-5f) {
+            return std::fabs(a - b) <= tolerance;
+        };
+        Check(nearlyEqual(kHalo2WorldUnitsPerMeter, 1.0f / 3.048f) &&
+                  kHalo2MaxEyeOffsetMeters >= 0.25f,
+            "C-H2-2 uses Halo 2's evidence-backed metric scale and a bounded "
+            "OpenXR eye offset");
+
+        Halo2CameraBasis renderCamera{};
+        renderCamera.position[0] = 10.0f;
+        renderCamera.position[1] = 20.0f;
+        renderCamera.position[2] = 30.0f;
+        renderCamera.forward[2] = -1.0f;
+        renderCamera.up[1] = 1.0f;
+        Halo2CameraBasis rasterCamera = renderCamera;
+        rasterCamera.position[0] = -5.0f;
+        rasterCamera.position[1] = 1.0f;
+        rasterCamera.position[2] = 2.0f;
+        const float eyeOffset[3]{0.03f, 0.01f, -0.02f};
+        Halo2TemporalEyePositions eyePositions{};
+        Check(Halo2BuildTemporalEyePositions(
+                  renderCamera, rasterCamera, eyeOffset, eyePositions) &&
+                  nearlyEqual(eyePositions.render[0],
+                       10.0f + 0.03f * kHalo2WorldUnitsPerMeter) &&
+                  nearlyEqual(eyePositions.render[1],
+                       20.0f + 0.01f * kHalo2WorldUnitsPerMeter) &&
+                  nearlyEqual(eyePositions.render[2],
+                       30.0f - 0.02f * kHalo2WorldUnitsPerMeter) &&
+                  nearlyEqual(eyePositions.raster[0],
+                       -5.0f + 0.03f * kHalo2WorldUnitsPerMeter) &&
+                  nearlyEqual(eyePositions.raster[1],
+                       1.0f + 0.01f * kHalo2WorldUnitsPerMeter) &&
+                  nearlyEqual(eyePositions.raster[2],
+                       2.0f - 0.02f * kHalo2WorldUnitsPerMeter),
+            "C-H2-2 offsets the render and raster cameras independently from "
+            "their own stock origins and bases");
+
+        Halo2TemporalEyePositions unchanged{};
+        unchanged.render[0] = 123.0f;
+        Halo2CameraBasis invalidCamera = renderCamera;
+        invalidCamera.up[1] = 0.0f;
+        invalidCamera.up[2] = -1.0f;
+        const float tooLargeEye[3]{
+            kHalo2MaxEyeOffsetMeters + 0.01f, 0.0f, 0.0f};
+        Check(!Halo2BuildTemporalEyePositions(
+                   invalidCamera, rasterCamera, eyeOffset, unchanged) &&
+                  unchanged.render[0] == 123.0f &&
+                  !Halo2BuildTemporalEyePositions(
+                      renderCamera, rasterCamera, tooLargeEye, unchanged) &&
+                  unchanged.render[0] == 123.0f,
+            "A corrupt basis or unbounded eye pose rejects the H2 camera write "
+            "without changing its output");
+
+        Halo2CameraRectangle viewport{};
+        viewport.y1 = 1080;
+        viewport.x1 = 1920;
+        Halo2SymmetricHalfFovs halfFovs{};
+        Check(Halo2DeriveSymmetricHalfFovs(pi * 0.5f, viewport, halfFovs) &&
+                  nearlyEqual(halfFovs.vertical, pi * 0.25f) &&
+                  nearlyEqual(
+                      halfFovs.horizontal, std::atan(16.0f / 9.0f)) &&
+                  !Halo2DeriveSymmetricHalfFovs(0.0f, viewport, halfFovs),
+            "C-H2-2 derives the stock symmetric cover from H2's vertical FOV "
+            "and proven y/x viewport ordering");
+        viewport.x1 = 0;
+        Check(!Halo2DeriveSymmetricHalfFovs(pi * 0.5f, viewport, halfFovs),
+            "An empty or inverted H2 viewport rejects temporal publication");
+        Check(Halo2StockProjectionIsSymmetric(0, 0, 0, 0) &&
+                  !Halo2StockProjectionIsSymmetric(1, 0, 0, 0) &&
+                  !Halo2StockProjectionIsSymmetric(0, 1, 0, 0) &&
+                  !Halo2StockProjectionIsSymmetric(0, 0, 1, 0) &&
+                  !Halo2StockProjectionIsSymmetric(0, 0, 0, 1),
+            "Any native asymmetric or pixel-offset flag withholds C-H2-2's "
+            "symmetric-cover claim");
+
+        Check(Halo2TemporalEyeForSerial(0, false) == -1 &&
+                  Halo2TemporalEyeForSerial(1, false) == kHalo2LeftEye &&
+                  Halo2TemporalEyeForSerial(2, false) == kHalo2RightEye &&
+                  Halo2TemporalEyeForSerial(1, true) == kHalo2RightEye &&
+                  Halo2TemporalEyeForSerial(2, true) == kHalo2LeftEye,
+            "Prepared serial parity, including right-eye-first, owns the H2 eye");
+
+        const Halo2TemporalEyeStamp previous{
+            7, 10, Halo2TemporalEyeForSerial(10, false), true};
+        const Halo2TemporalEyeStamp current{
+            7, 11, Halo2TemporalEyeForSerial(11, false), true};
+        Check(SelectHalo2TemporalPairAction(
+                  previous, current, 7, 11, false) ==
+                  Halo2TemporalPairAction::PublishAdjacentPair,
+            "Only an exact same-generation N-1/N opposite-eye pair publishes");
+        Halo2TemporalEyeStamp emptyStamp{};
+        Halo2TemporalEyeStamp gap = current;
+        gap.preparedSerial = 13;
+        gap.eye = Halo2TemporalEyeForSerial(13, false);
+        Check(SelectHalo2TemporalPairAction(
+                  emptyStamp, current, 7, 11, false) ==
+                  Halo2TemporalPairAction::SeedWithCurrent &&
+                  SelectHalo2TemporalPairAction(
+                      previous, gap, 7, 13, false) ==
+                      Halo2TemporalPairAction::SeedWithCurrent &&
+                  SelectHalo2TemporalPairAction(
+                      previous, current, 8, 11, false) ==
+                      Halo2TemporalPairAction::RejectCurrent &&
+                  SelectHalo2TemporalPairAction(
+                      previous, current, 7, 12, false) ==
+                      Halo2TemporalPairAction::RejectCurrent,
+            "A first eye or serial gap reseeds, while stale generation/frame "
+            "claims reject outright");
+
+        Check(SelectHalo2CameraPositionWrite(
+                  kHalo2WindowRenderPositionOffset, 12) ==
+                  Halo2CameraPositionWrite::RenderPosition &&
+                  SelectHalo2CameraPositionWrite(
+                      kHalo2WindowRasterPositionOffset, 12) ==
+                  Halo2CameraPositionWrite::RasterPosition &&
+                  SelectHalo2CameraPositionWrite(
+                      kHalo2RenderCameraOffset + kHalo2CameraZFarOffset, 4) ==
+                  Halo2CameraPositionWrite::Reject &&
+                  SelectHalo2CameraPositionWrite(
+                      kHalo2RenderCameraOffset, kHalo2CameraBytes) ==
+                  Halo2CameraPositionWrite::Reject,
+            "C-H2-2's engine-write allow-list contains only the two exact "
+            "12-byte position spans and excludes z_far/whole-camera restore");
+
+        Halo2TemporalTransactionInput transaction{};
+        transaction.stereoRequested = true;
+        transaction.hookArmed = true;
+        transaction.coldObservationPassed = true;
+        transaction.exactCaller = true;
+        transaction.flagValid = true;
+        transaction.windowReadable = true;
+        transaction.playerIndex = 0;
+        transaction.levelLive = true;
+        transaction.captureReady = true;
+        transaction.activeGeneration = 7;
+        transaction.snapshotGeneration = 7;
+        transaction.preparedSerial = 11;
+        transaction.eye = Halo2TemporalEyeForSerial(11, false);
+        transaction.renderCameraValid = true;
+        transaction.rasterCameraValid = true;
+        transaction.eyePositionValid = true;
+        transaction.stockProjectionSymmetric = true;
+        transaction.halfFovsValid = true;
+        Check(SelectHalo2TemporalTransactionAction(transaction) ==
+                  Halo2TemporalTransactionAction::ScopedPositionsAndCallOnce,
+            "The complete exact H2 transaction admits its two scoped writes");
+        Halo2TemporalTransactionInput foreign = transaction;
+        foreign.exactCaller = false;
+        Halo2TemporalTransactionInput malformed = transaction;
+        malformed.serialAlreadyClaimed = true;
+        Halo2TemporalTransactionInput badFlag = transaction;
+        badFlag.flagValid = false;
+        Check(SelectHalo2TemporalTransactionAction(foreign) ==
+                  Halo2TemporalTransactionAction::CallStockOnce &&
+                  SelectHalo2TemporalTransactionAction(malformed) ==
+                  Halo2TemporalTransactionAction::
+                      RejectTemporalFrameAndCallStockOnce &&
+                  SelectHalo2TemporalTransactionAction(badFlag) ==
+                  Halo2TemporalTransactionAction::
+                      RejectTemporalFrameAndCallStockOnce,
+            "Foreign H2 callers stay stock and malformed exact frames revoke "
+            "only their temporal token");
+
+        Halo2TemporalTransactionResult complete{};
+        complete.originalCalls = 1;
+        complete.originalReturned = true;
+        complete.renderPositionWritten = true;
+        complete.rasterPositionWritten = true;
+        complete.renderPositionRestored = true;
+        complete.rasterPositionRestored = true;
+        Check(Halo2TemporalTransactionResultMatches(
+                  Halo2TemporalTransactionAction::ScopedPositionsAndCallOnce,
+                  complete),
+            "A completed H2 temporal transaction proves exactly one original "
+            "call and both selective restores");
+        complete.otherCameraBytesWritten = true;
+        Check(!Halo2TemporalTransactionResultMatches(
+                  Halo2TemporalTransactionAction::ScopedPositionsAndCallOnce,
+                  complete),
+            "Any H2 camera write outside the two position spans invalidates "
+            "temporal publication");
+    }
 
     Halo2ColdObservationResult halo2Cold{};
     halo2Cold.moduleRangeValid = true;
@@ -8926,7 +9194,11 @@ int main()
     // controller-only stage grants admission, never a hook plan.
     const GameTitle unsupportedTitles[] = {
         GameTitle::Halo4, GameTitle::HaloCE,
+#if !HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
         GameTitle::Halo2, GameTitle::Unknown, GameTitle::None,
+#else
+        GameTitle::Unknown, GameTitle::None,
+#endif
     };
     for (GameTitle title : unsupportedTitles)
         Check(TitleRegistry_HookPlan(title) == TitleHookPlan::None,

@@ -9,6 +9,11 @@ enum class Halo2AdapterStage : uint8_t
     // generation-tagged loaded-image preflight. No controller admission, hook,
     // camera write, or other engine write is permitted.
     ColdObservationOnly,
+    // C-H2-2: one stock player-window render per game frame, with only the
+    // render/raster camera position fields offset for alternating eyes. The
+    // completed backbuffer is paired across adjacent prepared serials. No head
+    // pose, controller, aim, HUD, haptics, or generic engine write is admitted.
+    TemporalStereoPositionOnly,
 };
 
 struct Halo2EvidenceIdentity

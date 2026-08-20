@@ -7,6 +7,10 @@
 
 #include "runtime_types.h"
 
+#ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
+#endif
+
 constexpr size_t kTitleRuntimeSlotCount = 6;
 constexpr size_t kInvalidTitleRuntimeSlot = kTitleRuntimeSlotCount;
 
@@ -82,6 +86,12 @@ constexpr uint64_t TitleRuntimeHeartbeatWindowMs(GameTitle title)
     // fits both.
     case GameTitle::HaloReach: return kTitleRuntimeHeartbeatFreshMs;
     case GameTitle::Halo4: return kTitleRuntimeHeartbeatFreshMs;
+    case GameTitle::Halo2:
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+        return kTitleRuntimeHeartbeatFreshMs;
+#else
+        return 0;
+#endif
     default: return 0;
     }
 }

@@ -81,12 +81,23 @@ else()
     set(HALOMCCVR_BUILD_HALO4 "OFF")
 endif()
 
-# Halo 2 C-H2-1: read-only identity/liveness/anchor observation. This is an
-# independently isolatable bring-up stage: it grants no controller admission,
-# runtime hook, camera write, or other engine write.
+# Halo 2 C-H2-1 is the independently isolatable read-only identity/liveness
+# prerequisite. C-H2-2 adds one separately gated temporal-stereo hook and only
+# its two scoped camera-position writes; turning C-H2-2 off returns to C-H2-1.
 option(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
     "Enable Halo 2 read-only cold observation (C-H2-1)" ON)
-if(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
+option(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    "Enable Halo 2 one-render temporal position stereo (C-H2-2)" ON)
+if(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO AND
+   NOT HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
+    message(FATAL_ERROR
+        "Halo 2 C-H2-2 requires C-H2-1 cold observation")
+endif()
+if(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO)
+    set(HALOMCCVR_BUILD_HALO2 "TEMPORAL")
+    message(STATUS
+        "Halo MCC VR: Halo 2 temporal position stereo enabled (C-H2-2)")
+elseif(HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION)
     set(HALOMCCVR_BUILD_HALO2 "COLD")
     message(STATUS
         "Halo MCC VR: Halo 2 read-only cold observation enabled (C-H2-1)")
@@ -217,6 +228,7 @@ add_library(halo3xr SHARED
     src/dll/reach_adapter.cpp
     src/dll/halo2_adapter.cpp
     src/dll/halo2_cold_observation.cpp
+    src/dll/halo2_temporal_stereo.cpp
     src/dll/halo4_adapter.cpp
     src/dll/halo4_cold_observation.cpp)
 set_target_properties(halo3xr PROPERTIES OUTPUT_NAME "HaloMCCVR")
@@ -237,6 +249,7 @@ target_compile_definitions(halo3xr PRIVATE
     HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE}>
     HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA}>
     HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION}>
+    HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO}>
     HALOMCCVR_BUILD_COMMIT="${HALOMCCVR_BUILD_COMMIT}"
     HALOMCCVR_BUILD_ODST="${HALOMCCVR_BUILD_ODST}"
     HALOMCCVR_BUILD_REACH="${HALOMCCVR_BUILD_REACH}"
@@ -304,7 +317,8 @@ if(BUILD_TESTING)
         HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP}>
         HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE=$<BOOL:${HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE}>
         HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA}>
-        HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION}>)
+        HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION}>
+        HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO}>)
     add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
 endif()
 

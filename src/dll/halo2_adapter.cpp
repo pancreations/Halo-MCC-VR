@@ -5,6 +5,9 @@
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
 #define HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION 0
 #endif
+#ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
+#endif
 
 namespace
 {
@@ -21,7 +24,9 @@ namespace
 
 Halo2AdapterStage Halo2Adapter_GetStage()
 {
-#if HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    return Halo2AdapterStage::TemporalStereoPositionOnly;
+#elif HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
     return Halo2AdapterStage::ColdObservationOnly;
 #else
     return Halo2AdapterStage::Disabled;
@@ -35,13 +40,22 @@ const Halo2EvidenceIdentity& Halo2Adapter_GetEvidenceIdentity()
 
 bool Halo2Adapter_RuntimeHooksPermitted()
 {
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    return true;
+#else
     return false;
+#endif
 }
 
 bool Halo2Adapter_EngineWritesPermitted()
 {
-    // No H2 debug-variable binding or any other writable engine field has been
-    // admitted. This remains false even when the cold observer is compiled out;
-    // the generic draw-distance path must never scan/write an unproven title.
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    // This is deliberately narrower than the historical name: C-H2-2 permits
+    // only two temporary 12-byte camera-position writes inside the proven
+    // player-window transaction. Generic draw distance remains hard-denied by
+    // TitleRegistry_AllowsGenericDrawDistance.
+    return true;
+#else
     return false;
+#endif
 }

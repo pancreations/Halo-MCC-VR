@@ -40,6 +40,12 @@
 #include "../common/level_load_gate_logic.h"
 #include "halo2_adapter.h"
 #include "halo2_cold_observation.h"
+#ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#include "halo2_temporal_stereo.h"
+#endif
 #include "halo4_adapter.h"
 #include "halo4_cold_observation.h"
 #include "../common/odst_bringup_logic.h"
@@ -99,6 +105,11 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
+    // C-H2-2 proves only binocular position geometry and its exact temporal
+    // presentation pair. Head orientation/translation, controller input/aim,
+    // HUD, haptics, and cutscene policy remain stock and unadvertised.
+    constexpr uint32_t kHalo2TemporalRuntimeCapabilities =
+        TitleCapability_Stereo;
     constexpr uint32_t kRuntimeCapabilitiesRequiringArm =
         TitleCapability_Stereo |
         TitleCapability_ControllerAim |
@@ -1999,6 +2010,10 @@ namespace
         generations[TitleRuntimeSlotIndex(GameTitle::HaloReach)] =
             ReachRetainedRuntimeGeneration();
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+        generations[TitleRuntimeSlotIndex(GameTitle::Halo2)] =
+            Halo2TemporalStereo_Generation();
+#endif
         // Halo 4's slot joins here in the candidate that installs its camera
         // core (C-H4-3); until then its generation is structurally zero.
         return RetainedRuntimeTitleFromGenerations(generations);
@@ -2028,6 +2043,46 @@ namespace
         return TitleAdapter_PublishLifecycle(
             GameTitle::Halo3, generation, lifecycle);
     }
+
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    bool PublishHalo2TemporalLifecycle(uint32_t generation)
+    {
+        if (!generation)
+            return false;
+
+        TitleRuntimeLifecycle lifecycle{};
+        lifecycle.installed = Halo2TemporalStereo_Installed();
+        lifecycle.armed = Halo2TemporalStereo_Armed();
+        lifecycle.teardownRequested =
+            lifecycle.installed && !lifecycle.armed;
+        lifecycle.enabledCapabilities =
+            lifecycle.installed && lifecycle.armed
+            ? kHalo2TemporalRuntimeCapabilities
+            : TitleCapability_None;
+
+        // Republishing an identical lifecycle every 50 ms leaves the shared
+        // runtime snapshot perpetually pending. Keep the H2 publication edge-
+        // triggered, exactly like the established Reach and Halo 4 paths.
+        static uint32_t publishedGeneration = 0;
+        static uint32_t publishedState = 0xFFFFFFFFu;
+        const uint32_t state =
+            (lifecycle.installed ? 1u : 0u) |
+            (lifecycle.armed ? 2u : 0u) |
+            (lifecycle.teardownRequested ? 4u : 0u) |
+            (lifecycle.enabledCapabilities << 3);
+        if (generation == publishedGeneration && state == publishedState)
+            return true;
+
+        const bool published = TitleAdapter_PublishLifecycle(
+            GameTitle::Halo2, generation, lifecycle);
+        if (published)
+        {
+            publishedGeneration = generation;
+            publishedState = state;
+        }
+        return published;
+    }
+#endif
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     bool PublishOdstLifecycle()
@@ -35383,6 +35438,9 @@ namespace
             uintptr_t halo4GateBase = 0;
             size_t halo4GateSize = 0;
             bool halo4GateSampled = false;
+            uintptr_t halo2GateBase = 0;
+            size_t halo2GateSize = 0;
+            bool halo2GateSampled = false;
             if (activeTitle)
             {
                 uintptr_t gateBase = 0;
@@ -35438,6 +35496,9 @@ namespace
                         // the full scan only after that proof.
                         activeLevelRunning = Halo2ColdObservation_Poll(
                             gateBase, gateSize, gateGeneration);
+                        halo2GateBase = gateBase;
+                        halo2GateSize = gateSize;
+                        halo2GateSampled = true;
                         break;
                     default:
                         break;
@@ -35453,6 +35514,21 @@ namespace
             }
             if (!halo2Active)
                 Halo2ColdObservation_Rearm();
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+            {
+                const uint32_t halo2Generation =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                const bool halo2CoreReady = Halo2TemporalStereo_Poll(
+                    halo2GateBase, halo2GateSize, halo2Generation,
+                    halo2Active && halo2GateSampled,
+                    activeLevelRunning,
+                    Halo2ColdObservation_Passed(halo2Generation));
+                PublishHalo2TemporalLifecycle(halo2Generation);
+                if (halo2Generation && !halo2CoreReady)
+                    TitleAdapter_ClearHeartbeat(
+                        GameTitle::Halo2, halo2Generation);
+            }
+#endif
             g_activeTitleLevelRunning.store(
                 activeLevelRunning, std::memory_order_release);
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
@@ -35961,12 +36037,16 @@ bool Game_IsHooked() { return g_hooked; }
 bool Game_IsHeadTracking() { return g_enabled.load(); }
 bool Game_IsStereoGeometryOnlyBringup()
 {
-    // C-H4-8 ended the geometry-only phase: Halo 4 now applies the HMD's
-    // orientation and its room-space translation like every other title, so no
-    // title is stereo-geometry-only any more. The predicate is kept rather than
-    // deleted because three call sites read it and a dormant false costs
-    // nothing at runtime; deleting live-looking code mid-candidate is exactly
-    // what AGENTS.md forbids.
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    // C-H2-2 deliberately isolates binocular position geometry. It enables the
+    // projection compositor but does not apply the headset midpoint's rotation
+    // or translation to Halo 2's authored camera; that is the next candidate.
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        Halo2TemporalStereo_Armed())
+    {
+        return true;
+    }
+#endif
     return false;
 }
 bool Game_IsHeadTrackingApplied()
@@ -36494,6 +36574,13 @@ void Game_DetachForVrRuntimeFailure()
     if (reachOwned)
         g_reachCamera.armed.store(false, std::memory_order_release);
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    const bool halo2Owned = activeTitle == GameTitle::Halo2 ||
+        (activeTitle == GameTitle::Unknown &&
+         runtime.runtime.owner == GameTitle::Halo2);
+    if (halo2Owned)
+        Halo2TemporalStereo_ShutdownForVrFailure();
+#endif
     g_enabled.store(false, std::memory_order_release);
     g_autoVrOwned.store(false, std::memory_order_release);
     g_autoVrUserVeto.store(true, std::memory_order_release);
@@ -36984,6 +37071,46 @@ void Game_AutoVrTick()
                 "clearing 2D pause override");
         }
         InvalidateHudLayoutProfile(HudLayoutProfile::HaloReach);
+    }
+#endif
+
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    static bool wasHalo2TemporalContext = false;
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    {
+        wasHalo2TemporalContext = true;
+        const bool halo2StereoUsable = Halo2TemporalStereo_Armed();
+        if (halo2StereoUsable)
+        {
+            if (!g_enabled.load(std::memory_order_relaxed) ||
+                !VR_IsStereoEnabled())
+            {
+                g_enabled.store(true, std::memory_order_release);
+                g_autoVrOwned.store(true, std::memory_order_release);
+                g_autoVrUserVeto.store(false, std::memory_order_release);
+                if (!VR_IsStereoEnabled())
+                    VR_ToggleStereo();
+                LOG("Halo 2 C-H2-2 temporal stereo armed: binocular position "
+                    "geometry is live with one stock render per frame; head "
+                    "orientation/translation, controller aim, HUD, and haptics "
+                    "remain stock");
+            }
+        }
+        else if (g_enabled.load(std::memory_order_relaxed) ||
+                 VR_IsStereoEnabled())
+        {
+            g_enabled.store(false, std::memory_order_release);
+            g_autoVrOwned.store(false, std::memory_order_release);
+            VR_DetachGamePresentation();
+        }
+        return;
+    }
+    if (wasHalo2TemporalContext)
+    {
+        wasHalo2TemporalContext = false;
+        g_enabled.store(false, std::memory_order_release);
+        g_autoVrOwned.store(false, std::memory_order_release);
+        VR_DetachGamePresentation();
     }
 #endif
 
@@ -38393,6 +38520,15 @@ bool Game_GetRenderHalfFovs(
     halfX[1] = fallbackX;
     halfY[0] = fallbackY;
     halfY[1] = fallbackY;
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    {
+        const uint32_t generation = Halo2TemporalStereo_Generation();
+        return Halo2TemporalStereo_Armed() && generation &&
+            VR_Halo2GetTemporalHalfFovs(
+                generation, preparedFrameSerial, halfX, halfY);
+    }
+#endif
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
     {

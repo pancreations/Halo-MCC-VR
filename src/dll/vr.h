@@ -5,6 +5,23 @@
 
 struct IDXGISwapChain;
 
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+// C-H2-2 publishes only the runtime-measured eye offsets needed for binocular
+// geometry. Head orientation/translation deliberately remain stock until the
+// stereo image path has passed independently in the headset.
+struct Halo2VrEyeSnapshot
+{
+    float position[3]{};
+};
+
+struct Halo2VrRenderSnapshot
+{
+    uint64_t preparedSerial = 0;
+    uint32_t generation = 0;
+    Halo2VrEyeSnapshot eyes[2]{};
+};
+#endif
+
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
 #include "../common/reach_render_logic.h"
 
@@ -56,6 +73,29 @@ struct Halo4VrRenderSnapshot
     float leftControllerOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float leftControllerPosition[3]{};
 };
+#endif
+
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+// Exact-prepared-serial, lock-free snapshot consumed by Halo 2's hot render
+// hook. No lock, allocation, logging, COM call, or engine scan occurs here.
+bool VR_Halo2GetRenderSnapshot(Halo2VrRenderSnapshot& snapshot);
+// The hook publishes only after its one stock player-window transaction has
+// completed and both selectively overwritten camera positions were restored.
+bool VR_Halo2CompleteTemporalEye(
+    uint32_t generation, uint64_t preparedSerial, int eye,
+    float halfFovX, float halfFovY);
+// Revokes an incomplete/duplicate/split-screen transaction without disarming
+// the title core or OpenXR session.
+void VR_InvalidateHalo2TemporalFrame(
+    uint32_t generation, uint64_t preparedSerial);
+// Atomic-only worker/presentation teardown boundary. Revokes the pending token
+// and both cached-eye generation/serial stamps; shared caches remain reusable.
+void VR_ResetHalo2TemporalStereo();
+// Truthful raster-cover publication for the adjacent temporal pair admitted by
+// C-H2-2. Returns false for a partial, stale, non-adjacent, or foreign pair.
+bool VR_Halo2GetTemporalHalfFovs(
+    uint32_t generation, uint64_t preparedSerial,
+    float halfX[2], float halfY[2]);
 #endif
 
 // Called once on the DLL's background init thread. Creates the OpenXR instance

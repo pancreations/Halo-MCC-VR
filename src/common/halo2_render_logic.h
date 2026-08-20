@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -36,13 +37,46 @@ inline constexpr uint32_t kHalo2GameTimeTickRateOffset = 0x02;
 inline constexpr uint32_t kHalo2GameTimeSecondsPerTickOffset = 0x04;
 inline constexpr uint32_t kHalo2GameTimeCurrentTickOffset = 0x08;
 
-// Retail camera/window facts retained now because one of the cold anchors is
-// the native asymmetric-frustum helper. C-H2-1 does not consume or write these
-// fields; they define the evidence-backed route for the next stereo candidate.
+// Exact H2EK-to-retail render transaction. Win64 passes `window` in RCX and
+// the byte flag in low DL. The entry has one other retail caller, so entry-AOB
+// uniqueness alone never authorizes a stereo transaction: the detour must also
+// see the ordinary render-frame return address and the primary player index.
+using Halo2RenderPlayerWindowFn = void (*)(void* window, uint8_t flag);
+inline constexpr uint32_t kHalo2KitRenderPlayerWindowRva = 0x0029EAD0;
+inline constexpr uint32_t kHalo2RetailRenderPlayerWindowRva = 0x007E2130;
+inline constexpr uint32_t kHalo2RetailRenderPlayerWindowCallRva = 0x007E1706;
+inline constexpr uint32_t kHalo2RetailRenderPlayerWindowReturnRva = 0x007E170B;
+inline constexpr uint32_t kHalo2RetailRenderPlayerWindowOtherCallRva =
+    0x007F0A60;
+inline constexpr uint32_t kHalo2KitRenderViewRva = 0x002A0160;
+inline constexpr uint32_t kHalo2RetailRenderViewRva = 0x007E30D0;
+inline constexpr uint32_t kHalo2RetailRenderViewCallRva = 0x007E2412;
+
+// Retail camera/window facts. The two cameras occupy adjacent 0x74-byte
+// records inside a 0x120-byte window. C-H2-2 deliberately changes only their
+// 12-byte positions around one original call; every other field is read-only.
 inline constexpr uint32_t kHalo2RetailWindowStride = 0x120;
+inline constexpr uint32_t kHalo2WindowTypeOffset = 0x00;
+inline constexpr uint32_t kHalo2WindowPlayerIndexOffset = 0x04;
+inline constexpr uint32_t kHalo2WindowOutputUserOffset = 0x08;
 inline constexpr uint32_t kHalo2RenderCameraOffset = 0x0C;
 inline constexpr uint32_t kHalo2RasterCameraOffset = 0x80;
+inline constexpr uint32_t kHalo2WindowTrailingViewArgumentOffset = 0xF8;
 inline constexpr uint32_t kHalo2CameraBytes = 0x74;
+inline constexpr uint32_t kHalo2CameraPositionOffset = 0x00;
+inline constexpr uint32_t kHalo2CameraForwardOffset = 0x0C;
+inline constexpr uint32_t kHalo2CameraUpOffset = 0x18;
+inline constexpr uint32_t kHalo2CameraVectorBytes = 0x0C;
+inline constexpr uint32_t kHalo2CameraVerticalFovOffset = 0x28;
+inline constexpr uint32_t kHalo2CameraViewportRectangleOffset = 0x30;
+inline constexpr uint32_t kHalo2CameraWindowRectangleOffset = 0x38;
+inline constexpr uint32_t kHalo2CameraRectangleBytes = 0x08;
+inline constexpr uint32_t kHalo2RectangleY0Offset = 0x00;
+inline constexpr uint32_t kHalo2RectangleX0Offset = 0x02;
+inline constexpr uint32_t kHalo2RectangleY1Offset = 0x04;
+inline constexpr uint32_t kHalo2RectangleX1Offset = 0x06;
+inline constexpr uint32_t kHalo2CameraZNearOffset = 0x40;
+inline constexpr uint32_t kHalo2CameraZFarOffset = 0x44;
 inline constexpr uint32_t kHalo2CameraAsymmetricEnableOffset = 0x58;
 inline constexpr uint32_t kHalo2CameraFrustumCenterXOffset = 0x5C;
 inline constexpr uint32_t kHalo2CameraFrustumCenterYOffset = 0x60;
@@ -50,6 +84,400 @@ inline constexpr uint32_t kHalo2CameraFrustumExtentScaleOffset = 0x64;
 inline constexpr uint32_t kHalo2CameraPixelOffsetEnableOffset = 0x68;
 inline constexpr uint32_t kHalo2CameraPixelOffsetXOffset = 0x6C;
 inline constexpr uint32_t kHalo2CameraPixelOffsetYOffset = 0x70;
+
+inline constexpr uint32_t kHalo2WindowRenderPositionOffset =
+    kHalo2RenderCameraOffset + kHalo2CameraPositionOffset;
+inline constexpr uint32_t kHalo2WindowRasterPositionOffset =
+    kHalo2RasterCameraOffset + kHalo2CameraPositionOffset;
+
+static_assert(kHalo2RenderCameraOffset + kHalo2CameraBytes ==
+    kHalo2RasterCameraOffset);
+static_assert(kHalo2RasterCameraOffset + kHalo2CameraBytes <=
+    kHalo2RetailWindowStride);
+static_assert(kHalo2CameraPixelOffsetYOffset + sizeof(float) ==
+    kHalo2CameraBytes);
+
+// Halo 2-specific metric evidence, not an inherited constant. H2EK's unique
+// 3.048f is consumed by a source-backed metre/kilometre formatter; retail has
+// the same unique constant and behavior, plus the unique reciprocal.
+inline constexpr float kHalo2MetersPerWorldUnit = 3.048f;
+inline constexpr float kHalo2WorldUnitsPerMeter =
+    1.0f / kHalo2MetersPerWorldUnit;
+// OpenXR eye poses are only centimetres from the midpoint. This deliberately
+// generous bound turns a corrupt/torn runtime pose into a stock frame instead
+// of allowing an unbounded engine-camera write.
+inline constexpr float kHalo2MaxEyeOffsetMeters = 0.5f;
+inline constexpr uint32_t kHalo2KitMetersPerWorldUnitRva = 0x007AD4F8;
+inline constexpr uint32_t kHalo2RetailMetersPerWorldUnitFileOffset =
+    0x00B13AF4;
+inline constexpr uint32_t kHalo2RetailMetersPerWorldUnitRva = 0x00B14CF4;
+inline constexpr uint32_t kHalo2RetailWorldUnitsPerMeterFileOffset =
+    0x00B5B754;
+inline constexpr uint32_t kHalo2RetailWorldUnitsPerMeterRva = 0x00B5C954;
+
+inline constexpr int kHalo2LeftEye = 0;
+inline constexpr int kHalo2RightEye = 1;
+inline constexpr int kHalo2EyeCount = 2;
+
+// Exact first 0x24 bytes of either retail camera. Keeping projection fields out
+// of this POD makes position-only stereo independent from later 6DOF/FOV work.
+struct Halo2CameraBasis
+{
+    float position[3]{};
+    float forward[3]{};
+    float up[3]{};
+};
+static_assert(sizeof(Halo2CameraBasis) == 0x24);
+static_assert(offsetof(Halo2CameraBasis, position) ==
+    kHalo2CameraPositionOffset);
+static_assert(offsetof(Halo2CameraBasis, forward) ==
+    kHalo2CameraForwardOffset);
+static_assert(offsetof(Halo2CameraBasis, up) == kHalo2CameraUpOffset);
+
+// H2 camera producers supply an orthonormal basis. A torn or corrupt read must
+// never turn an otherwise bounded IPD into arbitrary engine memory writes.
+inline bool Halo2ValidateCameraBasis(const Halo2CameraBasis& basis) noexcept
+{
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(basis.position[axis]) ||
+            !std::isfinite(basis.forward[axis]) ||
+            !std::isfinite(basis.up[axis]))
+        {
+            return false;
+        }
+    }
+
+    const float forwardLengthSquared =
+        basis.forward[0] * basis.forward[0] +
+        basis.forward[1] * basis.forward[1] +
+        basis.forward[2] * basis.forward[2];
+    const float upLengthSquared =
+        basis.up[0] * basis.up[0] + basis.up[1] * basis.up[1] +
+        basis.up[2] * basis.up[2];
+    const float forwardUpDot =
+        basis.forward[0] * basis.up[0] +
+        basis.forward[1] * basis.up[1] +
+        basis.forward[2] * basis.up[2];
+    return std::isfinite(forwardLengthSquared) &&
+        std::isfinite(upLengthSquared) && std::isfinite(forwardUpDot) &&
+        std::fabs(forwardLengthSquared - 1.0f) < 0.05f &&
+        std::fabs(upLengthSquared - 1.0f) < 0.05f &&
+        std::fabs(forwardUpDot) < 0.05f;
+}
+
+struct Halo2TemporalEyePositions
+{
+    float render[3]{};
+    float raster[3]{};
+};
+
+// eyePositionMeters is the selected OpenXR view origin relative to the stereo
+// midpoint (+X right, +Y up, -Z forward). Both engine cameras are displaced in
+// their own validated basis so visibility and raster consumers stay coherent:
+//   delta = (cross(forward,up)*x + up*y - forward*z) / 3.048.
+// Failure leaves `out` untouched.
+inline bool Halo2BuildTemporalEyePositions(
+    const Halo2CameraBasis& renderCamera,
+    const Halo2CameraBasis& rasterCamera,
+    const float eyePositionMeters[3], Halo2TemporalEyePositions& out) noexcept
+{
+    if (!eyePositionMeters || !Halo2ValidateCameraBasis(renderCamera) ||
+        !Halo2ValidateCameraBasis(rasterCamera))
+    {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis)
+        if (!std::isfinite(eyePositionMeters[axis]) ||
+            std::fabs(eyePositionMeters[axis]) > kHalo2MaxEyeOffsetMeters)
+            return false;
+
+    Halo2TemporalEyePositions candidate{};
+    const auto buildPosition = [&](const Halo2CameraBasis& camera,
+                                   float position[3]) noexcept {
+        const float right[3] = {
+            camera.forward[1] * camera.up[2] -
+                camera.forward[2] * camera.up[1],
+            camera.forward[2] * camera.up[0] -
+                camera.forward[0] * camera.up[2],
+            camera.forward[0] * camera.up[1] -
+                camera.forward[1] * camera.up[0]};
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            position[axis] = camera.position[axis] +
+                (right[axis] * eyePositionMeters[0] +
+                 camera.up[axis] * eyePositionMeters[1] -
+                 camera.forward[axis] * eyePositionMeters[2]) *
+                    kHalo2WorldUnitsPerMeter;
+            if (!std::isfinite(position[axis]))
+                return false;
+        }
+        return true;
+    };
+    if (!buildPosition(renderCamera, candidate.render) ||
+        !buildPosition(rasterCamera, candidate.raster))
+    {
+        return false;
+    }
+    out = candidate;
+    return true;
+}
+
+// Retail stores both camera rectangles as signed 16-bit y0/x0/y1/x1. The
+// projection builder treats +0x28 as a full vertical FOV in radians.
+struct Halo2CameraRectangle
+{
+    int16_t y0 = 0;
+    int16_t x0 = 0;
+    int16_t y1 = 0;
+    int16_t x1 = 0;
+};
+static_assert(sizeof(Halo2CameraRectangle) == kHalo2CameraRectangleBytes);
+static_assert(offsetof(Halo2CameraRectangle, y0) == kHalo2RectangleY0Offset);
+static_assert(offsetof(Halo2CameraRectangle, x0) == kHalo2RectangleX0Offset);
+static_assert(offsetof(Halo2CameraRectangle, y1) == kHalo2RectangleY1Offset);
+static_assert(offsetof(Halo2CameraRectangle, x1) == kHalo2RectangleX1Offset);
+
+struct Halo2SymmetricHalfFovs
+{
+    float horizontal = 0.0f;
+    float vertical = 0.0f;
+};
+
+// This is only truthful while both native off-center controls are disabled.
+// The generic rectangle parameter lets the caller use the camera's proven
+// viewport rectangle without inventing a packed engine-camera C++ type.
+inline bool Halo2DeriveSymmetricHalfFovs(
+    float verticalFov, const Halo2CameraRectangle& rectangle,
+    Halo2SymmetricHalfFovs& out) noexcept
+{
+    constexpr float kPi = 3.14159265f;
+    if (!std::isfinite(verticalFov) || verticalFov <= 1.0e-4f ||
+        verticalFov >= kPi - 1.0e-4f)
+    {
+        return false;
+    }
+    const int32_t width =
+        static_cast<int32_t>(rectangle.x1) - rectangle.x0;
+    const int32_t height =
+        static_cast<int32_t>(rectangle.y1) - rectangle.y0;
+    if (width <= 0 || height <= 0)
+        return false;
+
+    const float aspect =
+        static_cast<float>(width) / static_cast<float>(height);
+    const float halfVertical = verticalFov * 0.5f;
+    const float verticalTangent = std::tan(halfVertical);
+    const float halfHorizontal = std::atan(verticalTangent * aspect);
+    if (!std::isfinite(aspect) || aspect <= 0.0f ||
+        !std::isfinite(verticalTangent) || verticalTangent <= 0.0f ||
+        !std::isfinite(halfHorizontal) || halfHorizontal <= 0.0f ||
+        halfHorizontal >= kPi * 0.5f)
+    {
+        return false;
+    }
+    out = {halfHorizontal, halfVertical};
+    return true;
+}
+
+constexpr bool Halo2StockProjectionIsSymmetric(
+    uint8_t renderAsymmetricEnable, uint8_t renderPixelOffsetEnable,
+    uint8_t rasterAsymmetricEnable, uint8_t rasterPixelOffsetEnable) noexcept
+{
+    return renderAsymmetricEnable == 0 && renderPixelOffsetEnable == 0 &&
+        rasterAsymmetricEnable == 0 && rasterPixelOffsetEnable == 0;
+}
+
+// Serial parity, not callback count, owns the eye. Prepared serial zero is an
+// invalid/unpublished frame. `rightEyeFirst` flips the odd/even assignment in
+// the same way as the established title setting.
+constexpr int Halo2TemporalEyeForSerial(
+    uint64_t preparedSerial, bool rightEyeFirst) noexcept
+{
+    if (preparedSerial == 0)
+        return -1;
+    const int oddSerialEye = rightEyeFirst ? kHalo2RightEye : kHalo2LeftEye;
+    return (preparedSerial & 1u) != 0 ? oddSerialEye : 1 - oddSerialEye;
+}
+
+struct Halo2TemporalEyeStamp
+{
+    uint32_t generation = 0;
+    uint64_t preparedSerial = 0;
+    int eye = -1;
+    bool complete = false;
+};
+
+constexpr bool Halo2TemporalEyeStampValid(
+    const Halo2TemporalEyeStamp& stamp, bool rightEyeFirst) noexcept
+{
+    return stamp.complete && stamp.generation != 0 &&
+        stamp.preparedSerial != 0 && stamp.eye >= kHalo2LeftEye &&
+        stamp.eye <= kHalo2RightEye &&
+        stamp.eye == Halo2TemporalEyeForSerial(
+            stamp.preparedSerial, rightEyeFirst);
+}
+
+enum class Halo2TemporalPairAction : uint8_t
+{
+    RejectCurrent = 0,
+    SeedWithCurrent,
+    PublishAdjacentPair,
+};
+
+// `previous` is the opposite-eye cache before `current` is committed. Current
+// must match the caller's exact active generation and prepared serial. A first
+// eye, generation boundary, or forward serial gap becomes a clean new seed;
+// replay/out-of-order input is rejected. Only exactly N-1/N, opposite-parity
+// completed eyes may publish.
+constexpr Halo2TemporalPairAction SelectHalo2TemporalPairAction(
+    const Halo2TemporalEyeStamp& previous,
+    const Halo2TemporalEyeStamp& current, uint32_t activeGeneration,
+    uint64_t expectedCurrentSerial, bool rightEyeFirst) noexcept
+{
+    if (!activeGeneration || !expectedCurrentSerial ||
+        !Halo2TemporalEyeStampValid(current, rightEyeFirst) ||
+        current.generation != activeGeneration ||
+        current.preparedSerial != expectedCurrentSerial)
+    {
+        return Halo2TemporalPairAction::RejectCurrent;
+    }
+    if (!Halo2TemporalEyeStampValid(previous, rightEyeFirst) ||
+        previous.generation != current.generation)
+    {
+        return Halo2TemporalPairAction::SeedWithCurrent;
+    }
+    if (previous.preparedSerial >= current.preparedSerial)
+        return Halo2TemporalPairAction::RejectCurrent;
+    if (current.preparedSerial - previous.preparedSerial != 1 ||
+        previous.eye == current.eye)
+    {
+        return Halo2TemporalPairAction::SeedWithCurrent;
+    }
+    return Halo2TemporalPairAction::PublishAdjacentPair;
+}
+
+enum class Halo2CameraPositionWrite : uint8_t
+{
+    Reject = 0,
+    RenderPosition,
+    RasterPosition,
+};
+
+// A mechanical allow-list for the only two engine writes C-H2-2 owns.
+constexpr Halo2CameraPositionWrite SelectHalo2CameraPositionWrite(
+    uint32_t windowRelativeOffset, size_t bytes) noexcept
+{
+    if (bytes != kHalo2CameraVectorBytes)
+        return Halo2CameraPositionWrite::Reject;
+    if (windowRelativeOffset == kHalo2WindowRenderPositionOffset)
+        return Halo2CameraPositionWrite::RenderPosition;
+    if (windowRelativeOffset == kHalo2WindowRasterPositionOffset)
+        return Halo2CameraPositionWrite::RasterPosition;
+    return Halo2CameraPositionWrite::Reject;
+}
+
+enum class Halo2TemporalTransactionAction : uint8_t
+{
+    CallStockOnce = 0,
+    RejectTemporalFrameAndCallStockOnce,
+    ScopedPositionsAndCallOnce,
+};
+
+// Everything the hot detour must prove before touching either position. A
+// foreign caller is simply stock; a malformed transaction on the exact player
+// edge revokes that temporal frame but never disarms the title core.
+struct Halo2TemporalTransactionInput
+{
+    bool stereoRequested = false;
+    bool hookArmed = false;
+    bool coldObservationPassed = false;
+    bool exactCaller = false;
+    bool flagValid = false;
+    bool windowReadable = false;
+    int32_t playerIndex = -1;
+    bool levelLive = false;
+    bool captureReady = false;
+    bool teardownRequested = false;
+    bool serialAlreadyClaimed = false;
+    uint32_t activeGeneration = 0;
+    uint32_t snapshotGeneration = 0;
+    uint64_t preparedSerial = 0;
+    int eye = -1;
+    bool rightEyeFirst = false;
+    bool renderCameraValid = false;
+    bool rasterCameraValid = false;
+    bool eyePositionValid = false;
+    bool stockProjectionSymmetric = false;
+    bool halfFovsValid = false;
+};
+
+constexpr Halo2TemporalTransactionAction SelectHalo2TemporalTransactionAction(
+    const Halo2TemporalTransactionInput& input) noexcept
+{
+    if (!input.stereoRequested || !input.hookArmed)
+        return Halo2TemporalTransactionAction::CallStockOnce;
+    if (!input.exactCaller)
+        return Halo2TemporalTransactionAction::CallStockOnce;
+    if (!input.coldObservationPassed || !input.flagValid ||
+        !input.windowReadable ||
+        input.playerIndex != 0 || !input.levelLive || !input.captureReady ||
+        input.teardownRequested || input.serialAlreadyClaimed ||
+        input.activeGeneration == 0 ||
+        input.snapshotGeneration != input.activeGeneration ||
+        input.preparedSerial == 0 || input.eye < kHalo2LeftEye ||
+        input.eye > kHalo2RightEye ||
+        input.eye != Halo2TemporalEyeForSerial(
+            input.preparedSerial, input.rightEyeFirst) ||
+        !input.renderCameraValid || !input.rasterCameraValid ||
+        !input.eyePositionValid || !input.stockProjectionSymmetric ||
+        !input.halfFovsValid)
+    {
+        return Halo2TemporalTransactionAction::
+            RejectTemporalFrameAndCallStockOnce;
+    }
+    return Halo2TemporalTransactionAction::ScopedPositionsAndCallOnce;
+}
+
+// Publication is permitted only after one (never zero or two) original call,
+// successful return, both selective writes, and byte-restoration of both saved
+// positions. Whole-camera restore or any other camera write fails this proof.
+struct Halo2TemporalTransactionResult
+{
+    uint32_t originalCalls = 0;
+    bool originalReturned = false;
+    bool renderPositionWritten = false;
+    bool rasterPositionWritten = false;
+    bool renderPositionRestored = false;
+    bool rasterPositionRestored = false;
+    bool otherCameraBytesWritten = false;
+};
+
+constexpr bool Halo2TemporalTransactionResultMatches(
+    Halo2TemporalTransactionAction action,
+    const Halo2TemporalTransactionResult& result) noexcept
+{
+    if (result.originalCalls != 1 || !result.originalReturned ||
+        result.otherCameraBytesWritten)
+    {
+        return false;
+    }
+    if (action == Halo2TemporalTransactionAction::ScopedPositionsAndCallOnce)
+    {
+        return result.renderPositionWritten && result.rasterPositionWritten &&
+            result.renderPositionRestored && result.rasterPositionRestored;
+    }
+    if (action == Halo2TemporalTransactionAction::CallStockOnce ||
+        action == Halo2TemporalTransactionAction::
+            RejectTemporalFrameAndCallStockOnce)
+    {
+        return !result.renderPositionWritten &&
+            !result.rasterPositionWritten &&
+            !result.renderPositionRestored &&
+            !result.rasterPositionRestored;
+    }
+    return false;
+}
 
 struct Halo2RetailAnchor
 {
@@ -101,6 +529,11 @@ inline constexpr Halo2RetailAnchor kHalo2RetailAnchors[] = {
 
 inline constexpr size_t kHalo2RetailAnchorCount =
     sizeof(kHalo2RetailAnchors) / sizeof(kHalo2RetailAnchors[0]);
+
+static_assert(kHalo2RetailAnchors[kHalo2AnchorPlayerWindow].rva ==
+    kHalo2RetailRenderPlayerWindowRva);
+static_assert(kHalo2RetailAnchors[kHalo2AnchorRenderView].rva ==
+    kHalo2RetailRenderViewRva);
 
 constexpr uint32_t Halo2RetailAnchorRelativeTargetCount()
 {

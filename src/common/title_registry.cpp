@@ -8,6 +8,9 @@
 #ifndef HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP
 #define HALOMCCVR_EXPERIMENTAL_REACH_BRINGUP 0
 #endif
+#ifndef HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+#define HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO 0
+#endif
 
 static_assert(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 0 ||
               HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 1);
@@ -70,6 +73,13 @@ namespace
         TitleCapability_Haptics;
     constexpr uint32_t kHalo4AdmissionCapabilities =
         TitleCapability_ControllerInput;
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+    // C-H2-2 owns binocular position geometry only. It intentionally grants no
+    // head/room-scale, input, aim, HUD, haptics, or cutscene behavior.
+    constexpr uint32_t kHalo2Capabilities = TitleCapability_Stereo;
+#else
+    constexpr uint32_t kHalo2Capabilities = TitleCapability_None;
+#endif
 
     constexpr TitleDescriptor kTitles[] = {
         { GameTitle::Halo3, L"halo3.dll", "Halo 3", true,
@@ -83,7 +93,7 @@ namespace
         { GameTitle::HaloCE, L"halo1.dll", "Halo: CE Anniversary", false,
           TitleCapability_None, TitleCapability_None },
         { GameTitle::Halo2, L"halo2.dll", "Halo 2 Anniversary", false,
-          TitleCapability_None, TitleCapability_None },
+          kHalo2Capabilities, TitleCapability_None },
     };
 
     bool EqualsModuleName(std::wstring_view left, std::wstring_view right)
@@ -146,6 +156,12 @@ TitleHookPlan TitleRegistry_HookPlan(GameTitle title)
 #endif
     case GameTitle::HaloReach:
         return TitleHookPlan::ReachCameraCore;
+    case GameTitle::Halo2:
+#if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
+        return TitleHookPlan::Halo2TemporalStereo;
+#else
+        return TitleHookPlan::None;
+#endif
     default:
         return TitleHookPlan::None;
     }
@@ -183,9 +199,9 @@ bool TitleRegistry_AllowsGenericDrawDistance(
 {
     if (!activeLevelRunning)
         return false;
-    // C-H2-1 is a strictly read-only observation stage. The generic draw-
-    // distance helper scans the active image and may write a debug variable,
-    // so it must remain unreachable even after H2's read-only level gate opens.
+    // C-H2-1 is read-only and C-H2-2 owns only two scoped camera-position
+    // writes. The generic draw-distance helper scans the active image and may
+    // write an unrelated debug variable, so it remains unreachable in both.
     return activeTitle != GameTitle::None &&
         activeTitle != GameTitle::Unknown &&
         activeTitle != GameTitle::Halo2;
