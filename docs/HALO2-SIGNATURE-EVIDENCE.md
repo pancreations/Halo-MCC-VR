@@ -8,8 +8,8 @@ before headset testing and is compile-disabled. C-H2-3 same-frame stereo +
 compile-disabled; it did not advance that pointer. C-H2-4 added a stock-screen
 fail-open for every ordinary unclaimed missing exact-current pair, but a fresh
 static audit found persistent post-Claim and inherited-pause black paths; it is
-also compile-disabled. C-H2-5 is the unaccepted, release-enabled black-safe
-successor awaiting its own headset run and Halo 3 regression.** C-H2-1 remains
+also compile-disabled. C-H2-5 was headset-rejected after its own pre-stereo
+screen check terminated a healthy OpenXR session, and is compile-disabled.** C-H2-1 remains
 the accepted read-only behavior. The machine-readable subset is
 `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
@@ -632,16 +632,32 @@ No C-H2-4 headset result is accepted. Its successor must pass the fallback,
 same-frame stereo, full headset rotation/translation, and full-rate headset
 checks, followed by the Halo 3 shared-code regression.
 
-## Unaccepted C-H2-5 successor: black-safe stereo + 6DOF
+## Headset-rejected C-H2-5 successor: false pre-stereo RTV fatal
 
-**C-H2-5 is release-enabled for a target-title headset run, but is not
-accepted. The accepted pointer remains C-H2-1 at `f8928bb`.** It changes no
+**C-H2-5 is headset-rejected and compile-disabled. It is not accepted. The
+accepted pointer remains C-H2-1 at `f8928bb`.** It changed no
 signature, caller edge, camera layout, engine-write span, pose mapping, or pair
 identity rule from C-H2-3/C-H2-4. It retains two fresh left/right renders and
 captures from one game frame, requires both eye serials to equal the current
 prepared OpenXR serial, forbids any temporal/N-1 eye, and keeps the intentional
 cadence divisor at 1. Headset rotation and translation remain part of both eyes'
 restored camera transactions.
+
+The Steam run used source `c5395ccf7a9972a1913da56df0775e8b8ec862a0`,
+DLL SHA-256 `8F3FDE784A4B28F8C77C0930ABB3DC898099D10505292C83383E18AEAF140635`,
+SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, and a 90 Hz panel. The
+session was focused and the headset remained connected. At the first Halo 2
+loading frame, the screen copy had the already-proven equal-size,
+equal-format-family `CopyResource` shape, whose fast path does not consume an
+RTV. C-H2-5 nevertheless required a non-null RTV, entered
+`EnterFrameWaitFatalDrain`, and requested `xrRequestExitSession`. The resulting
+STOPPING/EXITING events produced the misleading headset-off/runtime-ended
+popup. The H2 hooks installed only after the session had exited; all outer,
+inner, eye, and pair counters remained zero, so this run cannot accept or
+reject their gameplay behavior. The active claim line was never emitted.
+The preserved log is
+`out/test-runs/c5395cc-halo2-c5-false-rtv-fatal-20260820-1158/HaloMCCVR.log`,
+SHA-256 `54668DFA806CF6E17C4B6DD8C63D0DFCBFE5B06591157AF5C367437AB0E07B56`.
 
 ### No claim while inherited pause or unsupported app cadence is active
 
@@ -832,8 +848,9 @@ cannot establish a render-performance cause.
 This accepts the Halo 2 read-only observation claim and clears its evidence for
 stereo design. That C-H2-1 result did not accept C-H2-3's rejected hook/write or
 stereo/6DOF runtime claim, C-H2-4's audit-rejected fallback successor, or the
-C-H2-5 black-safe headset candidate. C-H2-5 still needs its own headset result
-and Halo 3 regression.
+C-H2-5 false-RTV-fatal candidate. C-H2-5 was headset-rejected and
+compile-disabled; a corrected successor still needs its own headset result and
+Halo 3 regression.
 
 ### Required Halo 3 shared-code regression PASS
 

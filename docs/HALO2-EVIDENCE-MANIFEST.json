@@ -1,13 +1,13 @@
 {
   "schema_version": 6,
-  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_REJECTED_C_H2_4_AUDIT_REJECTED_C_H2_5_UNACCEPTED_ACTIVE",
+  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_REJECTED_C_H2_4_AUDIT_REJECTED_C_H2_5_HEADSET_REJECTED_DISABLED",
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
   "accepted_build_pointer_source": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
-  "active_candidate": "C-H2-5",
+  "active_candidate": "none",
   "accepted_build_pointer_advanced": true,
   "active_candidate_accepted_build_pointer_advanced": false,
-  "remaining_gate": "C-H2-5 must pass Halo 2 headset validation proving strict visible fail-open fallback, two-witness full-rate admission with consecutive completed serials, same-frame stereo, full rotation and translation, and actual 72-144 Hz, followed by a Halo 3 shared-code regression; C-H2-1 has no remaining gate",
+  "remaining_gate": "C-H2-5 was headset-rejected and compile-disabled after a false RTV prerequisite terminated a healthy OpenXR session before stereo ran; a successor must correct the pre-stereo transition, then prove same-frame stereo, full rotation and translation, and actual 72-144 Hz before a Halo 3 regression; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -421,13 +421,13 @@
     ]
   },
   "c_h2_5_candidate": {
-    "status": "HEADSET_STEREO_6DOF_BLACK_SAFE_VALIDATION_REQUIRED",
+    "status": "HEADSET_REJECTED_FALSE_RTV_FATAL_COMPILE_DISABLED",
     "accepted": false,
-    "compiled_by_release_preset": true,
+    "compiled_by_release_preset": false,
     "accepted_build_pointer_advanced": false,
     "inherits_engine_contract_from": "C-H2-3",
     "inherits_unclaimed_screen_fallback_from": "C-H2-4",
-    "behavioral_delta": "clear inherited pause before claim, require both current predicted period and delivered predicted-time delta, require consecutive prepared serials after first Complete, quarantine H2 stereo for structural failure or serial gap, and send strict stock-screen transaction failures to named OpenXR session recovery",
+    "behavioral_delta": "rejected attempt to clear inherited pause before claim, require both current predicted period and delivered predicted-time delta, require consecutive prepared serials after first Complete, quarantine H2 stereo for structural failure or serial gap, and strictly validate the pre-stereo screen transaction",
     "build_gate": "HALOMCCVR_HALO2_STEREO6DOF",
     "build_identity": "Halo2=SAME_FRAME_6DOF_FAIL_OPEN",
     "package_manifest_schema_version": 14,
@@ -530,11 +530,26 @@
     "expected_stereo_line": "Halo 2 C-H2-5 simultaneous stereo + 6DOF active",
     "failure_policy": "dual-cadence-and-consecutive-serial-preclaim-stock-screen-post-claim-drop-generation-quarantine-strict-stock-screen-xr-failure-enters-session-recovery",
     "halo3_regression_required": true,
+    "headset_result": {
+      "accepted": false,
+      "result": "HEADSET_REJECTED_FALSE_RTV_PREREQUISITE_TERMINATED_OPENXR_BEFORE_STEREO",
+      "source_commit": "c5395ccf7a9972a1913da56df0775e8b8ec862a0",
+      "dll_sha256": "8F3FDE784A4B28F8C77C0930ABB3DC898099D10505292C83383E18AEAF140635",
+      "log_sha256": "54668DFA806CF6E17C4B6DD8C63D0DFCBFE5B06591157AF5C367437AB0E07B56",
+      "edition": "Steam",
+      "openxr_runtime": "SteamVR/OpenXR 2.17.7",
+      "headset": "SteamVR/OpenXR : oculus",
+      "panel_hz": 90.0,
+      "headset_connected": true,
+      "stereo_active_line_count": 0,
+      "exact_pair_count": 0,
+      "cause": "fast CopyResource path does not consume an RTV, but C-H2-5 required one and entered EnterFrameWaitFatalDrain"
+    },
     "remaining_acceptance": [
-      "Halo 2 headset validation proving strict visible stock-screen fallback during unclaimed, cadence-blocked, and quarantined intervals",
-      "Halo 2 headset validation proving simultaneous stereo and full headset rotation/translation",
-      "Halo 2 headset validation proving actual 72-144 Hz app cadence with both predicted-period and delivered-delta witnesses, consecutive completed serials, and no 45/60-Hz stereo admission",
-      "Halo 3 headset regression for shared VR/lifecycle changes"
+      "successor must correct the false pre-stereo RTV fatal without weakening the true two-eye transaction",
+      "successor must pass Halo 2 headset validation proving simultaneous stereo and full headset rotation/translation",
+      "successor must pass Halo 2 headset validation proving actual 72-144 Hz app cadence with both predicted-period and delivered-delta witnesses and consecutive completed serials",
+      "successor then requires Halo 3 headset regression for shared VR/lifecycle changes"
     ]
   },
   "headset_validation": {
