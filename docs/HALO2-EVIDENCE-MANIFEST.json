@@ -1,13 +1,13 @@
 {
   "schema_version": 3,
-  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_PENDING",
+  "status": "C_H2_1_ACCEPTED_C_H2_3_HEADSET_REJECTED_DISABLED",
   "accepted_stage": "C-H2-1",
   "accepted_stage_hook_eligible": false,
   "accepted_build_pointer_source": "f8928bbc25ee3ad90195cb32a1d9d41d767e4ed1",
-  "active_candidate": "C-H2-3",
+  "active_candidate": "none",
   "accepted_build_pointer_advanced": true,
   "active_candidate_accepted_build_pointer_advanced": false,
-  "remaining_gate": "C-H2-3 is implemented but requires Halo 2 headset stereo+6DOF validation and then a Halo 3 shared-code headset regression; C-H2-1 has no remaining gate",
+  "remaining_gate": "C-H2-3 was headset-rejected for zero-layer black presentation and is compile-disabled; a successor must fail open to the stock screen on every no-pair frame, then pass Halo 2 and Halo 3 headset validation; C-H2-1 has no remaining gate",
   "scope": {
     "title": "Halo 2 Anniversary campaign/classic",
     "module": "halo2.dll",
@@ -170,9 +170,9 @@
     ]
   },
   "c_h2_3_candidate": {
-    "status": "IMPLEMENTED_HEADSET_STEREO_6DOF_VALIDATION_REQUIRED",
+    "status": "HEADSET_REJECTED_ZERO_LAYER_BLACK_DISABLED",
     "accepted": false,
-    "compiled_by_release_preset": true,
+    "compiled_by_release_preset": false,
     "accepted_build_pointer_advanced": false,
     "build_gate": "HALOMCCVR_HALO2_STEREO6DOF",
     "build_identity": "Halo2=SAME_FRAME_6DOF",
@@ -320,9 +320,27 @@
     "failure_policy": "pre-claim-stock-once; post-claim-restore-all-dirty-spans-and-drop-only-current-pair; camera-core-and-openxr-remain-armed",
     "halo3_regression_required": true,
     "remaining_acceptance": [
+      "superseded successor must retain stock flat presentation on every frame without a complete exact-current pair",
       "Halo 2 headset validation proving simultaneous stereo, full headset rotation/translation, and no half-rate cadence",
       "Halo 3 headset regression for shared VR/lifecycle changes"
-    ]
+    ],
+    "headset_result": {
+      "accepted": false,
+      "date": "2026-08-20",
+      "edition": "Steam",
+      "openxr_runtime": "SteamVR/OpenXR 2.17.7",
+      "headset": "SteamVR/OpenXR : oculus",
+      "refresh_hz": 90.0,
+      "source_commit": "d82c6844072a72f12dc116f8eeb52a0045cb811d",
+      "package": "d82c684-halo2-c3-stereo6dof-20260820-120451679Z",
+      "dll_sha256": "7600D9135B3EE759EC612EC5B7F13F5BDDCD37C1C062594751704C58103606DB",
+      "log_sha256": "FACD98366720250CAA53FE05C718FAF675E1F136C094373EB51F8A1446D4EEA9",
+      "result": "black headset: no hook callbacks, no eye pairs, stock screen suppressed, layers zero",
+      "hook_callback_count": 0,
+      "submitted_pair_count": 0,
+      "zero_layer_status_count": 10,
+      "temporal_or_half_rate_path_observed": false
+    }
   },
   "headset_validation": {
     "accepted": true,

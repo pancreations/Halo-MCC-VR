@@ -14,8 +14,8 @@
 > failures, or stalls. The user confirmed that Halo 3 worked fine. This accepts
 > only C-H2-1's read-only observation behavior. In that accepted build, Halo 2
 > controller admission, stereo, 6DOF, camera/render/aim/HUD/haptics ownership,
-> engine hooks, and engine writes are disabled; the separately gated,
-> headset-pending C-H2-3 candidate described below does not alter this accepted
+> engine hooks, and engine writes are disabled. The headset-rejected C-H2-3
+> candidate described below is compile-disabled and does not alter this accepted
 > claim.
 >
 > | Accepted Halo 2 C-H2-1 identity | Value |
@@ -70,18 +70,19 @@
 > tool must never be used for a release**. Read `docs/V6-POSTBUILD-LAYER.md`
 > before touching anything Halo 4 HUD/helmet/pause related.
 >
-> **IMPLEMENTED, HEADSET-PENDING (2026-08-20): Halo 2 C-H2-3 same-frame
-> stereo + 6DOF. This is not accepted; the accepted pointer remains C-H2-1 at
-> `f8928bb`.** C-H2-2's alternating-eye temporal implementation remains
-> compile-disabled and retained only as rejected history because it divided the
-> per-eye update rate in half. C-H2-3 replaces it with two fresh eye renders and
-> captures inside one game frame. Both eyes must have render and capture serials
-> equal to the current prepared OpenXR serial; N-1, future, mixed-generation,
-> incomplete, duplicate-eye, or cross-attempt pairs are rejected. There is no
-> previous-eye cache or intentional cadence divider: each eye is intended to
-> render at the full game-frame cadence at 72, 80, 90, 120, and 144 Hz.
+> **HEADSET-REJECTED AND COMPILE-DISABLED (2026-08-20): Halo 2 C-H2-3
+> same-frame stereo + 6DOF, source `d82c684`. The accepted pointer remains
+> C-H2-1 at `f8928bb`.** Steam / SteamVR 2.17.7 / Oculus at 90 Hz reached the
+> H2 level, installed both hooks, and then showed a black headset. The exact
+> log proves the game and OpenXR session stayed at 90 Hz, but neither H2 hook
+> received a callback: zero eye pairs were claimed, captured, or submitted.
+> Stereo presentation nevertheless suppressed the stock screen layer, so ten
+> status samples reported `layers=0`. This is a frame-fallback failure, not a
+> 45 Hz path. The failed log is preserved at
+> `out/test-runs/d82c684-halo2-c3-black-20260820-0855/HaloMCCVR.log` (SHA-256
+> `FACD98366720250CAA53FE05C718FAF675E1F136C094373EB51F8A1446D4EEA9`).
 >
-> C-H2-3 installs two exact Halo 2 hooks. The outer
+> C-H2-3 attempted to install two exact Halo 2 hooks. The outer
 > `render_player_window` transaction runs once; its one exact player-path
 > `render_view` invocation is intercepted and the original inner render runs
 > twice, once per current eye. The final-output AOB
@@ -90,7 +91,7 @@
 > `+3`, based at RIP `+7`, resolves exactly to backbuffer-RTV slot RVA
 > `0x197EE58`.
 >
-> The candidate owns full headset rotation and translation. During each eye it
+> The dormant candidate owns full headset rotation and translation. During each eye it
 > scope-writes render/raster position, forward, and up as six independent
 > 12-byte spans, plus render/raster vertical FOV `+0x28` as two independent
 > 4-byte spans, and restores all eight. The FOV write is a title-native
@@ -98,8 +99,9 @@
 > claim of native asymmetric per-eye projection, and z-far/asymmetric fields
 > remain untouched. Controller admission/input, controller aim, HUD/crosshair,
 > haptics, scene-target redirection, and generic draw-distance writes remain
-> disabled. Halo 2 headset validation and then a Halo 3 shared-code regression
-> are still required before C-H2-3 can advance this pointer. See
+> disabled. Any successor must retain the stock screen layer on every frame
+> without a complete exact-current pair, then pass Halo 2 headset validation and
+> a Halo 3 shared-code regression before advancing this pointer. See
 > `docs/HALO2-SIGNATURE-EVIDENCE.md`.
 >
 > The earlier suspension context remains in `docs/HALO4-BRINGUP-WRAPUP.md`:

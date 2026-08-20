@@ -4,8 +4,8 @@ Status: **C-H2-1 is headset-accepted on Steam as of 2026-08-20. Its required
 Halo 3 shared-code regression also passed, advancing the accepted development
 pointer to `f8928bb`. C-H2-2's alternating-eye implementation was rejected
 before headset testing and is compile-disabled. C-H2-3 same-frame stereo +
-6DOF is implemented and package-gated, but remains headset-pending and has not
-advanced that pointer.** C-H2-1 remains the accepted read-only behavior. The
+6DOF was headset-rejected for a zero-layer black screen and is now also
+compile-disabled; it did not advance that pointer.** C-H2-1 remains the accepted read-only behavior. The
 machine-readable subset is `docs/HALO2-EVIDENCE-MANIFEST.json`.
 
 The Halo 3 player experience is the eventual target: native stereo geometry,
@@ -431,11 +431,11 @@ This rejected proof candidate started presentation automatically whenever the
 exact Halo 2 hook owned a live level; it did not honor `auto_vr` or the manual
 presentation veto.
 
-## Implemented C-H2-3 candidate: same-frame stereo + 6DOF
+## Rejected C-H2-3 candidate: same-frame stereo + 6DOF
 
-**C-H2-3 is implemented and headset-pending. It is not accepted, and the
-accepted pointer remains C-H2-1 at `f8928bb`.** The release gate is
-`HALOMCCVR_HALO2_STEREO6DOF=ON`; the rejected temporal gate must remain OFF.
+**C-H2-3 was headset-rejected and is compile-disabled. It is not accepted, and
+the accepted pointer remains C-H2-1 at `f8928bb`.** Its dormant gate is
+`HALOMCCVR_HALO2_STEREO6DOF=OFF`; the rejected temporal gate also remains OFF.
 The registry advertises exactly `Stereo | RoomScale | RuntimeModes`, uses hook
 plan `Halo2StereoCore`, and retains zero controller admission.
 
@@ -521,6 +521,32 @@ This is a title-native **symmetric cover**, not exact native asymmetric per-eye
 projection: `+0x58/+0x5C/+0x60/+0x64` and pixel-offset
 `+0x68/+0x6C/+0x70` remain untouched, as does z-far `+0x44`.
 
+### Headset rejection (2026-08-20)
+
+| Item | Measured result |
+| --- | --- |
+| Source/package | `d82c6844072a72f12dc116f8eeb52a0045cb811d` / `d82c684-halo2-c3-stereo6dof-20260820-120451679Z` |
+| Installed DLL | `7600D9135B3EE759EC612EC5B7F13F5BDDCD37C1C062594751704C58103606DB` in both Steam and Store |
+| Headset run | Steam, SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 90 Hz |
+| Preserved log | `out/test-runs/d82c684-halo2-c3-black-20260820-0855/HaloMCCVR.log`, SHA-256 `FACD98366720250CAA53FE05C718FAF675E1F136C094373EB51F8A1446D4EEA9` |
+| User result | black screen in the headset |
+
+The H2 gate passed and both hooks reported installed, but all core callback
+counters remained zero. Fifteen two-second reports recorded zero submitted
+pairs and zero post-claim drops; no outer callback, inner callback, eye capture,
+or upload occurred. Once C-H2-3 enabled stereo presentation, ten status reports
+showed `layers=0`. The OpenXR session remained focused and the final cadence was
+90 fps / 90 Hz, so this was not temporal or half-rate stereo. The direct cause
+was fail-closed presentation: an H2 frame without a complete pair could enter
+the stereo branch, suppress the stock screen quad, and submit no world layer.
+The selected player-window path may be scene-specific; this run does not prove
+that it is globally dead.
+
+Any successor must keep stock flat presentation for every no-pair frame,
+including loading and cinematics, while still forbidding N-1 eye reuse. It must
+log the first outer/inner callback and cannot claim stereo active until a full
+current-serial pair reaches `xrEndFrame`.
+
 ### Explicit nonclaims and acceptance debt
 
 C-H2-3 claims stereo, headset rotation, and headset translation/room scale. It
@@ -531,7 +557,7 @@ draw-distance writes. Before a pair is claimed, failure calls stock once. After
 scoped writes begin, failure restores every dirty span, invalidates/drops only
 the current pair, and keeps the camera core and OpenXR session armed.
 
-Acceptance still requires a Halo 2 headset run recording edition, runtime,
+Any successor still requires a Halo 2 headset run recording edition, runtime,
 headset, refresh rate, source/package identity, installed DLL SHA-256, and logs
 that prove two current-serial eye renders/captures per game frame with no
 half-rate cadence. The same exact DLL then requires a Halo 3 headset regression.
