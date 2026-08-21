@@ -1170,6 +1170,88 @@ so the "discover semantics from H2EK" rule cannot apply to it; H2EK remains
 authoritative for the classic engine and for the shared upstream
 camera/observer system, which is where E-H2-4's lever lives.
 
+## E-H2-5: the classic eye capture was fake stereo (identical eyes), and why
+
+### The measurement that proves it
+
+The 2026-08-21 02:55 headset run (Steam, Quest 3, source `ec9b268`) was the
+first with steady classic-mode pairs: `Halo 2 stereo core: outer=2153
+inner=2153 claimed=2036 eyes=4072 complete=2036 dropped=0`. The same log
+carries the GPU readback comparison of the two eye caches, five times:
+
+```
+M2 VALIDATION: distinct eye pixels mean RGB delta=0.000, changed samples=0.0% (0/23842)
+```
+
+Zero of 23,842 sampled pixels differed between the eyes. The call counters
+proved our detours ran; the readback proves the engine produced ONE image.
+That is fake stereo by definition, and the counters were never proof of
+anything else. The player's report ("fake stereo", "a flat picture on my
+face", "awful low FOV") is exactly what identical eyes presented per-eye
+look like.
+
+### The mechanism, from the engine's own render order
+
+1. `render_view 0x7E30D0` does not just draw the world. At `0x7E34C9` it
+   calls `0x952F50`, which at `0x952FE9` calls `0x7E2460`, which at
+   `0x7E2BE6` calls the postprocess `0x951EC0`; that ends in the final-output
+   helper `0x975230` (sole caller `0x9523B0`, a tail jump) which binds the
+   backbuffer RTV from slot `0x197EE58`. So resolve, postprocess and final
+   output are all INSIDE each render_view call. Capturing during render_view
+   is the right time.
+2. The D-H2-1 census taken inside the host render-target window
+   (`c63facd` run, classic mode) shows the classic renderer has no separate
+   scene target:
+
+   ```
+   backbuffer RTV slot 0x197EE58:     view 0000026B8AAF45E0 tex 0000026AE7060760 2912x2100 fmt 28
+   primary scene RTV slot 0x197EE60:  view 0000026B8AAF45E0 tex 0000026AE7060760 2912x2100 fmt 28
+   resolved scene RTV slot 0x197EE88: view 0000026C302116A0 tex 0000026C2CE77BA0 2912x2100 fmt 28
+   ```
+
+   The primary scene target IS the backbuffer view. The world is drawn
+   straight into it; the "resolved scene" is a second texture the engine
+   fills from it for shader reads.
+3. The capture redirected every slot-0 bind of that exact RTV to our eye
+   cache. The world pass therefore landed in our texture, but everything the
+   engine subsequently READS (the resolve into `0x197EE88`, bloom, the final
+   composite) goes through the engine's own SRVs of the ORIGINAL backbuffer
+   texture, which we had just prevented from being written. The final
+   composite then paints that stale source over our eye cache. Both eyes
+   receive a composite of the same untouched source: identical pixels, and
+   a source whose field of view is whatever the last un-redirected frame
+   had, not the cover we wrote - hence the zoomed, narrow image.
+
+This is the Reach "two eyes share one buffer" family of bug again: a
+redirect is only correct when the engine never reads the redirected target
+back, and Halo 2's classic postprocess reads it back by design.
+
+### The fix (C-H2-11)
+
+Halo 2 redirects nothing. `VR_RedirectRenderTargets` returns false for the
+title. Each eye runs the engine's complete pipeline into the engine's own
+backbuffer; when render_view returns, `VR_EndRasterEye` resolves the texture
+behind the proven final-output RTV (`GetResource`/`QueryInterface`, no
+reference held, so the swapchain can still resize) and `CopyResource`s it
+into that eye's cache. An eye is complete only when that copy was issued
+(`kHalo2SynchronousRequiredCaptures = 1`). Every other part of the
+transaction - the per-eye camera writes and restores, the exact-serial pair
+contract, the stock-screen fail-open - is unchanged.
+
+### The proof that must appear in every future log
+
+`ValidateHalo2EyePairPeriodic` reads both eye caches back every two seconds
+while an exact-serial pair is being presented and logs one of:
+
+```
+Halo 2 eye-pair pixel check: DISTINCT eyes, mean RGB delta=..., changed samples=...% (n/N) ... - true per-eye rendering
+Halo 2 eye-pair pixel check: IDENTICAL eyes (0/N samples differ, ...) - this is FAKE stereo: ...
+```
+
+Three consecutive IDENTICAL results add "the per-eye camera is NOT reaching
+the renderer". A Halo 2 headset result is not "stereo" unless the log says
+DISTINCT; counters do not count.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are

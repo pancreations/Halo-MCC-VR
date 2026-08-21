@@ -327,7 +327,9 @@ namespace
     bool g_eyeHasImage[2] = {false, false};
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint64_t kHalo2SynchronousReservationBit = uint64_t{1} << 63;
-    constexpr uint32_t kHalo2SynchronousMinimumFinalRedirects = 3;
+    // One eye is complete when the engine's FINISHED frame for it has been
+    // copied into the eye cache exactly once, after render_view returned.
+    constexpr uint32_t kHalo2SynchronousRequiredCaptures = 1;
     constexpr bool Halo2SynchronousSerialIsReserved(uint64_t value) noexcept
     {
         return (value & kHalo2SynchronousReservationBit) != 0;
@@ -348,8 +350,8 @@ namespace
     std::atomic<uint32_t> g_halo2SynchronousEyeResourceEpoch[2]{};
     std::atomic<float> g_halo2SynchronousEyeHalfFovX[2]{};
     std::atomic<float> g_halo2SynchronousEyeHalfFovY[2]{};
-    std::atomic<uint64_t> g_halo2SynchronousRedirectSerial[2]{};
-    std::atomic<uint32_t> g_halo2SynchronousRedirectCount[2]{};
+    std::atomic<uint64_t> g_halo2SynchronousCaptureSerial[2]{};
+    std::atomic<uint32_t> g_halo2SynchronousCaptureCount[2]{};
     std::atomic<uint32_t> g_halo2SynchronousResourceEpoch{1};
     // Resource-free presentation history. The even sequence is the publication
     // anchor; odd means a writer owns the payload. Unlike pair/cache state this
@@ -373,9 +375,8 @@ namespace
         uint32_t resourceEpoch = 0;
         uint64_t preparedSerial = 0;
         int eye = -1;
-        uint32_t finalRedirects = 0;
+        uint32_t captures = 0;
         ID3D11RenderTargetView* finalRtv = nullptr;
-        ID3D11RenderTargetView* eyeRtv = nullptr;
     };
     thread_local Halo2SynchronousEyeScope g_halo2SynchronousEyeScope{};
 #endif
@@ -4845,6 +4846,148 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_stereoValidationDone = true;
     }
 
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // Halo 2 acceptance is "two different images from two different cameras",
+    // not "our hooks ran". This reads both eye caches back every two seconds
+    // while a live exact-serial pair is being presented and says, in the log,
+    // whether the engine actually rendered distinct eyes. Staging textures
+    // are created once per eye-cache shape and reused; the GPU stall of the
+    // readback is paid once every two seconds on the present path only.
+    void ValidateHalo2EyePairPeriodic()
+    {
+        static ID3D11Texture2D* staging[2]{};
+        static D3D11_TEXTURE2D_DESC stagingDesc{};
+        static uint64_t lastCheckMs = 0;
+        static unsigned identicalRuns = 0;
+        const uint64_t nowMs = GetTickCount64();
+        if (nowMs - lastCheckMs < 2000)
+            return;
+        lastCheckMs = nowMs;
+        if (!g_device || !g_context || !g_eyeHasImage[0] ||
+            !g_eyeHasImage[1] || !g_eyeCache[0] || !g_eyeCache[1])
+        {
+            return;
+        }
+        if (g_eyeCacheDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+            g_eyeCacheDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
+            g_eyeCacheDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+            g_eyeCacheDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+        {
+            static bool loggedFormat = false;
+            if (!loggedFormat)
+            {
+                loggedFormat = true;
+                LOG("Halo 2 eye-pair pixel check: unsupported eye format %u; "
+                    "the check is disabled for this shape",
+                    static_cast<unsigned>(g_eyeCacheDesc.Format));
+            }
+            return;
+        }
+        if (!staging[0] || !staging[1] ||
+            stagingDesc.Width != g_eyeCacheDesc.Width ||
+            stagingDesc.Height != g_eyeCacheDesc.Height ||
+            stagingDesc.Format != g_eyeCacheDesc.Format)
+        {
+            for (auto*& texture : staging)
+            {
+                if (texture) texture->Release();
+                texture = nullptr;
+            }
+            D3D11_TEXTURE2D_DESC desc = g_eyeCacheDesc;
+            desc.Usage = D3D11_USAGE_STAGING;
+            desc.BindFlags = 0;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            desc.MiscFlags = 0;
+            if (FAILED(g_device->CreateTexture2D(&desc, nullptr, &staging[0])) ||
+                FAILED(g_device->CreateTexture2D(&desc, nullptr, &staging[1])))
+            {
+                for (auto*& texture : staging)
+                {
+                    if (texture) texture->Release();
+                    texture = nullptr;
+                }
+                LOG("Halo 2 eye-pair pixel check: staging allocation failed "
+                    "for %ux%u", desc.Width, desc.Height);
+                return;
+            }
+            stagingDesc = desc;
+        }
+
+        g_context->CopyResource(staging[0], g_eyeCache[0]);
+        g_context->CopyResource(staging[1], g_eyeCache[1]);
+        D3D11_MAPPED_SUBRESOURCE mapped[2]{};
+        const HRESULT hr0 =
+            g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
+        const HRESULT hr1 =
+            g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
+        if (SUCCEEDED(hr0) && SUCCEEDED(hr1))
+        {
+            unsigned long long rgbDelta = 0;
+            unsigned samples = 0, changed = 0, lit = 0;
+            const unsigned step = 16;
+            for (unsigned y = step / 2; y < g_eyeCacheDesc.Height; y += step)
+            {
+                const auto* left =
+                    static_cast<const unsigned char*>(mapped[0].pData) +
+                    y * mapped[0].RowPitch;
+                const auto* right =
+                    static_cast<const unsigned char*>(mapped[1].pData) +
+                    y * mapped[1].RowPitch;
+                for (unsigned x = step / 2; x < g_eyeCacheDesc.Width; x += step)
+                {
+                    const unsigned o = x * 4;
+                    unsigned pixelDelta = 0;
+                    unsigned sum = 0;
+                    for (unsigned c = 0; c < 3; ++c)
+                    {
+                        const int d = (int)left[o + c] - (int)right[o + c];
+                        pixelDelta += (unsigned)(d < 0 ? -d : d);
+                        sum += left[o + c];
+                    }
+                    rgbDelta += pixelDelta;
+                    if (pixelDelta > 12) ++changed;
+                    if (sum > 24) ++lit;
+                    ++samples;
+                }
+            }
+            const double meanChannelDelta =
+                samples ? (double)rgbDelta / (samples * 3.0) : 0.0;
+            const double changedPercent =
+                samples ? (100.0 * changed / samples) : 0.0;
+            const double litPercent =
+                samples ? (100.0 * lit / samples) : 0.0;
+            const bool identical = changed == 0;
+            identicalRuns = identical ? identicalRuns + 1 : 0;
+            if (identical)
+            {
+                LOG("Halo 2 eye-pair pixel check: IDENTICAL eyes (0/%u "
+                    "samples differ, %.1f%% lit) - this is FAKE stereo: the "
+                    "engine produced the same image for both eye passes%s",
+                    samples, litPercent,
+                    identicalRuns >= 3
+                        ? "; persistent, the per-eye camera is NOT reaching "
+                          "the renderer"
+                        : "");
+            }
+            else
+            {
+                LOG("Halo 2 eye-pair pixel check: DISTINCT eyes, mean RGB "
+                    "delta=%.3f, changed samples=%.1f%% (%u/%u), %.1f%% lit "
+                    "- true per-eye rendering",
+                    meanChannelDelta, changedPercent, changed, samples,
+                    litPercent);
+            }
+        }
+        else
+        {
+            LOG("Halo 2 eye-pair pixel check: staging map failed "
+                "(0x%08X, 0x%08X)", (unsigned)hr0, (unsigned)hr1);
+        }
+        if (SUCCEEDED(hr0)) g_context->Unmap(staging[0], 0);
+        if (SUCCEEDED(hr1)) g_context->Unmap(staging[1], 0);
+    }
+#endif
+
     void ResetPreparedFrame()
     {
         g_preparedShouldRender.store(false, std::memory_order_release);
@@ -8607,6 +8750,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 #endif
                     if (!reachTitle)
                         ValidateStereoImagesOnce();
+#if HALOMCCVR_HALO2_STEREO6DOF
+                    if (halo2Title && halo2LiveExactPair)
+                        ValidateHalo2EyePairPeriodic();
+#endif
                     // Once per frame, but it only writes a line every two
                     // seconds; the same shape every other steady report here
                     // uses. All three titles reach this point.
@@ -10405,9 +10552,9 @@ bool VR_Halo2BeginSynchronousPair(
             0, std::memory_order_relaxed);
         g_halo2SynchronousEyeResourceEpoch[eye].store(
             0, std::memory_order_relaxed);
-        g_halo2SynchronousRedirectSerial[eye].store(
+        g_halo2SynchronousCaptureSerial[eye].store(
             0, std::memory_order_release);
-        g_halo2SynchronousRedirectCount[eye].store(
+        g_halo2SynchronousCaptureCount[eye].store(
             0, std::memory_order_relaxed);
         g_eyeHasImage[eye] = false;
     }
@@ -10463,11 +10610,11 @@ bool VR_Halo2CompleteSynchronousEye(
             reserved ||
         g_halo2SynchronousPairGeneration.load(std::memory_order_relaxed) !=
             generation ||
-        g_halo2SynchronousRedirectSerial[eye].load(
+        g_halo2SynchronousCaptureSerial[eye].load(
             std::memory_order_acquire) != preparedSerial ||
-        g_halo2SynchronousRedirectCount[eye].load(
+        g_halo2SynchronousCaptureCount[eye].load(
             std::memory_order_relaxed) <
-                kHalo2SynchronousMinimumFinalRedirects ||
+                kHalo2SynchronousRequiredCaptures ||
         !Halo2SynchronousContextCurrent(
             generation, preparedSerial, resourceEpoch))
     {
@@ -10641,7 +10788,7 @@ void VR_Halo2InvalidateSynchronousPair(
                 std::memory_order_acquire);
         }
         uint64_t redirectSerial = preparedSerial;
-        (void)g_halo2SynchronousRedirectSerial[eye].compare_exchange_strong(
+        (void)g_halo2SynchronousCaptureSerial[eye].compare_exchange_strong(
             redirectSerial, 0, std::memory_order_acq_rel,
             std::memory_order_acquire);
     }
@@ -10673,9 +10820,9 @@ void VR_ResetHalo2SynchronousStereo()
             0, std::memory_order_release);
         g_halo2SynchronousEyeResourceEpoch[eye].store(
             0, std::memory_order_release);
-        g_halo2SynchronousRedirectSerial[eye].store(
+        g_halo2SynchronousCaptureSerial[eye].store(
             0, std::memory_order_release);
-        g_halo2SynchronousRedirectCount[eye].store(
+        g_halo2SynchronousCaptureCount[eye].store(
             0, std::memory_order_release);
     }
     // Clear the runtime-owner proof along the same reset edge. The stamped
@@ -11850,7 +11997,6 @@ void VR_BeginRasterEye(int eye)
                 scope.preparedSerial = serial;
                 scope.eye = eye;
                 scope.finalRtv = finalRtv;
-                scope.eyeRtv = g_eyeCacheRtvs[eye];
             }
         }
     }
@@ -11909,6 +12055,84 @@ static void Halo4ResolveSceneTargetAtEyeEnd()
         static_cast<UINT>(g_h4LastCandidateViewFormat), g_h4LearningEyes);
 }
 
+#if HALOMCCVR_HALO2_STEREO6DOF
+// Copies the engine's finished Halo 2 frame for one eye into that eye's cache.
+// Called on the render thread from VR_EndRasterEye, i.e. after render_view has
+// returned and every draw of this eye (world, resolve, postprocess, final
+// output) has been issued. Resolves the texture behind the proven final-output
+// RTV each call and holds NO reference to it: a held reference would pin the
+// swapchain buffer and make the game's own ResizeBuffers fail.
+static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
+{
+    static bool loggedShape = false;
+    static bool loggedFailure = false;
+    if (!g_context || !g_device || !scope.finalRtv ||
+        scope.eye < 0 || scope.eye > 1)
+    {
+        return false;
+    }
+    ID3D11Resource* resource = nullptr;
+    scope.finalRtv->GetResource(&resource);
+    ID3D11Texture2D* texture = nullptr;
+    if (resource)
+    {
+        (void)resource->QueryInterface(
+            __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture));
+        resource->Release();
+    }
+    if (!texture)
+    {
+        if (!loggedFailure)
+        {
+            loggedFailure = true;
+            LOG("Halo 2 eye capture FAILED: the final-output RTV %p is not "
+                "backed by a 2D texture; no eye image is published",
+                scope.finalRtv);
+        }
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    texture->GetDesc(&desc);
+    bool copied = false;
+    if (desc.SampleDesc.Count != 1 || desc.ArraySize != 1 ||
+        !desc.Width || !desc.Height)
+    {
+        if (!loggedFailure)
+        {
+            loggedFailure = true;
+            LOG("Halo 2 eye capture FAILED: final output %ux%u fmt %u has "
+                "%u samples / %u slices; a single-sample 2D texture is "
+                "required for CopyResource",
+                desc.Width, desc.Height, static_cast<unsigned>(desc.Format),
+                desc.SampleDesc.Count, desc.ArraySize);
+        }
+    }
+    else if (EnsureEyeCaches(desc) && g_eyeCache[scope.eye])
+    {
+        g_context->CopyResource(g_eyeCache[scope.eye], texture);
+        copied = true;
+        if (!loggedShape)
+        {
+            loggedShape = true;
+            LOG("Halo 2 eye capture: copying the engine's finished %ux%u "
+                "fmt %u frame into eye cache %d after render_view returns; "
+                "no render target is redirected",
+                desc.Width, desc.Height, static_cast<unsigned>(desc.Format),
+                scope.eye);
+        }
+    }
+    else if (!loggedFailure)
+    {
+        loggedFailure = true;
+        LOG("Halo 2 eye capture FAILED: eye caches for %ux%u fmt %u could "
+            "not be created",
+            desc.Width, desc.Height, static_cast<unsigned>(desc.Format));
+    }
+    texture->Release();
+    return copied;
+}
+#endif
+
 void VR_EndRasterEye()
 {
     if constexpr (kEnableRetiredRasterTrace)
@@ -11929,9 +12153,15 @@ void VR_EndRasterEye()
             g_halo2SynchronousPairResourceEpoch.load(
                 std::memory_order_relaxed) == halo2Scope.resourceEpoch)
         {
-            g_halo2SynchronousRedirectCount[halo2Scope.eye].store(
-                halo2Scope.finalRedirects, std::memory_order_relaxed);
-            g_halo2SynchronousRedirectSerial[halo2Scope.eye].store(
+            // render_view has returned, so the engine's own pipeline for
+            // this eye - world pass, resolve, postprocess, final output -
+            // has all been issued into its own backbuffer. Copy that
+            // finished frame. Nothing of the engine's was redirected.
+            if (Halo2CopyFinishedEyeFrame(halo2Scope))
+                halo2Scope.captures = 1;
+            g_halo2SynchronousCaptureCount[halo2Scope.eye].store(
+                halo2Scope.captures, std::memory_order_relaxed);
+            g_halo2SynchronousCaptureSerial[halo2Scope.eye].store(
                 halo2Scope.preparedSerial, std::memory_order_release);
         }
         halo2Scope = {};
@@ -12257,45 +12487,18 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                               ID3D11RenderTargetView** output)
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // Halo 2 owns a title-proven final-output pointer. Never feed it through
-    // Halo 3's 0xA8 shape discovery (H2's scene resources are a different 0x28
-    // shape), and never perform COM inspection in this OM hot hook.
+    // Halo 2 never redirects a render target. Its classic renderer draws the
+    // world straight into the backbuffer (D-H2-1 census: the primary scene
+    // RTV slot 0x197EE60 and the backbuffer slot 0x197EE58 hold the SAME
+    // view), and its postprocess then reads that texture back through the
+    // engine's own SRV. Redirecting the binds put each eye's world pass in
+    // our texture while the postprocess re-read the engine's untouched
+    // backbuffer and painted it over both eyes: M2 VALIDATION measured
+    // 0/23842 differing pixels, i.e. identical eyes. Each eye is instead
+    // copied whole after render_view returns (VR_EndRasterEye). Halo 2 is
+    // also never fed through Halo 3's 0xA8 shape discovery below.
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
-    {
-        Halo2SynchronousEyeScope& halo2Scope =
-            g_halo2SynchronousEyeScope;
-        if (!halo2Scope.active || halo2Scope.eye < 0 ||
-            halo2Scope.eye > 1 || !input || !output || !count ||
-            !halo2Scope.finalRtv || !halo2Scope.eyeRtv ||
-            g_rasterEye.load(std::memory_order_acquire) != halo2Scope.eye ||
-            g_halo2SynchronousPairToken.load(std::memory_order_acquire) !=
-                Halo2ReservedSynchronousSerial(
-                    halo2Scope.preparedSerial) ||
-            g_halo2SynchronousPairGeneration.load(
-                std::memory_order_relaxed) != halo2Scope.generation ||
-            g_halo2SynchronousPairResourceEpoch.load(
-                std::memory_order_relaxed) != halo2Scope.resourceEpoch)
-        {
-            return false;
-        }
-
-        bool changed = false;
-        for (UINT slot = 0; slot < count; ++slot)
-        {
-            output[slot] = input[slot];
-            // The proven H2 binder puts final output in OM slot zero. An equal
-            // pointer in any auxiliary MRT slot is not the claimed path.
-            if (slot == 0 && input[slot] == halo2Scope.finalRtv)
-            {
-                output[slot] = halo2Scope.eyeRtv;
-                ++halo2Scope.finalRedirects;
-                changed = true;
-            }
-        }
-        if (changed)
-            g_rasterRedirected[halo2Scope.eye] = true;
-        return changed;
-    }
+        return false;
 #endif
     ProbeFsrTargets(context, count, input);
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
