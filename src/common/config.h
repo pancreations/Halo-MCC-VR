@@ -388,6 +388,12 @@ struct Config
     // for titles whose controller Menu button is reserved by the OpenXR runtime.
     bool y_b_start_chord = true;
 
+    // Halo 2 only: the gamepad's Back/View button is MCC's instant
+    // Classic <-> Anniversary graphics switch. 0 = the mod swallows that
+    // button in Halo 2 so a physical pad (Steam Controller etc.) cannot flip
+    // the renderer mid-game; 1 = pass it through as the game expects.
+    bool halo2_gamepad_graphics_switch = false;
+
     // Which controller, held next to the head, turns the left stick into the
     // D-pad (UEVR-style gesture): 0 = left controller, 1 = right controller.
     int dpad_hand = 0;

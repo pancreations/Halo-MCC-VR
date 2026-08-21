@@ -142,11 +142,16 @@ namespace
         Game_Halo4UpdateVrTurn(pad);
         const bool wheelGesture = Game_Halo3VehicleSwallowsGrips();
 
+        // The physical pad's own Y/B count for the pause chord too, so a
+        // Steam Controller pauses the same way the VR controllers do.
+        const WORD physicalButtons = state->Gamepad.wButtons;
         MenuChordResult pauseChord{};
         if (g_config.y_b_start_chord && Game_AllowsPauseToggleInput())
         {
-            pauseChord =
-                g_pauseChord.Update(GetTickCount64(), pad.y, pad.b);
+            pauseChord = g_pauseChord.Update(
+                GetTickCount64(),
+                pad.y || (physicalButtons & XINPUT_GAMEPAD_Y) != 0,
+                pad.b || (physicalButtons & XINPUT_GAMEPAD_B) != 0);
             if (pauseChord.toggled)
                 Input_RequestPauseToggle();
         }
@@ -174,6 +179,8 @@ namespace
             swapLeftHandActions ? (pad.x ? 1.0f : 0.0f) : pad.trigL;
 
         WORD btn = state->Gamepad.wButtons;
+        if (pauseChord.consumeClicks)
+            btn &= ~(XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_B);
         if (scopeAvailable)
             btn &= ~XINPUT_GAMEPAD_RIGHT_THUMB;
         if (pad.a) btn |= XINPUT_GAMEPAD_A;
@@ -417,10 +424,43 @@ namespace
             g_diagReads.fetch_add(1);
             DiagTick();
         }
+        // E-H2-13: in Halo 2 the pad's Back/View button is MCC's instant
+        // Classic <-> Anniversary renderer switch. A physical pad (Steam
+        // Controller) reaches the game through this same hook, so unless the
+        // player opted in, that button never reaches Halo 2.
+        if (!ownVirtualSlot && !g_config.halo2_gamepad_graphics_switch &&
+            (state->Gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0 &&
+            TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+        {
+            state->Gamepad.wButtons &= ~XINPUT_GAMEPAD_BACK;
+            static std::atomic<bool> loggedBackSwallow{false};
+            if (!loggedBackSwallow.exchange(true))
+                LOG("M3: Halo 2 - the gamepad's Back/View press was swallowed "
+                    "(it is the Classic/Anniversary graphics switch); set "
+                    "halo2_gamepad_graphics_switch = 1 to pass it through");
+        }
         VrPadState pad;
         VR_GetPadState(pad);
         if (!pad.valid)
         {
+            // No VR controllers: the physical pad still gets the Y+B pause
+            // chord and the Start pulse it produces.
+            if (!ownVirtualSlot && g_config.y_b_start_chord &&
+                Game_AllowsPauseToggleInput())
+            {
+                const uint64_t now = GetTickCount64();
+                const WORD phys = state->Gamepad.wButtons;
+                const MenuChordResult chord = g_pauseChord.Update(
+                    now, (phys & XINPUT_GAMEPAD_Y) != 0,
+                    (phys & XINPUT_GAMEPAD_B) != 0);
+                if (chord.toggled)
+                    Input_RequestPauseToggle();
+                if (chord.consumeClicks)
+                    state->Gamepad.wButtons &=
+                        ~(XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_B);
+                if (now < g_startPulseUntilMs.load())
+                    state->Gamepad.wButtons |= XINPUT_GAMEPAD_START;
+            }
             if (Menu_IsOpen())
             {
                 state->Gamepad = {};

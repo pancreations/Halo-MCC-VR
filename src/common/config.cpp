@@ -489,6 +489,8 @@ void ConfigLoad(const wchar_t* path)
             g_config.turn_smooth_deg_s = (float)atof(val);
         else if (!strcmp(key, "y_b_start_chord"))
             g_config.y_b_start_chord = atoi(val) != 0;
+        else if (!strcmp(key, "halo2_gamepad_graphics_switch"))
+            g_config.halo2_gamepad_graphics_switch = atoi(val) != 0;
         else if (!strcmp(key, "ghost_fix") || !strcmp(key, "stereo_alternate_order") ||
                  !strcmp(key, "stereo_warmup_pass") || !strcmp(key, "per_eye_history") ||
                  !strcmp(key, "stereo_sun_shafts") || !strcmp(key, "gun_length_scale") ||
@@ -944,6 +946,13 @@ void ConfigSave()
     fprintf(f, "# Press Y+B together to send Start (pause/resume) in supported titles.\n");
     fprintf(f, "# (default %d)\n", d.y_b_start_chord ? 1 : 0);
     fprintf(f, "y_b_start_chord = %d\n\n", g_config.y_b_start_chord ? 1 : 0);
+    fprintf(f, "# Halo 2 only: the gamepad's Back/View button is MCC's instant\n");
+    fprintf(f, "# Classic <-> Anniversary graphics switch. 0 = the mod swallows that\n");
+    fprintf(f, "# button in Halo 2 so a physical pad (Steam Controller) cannot flip the\n");
+    fprintf(f, "# renderer mid-game; 1 = pass it through. Y+B still pauses on the pad.\n");
+    fprintf(f, "# (default %d)\n", d.halo2_gamepad_graphics_switch ? 1 : 0);
+    fprintf(f, "halo2_gamepad_graphics_switch = %d\n\n",
+            g_config.halo2_gamepad_graphics_switch ? 1 : 0);
     fprintf(f, "# Hold this controller next to your head to use the left stick as D-pad:\n");
     fprintf(f, "# 0 = left controller, 1 = right controller.\n");
     fprintf(f, "# While held, clicking the left stick presses the controller's\n");
