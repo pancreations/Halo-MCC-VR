@@ -264,6 +264,7 @@ add_library(halo3xr SHARED
     src/dll/halo2_stereo_core.cpp
     src/dll/halo2_observer_6dof.cpp
     src/dll/halo2_render_probe.cpp
+    src/dll/halo2_saber_camera.cpp
     src/dll/halo4_adapter.cpp
     src/dll/halo4_cold_observation.cpp)
 set_target_properties(halo3xr PROPERTIES OUTPUT_NAME "HaloMCCVR")
