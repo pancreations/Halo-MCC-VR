@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "../common/config.h"
@@ -63,6 +64,52 @@ namespace
     std::atomic<uint64_t> g_drops{0};
     std::atomic<uint64_t> g_stockPasses{0};
     std::atomic<uint64_t> g_exceptions{0};
+    // Every way EyeLoopBody can decline to render a pair, counted by
+    // reason. 790 of 791 callbacks took one of these on 2026-08-21 and the
+    // log could not say which; that is never allowed to happen again.
+    enum class Bail : uint8_t
+    {
+        NoBinding = 0,
+        SnapshotNotReady,
+        HeadPoseInvalid,
+        GenerationMismatch,
+        SerialZero,
+        SerialRepeated,
+        CadenceUnsupported,
+        ViewRecordUnresolved,
+        ObserverBasisInvalid,
+        ConstantsUnreadable,
+        TrackedCameraFailed,
+        EyeCameraFailed,
+        CameraSaveFailed,
+        FinalRtvNull,
+        PairBeginRefused,
+        SecondPassPreambleFaulted,
+        EyeApplyFailed,
+        EyeBeginRefused,
+        SceneRenderFaulted,
+        EyeCompleteRefused,
+        CameraRestoreFailed,
+        PairCompleteRefused,
+        Count
+    };
+    constexpr const char* kBailNames[] = {
+        "noBinding", "snapshotNotReady", "headPoseInvalid",
+        "generationMismatch", "serialZero", "serialRepeated",
+        "cadenceUnsupported", "viewRecordUnresolved",
+        "observerBasisInvalid", "constantsUnreadable",
+        "trackedCameraFailed", "eyeCameraFailed", "cameraSaveFailed",
+        "finalRtvNull", "pairBeginRefused", "secondPassPreambleFaulted",
+        "eyeApplyFailed", "eyeBeginRefused", "sceneRenderFaulted",
+        "eyeCompleteRefused", "cameraRestoreFailed", "pairCompleteRefused"};
+    static_assert(sizeof(kBailNames) / sizeof(kBailNames[0]) ==
+        static_cast<size_t>(Bail::Count));
+    std::atomic<uint64_t> g_bails[static_cast<size_t>(Bail::Count)]{};
+    void CountBail(Bail reason) noexcept
+    {
+        g_bails[static_cast<size_t>(reason)].fetch_add(
+            1, std::memory_order_relaxed);
+    }
     uint64_t g_lastReportMs = 0;
     uint64_t g_lastPairsReported = UINT64_MAX;
     uint64_t g_lastCallbacksReported = UINT64_MAX;
@@ -247,6 +294,7 @@ namespace
         const uintptr_t observer = g_observerResult.load(std::memory_order_acquire);
         if (!base || !generation || !observer)
         {
+            CountBail(Bail::NoBinding);
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
@@ -260,18 +308,32 @@ namespace
         Halo2CameraBasis stock{};
         Halo2SaberCameraConstants constants{};
         const uint64_t serial = snapshot.preparedSerial;
-        const bool eligible = ready && snapshot.headPoseValid &&
-            snapshot.generation == generation && serial != 0 &&
-            serial != g_lastCompletedSerial.load(std::memory_order_acquire) &&
-            ValidHeadPose(snapshot.headOrientation, snapshot.headPosition) &&
-            Halo2PreparedCadenceSupported(
-                snapshot.predictedDisplayPeriodNs,
-                snapshot.predictedDisplayDeltaNs) &&
-            ResolveViewRecord(base, viewIndex, record) &&
-            ReadObserverBasis(observer, stock) &&
-            Halo2SaberCamera_ReadConstants(base, constants);
-        if (!eligible)
+        // Sequential so the FIRST failing condition is the one counted.
+        Bail bail = Bail::Count;
+        if (!ready)
+            bail = Bail::SnapshotNotReady;
+        else if (!snapshot.headPoseValid ||
+                 !ValidHeadPose(snapshot.headOrientation, snapshot.headPosition))
+            bail = Bail::HeadPoseInvalid;
+        else if (snapshot.generation != generation)
+            bail = Bail::GenerationMismatch;
+        else if (serial == 0)
+            bail = Bail::SerialZero;
+        else if (serial == g_lastCompletedSerial.load(std::memory_order_acquire))
+            bail = Bail::SerialRepeated;
+        else if (!Halo2PreparedCadenceSupported(
+                     snapshot.predictedDisplayPeriodNs,
+                     snapshot.predictedDisplayDeltaNs))
+            bail = Bail::CadenceUnsupported;
+        else if (!ResolveViewRecord(base, viewIndex, record))
+            bail = Bail::ViewRecordUnresolved;
+        else if (!ReadObserverBasis(observer, stock))
+            bail = Bail::ObserverBasisInvalid;
+        else if (!Halo2SaberCamera_ReadConstants(base, constants))
+            bail = Bail::ConstantsUnreadable;
+        if (bail != Bail::Count)
         {
+            CountBail(bail);
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
@@ -298,6 +360,7 @@ namespace
         Halo2CameraBasis eyes[kHalo2EyeCount]{};
         if (!Halo2BuildTrackedCenterCamera(stock, head, tracked))
         {
+            CountBail(Bail::TrackedCameraFailed);
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
@@ -307,6 +370,7 @@ namespace
                     tracked, snapshot.eyes[eye].position,
                     snapshot.eyes[eye].orientation, eyes[eye]))
             {
+                CountBail(Bail::EyeCameraFailed);
                 CallStock(original, ctx, rdx, viewIndex);
                 return;
             }
@@ -320,6 +384,7 @@ namespace
                     record + kHalo2SaberViewRecordCameraOffset),
                 kHalo2SaberViewRecordCameraBytes))
         {
+            CountBail(Bail::CameraSaveFailed);
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
@@ -329,11 +394,17 @@ namespace
 
         uintptr_t finalRtv = 0;
         if (!ReadGuarded(base + kHalo2RetailFinalOutputRtvSlotRva, finalRtv) ||
-            !finalRtv ||
-            !VR_Halo2BeginSynchronousPair(
+            !finalRtv)
+        {
+            CountBail(Bail::FinalRtvNull);
+            CallStock(original, ctx, rdx, viewIndex);
+            return;
+        }
+        if (!VR_Halo2BeginSynchronousPair(
                 generation, serial,
                 reinterpret_cast<ID3D11RenderTargetView*>(finalRtv)))
         {
+            CountBail(Bail::PairBeginRefused);
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
@@ -358,18 +429,41 @@ namespace
                             base + kHalo2SaberSceneOnceLatchRva) = savedLatch;
                     }
                 }
-                __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; break; }
+                __except (EXCEPTION_EXECUTE_HANDLER)
+                {
+                    CountBail(Bail::SecondPassPreambleFaulted);
+                    ok = false;
+                    break;
+                }
             }
-            if (!ApplyEyeCamera(record, eyes[eye], constants) ||
-                !VR_Halo2BeginSynchronousEye(generation, serial, eye))
+            if (!ApplyEyeCamera(record, eyes[eye], constants))
             {
+                CountBail(Bail::EyeApplyFailed);
                 ok = false;
                 break;
             }
-            __try { original(ctx, rdx, viewIndex); }
+            if (!VR_Halo2BeginSynchronousEye(generation, serial, eye))
+            {
+                CountBail(Bail::EyeBeginRefused);
+                ok = false;
+                break;
+            }
+            bool rendered = false;
+            __try
+            {
+                original(ctx, rdx, viewIndex);
+                rendered = true;
+            }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
                 g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            }
+            // The raster-eye scope is closed whether or not the engine
+            // returned normally; that is where the finished eye is copied.
+            VR_EndRasterEye();
+            if (!rendered)
+            {
+                CountBail(Bail::SceneRenderFaulted);
                 ok = false;
                 break;
             }
@@ -380,6 +474,7 @@ namespace
                 !VR_Halo2CompleteSynchronousEye(
                     generation, serial, eye, halfX[eye], halfY[eye]))
             {
+                CountBail(Bail::EyeCompleteRefused);
                 ok = false;
                 break;
             }
@@ -397,12 +492,17 @@ namespace
             __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
 
-        if (ok && restored &&
-            VR_Halo2CompleteSynchronousPair(generation, serial))
+        if (ok && !restored)
+            CountBail(Bail::CameraRestoreFailed);
+        if (ok && restored)
         {
-            g_lastCompletedSerial.store(serial, std::memory_order_release);
-            g_pairs.fetch_add(1, std::memory_order_relaxed);
-            return;
+            if (VR_Halo2CompleteSynchronousPair(generation, serial))
+            {
+                g_lastCompletedSerial.store(serial, std::memory_order_release);
+                g_pairs.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            CountBail(Bail::PairCompleteRefused);
         }
 
         VR_Halo2InvalidateSynchronousPair(generation, serial);
@@ -595,13 +695,30 @@ namespace
             return;
         g_lastPairsReported = pairs;
         g_lastCallbacksReported = callbacks;
+        // Fixed-size, stack-only: one line per report, every nonzero reason.
+        char reasons[512];
+        size_t used = 0;
+        reasons[0] = '\0';
+        for (size_t i = 0; i < static_cast<size_t>(Bail::Count); ++i)
+        {
+            const uint64_t n = g_bails[i].load(std::memory_order_relaxed);
+            if (!n || used >= sizeof(reasons) - 1)
+                continue;
+            const int written = _snprintf_s(
+                reasons + used, sizeof(reasons) - used, _TRUNCATE,
+                "%s%s=%llu", used ? " " : "", kBailNames[i],
+                static_cast<unsigned long long>(n));
+            if (written > 0)
+                used += static_cast<size_t>(written);
+        }
         LOG("Halo 2 Anniversary stereo: %llu scene callbacks, %llu eye pairs, "
-            "%llu drops, %llu stock passes, %llu exceptions",
+            "%llu drops, %llu stock passes, %llu exceptions; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_stockPasses.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(g_exceptions.load(std::memory_order_relaxed)));
+            static_cast<unsigned long long>(g_exceptions.load(std::memory_order_relaxed)),
+            used ? reasons : "none");
     }
 }
 
