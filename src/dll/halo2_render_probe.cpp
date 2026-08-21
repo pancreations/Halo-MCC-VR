@@ -156,6 +156,95 @@ namespace
         }
     }
 
+
+    // The remastered renderer addresses its targets by a 16-bit id. A dynamic
+    // descriptor table holds the live resources for each id, and a parallel
+    // array of C strings names them. Pairing the two turns an anonymous pointer
+    // census into a named one, which is what identifies the resource that holds
+    // the finished Anniversary frame.
+    constexpr uint32_t kSaberTargetTableRva = 0x019985B0;
+    constexpr uint32_t kSaberTargetTableStride = 0x38;
+    constexpr uint32_t kSaberTargetNameArrayRva = 0x00BE9010;
+    constexpr uint32_t kSaberTargetCount = 98;
+    std::atomic<bool> g_saberTableDumped{false};
+
+    const char* SaberTargetName(uintptr_t base, uint32_t id) noexcept
+    {
+        uintptr_t namePointer = 0;
+        if (!ReadPointer(
+                base + kSaberTargetNameArrayRva +
+                    static_cast<uintptr_t>(id) * sizeof(uintptr_t),
+                namePointer) ||
+            !namePointer)
+        {
+            return "<unnamed>";
+        }
+        __try
+        {
+            const char* text = reinterpret_cast<const char*>(namePointer);
+            for (int index = 0; index < 64; ++index)
+            {
+                const char c = text[index];
+                if (!c)
+                    return index ? text : "<empty>";
+                if (c < 0x20 || c > 0x7E)
+                    return "<not-a-name>";
+            }
+            return "<unterminated>";
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return "<unreadable>";
+        }
+    }
+
+    void DumpSaberTargetTable(uintptr_t base) noexcept
+    {
+        if (g_saberTableDumped.exchange(true, std::memory_order_acq_rel))
+            return;
+        LOG("H2PROBE saber render-target table (RVA 0x%X, stride 0x%X), "
+            "names from RVA 0x%X:",
+            kSaberTargetTableRva, kSaberTargetTableStride,
+            kSaberTargetNameArrayRva);
+        for (uint32_t id = 0; id < kSaberTargetCount; ++id)
+        {
+            const uintptr_t record = base + kSaberTargetTableRva +
+                static_cast<uintptr_t>(id) * kSaberTargetTableStride;
+            uintptr_t srv = 0;
+            uintptr_t rtv0 = 0;
+            if (!ReadPointer(record + 0x00, srv) ||
+                !ReadPointer(record + 0x08, rtv0))
+            {
+                continue;
+            }
+            uint32_t count = 0;
+            uint32_t width = 0;
+            uint32_t height = 0;
+            uint8_t invalid = 1;
+            __try
+            {
+                count = *reinterpret_cast<const volatile uint32_t*>(
+                    record + 0x28);
+                width = *reinterpret_cast<const volatile uint32_t*>(
+                    record + 0x2C);
+                height = *reinterpret_cast<const volatile uint32_t*>(
+                    record + 0x30);
+                invalid = *reinterpret_cast<const volatile uint8_t*>(
+                    record + 0x34);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                continue;
+            }
+            if (!srv && !rtv0 && !width && !height)
+                continue;
+            LOG("H2PROBE   id %3u '%s': srv %p rtv0 %p rtvCount %u %ux%u "
+                "invalid %u", id, SaberTargetName(base, id),
+                reinterpret_cast<void*>(srv), reinterpret_cast<void*>(rtv0),
+                count, width, height, static_cast<unsigned>(invalid));
+        }
+    }
+
     // Called from inside the alternate-setup detour, i.e. while the Saber
     // bridge 0x69540 has its host-owned render target installed in the slots.
     // That window is exactly where a per-eye capture would read.
@@ -278,6 +367,15 @@ namespace
         g_counts.saberScene.fetch_add(1, std::memory_order_relaxed);
         if (original)
             original(view);
+        // AFTER the scene render returns, so the table reflects targets that
+        // have actually been produced this frame rather than stale ones.
+        if (!g_saberTableDumped.load(std::memory_order_acquire))
+        {
+            const uintptr_t base =
+                g_moduleBase.load(std::memory_order_acquire);
+            if (base)
+                DumpSaberTargetTable(base);
+        }
     }
 
     Target g_targets[] = {
@@ -395,6 +493,7 @@ namespace
         g_moduleBase.store(base, std::memory_order_release);
         g_generation.store(generation, std::memory_order_release);
         g_censusRemaining.store(3, std::memory_order_release);
+        g_saberTableDumped.store(false, std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         LOG("H2PROBE installed %u counting detours; every one calls the "
             "engine original and writes nothing", installedCount);
