@@ -136,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 18) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 19) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 18) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-d1-render-probe-',
+            $head.Substring(0, 7) + '-halo2-c9-classic-stereo-live-gate-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -162,7 +162,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 18) -or
         $manifest.embedded_build_identity.reach_render -ne $true -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
         [string]$manifest.embedded_build_identity.halo2 -cne
-            'OBSERVER_6DOF_PLUS_D_H2_1_RENDER_PROBE' -or
+            'CLASSIC_STEREO_6DOF_LIVE_MODE_GATE' -or
         [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-43' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
             'dd9946595511d65c9859b536e2727201c107da45' -or
@@ -200,15 +200,15 @@ if (-not (Test-ExactInt32 $manifest.schema_version 18) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-8' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-9' -or
         [string]$manifest.halo2_candidate.status -cne
-            'DIAGNOSTIC_RENDER_TOPOLOGY_CENSUS_REQUIRED' -or
+            'HEADSET_CLASSIC_STEREO_6DOF_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
             'headset-owned-observer-camera-position-and-orientation-in-both-renderers-plus-live-renderer-report' -or
-        $manifest.halo2_candidate.render_topology_probe -ne $true -or
+        $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
         $manifest.halo2_candidate.observer_6dof -ne $true -or

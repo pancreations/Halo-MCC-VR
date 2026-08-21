@@ -387,9 +387,11 @@ namespace
         {0x007E1600, "render_frame 0x7E1600",
          reinterpret_cast<void*>(&RenderFrameDetour),
          &g_originalRenderFrame, nullptr},
-        {0x007E2130, "render_player_window 0x7E2130",
-         reinterpret_cast<void*>(&PlayerWindowDetour),
-         &g_originalPlayerWindow, nullptr},
+        // DELIBERATELY NOT HOOKED. The classic stereo core verifies this
+        // function's entry AOB before it will install, and a MinHook detour
+        // rewrites exactly those bytes - so probing here silently blocks the
+        // very stereo path the probe exists to enable. Observed once, at
+        // 00:48:58: "stereo install WITHHELD ... playerAnchor=0".
         {0x00069540, "saber->blam bridge 0x69540",
          reinterpret_cast<void*>(&SaberBridgeDetour),
          &g_originalSaberBridge, nullptr},

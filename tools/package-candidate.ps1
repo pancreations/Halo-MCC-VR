@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-d1-render-probe',
+        'halo2-c9-classic-stereo-live-gate',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 18
+        schema_version = 19
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -187,7 +187,7 @@ try {
             reach = $true
             reach_render = $true
             halo4 = $true
-            halo2 = 'OBSERVER_6DOF_PLUS_D_H2_1_RENDER_PROBE'
+            halo2 = 'CLASSIC_STEREO_6DOF_LIVE_MODE_GATE'
         }
         deployment_policy = [ordered]@{
             automatic_after_package = $true
@@ -253,8 +253,8 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-8'
-            status = 'DIAGNOSTIC_RENDER_TOPOLOGY_CENSUS_REQUIRED'
+            id = 'C-H2-9'
+            status = 'HEADSET_CLASSIC_STEREO_6DOF_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
@@ -265,7 +265,7 @@ try {
             # C-H2-8, E-H2-4: the observer is the single camera root both
             # halo2.dll renderers consume, so one write owns the headset
             # pose in the classic and the remastered mode alike.
-            render_topology_probe = $true
+            render_topology_probe = $false
             render_topology_probe_changes_behavior = $false
             observer_6dof = $true
             observer_6dof_hook_rva = '0x006F0250'
