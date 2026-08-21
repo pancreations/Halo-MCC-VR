@@ -115,10 +115,14 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
+    // C-H2-22: matches kHalo2Capabilities in title_registry.cpp - the
+    // virtual gamepad and rumble are granted; aim/HUD/theatre are not.
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
         TitleCapability_RuntimeModes |
-        TitleCapability_RoomScale;
+        TitleCapability_RoomScale |
+        TitleCapability_ControllerInput |
+        TitleCapability_Haptics;
     constexpr uint32_t kHalo2TemporalRuntimeCapabilities =
         TitleCapability_Stereo;
     constexpr uint32_t kRuntimeCapabilitiesRequiringArm =

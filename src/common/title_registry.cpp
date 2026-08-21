@@ -81,13 +81,23 @@ namespace
     // unclaimed frames retain stock screen presentation, while a partially
     // claimed failed stereo transaction drops only that frame.
     // Controller input/aim, HUD, haptics and cutscene behavior remain denied.
+    // C-H2-22: the virtual gamepad (VR controllers merged over any physical
+    // pad) and rumble are granted. Without ControllerInput the XInput hook
+    // passed the physical pad through untouched inside every Halo 2 level,
+    // so the VR controllers only worked in the shell. Aim, HUD and theatre
+    // remain denied until each has Halo 2 evidence.
     constexpr uint32_t kHalo2Capabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
-        TitleCapability_RuntimeModes;
+        TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
+        TitleCapability_Haptics;
+    constexpr uint32_t kHalo2AdmissionCapabilities =
+        TitleCapability_ControllerInput;
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     constexpr uint32_t kHalo2Capabilities = TitleCapability_Stereo;
+    constexpr uint32_t kHalo2AdmissionCapabilities = TitleCapability_None;
 #else
     constexpr uint32_t kHalo2Capabilities = TitleCapability_None;
+    constexpr uint32_t kHalo2AdmissionCapabilities = TitleCapability_None;
 #endif
 
     constexpr TitleDescriptor kTitles[] = {
@@ -102,7 +112,7 @@ namespace
         { GameTitle::HaloCE, L"halo1.dll", "Halo: CE Anniversary", false,
           TitleCapability_None, TitleCapability_None },
         { GameTitle::Halo2, L"halo2.dll", "Halo 2 Anniversary", false,
-          kHalo2Capabilities, TitleCapability_None },
+          kHalo2Capabilities, kHalo2AdmissionCapabilities },
     };
 
     bool EqualsModuleName(std::wstring_view left, std::wstring_view right)

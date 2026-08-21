@@ -5897,7 +5897,8 @@ int main()
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
-        TitleCapability_RuntimeModes;
+        TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
+        TitleCapability_Haptics;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6099,14 +6100,21 @@ int main()
                   GameTitle::Halo3, false),
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
+    // C-H2-22 grants ControllerInput and Haptics; aim, HUD, arm IK and
+    // theatre stay denied until each has Halo 2 evidence.
     constexpr uint32_t halo2DeniedCapabilities =
         TitleCapability_ControllerAim | TitleCapability_Hud |
-        TitleCapability_ArmIk | TitleCapability_ControllerInput |
-        TitleCapability_Haptics | TitleCapability_CutsceneTheater;
+        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
+#if HALOMCCVR_HALO2_STEREO6DOF
+    constexpr uint32_t halo2ExpectedAdmission =
+        TitleCapability_ControllerInput;
+#else
+    constexpr uint32_t halo2ExpectedAdmission = TitleCapability_None;
+#endif
     Check(halo2Row && !halo2Row->runtimeSupported &&
               halo2Row->capabilities == halo2ExpectedCapabilities &&
               (halo2Row->capabilities & halo2DeniedCapabilities) == 0 &&
-              halo2Row->admissionCapabilities == TitleCapability_None &&
+              halo2Row->admissionCapabilities == halo2ExpectedAdmission &&
               TitleRegistry_HookPlan(GameTitle::Halo2) ==
                   halo2ExpectedHookPlan &&
               TitleRuntimeHeartbeatWindowMs(GameTitle::Halo2) ==
@@ -6115,8 +6123,8 @@ int main()
               std::wstring_view(halo2Identity.moduleName) ==
                   std::wstring_view(halo2Row->moduleName),
         "The Halo 2 registry row exposes the exact staged capabilities, hook "
-        "plan, heartbeat, and adapter module identity while denying controller, "
-        "aim, HUD, arm IK, haptics, and cutscene-theatre claims");
+        "plan, heartbeat, and adapter module identity while denying aim, HUD, "
+        "arm IK and cutscene-theatre claims");
 #if HALOMCCVR_HALO2_STEREO6DOF || \
     HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     {
@@ -6176,8 +6184,12 @@ int main()
         const TitleRuntimeSnapshot unarmedOwner =
             halo2Runtime.Resolve(101, policy);
 #if HALOMCCVR_HALO2_STEREO6DOF
+        // C-H2-22: this mask strips only Stereo and RoomScale; the declared
+        // ControllerInput and Haptics bits survive it like RuntimeModes does
+        // (the worker applies the fuller kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
-            TitleCapability_RuntimeModes;
+            TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
+            TitleCapability_Haptics;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;
@@ -10330,19 +10342,29 @@ int main()
     for (GameTitle title : unsupportedTitles)
         Check(TitleRegistry_HookPlan(title) == TitleHookPlan::None,
             "Unsupported titles never receive game hooks");
-    const GameTitle stockControllerTitles[] = {
-        GameTitle::HaloCE, GameTitle::Halo2,
-    };
-    for (GameTitle title : stockControllerTitles)
     {
-        const TitleDescriptor* descriptor = TitleRegistry_Find(title);
+        const TitleDescriptor* descriptor = TitleRegistry_Find(GameTitle::HaloCE);
         const bool admitted = descriptor &&
             (descriptor->admissionCapabilities &
                 TitleCapability_ControllerInput) != 0;
         Check(!admitted && !TitleRegistry_AllowsSharedControllerInput(
-                  title, false, false, true, admitted),
-            "CE and H2 never receive shared virtual-controller admission");
+                  GameTitle::HaloCE, false, false, true, admitted),
+            "CE never receives shared virtual-controller admission");
     }
+#if HALOMCCVR_HALO2_STEREO6DOF
+    {
+        // C-H2-22: without this admission the XInput hook passed a physical
+        // pad through untouched inside every Halo 2 level and the VR
+        // controllers only worked in the shell.
+        const TitleDescriptor* descriptor = TitleRegistry_Find(GameTitle::Halo2);
+        const bool admitted = descriptor &&
+            (descriptor->admissionCapabilities &
+                TitleCapability_ControllerInput) != 0;
+        Check(admitted && TitleRegistry_AllowsSharedControllerInput(
+                  GameTitle::Halo2, false, false, true, admitted),
+            "Halo 2 receives shared virtual-controller admission (C-H2-22)");
+    }
+#endif
     Check(TitleRegistry_FromModuleName(L"MCC-Win64-Shipping.exe") == nullptr,
         "The MCC host is not mistaken for a game title");
     Check(std::string_view(RuntimeModeName(RuntimeMode::Vehicle)) == "vehicle",

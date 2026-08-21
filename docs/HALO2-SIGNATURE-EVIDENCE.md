@@ -1639,3 +1639,36 @@ quarantine word is cleared on the next poll, the drop is counted and logged
 at most every two seconds (`Halo 2 stereo: claimed frame DROPPED (<reason>,
 drop #N this generation); the core stays armed`), and the core is never
 removed for it. Install/enable failures keep their own rejection path.
+
+## E-H2-15: why the VR controllers, chords and F1 menu were dead inside Halo 2 levels (C-H2-22)
+
+C-H2-21 log (`out/test-runs/7075832-halo2-c21-vr-controllers-dead-20260821-1729`):
+the XInput hook was alive (the L3+R3 chord and the menu pointer logged), but
+only while MCC was in its shell. Inside a Halo 2 level `Game_AllowsSharedControllerInput()`
+returned false, because the Halo 2 registry row granted
+`admissionCapabilities = TitleCapability_None` and `kHalo2Stereo6DofRuntimeCapabilities`
+carried neither `ControllerInput` nor `Haptics`. `ProcessGetState` then returned
+the physical pad untouched and `MergeVrPad` never ran: no VR sticks or buttons,
+no L3+R3 / Y+B chords, no D-pad gesture, and the welcome page that opened at
+17:28:11 could not be closed until the level was left (17:28:43, in the shell).
+"It works in all the other games" because every other supported title grants
+`ControllerInput` (Halo 4: `kHalo4AdmissionCapabilities`).
+
+C-H2-22 grants Halo 2 `ControllerInput` (admission + runtime) and `Haptics`
+(runtime, arm-gated), matching the Halo 4 pattern. Aim, HUD, arm IK and
+cutscene theatre remain denied until each has Halo 2 evidence.
+
+### The pictures (C-H2-19 eye dumps, same run)
+
+`HaloMCCVR-halo2-eye0/1.bmp` are correct per-eye renders of the 126.5 x 110.1
+deg cover: distinct eyes, full frame lit, world at the expected scale. The
+first-person weapon fills roughly the right half of each frame; the headset's
+native crop (the middle ~56% x 84%) therefore shows mostly the weapon and the
+ground in front of it. That is the "looking through goggles / 6-foot gun /
+can't see the world" report, and it is the weapon's framing, not the
+projection. MCC keeps the first-person weapon at a constant screen fraction
+across its FOV slider, so at the wide headset cover the weapon is scaled up
+with it. The weapon's projection/placement path is the next target; the
+classic camera `+0x2C` "FOV ratio" is NOT it (its three readers 0x708D90 /
+0x7E4D30 / 0x76DC90 scale an object distance for LOD), and 0x7DF7A0's other
+callers (0x7E2D50, 0x7E1F80, 0x7DF1A0) build ordinary render/raster pairs.
