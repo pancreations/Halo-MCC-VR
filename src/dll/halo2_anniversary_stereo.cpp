@@ -31,10 +31,15 @@ namespace
     //   mov r8d,ebx        / mov rcx,r15 / call 0x2DF190
     // so rdx carries nothing and the view index is the third integer register.
     using SaberSceneFn = void(__fastcall*)(void*, void*, uint32_t);
-    // 0x1C7740 calls this with both pointer arguments null:
-    //   xor r8d,r8d / xor edx,edx / lea rcx,[rsp+0x30] / call 0x1C6D80
-    using RebuildViewMatricesFn = void(__fastcall*)(void*, void*, void*);
+    // 0x1C7740 calls this with ALL THREE pointer arguments null:
+    //   xor r9d,r9d / xor r8d,r8d / xor edx,edx / lea rcx,[rsp+0x30] /
+    //   call 0x1C6D80
+    // The fourth (r9) is a float[4] clip plane that 0x1C6D80 stores and, when
+    // non-null, dereferences to rewrite the projection. A three-argument
+    // call left r9 as garbage.
+    using RebuildViewMatricesFn = void(__fastcall*)(void*, void*, void*, void*);
     using CameraCommitFn = void(__fastcall*)(void*);
+    using CameraRefreshRectFn = void(__fastcall*)(void*);
 
     enum class CoreState : uint8_t { StockFallback = 0, CleanupRequired, Installed };
 
@@ -58,6 +63,8 @@ namespace
     std::atomic<uintptr_t> g_originalScene{0};
     std::atomic<uintptr_t> g_rebuildMatrices{0};
     std::atomic<uintptr_t> g_cameraCommit{0};
+    std::atomic<uintptr_t> g_cameraRefreshRect{0};
+    std::atomic<uint32_t> g_coverLoggedGeneration{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
     std::atomic<uint64_t> g_lastCompletedSerial{0};
 
@@ -84,7 +91,7 @@ namespace
         TrackedCameraFailed,
         EyeCameraFailed,
         CameraSaveFailed,
-        StockFovInvalid,
+        CoverFovInvalid,
         FinalRtvNull,
         PairBeginRefused,
         SecondPassPreambleFaulted,
@@ -102,7 +109,7 @@ namespace
         "cadenceUnsupported", "viewRecordUnresolved",
         "observerBasisInvalid", "constantsUnreadable",
         "trackedCameraFailed", "eyeCameraFailed", "cameraSaveFailed",
-        "stockFovInvalid", "finalRtvNull", "pairBeginRefused", "secondPassPreambleFaulted",
+        "coverFovInvalid", "finalRtvNull", "pairBeginRefused", "secondPassPreambleFaulted",
         "eyeApplyFailed", "eyeBeginRefused", "sceneRenderFaulted",
         "eyeCompleteRefused", "cameraRestoreFailed", "pairCompleteRefused"};
     static_assert(sizeof(kBailNames) / sizeof(kBailNames[0]) ==
@@ -235,29 +242,46 @@ namespace
         return Halo2ValidateCameraBasis(basis);
     }
 
-    // One eye: write the record's embedded camera world matrix, let the engine
-    // normalise it and derive its inverse, then let the engine rebuild every
-    // matrix the record carries. No matrix is invented here.
+    // One eye: write the record's embedded camera world matrix and the
+    // headset cover as the engine's own horizontal/vertical degrees, let
+    // the engine refresh its near-plane rectangle (0xBC380), normalise the
+    // basis and derive the inverse (0xBC2B0), then rebuild every matrix the
+    // record carries (0x1C6D80, four null-safe arguments). The per-view
+    // consumers that re-derive tangents from the degree fields (0x1D6530,
+    // 0x1CB0F0, 0x247150, the shadow builders) therefore see the same
+    // frustum the projection does. No matrix is invented here.
     bool ApplyEyeCamera(
         uintptr_t record, const Halo2CameraBasis& eye,
-        const Halo2SaberCameraConstants& constants) noexcept
+        const Halo2SaberCameraConstants& constants,
+        const Halo2SaberEyeCover& cover) noexcept
     {
         Halo2SaberViewMatrix matrix{};
         if (!Halo2BuildSaberViewMatrix(eye, constants, matrix))
             return false;
         const uintptr_t camera = record + kHalo2SaberViewRecordCameraOffset;
-        if (!WriteFloatsGuarded(camera, matrix.m, 16))
+        if (!WriteFloatsGuarded(camera, matrix.m, 16) ||
+            !WriteFloatsGuarded(
+                camera + kHalo2SaberCameraHorizontalFovDegreesOffset,
+                &cover.horizontalDegrees, 1) ||
+            !WriteFloatsGuarded(
+                camera + kHalo2SaberCameraVerticalFovDegreesOffset,
+                &cover.verticalDegrees, 1))
+        {
             return false;
+        }
+        const auto refresh = reinterpret_cast<CameraRefreshRectFn>(
+            g_cameraRefreshRect.load(std::memory_order_acquire));
         const auto commit = reinterpret_cast<CameraCommitFn>(
             g_cameraCommit.load(std::memory_order_acquire));
         const auto rebuild = reinterpret_cast<RebuildViewMatricesFn>(
             g_rebuildMatrices.load(std::memory_order_acquire));
-        if (!commit || !rebuild)
+        if (!refresh || !commit || !rebuild)
             return false;
         __try
         {
+            refresh(reinterpret_cast<void*>(camera));
             commit(reinterpret_cast<void*>(camera));
-            rebuild(reinterpret_cast<void*>(record), nullptr, nullptr);
+            rebuild(reinterpret_cast<void*>(record), nullptr, nullptr, nullptr);
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -279,7 +303,7 @@ namespace
             return false;
         __try
         {
-            rebuild(reinterpret_cast<void*>(record), nullptr, nullptr);
+            rebuild(reinterpret_cast<void*>(record), nullptr, nullptr, nullptr);
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -451,32 +475,44 @@ namespace
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
-        // The field of view this pass renders with is the engine's own: the
-        // per-eye write replaces only the camera matrix. Read the stock
-        // horizontal/vertical field of view in degrees from the saved copy
-        // (0xBC560 keeps both consistent with the aspect) and hand the
-        // half-angles to the compositor as this eye's symmetric cover.
-        // VR_Halo2GetSynchronousHalfFovs cannot be used here: the pair token
-        // holds the RESERVED serial until the pair completes, so it always
-        // answered false and no Anniversary eye could ever complete.
-        float stockVerticalDegrees = 0.0f;
-        float stockHorizontalDegrees = 0.0f;
-        std::memcpy(&stockVerticalDegrees,
-                    savedCamera + kHalo2SaberCameraVerticalFovDegreesOffset,
-                    sizeof(stockVerticalDegrees));
-        std::memcpy(&stockHorizontalDegrees,
-                    savedCamera + kHalo2SaberCameraHorizontalFovDegreesOffset,
-                    sizeof(stockHorizontalDegrees));
-        constexpr float kDegreesToRadians = 3.14159265f / 180.0f;
-        const float halfFovX = stockHorizontalDegrees * 0.5f * kDegreesToRadians;
-        const float halfFovY = stockVerticalDegrees * 0.5f * kDegreesToRadians;
-        if (!std::isfinite(halfFovX) || !std::isfinite(halfFovY) ||
-            halfFovX <= 0.01f || halfFovX >= 1.55f ||
-            halfFovY <= 0.01f || halfFovY >= 1.55f)
+        // The cover each eye renders with is the headset's: both eyes' native
+        // frusta, per axis, as the engine's own horizontal/vertical degrees
+        // (E-H2-7). The half-angles go to the compositor as this eye's
+        // symmetric cover. VR_Halo2GetSynchronousHalfFovs cannot be used
+        // here: the pair token holds the RESERVED serial until the pair
+        // completes. The stock degrees are read only to be logged once.
+        Halo2SaberEyeCover cover{};
+        if (!snapshot.eyes[0].fovValid || !snapshot.eyes[1].fovValid ||
+            !Halo2DeriveSaberEyeCover(
+                snapshot.eyes[0].fov, snapshot.eyes[1].fov, cover))
         {
-            CountBail(Bail::StockFovInvalid);
+            CountBail(Bail::CoverFovInvalid);
             CallStock(original, ctx, rdx, viewIndex);
             return;
+        }
+        const float halfFovX = cover.halfHorizontalRadians;
+        const float halfFovY = cover.halfVerticalRadians;
+        if (g_coverLoggedGeneration.load(std::memory_order_acquire) != generation)
+        {
+            g_coverLoggedGeneration.store(generation, std::memory_order_release);
+            float stockHorizontalDegrees = 0.0f;
+            float stockVerticalDegrees = 0.0f;
+            float stockAspect = 0.0f;
+            std::memcpy(&stockHorizontalDegrees,
+                        savedCamera + kHalo2SaberCameraHorizontalFovDegreesOffset,
+                        sizeof(stockHorizontalDegrees));
+            std::memcpy(&stockVerticalDegrees,
+                        savedCamera + kHalo2SaberCameraVerticalFovDegreesOffset,
+                        sizeof(stockVerticalDegrees));
+            std::memcpy(&stockAspect,
+                        savedCamera + kHalo2SaberCameraAspectOffset,
+                        sizeof(stockAspect));
+            LOG("Halo 2 Anniversary eye cover: engine stock %.1f x %.1f deg "
+                "(aspect h/w %.3f) -> per-eye %.1f x %.1f deg written into the "
+                "view record camera (+0x150/+0x154) and refreshed by the "
+                "engine's own 0xBC380/0xBC2B0/0x1C6D80",
+                stockHorizontalDegrees, stockVerticalDegrees, stockAspect,
+                cover.horizontalDegrees, cover.verticalDegrees);
         }
         int32_t savedLatch = 0;
         const bool haveLatch =
@@ -526,7 +562,7 @@ namespace
                     break;
                 }
             }
-            if (!ApplyEyeCamera(record, eyes[eye], constants))
+            if (!ApplyEyeCamera(record, eyes[eye], constants, cover))
             {
                 CountBail(Bail::EyeApplyFailed);
                 ok = false;
@@ -657,6 +693,17 @@ namespace
         }
     }
 
+    bool EntryBytesMatch(
+        uintptr_t address, const uint8_t* expected, size_t bytes) noexcept
+    {
+        uint8_t actual[32]{};
+        if (!address || !expected || bytes == 0 || bytes > sizeof(actual))
+            return false;
+        if (!CopyGuarded(actual, reinterpret_cast<const void*>(address), bytes))
+            return false;
+        return std::memcmp(actual, expected, bytes) == 0;
+    }
+
     bool IsExecutable(uintptr_t address) noexcept
     {
         MEMORY_BASIC_INFORMATION info{};
@@ -691,6 +738,7 @@ namespace
         g_originalScene.store(0, std::memory_order_release);
         g_rebuildMatrices.store(0, std::memory_order_release);
         g_cameraCommit.store(0, std::memory_order_release);
+        g_cameraRefreshRect.store(0, std::memory_order_release);
         g_moduleBase.store(0, std::memory_order_release);
         g_observerResult.store(0, std::memory_order_release);
         g_generation.store(0, std::memory_order_release);
@@ -719,12 +767,31 @@ namespace
         const uintptr_t scene = base + kHalo2SaberSceneRenderRva;
         const uintptr_t rebuild = base + kHalo2SaberRebuildViewMatricesRva;
         const uintptr_t commit = base + kHalo2SaberCameraCommitRva;
-        if (!IsExecutable(scene) || !IsExecutable(rebuild) || !IsExecutable(commit))
+        const uintptr_t refresh = base + kHalo2SaberCameraRefreshRectRva;
+        if (!IsExecutable(scene) || !IsExecutable(rebuild) ||
+            !IsExecutable(commit) || !IsExecutable(refresh))
         {
             LOG("Halo 2 Anniversary stereo WITHHELD: scene=%d rebuild=%d "
-                "commit=%d executable; stock rendering is untouched",
+                "commit=%d refresh=%d executable; stock rendering is untouched",
                 IsExecutable(scene) ? 1 : 0, IsExecutable(rebuild) ? 1 : 0,
-                IsExecutable(commit) ? 1 : 0);
+                IsExecutable(commit) ? 1 : 0, IsExecutable(refresh) ? 1 : 0);
+            g_rejectedGeneration = generation;
+            return false;
+        }
+        // The three engine helpers the eye pass CALLS are pinned to their
+        // proven entry bytes; a module that differs keeps stock rendering.
+        const bool entriesPinned =
+            EntryBytesMatch(rebuild, kHalo2SaberRebuildViewMatricesEntryBytes,
+                            sizeof(kHalo2SaberRebuildViewMatricesEntryBytes)) &&
+            EntryBytesMatch(commit, kHalo2SaberCameraCommitEntryBytes,
+                            sizeof(kHalo2SaberCameraCommitEntryBytes)) &&
+            EntryBytesMatch(refresh, kHalo2SaberCameraRefreshRectEntryBytes,
+                            sizeof(kHalo2SaberCameraRefreshRectEntryBytes));
+        if (!entriesPinned)
+        {
+            LOG("Halo 2 Anniversary stereo WITHHELD: the engine's matrix "
+                "rebuild / camera commit / rect refresh entry bytes do not "
+                "match the proven module; stock rendering is untouched");
             g_rejectedGeneration = generation;
             return false;
         }
@@ -758,6 +825,7 @@ namespace
             reinterpret_cast<uintptr_t>(trampoline), std::memory_order_release);
         g_rebuildMatrices.store(rebuild, std::memory_order_release);
         g_cameraCommit.store(commit, std::memory_order_release);
+        g_cameraRefreshRect.store(refresh, std::memory_order_release);
         g_moduleBase.store(base, std::memory_order_release);
         g_observerResult.store(observerResult, std::memory_order_release);
         g_generation.store(generation, std::memory_order_release);

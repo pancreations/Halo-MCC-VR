@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1450,11 +1451,33 @@ inline constexpr uint32_t kHalo2SaberSceneCameraListOffset = 0x100;
 inline constexpr uint32_t kHalo2SaberSceneCameraCountOffset = 0x108;
 inline constexpr uint32_t kHalo2SaberCameraMatrixOffset = 0x00;
 inline constexpr uint32_t kHalo2SaberCameraFovChangedOffset = 0x14C;
-inline constexpr uint32_t kHalo2SaberCameraVerticalFovDegreesOffset = 0x150;
-inline constexpr uint32_t kHalo2SaberCameraHorizontalFovDegreesOffset = 0x154;
+// E-H2-7 (2026-08-21): +0x150 is the HORIZONTAL and +0x154 the VERTICAL
+// field of view in degrees, proven three ways: the projection builder
+// 0x1C82C0 maps +0x150 to P[0][0] (0x1C8386) and +0x154 to P[1][1]
+// (0x1C8390); the constructor's aspect is 0.75 for 640x480, i.e. HEIGHT /
+// WIDTH (0xBC162); and 0xBC4F0(cam, 80) writes +0x150 = 80 and +0x154 =
+// 2*atan(tan 40 deg * 0.75) = 64 deg, the classic 4:3 pair. The earlier
+// constants had the two names swapped.
+inline constexpr uint32_t kHalo2SaberCameraHorizontalFovDegreesOffset = 0x150;
+inline constexpr uint32_t kHalo2SaberCameraVerticalFovDegreesOffset = 0x154;
 inline constexpr uint32_t kHalo2SaberCameraAspectOffset = 0x158;
+inline constexpr uint32_t kHalo2SaberCameraNearOffset = 0x80;
+// 0xBC560(cam, verticalDegrees): +0x154 = V, +0x150 = 2*atan(tan(V/2) /
+// aspect), then jmp 0xBC380.
 inline constexpr uint32_t kHalo2SaberCameraSetFovRva = 0x000BC560;
+// 0xBC380(cam): refreshes the near-plane rectangle/polygon and the
+// pixels-per-metre fields (+0x88..+0xA8, +0x12C..+0x138, +0x15C/+0x160)
+// from +0x150/+0x154/+0x80/+0x144/+0x148. Reads neither +0x158 nor the
+// matrix. Writing both degree fields and calling this is the engine's own
+// way to a field of view that is not aspect-locked.
+inline constexpr uint32_t kHalo2SaberCameraRefreshRectRva = 0x000BC380;
+inline constexpr uint8_t kHalo2SaberCameraRefreshRectEntryBytes[] = {
+    0x40, 0x53, 0x48, 0x83, 0xEC, 0x50, 0xF3, 0x0F, 0x10, 0x81, 0x50, 0x01,
+    0x00, 0x00};
 inline constexpr uint32_t kHalo2SaberCameraCommitRva = 0x000BC2B0;
+inline constexpr uint8_t kHalo2SaberCameraCommitEntryBytes[] = {
+    0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48,
+    0x83, 0xEC, 0x40};
 
 // Saber render thread: frame entry -> view loop -> scene render. The view loop
 // already runs the scene render more than once per frame, which is why a
@@ -1540,30 +1563,98 @@ inline bool Halo2BuildSaberViewMatrix(
     return true;
 }
 
-// 0xBC560 derives the vertical FOV from the horizontal one and the aspect
-// ratio, so only a symmetric frustum is expressible through the engine's own
-// setter. This mirrors that derivation exactly; degrees, as the engine stores.
-inline bool Halo2SaberVerticalFovDegrees(
-    float horizontalFovDegrees, float aspect,
-    float& outVerticalDegrees) noexcept
+// 0xBC560(cam, V) stores the VERTICAL field of view and derives the
+// HORIZONTAL one as 2*atan(tan(V/2) / aspect), where the Saber aspect is
+// HEIGHT / WIDTH (0.75 for 640x480). This mirrors that derivation exactly;
+// degrees, as the engine stores.
+inline bool Halo2SaberHorizontalFovDegreesFromVertical(
+    float verticalFovDegrees, float aspectHeightOverWidth,
+    float& outHorizontalDegrees) noexcept
 {
     constexpr float kPi = 3.14159265f;
-    if (!std::isfinite(horizontalFovDegrees) || !std::isfinite(aspect) ||
-        horizontalFovDegrees <= 0.0f || horizontalFovDegrees >= 180.0f ||
-        aspect <= 0.0f)
+    if (!std::isfinite(verticalFovDegrees) ||
+        !std::isfinite(aspectHeightOverWidth) ||
+        verticalFovDegrees <= 0.0f || verticalFovDegrees >= 180.0f ||
+        aspectHeightOverWidth <= 0.0f)
     {
         return false;
     }
-    const float halfRadians = horizontalFovDegrees * 0.5f * kPi / 180.0f;
+    const float halfRadians = verticalFovDegrees * 0.5f * kPi / 180.0f;
     const float tangent = std::tan(halfRadians);
     if (!std::isfinite(tangent) || tangent <= 0.0f)
         return false;
-    const float vertical = std::atan(tangent / aspect);
-    if (!std::isfinite(vertical) || vertical <= 0.0f)
+    const float horizontal = std::atan(tangent / aspectHeightOverWidth);
+    if (!std::isfinite(horizontal) || horizontal <= 0.0f)
         return false;
-    outVerticalDegrees = (vertical + vertical) * 180.0f / kPi;
-    return std::isfinite(outVerticalDegrees) && outVerticalDegrees > 0.0f &&
-        outVerticalDegrees < 180.0f;
+    outHorizontalDegrees = (horizontal + horizontal) * 180.0f / kPi;
+    return std::isfinite(outHorizontalDegrees) &&
+        outHorizontalDegrees > 0.0f && outHorizontalDegrees < 180.0f;
+}
+
+// The headset cover for one Saber eye pass: the smallest symmetric
+// horizontal/vertical pair that contains both eyes' native frusta, each
+// axis solved on its own because 0x1C82C0 takes the two fields
+// independently (no aspect lock). Half-angles in radians for the
+// compositor, full angles in degrees for the camera record.
+struct Halo2SaberEyeCover
+{
+    float halfHorizontalRadians = 0.0f;
+    float halfVerticalRadians = 0.0f;
+    float horizontalDegrees = 0.0f;
+    float verticalDegrees = 0.0f;
+};
+
+inline bool Halo2DeriveSaberEyeCover(
+    const float leftFov[4], const float rightFov[4],
+    Halo2SaberEyeCover& out) noexcept
+{
+    constexpr float kPi = 3.14159265f;
+    constexpr float kMaximumAngle = 1.56f;
+    constexpr float kCoverMargin = 1.002f;
+    if (!leftFov || !rightFov)
+        return false;
+    float requiredTanX = 0.0f;
+    float requiredTanY = 0.0f;
+    const float* views[2] = {leftFov, rightFov};
+    for (const float* fov : views)
+    {
+        // OpenXR order: left (<0), right (>0), up (>0), down (<0).
+        if (!(fov[0] < 0.0f) || !(fov[1] > 0.0f) || !(fov[2] > 0.0f) ||
+            !(fov[3] < 0.0f))
+        {
+            return false;
+        }
+        for (int index = 0; index < 4; ++index)
+            if (!std::isfinite(fov[index]) ||
+                std::fabs(fov[index]) >= kMaximumAngle)
+                return false;
+        requiredTanX = (std::max)(requiredTanX,
+            (std::max)(std::fabs(std::tan(fov[0])),
+                       std::fabs(std::tan(fov[1]))));
+        requiredTanY = (std::max)(requiredTanY,
+            (std::max)(std::fabs(std::tan(fov[2])),
+                       std::fabs(std::tan(fov[3]))));
+    }
+    Halo2SaberEyeCover candidate{};
+    candidate.halfHorizontalRadians =
+        std::atan(requiredTanX * kCoverMargin);
+    candidate.halfVerticalRadians =
+        std::atan(requiredTanY * kCoverMargin);
+    candidate.horizontalDegrees =
+        2.0f * candidate.halfHorizontalRadians * 180.0f / kPi;
+    candidate.verticalDegrees =
+        2.0f * candidate.halfVerticalRadians * 180.0f / kPi;
+    if (!std::isfinite(candidate.halfHorizontalRadians) ||
+        !std::isfinite(candidate.halfVerticalRadians) ||
+        candidate.halfHorizontalRadians <= 0.01f ||
+        candidate.halfVerticalRadians <= 0.01f ||
+        candidate.halfHorizontalRadians >= 1.55f ||
+        candidate.halfVerticalRadians >= 1.55f)
+    {
+        return false;
+    }
+    out = candidate;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1584,9 +1675,15 @@ inline constexpr uint32_t kHalo2SaberViewRecordCameraOffset = 0x20;
 inline constexpr uint32_t kHalo2SaberViewRecordCameraBytes = 0x398;
 inline constexpr uint32_t kHalo2SaberViewRecordViewIdOffset = 0x10;
 
-// The engine's own rebuild of every derived matrix in the record, called with
-// both pointer arguments null exactly as 0x1C7740 calls it.
+// The engine's own rebuild of every derived matrix in the record. It takes
+// FOUR arguments: 0x1C7740 clears r9 too (0x1C790D xor r9d,r9d) and
+// 0x1C6D80 stores r9 (0x1C6DD7) and, when non-null, dereferences it as a
+// float[4] clip plane and rewrites the projection. It must be called with
+// all three pointers null. It reads +0x150/+0x154 in DEGREES through
+// 0x1C82C0 (P[0][0] = 1/tan(h/2), P[1][1] = 1/tan(v/2)); no clamp exists.
 inline constexpr uint32_t kHalo2SaberRebuildViewMatricesRva = 0x001C6D80;
+inline constexpr uint8_t kHalo2SaberRebuildViewMatricesEntryBytes[] = {
+    0x4C, 0x8B, 0xDC, 0x55, 0x49, 0x8D, 0xAB, 0xA8, 0xFB, 0xFF, 0xFF};
 // Normalises the camera basis rows and produces the inverse at camera+0x40.
 inline constexpr uint32_t kHalo2SaberCameraCommitRvaAlias =
     kHalo2SaberCameraCommitRva;

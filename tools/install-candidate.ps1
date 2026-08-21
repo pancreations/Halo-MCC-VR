@@ -136,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 21) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 21) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c11-real-stereo-copy-',
+            $head.Substring(0, 7) + '-halo2-c12-anniversary-fov-pose-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 21) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-11' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-12' -or
         [string]$manifest.halo2_candidate.status -cne
             'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'copied-finished-eye-frames-observer-single-pose-owner-both-cores-usable-pixel-checked' -or
+            'both-cores-usable-copied-eyes-verified-pose-ownership-saber-per-eye-cover-parity-tracking' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or

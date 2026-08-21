@@ -7005,27 +7005,66 @@ int main()
             "leaves the Saber matrix untouched instead of writing garbage "
             "into the renderer");
 
-        float saberVertical = 0.0f;
-        Check(Halo2SaberVerticalFovDegrees(90.0f, 1.0f, saberVertical) &&
-                  std::fabs(saberVertical - 90.0f) < 1.0e-2f,
-            "At a 1:1 aspect the Saber vertical field of view equals the "
-            "horizontal one, matching 0xBC560");
+        float saberHorizontal = 0.0f;
+        Check(Halo2SaberHorizontalFovDegreesFromVertical(
+                  90.0f, 1.0f, saberHorizontal) &&
+                  std::fabs(saberHorizontal - 90.0f) < 1.0e-2f,
+            "At a 1:1 aspect the Saber horizontal field of view equals the "
+            "vertical one, matching 0xBC560");
 
-        float wideVertical = 0.0f;
-        Check(Halo2SaberVerticalFovDegrees(90.0f, 2.0f, wideVertical) &&
-                  wideVertical > 0.0f && wideVertical < 90.0f,
-            "A wider aspect narrows the derived Saber vertical field of "
-            "view, so only a symmetric frustum is expressible");
+        // E-H2-7: 0xBC4F0(cam, 80) on the 640x480 constructor (aspect
+        // 0.75 = height/width) leaves +0x150 = 80 and +0x154 =
+        // 2*atan(tan 40 deg * 0.75) = 64.37 degrees; going the other way
+        // must reproduce 80.
+        float classicHorizontal = 0.0f;
+        Check(Halo2SaberHorizontalFovDegreesFromVertical(
+                  64.3698f, 0.75f, classicHorizontal) &&
+                  std::fabs(classicHorizontal - 80.0f) < 0.05f,
+            "The Saber aspect is height/width: 64 deg vertical at 0.75 is "
+            "the classic 80 deg horizontal");
 
-        float rejectedVertical = 7.0f;
-        Check(!Halo2SaberVerticalFovDegrees(0.0f, 1.0f, rejectedVertical) &&
-                  !Halo2SaberVerticalFovDegrees(180.0f, 1.0f,
-                      rejectedVertical) &&
-                  !Halo2SaberVerticalFovDegrees(90.0f, 0.0f,
-                      rejectedVertical) &&
-                  rejectedVertical == 7.0f,
+        float rejectedHorizontal = 7.0f;
+        Check(!Halo2SaberHorizontalFovDegreesFromVertical(
+                  0.0f, 1.0f, rejectedHorizontal) &&
+                  !Halo2SaberHorizontalFovDegreesFromVertical(
+                      180.0f, 1.0f, rejectedHorizontal) &&
+                  !Halo2SaberHorizontalFovDegreesFromVertical(
+                      90.0f, 0.0f, rejectedHorizontal) &&
+                  rejectedHorizontal == 7.0f,
             "An out-of-range Saber field of view is refused without "
             "changing the caller's value");
+
+        // The Saber eye cover is solved per axis from both eyes' native
+        // frusta: Quest 3 through Steam Link reports L-54 R40 U44 D-55 and
+        // the mirror for the other eye.
+        {
+            const float deg = pi / 180.0f;
+            const float leftEye[4] = {-54.0f * deg, 40.0f * deg, 44.0f * deg,
+                                      -55.0f * deg};
+            const float rightEye[4] = {-40.0f * deg, 54.0f * deg, 44.0f * deg,
+                                       -55.0f * deg};
+            Halo2SaberEyeCover cover{};
+            Check(Halo2DeriveSaberEyeCover(leftEye, rightEye, cover) &&
+                      std::fabs(cover.halfHorizontalRadians -
+                                std::atan(std::tan(54.0f * deg) * 1.002f)) <
+                          1.0e-4f &&
+                      std::fabs(cover.halfVerticalRadians -
+                                std::atan(std::tan(55.0f * deg) * 1.002f)) <
+                          1.0e-4f &&
+                      cover.horizontalDegrees > 108.0f &&
+                      cover.horizontalDegrees < 109.0f &&
+                      cover.verticalDegrees > 110.0f &&
+                      cover.verticalDegrees < 111.0f,
+                "E-H2-7 the Saber eye cover contains both eyes per axis "
+                "with the 0.2 percent margin");
+            const float badEye[4] = {0.1f, 40.0f * deg, 44.0f * deg,
+                                     -55.0f * deg};
+            Halo2SaberEyeCover untouchedCover{};
+            untouchedCover.horizontalDegrees = 3.0f;
+            Check(!Halo2DeriveSaberEyeCover(badEye, rightEye, untouchedCover) &&
+                      untouchedCover.horizontalDegrees == 3.0f,
+                "E-H2-7 a frustum with the wrong sign convention is refused");
+        }
 
         constexpr uint32_t sameFrameGeneration = 17;
         constexpr uint64_t sameFrameSerial = 41;

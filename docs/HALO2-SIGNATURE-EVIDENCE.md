@@ -1361,6 +1361,64 @@ the F6 toggle, re-application along a yawed game camera, the out-of-range
 clamp, an absolute pitch surviving a pitched recenter, and an exact yaw
 cancel.
 
+## E-H2-7: the Saber camera's field of view, and how the eye pass sets it
+
+Agent trace of halo2.dll, 2026-08-21 (all RVAs; Saber camera object 0x398
+bytes, embedded copy at view record +0x20):
+
+- **+0x150 is the HORIZONTAL and +0x154 the VERTICAL field of view, in
+  degrees.** The mod's constants had the names swapped. Proof: the
+  projection builder `0x1C82C0` reads `+0x150` at `0x1C82CF` into
+  `P[0][0] = 1/tan(fovx/2)` (`0x1C8386`) and `+0x154` at `0x1C8328` into
+  `P[1][1] = 1/tan(fovy/2)` (`0x1C8390`); the constructor's aspect at
+  `+0x158` is `0.75` for 640x480 (`0xBC162`), i.e. HEIGHT/WIDTH; and
+  `0xBC4F0(cam, 80.0)` leaves `+0x150 = 80` and `+0x154 = 2*atan(tan 40 *
+  0.75) = 64.0`, the classic 4:3 pair.
+- `0xBC560(cam, V)`: `+0x154 = V`, `+0x150 = 2*atan(tan(V/2) / aspect)`
+  (`0xBC571-0xBC5B5`), then `jmp 0xBC380`. `0xBC380(cam)` refreshes the
+  near-plane rectangle/polygon and px-per-metre fields (`+0x88..+0xA8`,
+  `+0x12C..+0x138`, `+0x15C/+0x160`) from `+0x150/+0x154/+0x80/+0x144/
+  +0x148`; it reads neither `+0x158` nor the matrix. `0xBC2B0` normalises
+  the three basis rows, copies `+0x00..0x3F` to `+0x40..0x7F` and inverts
+  the copy in place (`0xBC5D0`); it touches nothing at `+0x80` or above.
+- **`0x1C6D80` takes four arguments.** `0x1C7740` clears r9 as well
+  (`0x1C790D xor r9d,r9d`); `0x1C6D80` stores r9 (`0x1C6DD7`) and, when
+  non-null, dereferences it as a float[4] clip plane and rewrites the
+  projection column. The mod's three-argument typedef left r9 as garbage
+  on every call. Fixed: four arguments, all pointers null.
+- `0x1C6D80(record,0,0,0)` copies `cam+0x40` to `record+0x46C` (view),
+  bakes `record+0x4AC` (projection, reversed-Z, row-vector) from the
+  degree fields through `0x1C82C0`, and derives `+0x3EC = view*P` and
+  `+0x56C = rotView*P`. The scene render `0x2DF190` latches `record+0x20`
+  and the record itself into its context (`0x2DF2E8-0x2DF2F3`) and never
+  reads the per-user camera object; several per-view consumers re-derive
+  tangents from the record's degree fields (`0x1D6530`, `0x1CB0F0`,
+  `0x1D8FE0`, `0x247150/0x249120`, the shadow builders `0x21BC20`,
+  `0x21A2C2`), so the degree fields are load-bearing and writing matrices
+  alone would be insufficient.
+- No clamp exists on this path: `0xBC560`, `0xBC380`, `0x1C82C0`, `0x5F5ED`,
+  `0x7DFF10` contain no `maxss/minss`; the only `comiss` are two 1e-6 tests.
+- `+0x14C` (fovChanged) is written only by the bridge (`0x5F80E`); a
+  whole-module displacement scan found no camera-relative reader.
+- X off-centre exists natively (`+0x12C/+0x134` -> `P[2][0]`, `0x1C83B0-
+  0x1C8445`); Y off-centre does not. Left for a later candidate.
+
+### Per-eye recipe (C-H2-12, `ApplyEyeCamera`)
+
+1. Write the 16-float camera->world at `cam+0x00` (as before).
+2. Write `cam+0x150` = horizontal and `cam+0x154` = vertical cover in
+   degrees. The cover is solved PER AXIS from both eyes' native frusta
+   (`Halo2DeriveSaberEyeCover`), not aspect-locked, because `0x1C82C0` takes
+   the two fields independently.
+3. `0xBC380(cam)`, `0xBC2B0(cam)`, `0x1C6D80(record, 0, 0, 0)`.
+4. Run `0x2DF190` for the eye; restore the 0x398-byte camera copy and
+   re-run `0x1C6D80(record,0,0,0)`.
+
+The three helpers are pinned to their proven entry bytes at install
+(`kHalo2Saber*EntryBytes`); a module that differs keeps stock rendering.
+One line per generation logs the engine's stock degrees against the
+written cover.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are

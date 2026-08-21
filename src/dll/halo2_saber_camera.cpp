@@ -275,9 +275,14 @@ bool Halo2SaberCamera_WriteEye(
     {
         return false;
     }
-    float verticalDegrees = 0.0f;
-    if (!Halo2SaberVerticalFovDegrees(
-            horizontalFovDegrees, aspect, verticalDegrees))
+    // The engine's aspect is height/width, and 0xBC560 derives horizontal
+    // from vertical; invert that exactly: v = 2*atan(tan(h/2) * aspect).
+    constexpr float kPi = 3.14159265f;
+    const float halfHorizontal = horizontalFovDegrees * 0.5f * kPi / 180.0f;
+    const float verticalDegrees =
+        2.0f * std::atan(std::tan(halfHorizontal) * aspect) * 180.0f / kPi;
+    if (!std::isfinite(verticalDegrees) || verticalDegrees <= 0.0f ||
+        verticalDegrees >= 180.0f)
     {
         return false;
     }
