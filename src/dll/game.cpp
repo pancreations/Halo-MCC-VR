@@ -2104,8 +2104,10 @@ namespace
         if (!generation)
             return false;
         TitleRuntimeLifecycle lifecycle{};
-        lifecycle.installed = Halo2Stereo_Installed();
-        lifecycle.armed = Halo2Stereo_Armed();
+        lifecycle.installed = Halo2Stereo_Installed() ||
+            Halo2AnniversaryStereo_Installed();
+        lifecycle.armed = Halo2Stereo_Armed() ||
+            Halo2AnniversaryStereo_Armed();
         lifecycle.teardownRequested =
             lifecycle.installed && !lifecycle.armed;
         lifecycle.enabledCapabilities =
@@ -35629,7 +35631,11 @@ namespace
                     Halo2ColdObservation_ClassicRenderTreeRuns(
                         halo2Generation));
                 PublishHalo2StereoLifecycle(halo2Generation);
-                if (halo2Generation && !halo2CoreReady)
+                // The Anniversary core polled just above; while it is the
+                // armed one, the classic core being stock is not a reason
+                // to revoke the title's heartbeat every tick.
+                if (halo2Generation && !halo2CoreReady &&
+                    !Halo2AnniversaryStereo_Armed())
                     TitleAdapter_ClearHeartbeat(
                         GameTitle::Halo2, halo2Generation);
             }
@@ -36172,7 +36178,7 @@ bool Game_UsesTitleOwnedHeadTracking()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
     return TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
-        Halo2Stereo_Armed();
+        (Halo2Stereo_Armed() || Halo2AnniversaryStereo_Armed());
 #else
     return false;
 #endif
@@ -37252,7 +37258,12 @@ void Game_AutoVrTick()
         if (enteringHalo2ClaimContext)
             Halo2Stereo_SetPresentationReady(false);
         wasHalo2Stereo6DofContext = true;
-        const bool halo2StereoUsable = Halo2Stereo_Armed();
+        // Either Halo 2 core makes stereo usable. Consulting only the
+        // classic core forced stereo OFF within ~100 ms of every switch to
+        // Anniversary graphics ("M2 alternate-eye stereo OFF"), which is
+        // why the Anniversary detour fired 791 times and rendered 0 pairs.
+        const bool halo2StereoUsable =
+            Halo2Stereo_Armed() || Halo2AnniversaryStereo_Armed();
         const bool pauseTarget = VR_IsPausePresentationTarget();
         const bool pausePresentation = VR_IsPausePresentation();
         const bool mustClearForeignPause = Halo2MustClearForeignPause(
@@ -38856,8 +38867,12 @@ bool Game_GetRenderHalfFovs(
 #if HALOMCCVR_HALO2_STEREO6DOF
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
     {
-        const uint32_t generation = Halo2Stereo_Generation();
-        return Halo2Stereo_Armed() && generation &&
+        const bool classicArmed = Halo2Stereo_Armed();
+        const bool anniversaryArmed = Halo2AnniversaryStereo_Armed();
+        const uint32_t generation = classicArmed
+            ? Halo2Stereo_Generation()
+            : Halo2AnniversaryStereo_Generation();
+        return (classicArmed || anniversaryArmed) && generation &&
             VR_Halo2GetSynchronousHalfFovs(
                 generation, preparedFrameSerial, halfX, halfY);
     }

@@ -30,5 +30,6 @@ bool Halo2AnniversaryStereo_Poll(
 
 bool Halo2AnniversaryStereo_Installed() noexcept;
 bool Halo2AnniversaryStereo_Armed() noexcept;
+uint32_t Halo2AnniversaryStereo_Generation() noexcept;
 void Halo2AnniversaryStereo_RequestRecenter() noexcept;
 void Halo2AnniversaryStereo_ShutdownForVrFailure() noexcept;

@@ -83,6 +83,7 @@ namespace
         TrackedCameraFailed,
         EyeCameraFailed,
         CameraSaveFailed,
+        StockFovInvalid,
         FinalRtvNull,
         PairBeginRefused,
         SecondPassPreambleFaulted,
@@ -100,7 +101,7 @@ namespace
         "cadenceUnsupported", "viewRecordUnresolved",
         "observerBasisInvalid", "constantsUnreadable",
         "trackedCameraFailed", "eyeCameraFailed", "cameraSaveFailed",
-        "finalRtvNull", "pairBeginRefused", "secondPassPreambleFaulted",
+        "stockFovInvalid", "finalRtvNull", "pairBeginRefused", "secondPassPreambleFaulted",
         "eyeApplyFailed", "eyeBeginRefused", "sceneRenderFaulted",
         "eyeCompleteRefused", "cameraRestoreFailed", "pairCompleteRefused"};
     static_assert(sizeof(kBailNames) / sizeof(kBailNames[0]) ==
@@ -395,6 +396,33 @@ namespace
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
+        // The field of view this pass renders with is the engine's own: the
+        // per-eye write replaces only the camera matrix. Read the stock
+        // horizontal/vertical field of view in degrees from the saved copy
+        // (0xBC560 keeps both consistent with the aspect) and hand the
+        // half-angles to the compositor as this eye's symmetric cover.
+        // VR_Halo2GetSynchronousHalfFovs cannot be used here: the pair token
+        // holds the RESERVED serial until the pair completes, so it always
+        // answered false and no Anniversary eye could ever complete.
+        float stockVerticalDegrees = 0.0f;
+        float stockHorizontalDegrees = 0.0f;
+        std::memcpy(&stockVerticalDegrees,
+                    savedCamera + kHalo2SaberCameraVerticalFovDegreesOffset,
+                    sizeof(stockVerticalDegrees));
+        std::memcpy(&stockHorizontalDegrees,
+                    savedCamera + kHalo2SaberCameraHorizontalFovDegreesOffset,
+                    sizeof(stockHorizontalDegrees));
+        constexpr float kDegreesToRadians = 3.14159265f / 180.0f;
+        const float halfFovX = stockHorizontalDegrees * 0.5f * kDegreesToRadians;
+        const float halfFovY = stockVerticalDegrees * 0.5f * kDegreesToRadians;
+        if (!std::isfinite(halfFovX) || !std::isfinite(halfFovY) ||
+            halfFovX <= 0.01f || halfFovX >= 1.55f ||
+            halfFovY <= 0.01f || halfFovY >= 1.55f)
+        {
+            CountBail(Bail::StockFovInvalid);
+            CallStock(original, ctx, rdx, viewIndex);
+            return;
+        }
         int32_t savedLatch = 0;
         const bool haveLatch =
             ReadGuarded(base + kHalo2SaberSceneOnceLatchRva, savedLatch);
@@ -474,12 +502,8 @@ namespace
                 ok = false;
                 break;
             }
-            float halfX[2]{};
-            float halfY[2]{};
-            if (!VR_Halo2GetSynchronousHalfFovs(
-                    generation, serial, halfX, halfY) ||
-                !VR_Halo2CompleteSynchronousEye(
-                    generation, serial, eye, halfX[eye], halfY[eye]))
+            if (!VR_Halo2CompleteSynchronousEye(
+                    generation, serial, eye, halfFovX, halfFovY))
             {
                 CountBail(Bail::EyeCompleteRefused);
                 ok = false;
@@ -796,6 +820,11 @@ bool Halo2AnniversaryStereo_Armed() noexcept
     return g_armed.load(std::memory_order_acquire);
 }
 
+uint32_t Halo2AnniversaryStereo_Generation() noexcept
+{
+    return g_generation.load(std::memory_order_acquire);
+}
+
 void Halo2AnniversaryStereo_RequestRecenter() noexcept
 {
     g_recenterRequested.store(true, std::memory_order_release);
@@ -819,6 +848,7 @@ bool Halo2AnniversaryStereo_Poll(
 }
 bool Halo2AnniversaryStereo_Installed() noexcept { return false; }
 bool Halo2AnniversaryStereo_Armed() noexcept { return false; }
+uint32_t Halo2AnniversaryStereo_Generation() noexcept { return 0; }
 void Halo2AnniversaryStereo_RequestRecenter() noexcept {}
 void Halo2AnniversaryStereo_ShutdownForVrFailure() noexcept {}
 
