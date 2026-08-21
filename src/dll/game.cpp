@@ -37324,7 +37324,6 @@ void Game_AutoVrTick()
                 g_needRecenter.store(true, std::memory_order_release);
                 Halo2Stereo_RequestRecenter();
                 Halo2Observer6Dof_RequestRecenter();
-            Halo2Observer6Dof_RequestRecenter();
                 g_autoVrOwned.store(true, std::memory_order_release);
                 if (!VR_IsStereoEnabled())
                     VR_ToggleStereo();
