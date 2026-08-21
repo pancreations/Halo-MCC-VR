@@ -68,6 +68,34 @@ namespace
     std::atomic<uintptr_t> g_observerResult{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
 
+    // E-H2-6 publication: seqlock (even = stable), plain payload.
+    std::atomic<uint32_t> g_publicationVersion{0};
+    Halo2ObserverPosePublication g_publication{};
+    std::atomic<uint64_t> g_publicationTornReads{0};
+
+    void PublishPose(
+        uint32_t generation, uint64_t serial, const Halo2CameraBasis& stock,
+        const Halo2CameraBasis& tracked, const HeadReference& reference) noexcept
+    {
+        g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
+        g_publication.generation = generation;
+        g_publication.serial = serial;
+        g_publication.stock = stock;
+        g_publication.tracked = tracked;
+        std::memcpy(g_publication.referenceOrientation, reference.orientation,
+                    sizeof(g_publication.referenceOrientation));
+        std::memcpy(g_publication.referencePosition, reference.position,
+                    sizeof(g_publication.referencePosition));
+        g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    void ClearPublication() noexcept
+    {
+        g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
+        g_publication = {};
+        g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
+    }
+
     std::atomic<uint64_t> g_callbacks{0};
     std::atomic<uint64_t> g_appliedPoses{0};
     std::atomic<uint64_t> g_rejectedSamples{0};
@@ -268,6 +296,9 @@ namespace
             g_unreadableSamples.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        PublishPose(
+            g_generation.load(std::memory_order_acquire),
+            snapshot.preparedSerial, stock, tracked, g_reference);
         g_appliedPoses.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -766,6 +797,31 @@ bool Halo2Observer6Dof_Armed() noexcept
     return g_armed.load(std::memory_order_acquire);
 }
 
+bool Halo2Observer6Dof_ReadPublishedPose(
+    Halo2ObserverPosePublication& out) noexcept
+{
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        const uint32_t before =
+            g_publicationVersion.load(std::memory_order_acquire);
+        if (before & 1u)
+            continue;
+        Halo2ObserverPosePublication candidate = g_publication;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (g_publicationVersion.load(std::memory_order_acquire) != before)
+            continue;
+        if (!candidate.generation || !candidate.serial ||
+            !g_armed.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+        out = candidate;
+        return true;
+    }
+    g_publicationTornReads.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
 void Halo2Observer6Dof_RequestRecenter() noexcept
 {
     g_recenterRequested.store(true, std::memory_order_release);
@@ -790,6 +846,8 @@ bool Halo2Observer6Dof_Poll(
 
 bool Halo2Observer6Dof_Installed() noexcept { return false; }
 bool Halo2Observer6Dof_Armed() noexcept { return false; }
+bool Halo2Observer6Dof_ReadPublishedPose(
+    Halo2ObserverPosePublication&) noexcept { return false; }
 void Halo2Observer6Dof_RequestRecenter() noexcept {}
 void Halo2Observer6Dof_ShutdownForVrFailure() noexcept {}
 

@@ -8417,10 +8417,25 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     {x0, y0}, {x1 - x0, y1 - y0}};
                 projectionViews[i].subImage.imageArrayIndex = i;
 
-                static bool loggedNativeFov = false;
-                if (!loggedNativeFov && i + 1 == locatedViewCount)
+                // Log on the first frame and again whenever the cover or
+                // the rect changes (a graphics-mode switch, a new title),
+                // at most every two seconds; a once-ever line could not
+                // describe Halo 2's two renderers.
+                static float loggedCoverX = -1.0f, loggedCoverY = -1.0f;
+                static int32_t loggedRectW = -1, loggedRectH = -1;
+                static uint64_t loggedNativeFovMs = 0;
+                const uint64_t nativeFovNowMs = GetTickCount64();
+                const bool nativeFovChanged =
+                    loggedCoverX != coverX || loggedCoverY != coverY ||
+                    loggedRectW != x1 - x0 || loggedRectH != y1 - y0;
+                if (i + 1 == locatedViewCount && nativeFovChanged &&
+                    nativeFovNowMs - loggedNativeFovMs >= 2000)
                 {
-                    loggedNativeFov = true;
+                    loggedCoverX = coverX;
+                    loggedCoverY = coverY;
+                    loggedRectW = x1 - x0;
+                    loggedRectH = y1 - y0;
+                    loggedNativeFovMs = nativeFovNowMs;
                     LOG("M2: submitting native per-eye FOV; eye %u cover "
                         "%.1f/%.1f deg -> rect (%d,%d)+%dx%d of %ux%u, fov "
                         "L%.1f R%.1f U%.1f D%.1f deg",
@@ -12132,6 +12147,64 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
     return copied;
 }
 #endif
+
+static void Halo2DescribeRtv(
+    ID3D11RenderTargetView* rtv, char* out, size_t outBytes)
+{
+    if (!rtv)
+    {
+        _snprintf_s(out, outBytes, _TRUNCATE, "null");
+        return;
+    }
+    ID3D11Resource* resource = nullptr;
+    rtv->GetResource(&resource);
+    ID3D11Texture2D* texture = nullptr;
+    if (resource)
+    {
+        (void)resource->QueryInterface(
+            __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture));
+        resource->Release();
+    }
+    if (!texture)
+    {
+        _snprintf_s(out, outBytes, _TRUNCATE, "%p (not a 2D texture)", rtv);
+        return;
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    texture->GetDesc(&desc);
+    _snprintf_s(out, outBytes, _TRUNCATE, "%p tex %p %ux%u fmt %u samples %u",
+                rtv, texture, desc.Width, desc.Height,
+                static_cast<unsigned>(desc.Format), desc.SampleDesc.Count);
+    texture->Release();
+}
+
+void VR_Halo2LogTargetCensusOnce(
+    const char* tag, const uintptr_t slots[3], uint32_t viewIndex,
+    uint32_t viewMask)
+{
+    if (!g_context || !slots)
+        return;
+    char described[4][160]{};
+    for (int index = 0; index < 3; ++index)
+    {
+        Halo2DescribeRtv(
+            reinterpret_cast<ID3D11RenderTargetView*>(slots[index]),
+            described[index], sizeof(described[index]));
+    }
+    ID3D11RenderTargetView* bound[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    ID3D11DepthStencilView* depth = nullptr;
+    g_context->OMGetRenderTargets(
+        D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, bound, &depth);
+    Halo2DescribeRtv(bound[0], described[3], sizeof(described[3]));
+    for (auto* view : bound)
+        if (view) view->Release();
+    if (depth) depth->Release();
+    LOG("Halo 2 target census (%s, view %u, views seen mask 0x%X): "
+        "backbuffer slot 0x197EE58 = %s | primary scene slot 0x197EE60 = %s | "
+        "resolved scene slot 0x197EE88 = %s | OM slot 0 bound now = %s",
+        tag ? tag : "?", viewIndex, viewMask,
+        described[0], described[1], described[2], described[3]);
+}
 
 void VR_EndRasterEye()
 {

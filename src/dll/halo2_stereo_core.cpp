@@ -13,6 +13,7 @@
 #include "../common/config.h"
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
+#include "game.h"
 #include "halo2_observer_6dof.h"
 #include "vr.h"
 
@@ -76,6 +77,10 @@ namespace
         std::atomic<uint64_t> droppedPairs{};
         std::atomic<uint64_t> restoreFailures{};
         std::atomic<uint64_t> transactionExceptions{};
+        std::atomic<uint64_t> posePublished{};
+        std::atomic<uint64_t> poseRederived{};
+        std::atomic<uint64_t> poseSelfTracked{};
+        std::atomic<uint64_t> poseUnavailable{};
     };
 
     struct TelemetrySnapshot
@@ -96,6 +101,10 @@ namespace
         uint64_t droppedPairs = 0;
         uint64_t restoreFailures = 0;
         uint64_t transactionExceptions = 0;
+        uint64_t posePublished = 0;
+        uint64_t poseRederived = 0;
+        uint64_t poseSelfTracked = 0;
+        uint64_t poseUnavailable = 0;
     };
 
     struct CameraReadback
@@ -370,17 +379,23 @@ namespace
         return false;
     }
 
-    bool BuildEyeCamera(
+    // E-H2-6: the classic window cameras are BUILT from the observer result
+    // record (0x960230 -> 0x6F0E60 -> 0x960780 -> 0x7DF5A0). When the observer
+    // core wrote the head pose into that record this frame, the camera in
+    // hand is already the tracked centre and applying the head delta again
+    // doubles it (87.0 observer poses/s against 87.6 window callbacks/s,
+    // 1:1, on 2026-08-21). When the observer skipped the frame, or the
+    // engine substituted a non-observer camera, the camera in hand is NOT
+    // tracked and this core must track it itself. The publication decides.
+    bool ResolveTrackedCenter(
         const Halo2CameraBasis& stock, const HeadReference& reference,
-        const Halo2SynchronousVrRenderSnapshot& snapshot, int eye,
-        Halo2CameraBasis& output) noexcept
+        const Halo2SynchronousVrRenderSnapshot& snapshot,
+        uint32_t generation, bool published,
+        const Halo2ObserverPosePublication& publication,
+        Halo2CameraBasis& center) noexcept
     {
-        if (eye < kHalo2LeftEye || eye > kHalo2RightEye ||
-            !snapshot.headPoseValid || !Halo2ValidateCameraBasis(stock))
-        {
+        if (!snapshot.headPoseValid || !Halo2ValidateCameraBasis(stock))
             return false;
-        }
-
         Halo2TrackedHeadInput head{};
         std::memcpy(
             head.orientation, snapshot.headOrientation,
@@ -388,27 +403,55 @@ namespace
         std::memcpy(
             head.position, snapshot.headPosition,
             sizeof(head.position));
-        std::memcpy(
-            head.referenceOrientation, reference.orientation,
-            sizeof(head.referenceOrientation));
-        std::memcpy(
-            head.referencePosition, reference.position,
-            sizeof(head.referencePosition));
+        head.positional = Game_IsPositionalTracking();
+        head.worldScale = Game_GetWorldScale();
 
-        // E-H2-6: the classic window cameras are BUILT from the observer
-        // result record (0x960230 -> 0x6F0E60 -> 0x960780 -> 0x7DF5A0), and
-        // the observer core has already written the head pose into that
-        // record this frame. While it owns the pose, `stock` is therefore
-        // already the tracked centre; applying the head delta here again
-        // doubled every rotation and translation (87.0 observer poses/s
-        // against 87.6 window callbacks/s, 1:1, on 2026-08-21). Only the
-        // per-eye offset is added. Without an armed observer this core is
-        // the sole owner and tracks the centre itself, as before.
-        Halo2CameraBasis trackedCenter{};
-        if (Halo2Observer6Dof_Armed())
-            trackedCenter = stock;
-        else if (!Halo2BuildTrackedCenterCamera(stock, head, trackedCenter))
+        switch (Halo2SelectPoseOwner(
+            published, publication.generation, publication.serial,
+            publication.tracked, stock, generation,
+            snapshot.preparedSerial))
+        {
+        case Halo2PoseOwnerDecision::UsePublishedTracked:
+            g_telemetry.posePublished.fetch_add(1, std::memory_order_relaxed);
+            center = stock;
+            return true;
+        case Halo2PoseOwnerDecision::RederiveFromPublishedStock:
+            g_telemetry.poseRederived.fetch_add(1, std::memory_order_relaxed);
+            std::memcpy(
+                head.referenceOrientation, publication.referenceOrientation,
+                sizeof(head.referenceOrientation));
+            std::memcpy(
+                head.referencePosition, publication.referencePosition,
+                sizeof(head.referencePosition));
+            return Halo2BuildTrackedCenterCamera(
+                publication.stock, head, center);
+        case Halo2PoseOwnerDecision::SelfTrack:
+            g_telemetry.poseSelfTracked.fetch_add(1, std::memory_order_relaxed);
+            std::memcpy(
+                head.referenceOrientation, reference.orientation,
+                sizeof(head.referenceOrientation));
+            std::memcpy(
+                head.referencePosition, reference.position,
+                sizeof(head.referencePosition));
+            return Halo2BuildTrackedCenterCamera(stock, head, center);
+        case Halo2PoseOwnerDecision::NoPose:
+        default:
+            g_telemetry.poseUnavailable.fetch_add(1, std::memory_order_relaxed);
             return false;
+        }
+    }
+
+    bool BuildEyeCamera(
+        const Halo2CameraBasis& trackedCenter,
+        const Halo2SynchronousVrRenderSnapshot& snapshot, int eye,
+        Halo2CameraBasis& output) noexcept
+    {
+        if (eye < kHalo2LeftEye || eye > kHalo2RightEye ||
+            !snapshot.headPoseValid ||
+            !Halo2ValidateCameraBasis(trackedCenter))
+        {
+            return false;
+        }
         return Halo2BuildSynchronousEyeCamera(
             trackedCenter, snapshot.eyes[eye].position,
             snapshot.eyes[eye].orientation, output);
@@ -1358,15 +1401,35 @@ namespace
             return false;
         }
 
+        Halo2ObserverPosePublication publication{};
+        bool published = false;
+        __try
+        {
+            published = Halo2Observer6Dof_ReadPublishedPose(publication);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            published = false;
+        }
+        Halo2CameraBasis renderCenter{};
+        Halo2CameraBasis rasterCenter{};
+        if (!ResolveTrackedCenter(
+                render.basis, reference, snapshot, generation, published,
+                publication, renderCenter) ||
+            !ResolveTrackedCenter(
+                raster.basis, reference, snapshot, generation, published,
+                publication, rasterCenter))
+        {
+            return false;
+        }
+
         EyeCameraPair eyes[kHalo2EyeCount]{};
         for (int eye = 0; eye < kHalo2EyeCount; ++eye)
         {
             if (!BuildEyeCamera(
-                    render.basis, reference, snapshot, eye,
-                    eyes[eye].render) ||
+                    renderCenter, snapshot, eye, eyes[eye].render) ||
                 !BuildEyeCamera(
-                    raster.basis, reference, snapshot, eye,
-                    eyes[eye].raster))
+                    rasterCenter, snapshot, eye, eyes[eye].raster))
             {
                 return false;
             }
@@ -1669,6 +1732,10 @@ namespace
         H2_READ_TELEMETRY(droppedPairs);
         H2_READ_TELEMETRY(restoreFailures);
         H2_READ_TELEMETRY(transactionExceptions);
+        H2_READ_TELEMETRY(posePublished);
+        H2_READ_TELEMETRY(poseRederived);
+        H2_READ_TELEMETRY(poseSelfTracked);
+        H2_READ_TELEMETRY(poseUnavailable);
 #undef H2_READ_TELEMETRY
         return out;
     }
@@ -1693,6 +1760,10 @@ namespace
         H2_RESET_TELEMETRY(droppedPairs);
         H2_RESET_TELEMETRY(restoreFailures);
         H2_RESET_TELEMETRY(transactionExceptions);
+        H2_RESET_TELEMETRY(posePublished);
+        H2_RESET_TELEMETRY(poseRederived);
+        H2_RESET_TELEMETRY(poseSelfTracked);
+        H2_RESET_TELEMETRY(poseUnavailable);
 #undef H2_RESET_TELEMETRY
         g_lastTelemetry = {};
         g_lastTelemetryMs = 0;
@@ -1724,7 +1795,9 @@ namespace
                 "stockInner=%llu snapshotMiss=%llu foreignOuter=%llu "
                 "foreignInner=%llu invalid=%llu duplicate=%llu claimed=%llu "
                 "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
-                "restoreFail=%llu exception=%llu poseOwner=%s",
+                "restoreFail=%llu exception=%llu poseOwner=%s "
+                "posePublished=%llu poseRederived=%llu poseSelf=%llu "
+                "poseUnavailable=%llu",
                 static_cast<unsigned long long>(current.outerCallbacks),
                 static_cast<unsigned long long>(current.innerCallbacks),
                 static_cast<unsigned long long>(current.stockOuterCalls),
@@ -1741,7 +1814,11 @@ namespace
                 static_cast<unsigned long long>(current.droppedPairs),
                 static_cast<unsigned long long>(current.restoreFailures),
                 static_cast<unsigned long long>(current.transactionExceptions),
-                Halo2Observer6Dof_Armed() ? "observer" : "classicCore");
+                Halo2Observer6Dof_Armed() ? "observer" : "classicCore",
+                static_cast<unsigned long long>(current.posePublished),
+                static_cast<unsigned long long>(current.poseRederived),
+                static_cast<unsigned long long>(current.poseSelfTracked),
+                static_cast<unsigned long long>(current.poseUnavailable));
             g_lastTelemetry = current;
         }
         g_lastTelemetryMs = now;

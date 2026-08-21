@@ -880,6 +880,83 @@ inline bool Halo2BuildTrackedCenterCamera(
     return true;
 }
 
+// E-H2-6 pose ownership. The observer core publishes, once per game frame,
+// the engine's camera as it found it (`stock`) and the camera it wrote
+// (`tracked`), with the recenter reference it used. A per-eye core then
+// decides, from the camera it actually holds, whether that camera already
+// carries the head pose. This is what stops a frame the observer skipped
+// (snapshot not ready yet - 576 of ~5300 frames on 2026-08-21) from being
+// rendered as if it were tracked, and what keeps a director/playback camera
+// (0x960780's override branch, not observer-derived) from being mistaken
+// for one.
+struct Halo2ObserverPosePublication
+{
+    uint32_t generation = 0;
+    uint64_t serial = 0;
+    Halo2CameraBasis stock{};
+    Halo2CameraBasis tracked{};
+    float referenceOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float referencePosition[3]{};
+};
+
+inline bool Halo2CameraBasisMatches(
+    const Halo2CameraBasis& left, const Halo2CameraBasis& right) noexcept
+{
+    constexpr float kPositionEpsilonWorldUnits = 1.0e-3f;
+    constexpr float kMinimumAxisDot = 0.9999f;
+    float forwardDot = 0.0f;
+    float upDot = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(left.position[axis]) ||
+            !std::isfinite(right.position[axis]) ||
+            std::fabs(left.position[axis] - right.position[axis]) >
+                kPositionEpsilonWorldUnits)
+        {
+            return false;
+        }
+        forwardDot += left.forward[axis] * right.forward[axis];
+        upDot += left.up[axis] * right.up[axis];
+    }
+    return std::isfinite(forwardDot) && std::isfinite(upDot) &&
+        forwardDot > kMinimumAxisDot && upDot > kMinimumAxisDot;
+}
+
+enum class Halo2PoseOwnerDecision : uint8_t
+{
+    // No publication, or the camera in hand is not the observer's tracked
+    // camera (observer skipped this frame, or a non-observer camera): this
+    // core tracks the centre itself from its own snapshot.
+    SelfTrack = 0,
+    // The camera in hand is the observer's tracked camera for this exact
+    // prepared serial: use it as the centre and add only the eye offset.
+    UsePublishedTracked,
+    // The camera in hand is the observer's tracked camera, but for a
+    // different prepared serial: rebuild the centre from the published stock
+    // with this core's own (current) snapshot and the observer's reference.
+    RederiveFromPublishedStock,
+    // The publication claims to describe this camera but belongs to another
+    // module generation: nothing can be trusted, render stock this frame.
+    NoPose,
+};
+
+inline Halo2PoseOwnerDecision Halo2SelectPoseOwner(
+    bool published, uint32_t publishedGeneration, uint64_t publishedSerial,
+    const Halo2CameraBasis& publishedTracked,
+    const Halo2CameraBasis& engineCamera,
+    uint32_t generation, uint64_t serial) noexcept
+{
+    if (!published || !publishedSerial)
+        return Halo2PoseOwnerDecision::SelfTrack;
+    if (!Halo2CameraBasisMatches(engineCamera, publishedTracked))
+        return Halo2PoseOwnerDecision::SelfTrack;
+    if (publishedGeneration != generation || !generation)
+        return Halo2PoseOwnerDecision::NoPose;
+    return publishedSerial == serial
+        ? Halo2PoseOwnerDecision::UsePublishedTracked
+        : Halo2PoseOwnerDecision::RederiveFromPublishedStock;
+}
+
 inline bool Halo2BuildSynchronousEyeCamera(
     const Halo2CameraBasis& trackedCenter, const float eyePositionMeters[3],
     const float eyeOrientation[4], Halo2CameraBasis& output) noexcept

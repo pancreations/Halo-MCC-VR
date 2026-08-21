@@ -6607,6 +6607,49 @@ int main()
             "C-H2-12 keeps the headset's absolute pitch across a recenter "
             "taken while looking down");
 
+        // E-H2-6 pose ownership predicate.
+        {
+            Halo2CameraBasis tracked = haloCamera;
+            tracked.position[0] += 0.3f;
+            Halo2CameraBasis displaced = tracked;
+            displaced.position[1] += 0.5f;
+            Halo2CameraBasis rotated = tracked;
+            rotated.forward[0] = std::cos(2.0f * pi / 180.0f);
+            rotated.forward[1] = std::sin(2.0f * pi / 180.0f);
+            Check(Halo2SelectPoseOwner(
+                      false, 7, 100, tracked, tracked, 7, 100) ==
+                      Halo2PoseOwnerDecision::SelfTrack,
+                "E-H2-6 no publication: the per-eye core tracks itself");
+            Check(Halo2SelectPoseOwner(
+                      true, 7, 100, tracked, tracked, 7, 100) ==
+                      Halo2PoseOwnerDecision::UsePublishedTracked,
+                "E-H2-6 same serial, same camera: use the published centre");
+            Check(Halo2SelectPoseOwner(
+                      true, 7, 99, tracked, tracked, 7, 100) ==
+                      Halo2PoseOwnerDecision::RederiveFromPublishedStock,
+                "E-H2-6 older serial, same camera: rederive from the stock");
+            Check(Halo2SelectPoseOwner(
+                      true, 7, 100, tracked, displaced, 7, 100) ==
+                      Halo2PoseOwnerDecision::SelfTrack,
+                "E-H2-6 a camera the observer did not write (0x960780 "
+                "override, or a skipped frame) is tracked by the core");
+            Check(Halo2SelectPoseOwner(
+                      true, 7, 100, tracked, rotated, 7, 100) ==
+                      Halo2PoseOwnerDecision::SelfTrack,
+                "E-H2-6 a 2-degree rotation is not the published camera");
+            Check(Halo2SelectPoseOwner(
+                      true, 6, 100, tracked, tracked, 7, 100) ==
+                      Halo2PoseOwnerDecision::NoPose,
+                "E-H2-6 a matching camera from another generation drops "
+                "the frame");
+            Halo2CameraBasis nearlySame = tracked;
+            nearlySame.position[2] += 0.0005f;
+            Check(Halo2CameraBasisMatches(tracked, nearlySame) &&
+                      !Halo2CameraBasisMatches(tracked, displaced) &&
+                      !Halo2CameraBasisMatches(tracked, rotated),
+                "E-H2-6 basis match tolerates sub-millimetre jitter only");
+        }
+
         Halo2TrackedHeadInput yawedReference{};
         yawedReference.orientation[1] = std::sin(halfThirty);
         yawedReference.orientation[3] = std::cos(halfThirty);

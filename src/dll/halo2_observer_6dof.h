@@ -29,6 +29,13 @@ bool Halo2Observer6Dof_Poll(
 bool Halo2Observer6Dof_Installed() noexcept;
 bool Halo2Observer6Dof_Armed() noexcept;
 
+// The pose the observer core applied on its most recent successful frame
+// (E-H2-6 publication). Lock-free seqlock read, bounded; false when nothing
+// has been published this generation or the read was torn four times.
+struct Halo2ObserverPosePublication;
+bool Halo2Observer6Dof_ReadPublishedPose(
+    Halo2ObserverPosePublication& out) noexcept;
+
 // Atomic-only. The next valid sample becomes the new orientation/translation
 // reference; safe to call from the universal recenter path.
 void Halo2Observer6Dof_RequestRecenter() noexcept;

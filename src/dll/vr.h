@@ -466,6 +466,12 @@ bool VR_CaptureRenderedEye(int eye);
 bool VR_CaptureBackbufferEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
+// One-shot Halo 2 evidence: describes the textures behind three engine RTV
+// slots and the render target bound at the moment of the call. COM work,
+// caller gates it to once per module generation; never per frame.
+void VR_Halo2LogTargetCensusOnce(
+    const char* tag, const uintptr_t slots[3], uint32_t viewIndex,
+    uint32_t viewMask);
 // ODST's native CHUD phases are part of the same logical per-eye render as
 // Halo 3, but ODST can rebind the flat output target while those phases run.
 // Keep that title-specific phase on the active eye cache and restore every

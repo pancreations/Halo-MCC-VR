@@ -13,6 +13,7 @@
 #include "../common/config.h"
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
+#include "game.h"
 #include "halo2_observer_6dof.h"
 #include "halo2_saber_camera.h"
 #include "vr.h"
@@ -107,6 +108,13 @@ namespace
     static_assert(sizeof(kBailNames) / sizeof(kBailNames[0]) ==
         static_cast<size_t>(Bail::Count));
     std::atomic<uint64_t> g_bails[static_cast<size_t>(Bail::Count)]{};
+    // E-H2-6 pose ownership outcomes and view-selection evidence.
+    std::atomic<uint64_t> g_posePublished{0};
+    std::atomic<uint64_t> g_poseRederived{0};
+    std::atomic<uint64_t> g_poseSelfTracked{0};
+    std::atomic<uint32_t> g_viewIndexMask{0};
+    std::atomic<uint32_t> g_lastViewIndex{0};
+    std::atomic<uint32_t> g_censusGeneration{0};
     void CountBail(Bail reason) noexcept
     {
         g_bails[static_cast<size_t>(reason)].fetch_add(
@@ -358,15 +366,51 @@ namespace
         std::memcpy(head.referencePosition, g_reference.position,
                     sizeof(head.referencePosition));
 
-        // E-H2-6: `stock` was read from the observer result record, which
-        // the observer core has already head-tracked this frame when it is
-        // armed. Tracking it again here doubles the pose exactly as it did
-        // in the classic core; only the per-eye offset is added.
+        head.positional = Game_IsPositionalTracking();
+        head.worldScale = Game_GetWorldScale();
+
+        // E-H2-6: `stock` was read from the observer result record. When the
+        // observer core wrote this frame's head pose into it, tracking it
+        // again doubles the pose exactly as it did in the classic core. The
+        // Saber scene renders on its own thread, so its serial frequently
+        // differs from the observer's: rebuild from the published stock
+        // with THIS snapshot and the observer's own reference in that case.
+        Halo2ObserverPosePublication publication{};
+        bool published = false;
+        __try { published = Halo2Observer6Dof_ReadPublishedPose(publication); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { published = false; }
         Halo2CameraBasis tracked{};
         Halo2CameraBasis eyes[kHalo2EyeCount]{};
-        if (Halo2Observer6Dof_Armed())
+        bool centerOk = false;
+        switch (Halo2SelectPoseOwner(
+            published, publication.generation, publication.serial,
+            publication.tracked, stock, generation, serial))
+        {
+        case Halo2PoseOwnerDecision::UsePublishedTracked:
+            g_posePublished.fetch_add(1, std::memory_order_relaxed);
             tracked = stock;
-        else if (!Halo2BuildTrackedCenterCamera(stock, head, tracked))
+            centerOk = true;
+            break;
+        case Halo2PoseOwnerDecision::RederiveFromPublishedStock:
+            g_poseRederived.fetch_add(1, std::memory_order_relaxed);
+            std::memcpy(head.referenceOrientation,
+                        publication.referenceOrientation,
+                        sizeof(head.referenceOrientation));
+            std::memcpy(head.referencePosition, publication.referencePosition,
+                        sizeof(head.referencePosition));
+            centerOk = Halo2BuildTrackedCenterCamera(
+                publication.stock, head, tracked);
+            break;
+        case Halo2PoseOwnerDecision::SelfTrack:
+            g_poseSelfTracked.fetch_add(1, std::memory_order_relaxed);
+            centerOk = Halo2BuildTrackedCenterCamera(stock, head, tracked);
+            break;
+        case Halo2PoseOwnerDecision::NoPose:
+        default:
+            centerOk = false;
+            break;
+        }
+        if (!centerOk)
         {
             CountBail(Bail::TrackedCameraFailed);
             CallStock(original, ctx, rdx, viewIndex);
@@ -384,13 +428,24 @@ namespace
             }
         }
 
-        // Everything the two passes disturb is saved before the first of them.
+        // Everything the two passes disturb is saved before the first of them:
+        // the record's embedded camera, and the 0xC8 context bytes the
+        // engine's caller prepared for THIS call (one call site also stores a
+        // resource pointer at ctx+0x98 after its memset, which the scene pass
+        // consumes; zeroing it for the second eye would not be what the
+        // engine handed the first).
         static thread_local uint8_t savedCamera[kHalo2SaberViewRecordCameraBytes];
+        static thread_local uint8_t savedContext[kHalo2SaberSceneContextResetBytes];
         if (!CopyGuarded(
                 savedCamera,
                 reinterpret_cast<const void*>(
                     record + kHalo2SaberViewRecordCameraOffset),
-                kHalo2SaberViewRecordCameraBytes))
+                kHalo2SaberViewRecordCameraBytes) ||
+            !CopyGuarded(
+                savedContext,
+                reinterpret_cast<const uint8_t*>(ctx) +
+                    kHalo2SaberSceneContextResetOffset,
+                kHalo2SaberSceneContextResetBytes))
         {
             CountBail(Bail::CameraSaveFailed);
             CallStock(original, ctx, rdx, viewIndex);
@@ -454,10 +509,10 @@ namespace
                 // pass consumed, or the second eye silently skips work.
                 __try
                 {
-                    std::memset(
+                    std::memcpy(
                         reinterpret_cast<uint8_t*>(ctx) +
                             kHalo2SaberSceneContextResetOffset,
-                        0, kHalo2SaberSceneContextResetBytes);
+                        savedContext, kHalo2SaberSceneContextResetBytes);
                     if (haveLatch)
                     {
                         *reinterpret_cast<volatile int32_t*>(
@@ -496,6 +551,23 @@ namespace
             // The raster-eye scope is closed whether or not the engine
             // returned normally; that is where the finished eye is copied.
             VR_EndRasterEye();
+            // Once per generation, name what the engine actually holds at
+            // this moment: the three classic output slots and the target
+            // bound right now. Whether 0x197EE58 is the Saber frame when
+            // the scene render returns is NOT proven either way; this is
+            // the evidence, next to the pixel check.
+            if (eye == 0 && rendered &&
+                g_censusGeneration.load(std::memory_order_acquire) != generation)
+            {
+                g_censusGeneration.store(generation, std::memory_order_release);
+                uintptr_t slots[3]{};
+                (void)ReadGuarded(base + kHalo2RetailFinalOutputRtvSlotRva, slots[0]);
+                (void)ReadGuarded(base + kHalo2RetailFinalOutputRtvSlotRva + 8, slots[1]);
+                (void)ReadGuarded(base + kHalo2RetailFinalOutputRtvSlotRva + 0x30, slots[2]);
+                VR_Halo2LogTargetCensusOnce(
+                    "Anniversary eye 0 end", slots, viewIndex,
+                    g_viewIndexMask.load(std::memory_order_relaxed));
+            }
             if (!rendered)
             {
                 CountBail(Bail::SceneRenderFaulted);
@@ -549,6 +621,9 @@ namespace
         if (!original)
             return;
 
+        if (viewIndex < 32)
+            g_viewIndexMask.fetch_or(1u << viewIndex, std::memory_order_relaxed);
+        g_lastViewIndex.store(viewIndex, std::memory_order_relaxed);
         if (g_callbacks.fetch_add(1, std::memory_order_relaxed) == 0)
         {
             LOG("Halo 2 Anniversary stereo: the remastered scene render "
@@ -743,12 +818,19 @@ namespace
                 used += static_cast<size_t>(written);
         }
         LOG("Halo 2 Anniversary stereo: %llu scene callbacks, %llu eye pairs, "
-            "%llu drops, %llu stock passes, %llu exceptions; bail reasons: %s",
+            "%llu drops, %llu stock passes, %llu exceptions; pose published=%llu "
+            "rederived=%llu self=%llu; views seen mask=0x%X last=%u; "
+            "bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_stockPasses.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_exceptions.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_posePublished.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_poseRederived.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_poseSelfTracked.load(std::memory_order_relaxed)),
+            g_viewIndexMask.load(std::memory_order_relaxed),
+            g_lastViewIndex.load(std::memory_order_relaxed),
             used ? reasons : "none");
     }
 }
