@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c10-both-modes-stereo',
+        'halo2-c11-real-stereo-copy',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 20
+        schema_version = 21
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-10'
+            id = 'C-H2-11'
             status = 'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
-                'headset-owned-observer-camera-position-and-orientation-in-both-renderers-plus-live-renderer-report'
+                'copied-finished-eye-frames-observer-single-pose-owner-both-cores-usable-pixel-checked'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
