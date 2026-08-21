@@ -527,9 +527,12 @@ namespace
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
+        uintptr_t sceneRtv = 0;
+        (void)ReadGuarded(base + kHalo2RetailFinalOutputRtvSlotRva + 8, sceneRtv);
         if (!VR_Halo2BeginSynchronousPair(
                 generation, serial,
-                reinterpret_cast<ID3D11RenderTargetView*>(finalRtv)))
+                reinterpret_cast<ID3D11RenderTargetView*>(finalRtv),
+                reinterpret_cast<ID3D11RenderTargetView*>(sceneRtv)))
         {
             CountBail(Bail::PairBeginRefused);
             CallStock(original, ctx, rdx, viewIndex);

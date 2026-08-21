@@ -347,9 +347,14 @@ bool VR_Halo2GetCurrentPreparedCadence(
 // The game core resolves the title-proven final-output RTV outside its hot
 // hooks and lends that raw pointer for this synchronous render transaction.
 // No COM call, allocation, lock, scan, or log occurs in these functions.
+// `sceneRtv` is the engine's primary scene target (slot 0x197EE60), lent as
+// a second capture candidate: the capture learns at runtime which target
+// actually carries per-eye content (E-H2-8) instead of assuming the
+// final-output slot does.
 bool VR_Halo2BeginSynchronousPair(
     uint32_t generation, uint64_t preparedSerial,
-    ID3D11RenderTargetView* finalRtv);
+    ID3D11RenderTargetView* finalRtv,
+    ID3D11RenderTargetView* sceneRtv = nullptr);
 bool VR_Halo2BeginSynchronousEye(
     uint32_t generation, uint64_t preparedSerial, int eye);
 bool VR_Halo2CompleteSynchronousEye(

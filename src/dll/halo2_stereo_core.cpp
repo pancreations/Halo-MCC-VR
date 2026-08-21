@@ -993,10 +993,22 @@ namespace
         uint32_t generation, uint64_t serial,
         ID3D11RenderTargetView* backbufferRtv) noexcept
     {
+        // The primary scene slot sits 8 bytes past the final-output slot
+        // (0x197EE60); lent as the second capture candidate (E-H2-8).
+        ID3D11RenderTargetView* sceneRtv = nullptr;
+        const uintptr_t slot =
+            g_backbufferRtvSlotAddress.load(std::memory_order_acquire);
+        __try
+        {
+            if (slot)
+                std::memcpy(&sceneRtv, reinterpret_cast<const void*>(slot + 8),
+                            sizeof(sceneRtv));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { sceneRtv = nullptr; }
         __try
         {
             return VR_Halo2BeginSynchronousPair(
-                generation, serial, backbufferRtv);
+                generation, serial, backbufferRtv, sceneRtv);
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
