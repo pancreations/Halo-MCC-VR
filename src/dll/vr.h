@@ -159,6 +159,12 @@ enum class Halo2SynchronousPresentationDecision : uint8_t
     SynchronousStereo,
     StockScreen,
     Drop,
+    // No pair was rendered for this prepared serial (the game runs below
+    // the panel rate), but the last complete pair is intact in the eye
+    // caches and fresh: re-present it with the pose it was rendered with
+    // and let the compositor reproject, exactly as a missed frame is
+    // handled in every other title. Never mixes eyes from two frames.
+    RepeatLastPair,
 };
 
 // C-H2-6 presentation admission is exact and frame-local. A currently live
@@ -184,7 +190,8 @@ Halo2SynchronousSelectPresentation(
     bool stereoRequested, bool projectionReady, bool activeHalo2,
     bool exactLivePair,
     uint32_t generation, uint64_t preparedSerial,
-    const Halo2SynchronousPresentationStamp& presentation) noexcept
+    const Halo2SynchronousPresentationStamp& presentation,
+    bool repeatablePair = false) noexcept
 {
     const Halo2SynchronousFrameDisposition disposition =
         Halo2SynchronousClassifyFrame(
@@ -209,10 +216,12 @@ Halo2SynchronousSelectPresentation(
         return Halo2SynchronousPresentationDecision::Drop;
     case Halo2SynchronousFrameDisposition::Unclaimed:
     default:
-        // No original eye render ran, so ordinary late-ineligible behavior may
-        // still present the untouched stock backbuffer. When stereo remains
-        // eligible, identify the intentional C-H2-6 pre-stereo screen path for
-        // diagnostics.
+        // No original eye render ran. With stereo eligible and the last
+        // complete pair intact and fresh, re-present that pair; otherwise
+        // ordinary late-ineligible behavior presents the untouched stock
+        // backbuffer, identified as the C-H2-6 pre-stereo screen path.
+        if (stereoRequested && projectionReady && repeatablePair)
+            return Halo2SynchronousPresentationDecision::RepeatLastPair;
         return stereoRequested
             ? Halo2SynchronousPresentationDecision::StockScreen
             : Halo2SynchronousPresentationDecision::SharedDefault;
@@ -361,6 +370,13 @@ void VR_Halo2InvalidateSynchronousPair(
 void VR_ResetHalo2SynchronousStereo();
 // Exact pair admission and raster-cover publication. Both eyes, the pair
 // token, title generation, and cache-resource epoch must name this serial.
+// The cover of the last complete pair, when it may be re-presented for a
+// prepared serial that has no pair of its own: same generation, no pair
+// reserved or in flight, both eye caches still holding that pair, and not
+// older than the freshness bound. Also records the decision's freshness.
+bool VR_Halo2GetRepeatableHalfFovs(
+    uint32_t generation, uint64_t preparedSerial,
+    float halfX[2], float halfY[2]);
 bool VR_Halo2GetSynchronousHalfFovs(
     uint32_t generation, uint64_t preparedSerial,
     float halfX[2], float halfY[2]);

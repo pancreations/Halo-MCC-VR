@@ -38877,8 +38877,13 @@ bool Game_GetRenderHalfFovs(
         const uint32_t generation = classicArmed
             ? Halo2Stereo_Generation()
             : Halo2AnniversaryStereo_Generation();
-        return (classicArmed || anniversaryArmed) && generation &&
-            VR_Halo2GetSynchronousHalfFovs(
+        if (!(classicArmed || anniversaryArmed) || !generation)
+            return false;
+        // A serial without a pair of its own re-presents the last pair, so
+        // the crop must use that pair's cover.
+        return VR_Halo2GetSynchronousHalfFovs(
+                   generation, preparedFrameSerial, halfX, halfY) ||
+            VR_Halo2GetRepeatableHalfFovs(
                 generation, preparedFrameSerial, halfX, halfY);
     }
 #endif

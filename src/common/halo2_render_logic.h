@@ -79,10 +79,14 @@ inline constexpr bool Halo2CadencePeriodSupported(uint64_t periodNs) noexcept
 }
 
 inline constexpr bool Halo2PreparedCadenceSupported(
-    uint64_t targetPeriodNs, uint64_t predictedDisplayDeltaNs) noexcept
+    uint64_t targetPeriodNs, uint64_t /*predictedDisplayDeltaNs*/) noexcept
 {
-    return Halo2CadencePeriodSupported(targetPeriodNs) &&
-        Halo2CadencePeriodSupported(predictedDisplayDeltaNs);
+    // The predicted-display delta between two prepared frames is NOT a
+    // liveness signal: the runtime legitimately predicts the same display
+    // time twice (a delta of nanoseconds, logged as 1e9 Hz) and skips
+    // display periods. Only the xrWaitFrame target period says whether the
+    // runtime is pacing at all.
+    return Halo2CadencePeriodSupported(targetPeriodNs);
 }
 
 inline float Halo2CadenceHz(uint64_t periodNs) noexcept

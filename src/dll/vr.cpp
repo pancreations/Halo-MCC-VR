@@ -345,6 +345,21 @@ namespace
     std::atomic<uint32_t> g_halo2SynchronousPairResourceEpoch{};
     std::atomic<uint64_t> g_halo2SynchronousTargetSerial{};
     std::atomic<ID3D11RenderTargetView*> g_halo2SynchronousFinalRtv{};
+    // The last complete pair the compositor accepted, as rendered: poses,
+    // covers, serial and time. Render-thread-owned (SubmitPreparedFrame).
+    struct Halo2LastPair
+    {
+        bool valid = false;
+        uint32_t generation = 0;
+        uint64_t serial = 0;
+        uint64_t tickMs = 0;
+        XrPosef pose[2]{};
+        float halfX[2]{};
+        float halfY[2]{};
+    };
+    Halo2LastPair g_halo2LastPair{};
+    constexpr uint64_t kHalo2RepeatPairMaxAgeMs = 150;
+    std::atomic<uint64_t> g_halo2XrPairsRepeated{};
     // E-H2-8 draw census counters (see VR_Halo2NoteDraw).
     std::atomic<uint64_t> g_halo2DrawsInsideEye[2]{};
     std::atomic<uint64_t> g_halo2DrawsOutsideEye{0};
@@ -7363,8 +7378,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             return;
         }
         if (synchronousPresentationActive &&
-            decision ==
-                Halo2SynchronousPresentationDecision::SynchronousStereo)
+            (decision ==
+                 Halo2SynchronousPresentationDecision::SynchronousStereo ||
+             decision ==
+                 Halo2SynchronousPresentationDecision::RepeatLastPair))
         {
             if (previous == Halo2SynchronousPresentationDecision::Drop)
             {
@@ -8576,15 +8593,43 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     VR_Halo2GetSynchronousHalfFovs(
                         halo2Generation, g_preparedFrame.serial,
                         halo2HalfX, halo2HalfY);
-                const bool halo2Images = !halo2Title || halo2LiveExactPair;
                 const bool halo2ProjectionReady = projection.viewCount == 2;
+                // The game runs below the panel rate, so some prepared
+                // serials have no pair of their own. Re-presenting the last
+                // complete pair with its own pose is what every title does
+                // on a missed frame; showing the flat screen quad for that
+                // one frame was a visible flash about once a second.
+                float halo2RepeatHalfX[2]{}, halo2RepeatHalfY[2]{};
+                const bool halo2RepeatablePair = currentHalo2Title &&
+                    !halo2LiveExactPair &&
+                    VR_Halo2GetRepeatableHalfFovs(
+                        halo2Generation, g_preparedFrame.serial,
+                        halo2RepeatHalfX, halo2RepeatHalfY);
                 const Halo2SynchronousPresentationDecision
                     halo2PresentationDecision =
                         Halo2SynchronousSelectPresentation(
                             stereo, halo2ProjectionReady, halo2Title,
                             halo2LiveExactPair,
                             halo2Generation, g_preparedFrame.serial,
-                            halo2Presentation);
+                            halo2Presentation, halo2RepeatablePair);
+                const bool halo2RepeatPair =
+                    halo2PresentationDecision ==
+                    Halo2SynchronousPresentationDecision::RepeatLastPair;
+                const bool halo2Images =
+                    !halo2Title || halo2LiveExactPair || halo2RepeatPair;
+                if (halo2RepeatPair)
+                {
+                    // The images are the last pair's; so must the poses be.
+                    // The cover/crop above already came from that pair via
+                    // Game_GetRenderHalfFovs.
+                    for (size_t view = 0;
+                         view < projectionViews.size() && view < 2; ++view)
+                    {
+                        projectionViews[view].pose = g_halo2LastPair.pose[view];
+                    }
+                    g_halo2XrPairsRepeated.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 const Halo2SynchronousFrameDisposition
                     halo2FrameDisposition =
                         Halo2SynchronousClassifyFrame(
@@ -8598,8 +8643,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     halo2PresentationDecision ==
                         Halo2SynchronousPresentationDecision::SharedDefault
                     ? stereo
-                    : halo2PresentationDecision ==
-                        Halo2SynchronousPresentationDecision::SynchronousStereo;
+                    : (halo2PresentationDecision ==
+                           Halo2SynchronousPresentationDecision::SynchronousStereo ||
+                       halo2PresentationDecision ==
+                           Halo2SynchronousPresentationDecision::RepeatLastPair);
                 const bool allowStockScreenFrame =
                     halo2PresentationDecision !=
                         Halo2SynchronousPresentationDecision::Drop;
@@ -9480,6 +9527,23 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     HALOMCCVR_HALO2_STEREO6DOF
                                 if (halo2Title)
                                     halo2ProjectionQueued = true;
+#endif
+#if HALOMCCVR_HALO2_STEREO6DOF
+                                if (halo2Title && halo2LiveExactPair &&
+                                    projectionViews.size() >= 2)
+                                {
+                                    g_halo2LastPair.valid = true;
+                                    g_halo2LastPair.generation = halo2Generation;
+                                    g_halo2LastPair.serial = g_preparedFrame.serial;
+                                    g_halo2LastPair.tickMs = GetTickCount64();
+                                    for (int view = 0; view < 2; ++view)
+                                    {
+                                        g_halo2LastPair.pose[view] =
+                                            projectionViews[view].pose;
+                                        g_halo2LastPair.halfX[view] = halo2HalfX[view];
+                                        g_halo2LastPair.halfY[view] = halo2HalfY[view];
+                                    }
+                                }
 #endif
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
                                 if (halo4Title)
@@ -10849,6 +10913,7 @@ void VR_Halo2InvalidateSynchronousPair(
 
 void VR_ResetHalo2SynchronousStereo()
 {
+    g_halo2LastPair = {};
     const uint32_t generation =
         g_halo2SynchronousPairGeneration.load(std::memory_order_acquire);
     g_halo2SynchronousPairToken.store(0, std::memory_order_release);
@@ -10880,6 +10945,42 @@ void VR_ResetHalo2SynchronousStereo()
     // publish a new one. ClearHeartbeat is bounded atomic-only state work.
     if (generation)
         TitleAdapter_ClearHeartbeat(GameTitle::Halo2, generation);
+}
+
+bool VR_Halo2GetRepeatableHalfFovs(
+    uint32_t generation, uint64_t preparedSerial,
+    float halfX[2], float halfY[2])
+{
+    const Halo2LastPair& last = g_halo2LastPair;
+    if (!last.valid || !generation || last.generation != generation ||
+        !preparedSerial || preparedSerial <= last.serial)
+    {
+        return false;
+    }
+    const uint64_t nowMs = GetTickCount64();
+    if (nowMs < last.tickMs || nowMs - last.tickMs > kHalo2RepeatPairMaxAgeMs)
+        return false;
+    // A reserved token means a newer pair is being rendered right now and
+    // may already have overwritten one eye cache: never mix two frames.
+    if (Halo2SynchronousSerialIsReserved(
+            g_halo2SynchronousPairToken.load(std::memory_order_acquire)))
+    {
+        return false;
+    }
+    for (int eye = 0; eye < 2; ++eye)
+    {
+        if (!g_eyeHasImage[eye] ||
+            g_halo2SynchronousCaptureSerial[eye].load(
+                std::memory_order_acquire) != last.serial ||
+            !Halo2SynchronousHalfFovValid(last.halfX[eye]) ||
+            !Halo2SynchronousHalfFovValid(last.halfY[eye]))
+        {
+            return false;
+        }
+        halfX[eye] = last.halfX[eye];
+        halfY[eye] = last.halfY[eye];
+    }
+    return true;
 }
 
 bool VR_Halo2GetSynchronousHalfFovs(
@@ -11449,6 +11550,10 @@ void VR_FramePacingWorkerPoll()
             0, std::memory_order_relaxed);
         const uint64_t dropped = g_halo2XrPairsDropped.exchange(
             0, std::memory_order_relaxed);
+#if HALOMCCVR_HALO2_STEREO6DOF
+        const uint64_t repeated = g_halo2XrPairsRepeated.exchange(
+            0, std::memory_order_relaxed);
+#endif
         uint32_t reason = g_halo2LastDropReason.exchange(
             0, std::memory_order_relaxed);
         static const char* const kDropReasons[] = {
@@ -11466,10 +11571,12 @@ void VR_FramePacingWorkerPoll()
         {
 #if HALOMCCVR_HALO2_STEREO6DOF
             LOG("Halo 2 C-H2-6 synchronous XR publish: %llu exact-current-"
-                "serial pairs submitted, %llu recoverable frame drops in 2s; "
-                "last drop: %s (two renders/frame; no temporal reuse; drops "
+                "serial pairs submitted, %llu last-pair repeats (game below "
+                "panel rate), %llu recoverable frame drops in 2s; last drop: "
+                "%s (two renders/frame; no cross-frame eye mixing; drops "
                 "keep the core/session armed)",
                 static_cast<unsigned long long>(submitted),
+                static_cast<unsigned long long>(repeated),
                 static_cast<unsigned long long>(dropped),
                 kDropReasons[reason]);
 #else

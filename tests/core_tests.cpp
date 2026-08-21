@@ -5296,11 +5296,13 @@ int main()
             "H2 admits slow, throttled and early delivery: a slow frame still "
             "gets its pair");
         Check(!Halo2PreparedCadenceSupported(0, 11111111) &&
-                  !Halo2PreparedCadenceSupported(11111111, 0) &&
+                  Halo2PreparedCadenceSupported(11111111, 0) &&
+                  Halo2PreparedCadenceSupported(11111111, 1) &&
                   !Halo2CadencePeriodSupported(250000001) &&
                   !Halo2CadencePeriodSupported(999999),
-            "H2 rejects unknown timing and periods outside the 4-1000 Hz "
-            "liveness band");
+            "H2 rejects an unknown target period and periods outside the "
+            "4-1000 Hz liveness band; the predicted-display delta is not a "
+            "gate");
         Check(!Halo2PresentationMayClaim(
                   true, true, true, true, false, 11111111, 11111111) &&
                   !Halo2PresentationMayClaim(
@@ -5986,6 +5988,25 @@ int main()
                   generation, serial, unclaimed) ==
                   Halo2SynchronousPresentationDecision::StockScreen,
             "C-H2-6 routes an unclaimed H2 frame to the stock screen-quad path");
+        Check(Halo2SynchronousSelectPresentation(
+                  true, true, true, false,
+                  generation, serial, unclaimed, true) ==
+                  Halo2SynchronousPresentationDecision::RepeatLastPair &&
+                  Halo2SynchronousSelectPresentation(
+                      true, false, true, false,
+                      generation, serial, unclaimed, true) ==
+                  Halo2SynchronousPresentationDecision::StockScreen &&
+                  Halo2SynchronousSelectPresentation(
+                      false, true, true, false,
+                      generation, serial, unclaimed, true) ==
+                  Halo2SynchronousPresentationDecision::SharedDefault &&
+                  Halo2SynchronousSelectPresentation(
+                      true, true, true, false,
+                      generation, serial, claimed, true) ==
+                  Halo2SynchronousPresentationDecision::Drop,
+            "C-H2-13 re-presents the last complete pair for a serial with no "
+            "pair of its own, but only with stereo eligible, the projection "
+            "ready and no claim on the frame");
         Check(Halo2SynchronousSelectPresentation(
                   true, false, true, false,
                   generation, serial, unclaimed) ==
