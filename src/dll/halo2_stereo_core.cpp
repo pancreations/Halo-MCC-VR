@@ -13,6 +13,7 @@
 #include "../common/config.h"
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
+#include "halo2_observer_6dof.h"
 #include "vr.h"
 
 #ifndef HALOMCCVR_HALO2_STEREO6DOF
@@ -394,11 +395,23 @@ namespace
             head.referencePosition, reference.position,
             sizeof(head.referencePosition));
 
+        // E-H2-6: the classic window cameras are BUILT from the observer
+        // result record (0x960230 -> 0x6F0E60 -> 0x960780 -> 0x7DF5A0), and
+        // the observer core has already written the head pose into that
+        // record this frame. While it owns the pose, `stock` is therefore
+        // already the tracked centre; applying the head delta here again
+        // doubled every rotation and translation (87.0 observer poses/s
+        // against 87.6 window callbacks/s, 1:1, on 2026-08-21). Only the
+        // per-eye offset is added. Without an armed observer this core is
+        // the sole owner and tracks the centre itself, as before.
         Halo2CameraBasis trackedCenter{};
-        return Halo2BuildTrackedCenterCamera(stock, head, trackedCenter) &&
-            Halo2BuildSynchronousEyeCamera(
-                trackedCenter, snapshot.eyes[eye].position,
-                snapshot.eyes[eye].orientation, output);
+        if (Halo2Observer6Dof_Armed())
+            trackedCenter = stock;
+        else if (!Halo2BuildTrackedCenterCamera(stock, head, trackedCenter))
+            return false;
+        return Halo2BuildSynchronousEyeCamera(
+            trackedCenter, snapshot.eyes[eye].position,
+            snapshot.eyes[eye].orientation, output);
     }
 
     bool DeriveRuntimeCover(
@@ -1711,7 +1724,7 @@ namespace
                 "stockInner=%llu snapshotMiss=%llu foreignOuter=%llu "
                 "foreignInner=%llu invalid=%llu duplicate=%llu claimed=%llu "
                 "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
-                "restoreFail=%llu exception=%llu",
+                "restoreFail=%llu exception=%llu poseOwner=%s",
                 static_cast<unsigned long long>(current.outerCallbacks),
                 static_cast<unsigned long long>(current.innerCallbacks),
                 static_cast<unsigned long long>(current.stockOuterCalls),
@@ -1727,7 +1740,8 @@ namespace
                 static_cast<unsigned long long>(current.completedPairs),
                 static_cast<unsigned long long>(current.droppedPairs),
                 static_cast<unsigned long long>(current.restoreFailures),
-                static_cast<unsigned long long>(current.transactionExceptions));
+                static_cast<unsigned long long>(current.transactionExceptions),
+                Halo2Observer6Dof_Armed() ? "observer" : "classicCore");
             g_lastTelemetry = current;
         }
         g_lastTelemetryMs = now;

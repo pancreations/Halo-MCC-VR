@@ -36806,8 +36806,11 @@ void Game_ToggleHeadTracking()
         g_needRecenter = true;
 #if HALOMCCVR_HALO2_STEREO6DOF
         if (Game_UsesTitleOwnedHeadTracking())
+        {
             Halo2Stereo_RequestRecenter();
             Halo2Observer6Dof_RequestRecenter();
+            Halo2AnniversaryStereo_RequestRecenter();
+        }
 #endif
     }
     else
@@ -37792,8 +37795,16 @@ void Game_Recenter()
     // the F1 button, and transition-triggered recentering behavior identical.
     g_needRecenter = true;
 #if HALOMCCVR_HALO2_STEREO6DOF
+    // All three Halo 2 pose references move together, or the observer
+    // (the pose owner in both graphics modes) keeps the old origin while
+    // the per-eye cores take the new one and every frame carries the
+    // difference as a fixed offset.
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    {
         Halo2Stereo_RequestRecenter();
+        Halo2Observer6Dof_RequestRecenter();
+        Halo2AnniversaryStereo_RequestRecenter();
+    }
 #endif
     VR_RequestRecenter();
 }

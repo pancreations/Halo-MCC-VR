@@ -13,6 +13,7 @@
 #include "../common/config.h"
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
+#include "halo2_observer_6dof.h"
 #include "halo2_saber_camera.h"
 #include "vr.h"
 
@@ -356,9 +357,15 @@ namespace
         std::memcpy(head.referencePosition, g_reference.position,
                     sizeof(head.referencePosition));
 
+        // E-H2-6: `stock` was read from the observer result record, which
+        // the observer core has already head-tracked this frame when it is
+        // armed. Tracking it again here doubles the pose exactly as it did
+        // in the classic core; only the per-eye offset is added.
         Halo2CameraBasis tracked{};
         Halo2CameraBasis eyes[kHalo2EyeCount]{};
-        if (!Halo2BuildTrackedCenterCamera(stock, head, tracked))
+        if (Halo2Observer6Dof_Armed())
+            tracked = stock;
+        else if (!Halo2BuildTrackedCenterCamera(stock, head, tracked))
         {
             CountBail(Bail::TrackedCameraFailed);
             CallStock(original, ctx, rdx, viewIndex);
