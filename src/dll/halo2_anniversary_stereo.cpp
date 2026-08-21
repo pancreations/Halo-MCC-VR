@@ -65,6 +65,7 @@ namespace
     std::atomic<uint64_t> g_exceptions{0};
     uint64_t g_lastReportMs = 0;
     uint64_t g_lastPairsReported = UINT64_MAX;
+    uint64_t g_lastCallbacksReported = UINT64_MAX;
 
     HeadReference g_reference{};
     HMODULE g_moduleReference = nullptr;
@@ -417,7 +418,11 @@ namespace
         if (!original)
             return;
 
-        g_callbacks.fetch_add(1, std::memory_order_relaxed);
+        if (g_callbacks.fetch_add(1, std::memory_order_relaxed) == 0)
+        {
+            LOG("Halo 2 Anniversary stereo: the remastered scene render "
+                "detour FIRED for the first time; the binding is live");
+        }
 
         // Our own second pass re-enters this detour; it must run stock.
         if (g_insideEyeLoop || !g_armed.load(std::memory_order_acquire) ||
@@ -581,9 +586,15 @@ namespace
             return;
         g_lastReportMs = now;
         const uint64_t pairs = g_pairs.load(std::memory_order_relaxed);
-        if (pairs == g_lastPairsReported)
+        const uint64_t callbacks = g_callbacks.load(std::memory_order_relaxed);
+        // Report on ANY movement, not just completed pairs. "Zero pairs" and
+        // "the hook never fired" look identical from the player's seat, and
+        // telling them apart is the whole reason four earlier Halo 2
+        // candidates were expensive to diagnose.
+        if (pairs == g_lastPairsReported && callbacks == g_lastCallbacksReported)
             return;
         g_lastPairsReported = pairs;
+        g_lastCallbacksReported = callbacks;
         LOG("Halo 2 Anniversary stereo: %llu scene callbacks, %llu eye pairs, "
             "%llu drops, %llu stock passes, %llu exceptions",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),

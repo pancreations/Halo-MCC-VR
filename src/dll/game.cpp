@@ -35609,8 +35609,9 @@ namespace
                     activeLevelRunning,
                     Halo2ColdObservation_Passed(
                         halo2AnniversaryGeneration),
-                    !Halo2ColdObservation_ClassicRenderTreeRuns(
-                        halo2AnniversaryGeneration),
+                    Halo2ColdObservation_GraphicsMode(
+                        halo2AnniversaryGeneration) ==
+                        Halo2GraphicsMode::Remastered,
                     Halo2ColdObservation_ObserverResultArray(
                         halo2AnniversaryGeneration));
             }
