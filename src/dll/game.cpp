@@ -53,6 +53,7 @@
 #if HALOMCCVR_HALO2_STEREO6DOF
 #include "halo2_stereo_core.h"
 #include "halo2_observer_6dof.h"
+#include "halo2_render_probe.h"
 #endif
 #include "halo4_adapter.h"
 #include "halo4_cold_observation.h"
@@ -35578,6 +35579,16 @@ namespace
                     Halo2ColdObservation_Passed(halo2ObserverGeneration),
                     Halo2ColdObservation_ObserverResultArray(
                         halo2ObserverGeneration));
+            }
+            {
+                // D-H2-1 diagnostic census. Independent of OpenXR so the
+                // same build reads on a monitor or in a headset.
+                const uint32_t halo2ProbeGeneration =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                (void)Halo2RenderProbe_Poll(
+                    halo2GateBase, halo2GateSize, halo2ProbeGeneration,
+                    halo2Active && halo2GateSampled, activeLevelRunning,
+                    Halo2ColdObservation_Passed(halo2ProbeGeneration));
             }
 #if HALOMCCVR_HALO2_STEREO6DOF
             {
