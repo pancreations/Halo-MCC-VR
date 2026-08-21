@@ -1252,6 +1252,80 @@ Three consecutive IDENTICAL results add "the per-eye camera is NOT reaching
 the renderer". A Halo 2 headset result is not "stereo" unless the log says
 DISTINCT; counters do not count.
 
+### render_view does honour the written camera (agent trace, 2026-08-21)
+
+Independently of the capture defect, a whole-module trace of `render_view
+0x7E30D0` established that the per-eye camera write is consumed: at
+`0x7E3205-0x7E3263` the rdx camera record is copied byte-for-byte (0x74) into
+`g_render_camera` (RVA `0x165C260`); `0x7DF7A0` builds `g_projection`
+(`0x165C2D4`) from it reading FOV `+0x28` (`0x7DF88C`), forward/up
+`+0x0C..+0x20`, position `+0x00`, znear/zfar `+0x40/+0x44`; the scene pass
+`0x7E34A0 call 0x7DECC0` receives `&g_render_camera, &g_projection` and
+`0x7F0F50` derives the view record from them. The 707-function closure of the
+scene pass contains no reference to the observer arrays `0x15F297C` /
+`0x15F28B8` nor to the camera builder `0x7DF5A0`, and no RIP-relative write
+into `0x165C260..0x165C2D3` is reachable before the scene call. So once the
+capture copies what each pass actually drew, the two eyes differ.
+
+Two caveats the same trace produced:
+
+- The asymmetric-frustum fields `+0x58..+0x70` are consumed in
+  `render_player_window` (`0x7E2315 call 0x7DFCD0`) BEFORE `render_view`, and
+  passed as its 8th argument. A write to those fields at render_view entry is
+  silently ignored. Position/forward/up/FOV/viewport/znear/zfar are honoured.
+- `0x7E236F`: `comiss [window+0x34]` (render-camera FOV) against `.rdata`
+  `0xC32580` = `1e-4f`; `jbe 0x7E2417` skips render_view entirely. Any FOV
+  the mod writes must exceed 1e-4 rad, which every cover does.
+
+## E-H2-6: the head pose was applied twice in Classic mode
+
+The classic window cameras are not an independent camera. `0x960230` (the
+per-frame setup that ends in `0x96040E call render_frame 0x7E1600`, its only
+caller) runs `0x6F0E60 -> 0x960780 -> 0x7DF5A0`, which builds the window's
+render camera (`window+0x0C`) and raster camera (`window+0x80`) FROM the
+observer RESULT record at `0x15F297C + user*0x368`. The observer core
+(C-H2-8, hook on `0x6F0250`) has already written the head-tracked
+position/forward/up into that record by then. The classic stereo core then
+read those cameras as "stock" and applied the head delta again through
+`Halo2BuildTrackedCenterCamera`. The 02:55 log shows 87.0 observer poses
+applied per second against 87.6 `render_player_window` callbacks per second,
+1:1. The Anniversary path read the same record and doubled identically.
+
+Because the two cores read separate publications of the OpenXR snapshot, the
+composite is `delta(N-1) + delta(N)` whenever a publish lands between them,
+not a clean 2x, so halving either contribution was never a valid fix.
+
+Fix (C-H2-11): while the observer core is armed, both per-eye cores take their
+camera as the already-tracked centre and add only the per-eye offset; the
+classic telemetry line names `poseOwner=observer|classicCore`. `Game_Recenter`
+and the head-tracking toggle recenter all three references together; the
+toggle's missing braces had left the observer recentering unconditionally and
+the Anniversary core never.
+
+## Anniversary: why 791 callbacks produced 0 pairs (2026-08-21)
+
+All 790 stock passes took the first gate: `VR_Halo2GetSynchronousRenderSnapshot`
+returned false because `Game_AutoVrTick` computed `halo2StereoUsable` from
+`Halo2Stereo_Armed()` alone, and the classic core is (correctly) never armed
+while the remastered renderer is live, so stereo was forced OFF within ~100 ms
+of every switch (`M2 alternate-eye stereo OFF`). Behind it, two further
+defects guaranteed the single drop: the eye loop asked
+`VR_Halo2GetSynchronousHalfFovs` while the pair token held the RESERVED
+serial (never true), and `VR_Halo2BeginSynchronousEye` opened a raster-eye
+scope that nothing ever closed, so no capture could be published.
+
+Refuted suspects: `0x197EE58` IS populated in remastered mode (the per-frame
+draw entry writes both `0x197EE58` and `0x197EE60` from the same vtable call
+before the classic/remastered branch); `ResolveViewRecord`, the count offset,
+the view-index range and the 0xC8-byte context memset match the engine
+byte-for-byte.
+
+Every bail in `EyeLoopBody` now counts a named reason and the two-second
+report prints the nonzero ones, so the next log names the gate if one remains.
+The Anniversary eye reports the engine's own stock field of view (degrees at
+camera `+0x150/+0x154`) as its cover; widening that cover to the headset's
+native frustum is the next step once DISTINCT pairs are logged in this mode.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are
