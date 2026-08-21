@@ -494,10 +494,18 @@ namespace
         // symmetric cover. VR_Halo2GetSynchronousHalfFovs cannot be used
         // here: the pair token holds the RESERVED serial until the pair
         // completes. The stock degrees are read only to be logged once.
+        // E-H2-13: aspect-locked to the camera's own +0x158, as 0xBC560
+        // keeps it, so every consumer that derives one axis from the other
+        // sees the frustum the scene was drawn with (C-H2-17's independent
+        // axes squashed the first-person weapon).
+        float stockAspect = 0.0f;
+        std::memcpy(&stockAspect,
+                    savedCamera + kHalo2SaberCameraAspectOffset,
+                    sizeof(stockAspect));
         Halo2SaberEyeCover cover{};
         if (!snapshot.eyes[0].fovValid || !snapshot.eyes[1].fovValid ||
-            !Halo2DeriveSaberEyeCover(
-                snapshot.eyes[0].fov, snapshot.eyes[1].fov, cover))
+            !Halo2DeriveSaberAspectLockedEyeCover(
+                snapshot.eyes[0].fov, snapshot.eyes[1].fov, stockAspect, cover))
         {
             CountBail(Bail::CoverFovInvalid);
             CallStock(original, ctx, rdx, viewIndex);
@@ -510,20 +518,17 @@ namespace
             g_coverLoggedGeneration.store(generation, std::memory_order_release);
             float stockHorizontalDegrees = 0.0f;
             float stockVerticalDegrees = 0.0f;
-            float stockAspect = 0.0f;
             std::memcpy(&stockHorizontalDegrees,
                         savedCamera + kHalo2SaberCameraHorizontalFovDegreesOffset,
                         sizeof(stockHorizontalDegrees));
             std::memcpy(&stockVerticalDegrees,
                         savedCamera + kHalo2SaberCameraVerticalFovDegreesOffset,
                         sizeof(stockVerticalDegrees));
-            std::memcpy(&stockAspect,
-                        savedCamera + kHalo2SaberCameraAspectOffset,
-                        sizeof(stockAspect));
             LOG("Halo 2 Anniversary eye cover: engine stock %.1f x %.1f deg "
-                "(aspect h/w %.3f) -> per-eye %.1f x %.1f deg written into the "
-                "view record camera (+0x150/+0x154) and refreshed by the "
-                "engine's own 0xBC380/0xBC2B0/0x1C6D80",
+                "(aspect h/w %.3f) -> per-eye %.1f x %.1f deg, aspect-locked "
+                "like 0xBC560, written into the view record camera "
+                "(+0x150/+0x154) and refreshed by the engine's own "
+                "0xBC380/0xBC2B0/0x1C6D80",
                 stockHorizontalDegrees, stockVerticalDegrees, stockAspect,
                 cover.horizontalDegrees, cover.verticalDegrees);
         }

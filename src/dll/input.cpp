@@ -228,8 +228,24 @@ namespace
             // other meaning, and normal play keeps L3 untouched.
             if (pad.clickL && !chord.consumeClicks)
             {
-                btn &= ~XINPUT_GAMEPAD_LEFT_THUMB;
-                btn |= XINPUT_GAMEPAD_BACK;
+                // E-H2-13: in Halo 2 the Back/View button is MCC's instant
+                // Classic<->Anniversary renderer switch, and this virtual pad
+                // is the only pad the game sees, so a synthetic Back there
+                // flips the whole renderer mid-fight. The click stays a
+                // stick click in Halo 2; every other title keeps the map.
+                if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+                {
+                    static std::atomic<bool> halo2BackLogged{false};
+                    if (!halo2BackLogged.exchange(true))
+                        LOG("M3: Halo 2 - D-pad gesture stick click stays L3; "
+                            "Back is the renderer switch and is never "
+                            "synthesised here");
+                }
+                else
+                {
+                    btn &= ~XINPUT_GAMEPAD_LEFT_THUMB;
+                    btn |= XINPUT_GAMEPAD_BACK;
+                }
             }
             state->Gamepad.wButtons = btn;
             // No walking while navigating.

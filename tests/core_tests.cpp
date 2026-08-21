@@ -7091,6 +7091,55 @@ int main()
                 "E-H2-7 a frustum with the wrong sign convention is refused");
         }
 
+        // E-H2-13: the Saber cover is aspect-locked like 0xBC560 - the
+        // horizontal axis derives from the vertical and +0x158 (height /
+        // width), and both eyes still fit on both axes.
+        {
+            const float deg = pi / 180.0f;
+            const float leftEye[4] = {-54.0f * deg, 40.0f * deg, 44.0f * deg,
+                                      -55.0f * deg};
+            const float rightEye[4] = {-40.0f * deg, 54.0f * deg, 44.0f * deg,
+                                       -55.0f * deg};
+            const float aspect = 2100.0f / 2912.0f;
+            Halo2SaberEyeCover locked{};
+            float derived = 0.0f;
+            Check(Halo2DeriveSaberAspectLockedEyeCover(
+                      leftEye, rightEye, aspect, locked) &&
+                      std::fabs(locked.halfVerticalRadians -
+                                std::atan(std::tan(55.0f * deg) * 1.002f)) <
+                          1.0e-4f &&
+                      Halo2SaberHorizontalFovDegreesFromVertical(
+                          locked.verticalDegrees, aspect, derived) &&
+                      std::fabs(derived - locked.horizontalDegrees) < 1.0e-3f &&
+                      locked.horizontalDegrees > 126.0f &&
+                      locked.horizontalDegrees < 127.0f &&
+                      std::tan(locked.halfHorizontalRadians) >=
+                          std::tan(54.0f * deg) * 1.002f - 1.0e-4f,
+                "E-H2-13 the 2912x2100 Saber cover is 110 deg vertical with the "
+                "126 deg horizontal 0xBC560 would derive, containing both eyes");
+            // A tall raster (aspect 2.0): the horizontal requirement drives
+            // the vertical cover up instead.
+            Halo2SaberEyeCover tall{};
+            Check(Halo2DeriveSaberAspectLockedEyeCover(
+                      leftEye, rightEye, 2.0f, tall) &&
+                      std::fabs(std::tan(tall.halfVerticalRadians) -
+                                std::tan(54.0f * deg) * 1.002f * 2.0f) < 1.0e-3f &&
+                      std::tan(tall.halfHorizontalRadians) >=
+                          std::tan(54.0f * deg) * 1.002f - 1.0e-4f,
+                "E-H2-13 a tall raster lifts the vertical cover so the "
+                "derived horizontal still contains both eyes");
+            Halo2SaberEyeCover untouched{};
+            untouched.verticalDegrees = 9.0f;
+            Check(!Halo2DeriveSaberAspectLockedEyeCover(
+                      leftEye, rightEye, 0.0f, untouched) &&
+                      !Halo2DeriveSaberAspectLockedEyeCover(
+                          leftEye, rightEye,
+                          std::numeric_limits<float>::quiet_NaN(), untouched) &&
+                      untouched.verticalDegrees == 9.0f,
+                "E-H2-13 a zero or NaN aspect is refused without touching the "
+                "caller's cover");
+        }
+
         // E-H2-12: the crop follows the projection the engine built, read
         // back as its two diagonal scales.
         {

@@ -1575,3 +1575,46 @@ or the numbers change. A MISMATCH line is the evidence that the engine did
 not render the written cover; the crop follows the engine either way, so the
 headset image keeps its true scale (with the loud whole-slice fallback in
 `vr.cpp` if the real frustum is narrower than the native one).
+
+## E-H2-13: C-H2-17 headset result, the Saber aspect lock, and the Back button (C-H2-18)
+
+C-H2-17 (`54b97bc`, Steam, SteamVR, log preserved at
+`out/test-runs/54b97bc-halo2-c17-cropped-20260821-1647`) read back
+`AGREES` in both renderers - classic `126.5 x 110.1` written and rasterised,
+Anniversary `108.1 x 110.1` written and rasterised, `0` mismatches of 474/480
+- so the compositor crop matches the engine's projection and the crop
+geometry is NOT the cause of the "cropped" feeling. The user additionally
+reported (a) the renderer flipping Classic<->Anniversary on its own (the
+log shows ~15 `live renderer CHANGED` lines in two minutes) and (b) the
+Anniversary first-person weapon "squished tall".
+
+### (b) Anniversary weapon squashed: the cover must stay aspect-locked
+
+E-H2-7 proved the engine's own setter `0xBC560(cam, V)` always derives
+`+0x150 = 2*atan(tan(V/2) / aspect)` from `+0x154` and `+0x158`
+(height/width); C-H2-12..17 instead wrote the two axes independently
+(`108.1 x 110.1` on a 2912x2100 raster, tangent aspect 0.96 against the
+raster's 0.72). The scene projection `0x1C82C0` takes both fields, so the
+world was right and the read-back agreed; the weapon pass evidently does
+not - it came out narrowed by about the ratio of the two horizontal
+tangents (`tan 54 / (tan 55 / 0.721) = 0.69`), i.e. squashed tall. C-H2-18
+derives the Saber cover aspect-locked (`Halo2DeriveSaberAspectLockedEyeCover`,
+vertical lifted until the derived horizontal contains both eyes: 110.2 x
+126.6 deg at 2912x2100, the same pair the classic core uses), so every
+consumer, locked or not, sees one frustum. Which Saber function draws the
+weapon and how it builds its frustum was not located; the runtime evidence
+is the weapon shape next to the scene, and C-H2-18 tests exactly that.
+
+### (a) The renderer flips: the mod's synthetic Back button
+
+The retail `halo2.dll` request global `0xE21278` is written by the Saber
+frame driver `0x515E0` (five sites) and the start-up applier `0x6CCA0`;
+the request comes from the SSL `switch_render_mode` path, which MCC binds
+to the controller's Back/View button in Halo 2. The log reports
+`reporting virtual gamepad as connected (no physical pad found)`, so every
+Back press the game saw came from the mod's virtual pad, whose only Back
+source is the D-pad gesture (controller held within 30 cm of the head:
+left-stick click -> Back, added for ODST's map screen). In Halo 2 that
+button is the instant renderer switch, so C-H2-18 never synthesises Back
+while Halo 2 is the active title (the click stays a stick click) and logs
+once that it did so.

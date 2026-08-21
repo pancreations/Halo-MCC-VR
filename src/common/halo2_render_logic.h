@@ -1762,6 +1762,59 @@ inline bool Halo2DeriveSaberEyeCover(
     return true;
 }
 
+// E-H2-13: the same cover, ASPECT-LOCKED the way the engine's own setter
+// 0xBC560 keeps it (+0x150 = 2*atan(tan(+0x154/2) / aspect), aspect =
+// height/width at +0x158). C-H2-12/17 wrote the two axes independently
+// (108 x 110 deg on a 2912x2100 raster); the scene projection honoured that,
+// but the first-person weapon came out squashed tall - a consumer that
+// derives one axis from the other and the aspect, as 0xBC560 does, sees a
+// different frustum than the scene. The vertical cover is the smallest that
+// contains both eyes on both axes once the horizontal is derived from it.
+inline bool Halo2DeriveSaberAspectLockedEyeCover(
+    const float leftFov[4], const float rightFov[4],
+    float aspectHeightOverWidth, Halo2SaberEyeCover& out) noexcept
+{
+    constexpr float kPi = 3.14159265f;
+    Halo2SaberEyeCover perAxis{};
+    if (!std::isfinite(aspectHeightOverWidth) ||
+        aspectHeightOverWidth <= 1.0e-3f ||
+        !Halo2DeriveSaberEyeCover(leftFov, rightFov, perAxis))
+    {
+        return false;
+    }
+    // Required tangents already carry the margin; lock: tanX = tanY / aspect.
+    const float requiredTanX = std::tan(perAxis.halfHorizontalRadians);
+    const float requiredTanY = std::tan(perAxis.halfVerticalRadians);
+    const float lockedTanY =
+        (std::max)(requiredTanY, requiredTanX * aspectHeightOverWidth);
+    Halo2SaberEyeCover candidate{};
+    candidate.halfVerticalRadians = std::atan(lockedTanY);
+    candidate.verticalDegrees =
+        2.0f * candidate.halfVerticalRadians * 180.0f / kPi;
+    if (!Halo2SaberHorizontalFovDegreesFromVertical(
+            candidate.verticalDegrees, aspectHeightOverWidth,
+            candidate.horizontalDegrees))
+    {
+        return false;
+    }
+    candidate.halfHorizontalRadians =
+        candidate.horizontalDegrees * 0.5f * kPi / 180.0f;
+    if (!std::isfinite(candidate.halfHorizontalRadians) ||
+        !std::isfinite(candidate.halfVerticalRadians) ||
+        candidate.halfHorizontalRadians <= 0.01f ||
+        candidate.halfVerticalRadians <= 0.01f ||
+        candidate.halfHorizontalRadians >= 1.55f ||
+        candidate.halfVerticalRadians >= 1.55f ||
+        // Containment on both axes, with the per-axis margin as the floor.
+        std::tan(candidate.halfHorizontalRadians) + 1.0e-4f < requiredTanX ||
+        std::tan(candidate.halfVerticalRadians) + 1.0e-4f < requiredTanY)
+    {
+        return false;
+    }
+    out = candidate;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // The remastered renderer's per-view record. Byte-verified at 0x2DF2C5:
 //   record = *(halo2 + kHalo2SaberViewCollectionSlotRva)
