@@ -5287,17 +5287,20 @@ int main()
                   Halo2PreparedCadenceSupported(8333333, 8333333) &&
                   Halo2PreparedCadenceSupported(6944444, 6944444),
             "H2 exact durations admit nominal 72/80/90/120/144 Hz");
-        Check(!Halo2PreparedCadenceSupported(11111111, 22222222) &&
-                  !Halo2PreparedCadenceSupported(11111111, 16666667) &&
-                  !Halo2PreparedCadenceSupported(0, 11111111) &&
+        // The cadence is advisory (liveness only): a 45/60/30 Hz delivery or
+        // a throttled 30 Hz target still renders its true per-eye pair.
+        Check(Halo2PreparedCadenceSupported(11111111, 22222222) &&
+                  Halo2PreparedCadenceSupported(11111111, 16666667) &&
+                  Halo2PreparedCadenceSupported(33333333, 35842294) &&
+                  Halo2PreparedCadenceSupported(11111111, 4069000),
+            "H2 admits slow, throttled and early delivery: a slow frame still "
+            "gets its pair");
+        Check(!Halo2PreparedCadenceSupported(0, 11111111) &&
                   !Halo2PreparedCadenceSupported(11111111, 0) &&
-                  !Halo2CadencePeriodSupported(13888890) &&
-                  !Halo2CadencePeriodSupported(6944443),
-            "H2 rejects 45/60 Hz delivery, unknown timing, and periods beyond exact bounds");
-        Check(Halo2PreparedCadenceSupported(11111111, 11111111) &&
-                  !Halo2PreparedCadenceSupported(11111111, 22222222),
-            "H2 closes hot admission when a 90 Hz target changes from full-rate "
-            "delivery to ASW-style 45 Hz delivery before any eye render");
+                  !Halo2CadencePeriodSupported(250000001) &&
+                  !Halo2CadencePeriodSupported(999999),
+            "H2 rejects unknown timing and periods outside the 4-1000 Hz "
+            "liveness band");
         Check(!Halo2PresentationMayClaim(
                   true, true, true, true, false, 11111111, 11111111) &&
                   !Halo2PresentationMayClaim(
@@ -5313,7 +5316,7 @@ int main()
                   !Halo2PresentationMayClaim(
                       true, true, false, false, false, 11111111, 11111111) &&
                   !Halo2PresentationMayClaim(
-                      true, true, true, false, false, 11111111, 22222222),
+                      true, true, true, false, false, 0, 11111111),
             "H2 cannot claim outside its intended usable stereo context");
         Check(Halo2PreparedSerialMayFollowCompletedPair(0, 400) &&
                   Halo2PreparedSerialMayFollowCompletedPair(400, 401) &&

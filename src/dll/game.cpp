@@ -37317,15 +37317,16 @@ void Game_AutoVrTick()
             if (halo2CadenceSupported)
             {
                 LOG("Halo 2 cadence gate OPEN: xrWaitFrame target %.1fHz and "
-                    "predicted-display delivery %.1fHz are within 72-144Hz",
+                    "predicted-display delivery %.1fHz (advisory 4-1000Hz "
+                    "liveness band; a slow frame still gets its pair)",
                     halo2TargetCadenceHz, halo2DeliveredCadenceHz);
             }
             else
             {
                 LOG("Halo 2 cadence gate BLOCKED: xrWaitFrame target %.1fHz, "
                     "predicted-display delivery %.1fHz (current=%d); both "
-                    "must be within 72-144Hz, keeping stock unclaimed "
-                    "presentation", halo2TargetCadenceHz,
+                    "must be within the 4-1000Hz liveness band, keeping "
+                    "stock unclaimed presentation", halo2TargetCadenceHz,
                     halo2DeliveredCadenceHz,
                     halo2CadenceCurrent ? 1 : 0);
             }

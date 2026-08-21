@@ -59,11 +59,18 @@ inline bool Halo2RefreshCadenceSupported(float appCadenceHz)
 }
 
 inline constexpr uint64_t kHalo2NanosecondsPerSecond = 1000000000ull;
-// XrDuration is an integer count of nanoseconds. These two bounds are the
-// nearest integer representations of exactly 144 Hz and exactly 72 Hz; the
-// resulting sub-nanosecond rounding allowance is the only tolerance admitted.
-inline constexpr uint64_t kHalo2FastestCadencePeriodNs = 6944444ull;
-inline constexpr uint64_t kHalo2SlowestCadencePeriodNs = 13888889ull;
+// XrDuration is an integer count of nanoseconds. The prepared-frame cadence
+// is ADVISORY: it only proves the runtime is alive and pacing (a period
+// between 1000 Hz and 4 Hz). It used to demand 72-144 Hz on both the
+// xrWaitFrame target and the predicted-display delta to keep a half-rate
+// alternate-eye mode out; same-frame stereo makes that mode impossible by
+// construction, and on 2026-08-21 the strict band blocked 22 times in two
+// minutes (the game at 64-70 fps, SteamVR throttling to 30 Hz) and put the
+// player on the flat screen each time - 864 of Anniversary's 920 stock
+// passes. A slow frame now still gets its true per-eye pair; the
+// compositor reprojects it.
+inline constexpr uint64_t kHalo2FastestCadencePeriodNs = 1000000ull;
+inline constexpr uint64_t kHalo2SlowestCadencePeriodNs = 250000000ull;
 
 inline constexpr bool Halo2CadencePeriodSupported(uint64_t periodNs) noexcept
 {
