@@ -6,6 +6,7 @@
 
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
+#include "game.h"
 
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
 #define HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION 0
@@ -994,14 +995,21 @@ Halo2GraphicsMode Halo2ColdObservation_GraphicsMode(
         g_graphicsMode = Halo2ClassicRenderTreeRuns(live)
             ? Halo2GraphicsMode::Classic
             : Halo2GraphicsMode::Remastered;
+        // E-H2-13: the engine switches on a rising edge of input action 0x21
+        // (frame driver 0x515E0) and the only pad it sees is the mod's; name
+        // every button mask fed in the last 600 ms so the trigger is evidence.
+        char recentButtons[256];
+        Input_DescribeRecentButtons(recentButtons, sizeof(recentButtons), 600);
         LOG("Halo 2 live renderer CHANGED to %s (gate byte RVA 0x%X = %u); "
-            "the classic render tree %s execute now",
+            "the classic render tree %s execute now; virtual pad buttons fed "
+            "in the last 600 ms: %s",
             g_graphicsMode == Halo2GraphicsMode::Classic
                 ? "CLASSIC (legacy Blam)"
                 : "REMASTERED (Anniversary / Saber)",
             kHalo2ClassicRenderDisabledByteRva,
             static_cast<unsigned>(live),
-            Halo2ClassicRenderTreeRuns(live) ? "DOES" : "does NOT");
+            Halo2ClassicRenderTreeRuns(live) ? "DOES" : "does NOT",
+            recentButtons);
     }
     return g_graphicsMode;
 #endif

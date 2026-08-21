@@ -14,6 +14,7 @@
 #include <mutex>
 #include <cmath>
 #include <cstdio>
+#include <share.h>
 #include <cstring>
 #include <limits>
 #include <type_traits>
@@ -5017,6 +5018,75 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 samples ? (100.0 * changed / samples) : 0.0;
             const double litPercent =
                 samples ? (100.0 * lit / samples) : 0.0;
+            // E-H2-13: the picture itself, every 10 s, quarter size, next to
+            // the log (HaloMCCVR-halo2-eye0.bmp / eye1.bmp). "Cropped" and
+            // "goggles" are judged by looking at the frame the mod actually
+            // published, not by counters. Staging is already mapped here.
+            {
+                static uint64_t lastDumpMs = 0;
+                if (nowMs - lastDumpMs >= 10000 && LogDirectory()[0])
+                {
+                    lastDumpMs = nowMs;
+                    const bool bgr =
+                        g_eyeCacheDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                        g_eyeCacheDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+                    const unsigned scale = 4;
+                    const unsigned w = g_eyeCacheDesc.Width / scale;
+                    const unsigned h = g_eyeCacheDesc.Height / scale;
+                    for (int eye = 0; eye < 2 && w && h; ++eye)
+                    {
+                        wchar_t path[MAX_PATH];
+                        _snwprintf_s(path, _TRUNCATE, L"%sHaloMCCVR-halo2-eye%d.bmp",
+                                     LogDirectory(), eye);
+                        FILE* file = _wfsopen(path, L"wb", _SH_DENYNO);
+                        if (!file)
+                            continue;
+                        const uint32_t rowBytes = (w * 3 + 3) & ~3u;
+                        const uint32_t imageBytes = rowBytes * h;
+                        uint8_t header[54] = {'B', 'M'};
+                        auto put32 = [&](size_t at, uint32_t v) {
+                            std::memcpy(header + at, &v, 4);
+                        };
+                        auto put16 = [&](size_t at, uint16_t v) {
+                            std::memcpy(header + at, &v, 2);
+                        };
+                        put32(2, 54 + imageBytes);
+                        put32(10, 54);
+                        put32(14, 40);
+                        put32(18, w);
+                        put32(22, h);
+                        put16(26, 1);
+                        put16(28, 24);
+                        put32(34, imageBytes);
+                        fwrite(header, 1, sizeof(header), file);
+                        std::vector<uint8_t> row(rowBytes, 0);
+                        const auto* base =
+                            static_cast<const unsigned char*>(mapped[eye].pData);
+                        for (unsigned y = h; y-- > 0;)
+                        {
+                            const auto* src = base + (y * scale) * mapped[eye].RowPitch;
+                            for (unsigned x = 0; x < w; ++x)
+                            {
+                                const unsigned o = x * scale * 4;
+                                row[x * 3 + 0] = bgr ? src[o + 0] : src[o + 2];
+                                row[x * 3 + 1] = src[o + 1];
+                                row[x * 3 + 2] = bgr ? src[o + 2] : src[o + 0];
+                            }
+                            fwrite(row.data(), 1, rowBytes, file);
+                        }
+                        fclose(file);
+                    }
+                    static bool loggedDump = false;
+                    if (!loggedDump)
+                    {
+                        loggedDump = true;
+                        LOG("Halo 2 eye frames dumped every 10 s as "
+                            "HaloMCCVR-halo2-eye0.bmp / eye1.bmp next to the log "
+                            "(%ux%u, quarter size of the %ux%u capture)",
+                            w, h, g_eyeCacheDesc.Width, g_eyeCacheDesc.Height);
+                    }
+                }
+            }
             const bool identical = changed == 0;
             identicalRuns = identical ? identicalRuns + 1 : 0;
             // E-H2-8: compare the probe candidates the same way. If the

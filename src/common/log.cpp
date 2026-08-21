@@ -7,12 +7,18 @@
 
 static FILE* g_file = nullptr;
 static CRITICAL_SECTION g_cs;
+static std::wstring g_directory;
+
+const wchar_t* LogDirectory() { return g_directory.c_str(); }
 
 void LogInit(const wchar_t* filePath)
 {
     InitializeCriticalSection(&g_cs);
     // Keep the previous run's log as <name>.prev so a failed relaunch (which
     // truncates the log) doesn't erase the evidence from the run before it.
+    g_directory.assign(filePath);
+    const size_t slash = g_directory.find_last_of(L"\\/");
+    g_directory = slash == std::wstring::npos ? std::wstring() : g_directory.substr(0, slash + 1);
     std::wstring prev(filePath);
     prev += L".prev";
     MoveFileExW(filePath, prev.c_str(), MOVEFILE_REPLACE_EXISTING);

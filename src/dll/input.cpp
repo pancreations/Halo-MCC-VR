@@ -43,6 +43,27 @@ namespace
     ScopeToggleDetector g_scopeToggle;
     std::atomic<uint64_t> g_startPulseUntilMs{0};
 
+    // E-H2-13: the last button masks fed to the game, newest at g_fedHead-1.
+    // One slot per CHANGE of mask (a held button is one entry), so a 600 ms
+    // window around an engine event is a handful of entries. Lock-free, the
+    // reporter tolerates a torn slot (it only names a mask and an age).
+    constexpr unsigned kFedButtonSlots = 16;
+    std::atomic<uint32_t> g_fedButtons[kFedButtonSlots]{};
+    std::atomic<uint64_t> g_fedButtonsMs[kFedButtonSlots]{};
+    std::atomic<unsigned> g_fedHead{0};
+    std::atomic<uint32_t> g_fedLastMask{0xFFFFFFFFu};
+
+    void NoteFedButtons(WORD mask) noexcept
+    {
+        if (g_fedLastMask.load(std::memory_order_relaxed) == mask)
+            return;
+        g_fedLastMask.store(mask, std::memory_order_relaxed);
+        const unsigned slot =
+            g_fedHead.fetch_add(1, std::memory_order_relaxed) % kFedButtonSlots;
+        g_fedButtonsMs[slot].store(GetTickCount64(), std::memory_order_relaxed);
+        g_fedButtons[slot].store(mask, std::memory_order_release);
+    }
+
     // Map |v| in 0..1 to a raw stick value that clears MCC's inner deadzone,
     // so small corrections still produce movement.
     SHORT ToRawStick(float v)
@@ -190,6 +211,7 @@ namespace
             if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
         }
         state->Gamepad.wButtons = btn;
+        NoteFedButtons(btn);
 
         const BYTE tl = (BYTE)(leftTrigger * 255.0f);
         const BYTE tr = (BYTE)(pad.trigR * 255.0f);
@@ -248,6 +270,7 @@ namespace
                 }
             }
             state->Gamepad.wButtons = btn;
+        NoteFedButtons(btn);
             // No walking while navigating.
             state->Gamepad.sThumbLX = 0;
             state->Gamepad.sThumbLY = 0;
@@ -540,6 +563,37 @@ namespace
         LOG("M3: claimed game import-table slot for %s (previous handler %p)", what, *prevOut);
         return true;
     }
+}
+
+void Input_DescribeRecentButtons(char* buffer, size_t bytes, uint64_t sinceMs)
+{
+    if (!buffer || !bytes)
+        return;
+    buffer[0] = 0;
+    const uint64_t now = GetTickCount64();
+    const unsigned head = g_fedHead.load(std::memory_order_acquire);
+    size_t used = 0;
+    unsigned listed = 0;
+    for (unsigned back = 1; back <= kFedButtonSlots && back <= head; ++back)
+    {
+        const unsigned slot = (head - back) % kFedButtonSlots;
+        const uint64_t at = g_fedButtonsMs[slot].load(std::memory_order_relaxed);
+        const uint32_t mask = g_fedButtons[slot].load(std::memory_order_acquire);
+        if (at > now || now - at > sinceMs)
+            break;
+        const int written = _snprintf_s(
+            buffer + used, bytes - used, _TRUNCATE, "%s0x%04X@-%llums",
+            listed ? " " : "", mask & 0xFFFFu,
+            static_cast<unsigned long long>(now - at));
+        if (written <= 0)
+            break;
+        used += static_cast<size_t>(written);
+        ++listed;
+    }
+    if (!listed)
+        _snprintf_s(buffer, bytes, _TRUNCATE, "none (mask unchanged for >%llu ms; last 0x%04X)",
+                    static_cast<unsigned long long>(sinceMs),
+                    g_fedLastMask.load(std::memory_order_relaxed) & 0xFFFFu);
 }
 
 void Input_RequestPauseToggle()

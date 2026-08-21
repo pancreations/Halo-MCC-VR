@@ -215,6 +215,11 @@ int Input_ClaimXInputIat();
 // Injects a real XINPUT_GAMEPAD_START pulse and requests the matching
 // stereo/flat pause presentation. Used when a runtime reserves its system key.
 void Input_RequestPauseToggle();
+// E-H2-13: every button mask the virtual gamepad fed the game in the last
+// `sinceMs` milliseconds, newest first, as "0x1234@-37ms ..." (buffer-bounded).
+// The game sees no other pad, so this is the whole input story behind an
+// engine event such as the Halo 2 renderer switch.
+void Input_DescribeRecentButtons(char* buffer, size_t bytes, uint64_t sinceMs);
 // True when Halo's signature-resolved native pause flag is available. Once
 // true, presentation follows the engine rather than controller-edge guesses.
 bool Game_HasAuthoritativePauseState();
