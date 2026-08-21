@@ -706,9 +706,25 @@ namespace
         reportedOnce = true;
         g_lastAppliedReported = applied;
         g_lastCallbacks = g_callbacks.load(std::memory_order_relaxed);
+        // The measured lean: how far the camera the engine now holds sits
+        // from the camera it computed, in metres. This is the number that
+        // says whether the head moves the world, not the applied count.
+        Halo2ObserverPosePublication published{};
+        float leanMeters = -1.0f;
+        if (Halo2Observer6Dof_ReadPublishedPose(published))
+        {
+            float sum = 0.0f;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const float d = published.tracked.position[axis] -
+                    published.stock.position[axis];
+                sum += d * d;
+            }
+            leanMeters = std::sqrt(sum) * kHalo2MetersPerWorldUnit;
+        }
         LOG("Halo 2 observer 6DOF: %llu observer transforms seen, %llu head "
             "poses applied, %llu rejected samples, %llu unreadable, %llu "
-            "exceptions",
+            "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional %s)",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -717,7 +733,9 @@ namespace
             static_cast<unsigned long long>(
                 g_unreadableSamples.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_exceptions.load(std::memory_order_relaxed)));
+                g_exceptions.load(std::memory_order_relaxed)),
+            leanMeters, Game_GetWorldScale(),
+            Game_IsPositionalTracking() ? "ON" : "OFF");
     }
 }
 
