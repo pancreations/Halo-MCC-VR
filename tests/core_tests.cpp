@@ -7091,6 +7091,73 @@ int main()
                 "E-H2-7 a frustum with the wrong sign convention is refused");
         }
 
+        // E-H2-12: the crop follows the projection the engine built, read
+        // back as its two diagonal scales.
+        {
+            const float deg = pi / 180.0f;
+            // Classic 0x7DF7A0 for the 5d713cf log's cover: 110.2 deg
+            // vertical on a 2912x2100 raster gives P+0x8C = 1/tan(55.1) and
+            // P+0x78 = 1/(1.3867 * tan(55.1)), i.e. 63.3 deg horizontal.
+            const float tanY = std::tan(55.1f * deg);
+            Halo2SymmetricHalfFovs classic{};
+            Check(Halo2HalfFovsFromProjectionScales(
+                      1.0f / (2912.0f / 2100.0f * tanY), 1.0f / tanY, classic) &&
+                      std::fabs(classic.vertical - 55.1f * deg) < 1.0e-4f &&
+                      std::fabs(classic.horizontal - 63.3f * deg) < 0.05f * deg,
+                "E-H2-12 the classic projection scales give back the cover "
+                "that built them");
+            // Saber 0x1C82C0 at the C-H2-12 written degrees 108.1 x 110.1;
+            // sign does not matter (reversed-Z builders negate).
+            Halo2SymmetricHalfFovs saber{};
+            Check(Halo2HalfFovsFromProjectionScales(
+                      -1.0f / std::tan(54.05f * deg),
+                      1.0f / std::tan(55.05f * deg), saber) &&
+                      std::fabs(saber.horizontal - 54.05f * deg) < 1.0e-4f &&
+                      std::fabs(saber.vertical - 55.05f * deg) < 1.0e-4f,
+                "E-H2-12 the Saber projection scales give back the written "
+                "degrees regardless of sign");
+            // The stock Anniversary frame (100.9 x 82.3 deg) must NOT agree
+            // with that cover: this is the disagreement the log names.
+            Halo2SymmetricHalfFovs stock{};
+            Check(Halo2HalfFovsFromProjectionScales(
+                      1.0f / std::tan(50.45f * deg),
+                      1.0f / std::tan(41.15f * deg), stock) &&
+                      !Halo2HalfFovsAgree(
+                          stock, saber, kHalo2ProjectionReadbackToleranceRadians) &&
+                      Halo2HalfFovsAgree(
+                          saber, saber, kHalo2ProjectionReadbackToleranceRadians) &&
+                      !Halo2HalfFovsAgree(saber, saber, -1.0f),
+                "E-H2-12 a stock-FOV render is a mismatch against the written "
+                "cover; half a degree is the tolerance");
+            Halo2SymmetricHalfFovs untouched{0.5f, 0.5f};
+            Check(!Halo2HalfFovsFromProjectionScales(0.0f, 1.0f, untouched) &&
+                      !Halo2HalfFovsFromProjectionScales(1.0f, 0.0f, untouched) &&
+                      !Halo2HalfFovsFromProjectionScales(
+                          std::numeric_limits<float>::quiet_NaN(), 1.0f,
+                          untouched) &&
+                      !Halo2HalfFovsFromProjectionScales(5.0e-4f, 1.0f, untouched) &&
+                      !Halo2HalfFovsFromProjectionScales(200.0f, 1.0f, untouched) &&
+                      untouched.horizontal == 0.5f && untouched.vertical == 0.5f,
+                "E-H2-12 a zero, NaN, near-orthographic or near-zero-angle "
+                "scale is refused without touching the caller's value");
+            // The popped raster context: depth after render_view returned,
+            // plus one, inside the three-slot stack at 0x1996D30.
+            uint32_t slot = 0;
+            Check(Halo2ClassicPoppedRasterContextSlot(-1, slot) &&
+                      slot == 0x01996D30u &&
+                      Halo2ClassicPoppedRasterContextSlot(0, slot) &&
+                      slot == 0x01996D30u + 0x318u &&
+                      Halo2ClassicPoppedRasterContextSlot(1, slot) &&
+                      slot == 0x01996D30u + 2u * 0x318u,
+                "E-H2-12 the popped raster context is slot depth+1");
+            slot = 7;
+            Check(!Halo2ClassicPoppedRasterContextSlot(2, slot) &&
+                      !Halo2ClassicPoppedRasterContextSlot(-2, slot) &&
+                      !Halo2ClassicPoppedRasterContextSlot(INT32_MAX, slot) &&
+                      slot == 7,
+                "E-H2-12 a depth outside the three-slot stack is refused");
+        }
+
         constexpr uint32_t sameFrameGeneration = 17;
         constexpr uint64_t sameFrameSerial = 41;
         Halo2SameFramePairProof sameFrame{};

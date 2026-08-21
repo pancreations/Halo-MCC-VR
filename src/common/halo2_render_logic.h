@@ -237,6 +237,55 @@ static_assert(kHalo2RasterCameraOffset + kHalo2CameraBytes <=
 static_assert(kHalo2CameraPixelOffsetYOffset + sizeof(float) ==
     kHalo2CameraBytes);
 
+// ---------------------------------------------------------------------------
+// E-H2-12: the projection the classic renderer actually rasterised with.
+// render_view 0x7E30D0 copies the raster camera (window+0x80, r8) into a
+// 0x318-byte raster context block (camera at +0x18), builds that block's
+// projection at +0x100 with 0x7DF7A0 (P[0][0] = 1/(aspect*tan(fov/2)) at
+// +0x78, P[1][1] = 1/tan(fov/2) at +0x8C; the builder reads camera +0x28
+// directly, no further FOV scale) and commits it with 0x955EC0: the int32
+// depth at 0xE19208 is incremented and the block is copied verbatim into
+// slot[depth] of the stack at 0x1996D30. 0x955F60 pops (depth -= 1) without
+// clearing the slot, then rebuilds g_projection 0x165C2D4 from the RESTORED
+// outer camera - so g_projection is the wrong thing to read after the call.
+// slot[depth + 1] still holds the eye pass's raster camera and the projection
+// the engine built from it; the camera bytes identify the slot as this eye's.
+// ---------------------------------------------------------------------------
+inline constexpr uint32_t kHalo2ClassicRasterContextDepthRva = 0x00E19208;
+inline constexpr uint32_t kHalo2ClassicRasterContextStackRva = 0x01996D30;
+inline constexpr uint32_t kHalo2ClassicRasterContextStride = 0x318;
+inline constexpr int32_t kHalo2ClassicRasterContextCapacity = 3;
+inline constexpr uint32_t kHalo2ClassicRasterContextCameraOffset = 0x18;
+inline constexpr uint32_t kHalo2ClassicRasterContextProjectionOffset = 0x100;
+inline constexpr uint32_t kHalo2ClassicProjectionScaleXOffset = 0x78;
+inline constexpr uint32_t kHalo2ClassicProjectionScaleYOffset = 0x8C;
+// The stack ends before the window array (E-H2-3: RVA 0x19976E0).
+static_assert(kHalo2ClassicRasterContextStackRva +
+    static_cast<uint32_t>(kHalo2ClassicRasterContextCapacity) *
+        kHalo2ClassicRasterContextStride <= 0x019976E0);
+static_assert(kHalo2ClassicRasterContextCameraOffset + kHalo2CameraBytes <=
+    kHalo2ClassicRasterContextProjectionOffset);
+static_assert(kHalo2ClassicRasterContextProjectionOffset +
+    kHalo2ClassicProjectionScaleYOffset + sizeof(float) <=
+    kHalo2ClassicRasterContextStride);
+
+// The slot the engine just popped: depth after render_view returned, plus
+// one. A depth below -1 or a slot past the three-entry stack is refused.
+inline bool Halo2ClassicPoppedRasterContextSlot(
+    int32_t depthAfterPop, uint32_t& slotRva) noexcept
+{
+    // Compared, not added: depth + 1 would overflow for a garbage depth.
+    if (depthAfterPop < -1 ||
+        depthAfterPop >= kHalo2ClassicRasterContextCapacity - 1)
+    {
+        return false;
+    }
+    slotRva = kHalo2ClassicRasterContextStackRva +
+        static_cast<uint32_t>(depthAfterPop + 1) *
+            kHalo2ClassicRasterContextStride;
+    return true;
+}
+
 // Halo 2-specific metric evidence, not an inherited constant. H2EK's unique
 // 3.048f is consumed by a source-backed metre/kilometre formatter; retail has
 // the same unique constant and behavior, plus the unique reciprocal.
@@ -392,6 +441,45 @@ struct Halo2SymmetricHalfFovs
     float horizontal = 0.0f;
     float vertical = 0.0f;
 };
+
+// Half-angles from the two diagonal scales of a perspective projection:
+// P[0][0] = 1/tan(halfX), P[1][1] = 1/tan(halfY). Both Halo 2 renderers bake
+// them exactly this way (classic 0x7DF7A0, Saber 0x1C82C0), so reading the
+// matrix the engine built gives the frustum it rasterised with, independent
+// of whether it honoured the camera field the mod wrote. Sign is irrelevant.
+inline bool Halo2HalfFovsFromProjectionScales(
+    float scaleX, float scaleY, Halo2SymmetricHalfFovs& out) noexcept
+{
+    if (!std::isfinite(scaleX) || !std::isfinite(scaleY))
+        return false;
+    const float magnitudeX = std::fabs(scaleX);
+    const float magnitudeY = std::fabs(scaleY);
+    // 1/1000 is a half-angle of 89.94 degrees: not a frustum.
+    if (magnitudeX < 1.0e-3f || magnitudeY < 1.0e-3f)
+        return false;
+    const float halfX = std::atan(1.0f / magnitudeX);
+    const float halfY = std::atan(1.0f / magnitudeY);
+    if (!std::isfinite(halfX) || !std::isfinite(halfY) ||
+        halfX <= 0.01f || halfY <= 0.01f || halfX >= 1.55f || halfY >= 1.55f)
+    {
+        return false;
+    }
+    out = {halfX, halfY};
+    return true;
+}
+
+inline bool Halo2HalfFovsAgree(
+    const Halo2SymmetricHalfFovs& left, const Halo2SymmetricHalfFovs& right,
+    float toleranceRadians) noexcept
+{
+    return std::isfinite(toleranceRadians) && toleranceRadians >= 0.0f &&
+        std::fabs(left.horizontal - right.horizontal) <= toleranceRadians &&
+        std::fabs(left.vertical - right.vertical) <= toleranceRadians;
+}
+
+// Written cover versus engine-held projection, by more than half a degree on
+// either axis, is the read-back disagreement the log must name.
+inline constexpr float kHalo2ProjectionReadbackToleranceRadians = 0.0087f;
 
 // This is only truthful while both native off-center controls are disabled.
 // The generic rectangle parameter lets the caller use the camera's proven
@@ -1691,6 +1779,17 @@ inline constexpr uint32_t kHalo2SaberViewRecordCapacity = 0x50;
 inline constexpr uint32_t kHalo2SaberViewRecordCameraOffset = 0x20;
 inline constexpr uint32_t kHalo2SaberViewRecordCameraBytes = 0x398;
 inline constexpr uint32_t kHalo2SaberViewRecordViewIdOffset = 0x10;
+// E-H2-7/E-H2-12: 0x1C6D80 bakes the record's projection at +0x4AC through
+// 0x1C82C0 (puVar15 = record + 299*4), row-vector float[16]: [0] =
+// 1/tan(horizontal/2), [5] = 1/tan(vertical/2). Read after the scene render
+// returns, it is the frustum that eye was drawn with.
+inline constexpr uint32_t kHalo2SaberViewRecordProjectionOffset = 0x4AC;
+inline constexpr uint32_t kHalo2SaberProjectionScaleXOffset =
+    kHalo2SaberViewRecordProjectionOffset + 0 * sizeof(float);
+inline constexpr uint32_t kHalo2SaberProjectionScaleYOffset =
+    kHalo2SaberViewRecordProjectionOffset + 5 * sizeof(float);
+static_assert(kHalo2SaberViewRecordProjectionOffset + 16 * sizeof(float) <=
+    kHalo2SaberViewRecordStride);
 
 // The engine's own rebuild of every derived matrix in the record. It takes
 // FOUR arguments: 0x1C7740 clears r9 too (0x1C790D xor r9d,r9d) and

@@ -81,6 +81,13 @@ namespace
         std::atomic<uint64_t> poseRederived{};
         std::atomic<uint64_t> poseSelfTracked{};
         std::atomic<uint64_t> poseUnavailable{};
+        // E-H2-12: per eye pass, the projection read back from the engine's
+        // popped raster context. Unreadable means the crop used the written
+        // cover instead; a mismatch means the engine rasterised a different
+        // frustum than the cover the mod wrote, which the crop then follows.
+        std::atomic<uint64_t> projectionReadbacks{};
+        std::atomic<uint64_t> projectionUnreadable{};
+        std::atomic<uint64_t> projectionMismatches{};
     };
 
     struct TelemetrySnapshot
@@ -105,6 +112,9 @@ namespace
         uint64_t poseRederived = 0;
         uint64_t poseSelfTracked = 0;
         uint64_t poseUnavailable = 0;
+        uint64_t projectionReadbacks = 0;
+        uint64_t projectionUnreadable = 0;
+        uint64_t projectionMismatches = 0;
     };
 
     struct CameraReadback
@@ -158,6 +168,10 @@ namespace
         float rasterCoverVerticalFov = 0.0f;
         EyeCameraPair eyes[kHalo2EyeCount]{};
         Halo2SymmetricHalfFovs halfFovs{};
+        // The frustum the engine actually rasterised each eye with, read
+        // from its popped raster context after render_view returned.
+        Halo2SymmetricHalfFovs engineHalfFovs[kHalo2EyeCount]{};
+        bool engineHalfFovsValid[kHalo2EyeCount]{};
         bool dirty[kOwnedCameraSpanCount]{};
     };
 
@@ -198,6 +212,15 @@ namespace
     std::atomic<uint64_t> g_headReferenceState{0};
     std::atomic<uint32_t> g_headReferenceBits[7]{};
     std::atomic<uint32_t> g_headReferenceResetSerial{1};
+    // Last projection read-back, for the telemetry line: written cover and
+    // engine-held half-angles as float bits, and its status (0 none,
+    // 1 agrees, 2 mismatch, 3 unreadable). Written on the render thread,
+    // read by the reporter; a torn pair only misreports one line.
+    std::atomic<uint32_t> g_projectionReadbackWrittenBits[2]{};
+    std::atomic<uint32_t> g_projectionReadbackEngineBits[2]{};
+    std::atomic<uint32_t> g_projectionReadbackStatus{0};
+    uint32_t g_projectionReadbackLoggedStatus = 0;
+    uint32_t g_projectionReadbackLoggedBits[4]{};
 
     HMODULE g_moduleReference = nullptr;
     void* g_outerTarget = nullptr;
@@ -1073,6 +1096,91 @@ namespace
         }
     }
 
+    // E-H2-12: after render_view returns, the raster context it pushed has
+    // been popped but not cleared. Find it by depth, prove it is this eye's
+    // by its camera bytes (the raster basis and cover FOV the mod wrote are
+    // copied verbatim into the block), then take the projection the engine
+    // built from it. SEH-contained; any doubt leaves the eye on the written
+    // cover and is counted, never silent.
+    bool ReadEngineProjection(StereoScope& scope, int eye) noexcept
+    {
+        scope.engineHalfFovsValid[eye] = false;
+        const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
+        if (!base)
+            return false;
+        __try
+        {
+            const int32_t depth = *reinterpret_cast<const volatile int32_t*>(
+                base + kHalo2ClassicRasterContextDepthRva);
+            uint32_t slotRva = 0;
+            if (!Halo2ClassicPoppedRasterContextSlot(depth, slotRva))
+                return false;
+            const uint8_t* slot = reinterpret_cast<const uint8_t*>(base + slotRva);
+            const uint8_t* camera = slot + kHalo2ClassicRasterContextCameraOffset;
+            Halo2CameraBasis held{};
+            float heldFov = 0.0f;
+            std::memcpy(&held, camera + kHalo2CameraPositionOffset, sizeof(held));
+            std::memcpy(&heldFov, camera + kHalo2CameraVerticalFovOffset,
+                        sizeof(heldFov));
+            if (std::memcmp(&held, &scope.eyes[eye].raster, sizeof(held)) != 0 ||
+                std::memcmp(&heldFov, &scope.rasterCoverVerticalFov,
+                            sizeof(heldFov)) != 0)
+            {
+                return false;
+            }
+            const uint8_t* projection =
+                slot + kHalo2ClassicRasterContextProjectionOffset;
+            float scaleX = 0.0f;
+            float scaleY = 0.0f;
+            std::memcpy(&scaleX, projection + kHalo2ClassicProjectionScaleXOffset,
+                        sizeof(scaleX));
+            std::memcpy(&scaleY, projection + kHalo2ClassicProjectionScaleYOffset,
+                        sizeof(scaleY));
+            if (!Halo2HalfFovsFromProjectionScales(
+                    scaleX, scaleY, scope.engineHalfFovs[eye]))
+            {
+                return false;
+            }
+            scope.engineHalfFovsValid[eye] = true;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // The half-angles the compositor crops with: the engine's own projection
+    // when it could be read, else the written cover. Telemetry records which.
+    Halo2SymmetricHalfFovs NoteProjectionReadback(
+        StereoScope& scope, int eye) noexcept
+    {
+        g_telemetry.projectionReadbacks.fetch_add(1, std::memory_order_relaxed);
+        uint32_t writtenBits[2]{};
+        std::memcpy(&writtenBits[0], &scope.halfFovs.horizontal, sizeof(float));
+        std::memcpy(&writtenBits[1], &scope.halfFovs.vertical, sizeof(float));
+        g_projectionReadbackWrittenBits[0].store(writtenBits[0], std::memory_order_relaxed);
+        g_projectionReadbackWrittenBits[1].store(writtenBits[1], std::memory_order_relaxed);
+        if (!scope.engineHalfFovsValid[eye])
+        {
+            g_telemetry.projectionUnreadable.fetch_add(1, std::memory_order_relaxed);
+            g_projectionReadbackStatus.store(3, std::memory_order_release);
+            return scope.halfFovs;
+        }
+        const Halo2SymmetricHalfFovs& engine = scope.engineHalfFovs[eye];
+        uint32_t engineBits[2]{};
+        std::memcpy(&engineBits[0], &engine.horizontal, sizeof(float));
+        std::memcpy(&engineBits[1], &engine.vertical, sizeof(float));
+        g_projectionReadbackEngineBits[0].store(engineBits[0], std::memory_order_relaxed);
+        g_projectionReadbackEngineBits[1].store(engineBits[1], std::memory_order_relaxed);
+        const bool agrees = Halo2HalfFovsAgree(
+            engine, scope.halfFovs, kHalo2ProjectionReadbackToleranceRadians);
+        if (!agrees)
+            g_telemetry.projectionMismatches.fetch_add(1, std::memory_order_relaxed);
+        g_projectionReadbackStatus.store(agrees ? 1u : 2u, std::memory_order_release);
+        return engine;
+    }
+
     bool GuardedCompletePair(
         uint32_t generation, uint64_t serial) noexcept
     {
@@ -1278,6 +1386,10 @@ namespace
                             __except (NoteClaimedTransactionException())
                             {
                             }
+                            // Before anything else can push another raster
+                            // context: the popped slot is this eye's only now.
+                            if (originalReturned)
+                                (void)ReadEngineProjection(*scope, eye);
                         }
                     }
                 }
@@ -1302,7 +1414,7 @@ namespace
                         scope->generation, scope->serial) ||
                     !GuardedCompleteEye(
                         scope->generation, scope->serial, eye,
-                        scope->halfFovs))
+                        NoteProjectionReadback(*scope, eye)))
                 {
                     InvalidateScope(*scope);
                     break;
@@ -1748,6 +1860,9 @@ namespace
         H2_READ_TELEMETRY(poseRederived);
         H2_READ_TELEMETRY(poseSelfTracked);
         H2_READ_TELEMETRY(poseUnavailable);
+        H2_READ_TELEMETRY(projectionReadbacks);
+        H2_READ_TELEMETRY(projectionUnreadable);
+        H2_READ_TELEMETRY(projectionMismatches);
 #undef H2_READ_TELEMETRY
         return out;
     }
@@ -1832,6 +1947,49 @@ namespace
                 static_cast<unsigned long long>(current.poseSelfTracked),
                 static_cast<unsigned long long>(current.poseUnavailable));
             g_lastTelemetry = current;
+        }
+        // E-H2-12: the projection read-back, whenever its verdict or its
+        // numbers change. This line, not the cover the mod wrote, says what
+        // frustum the headset image really has.
+        const uint32_t status =
+            g_projectionReadbackStatus.load(std::memory_order_acquire);
+        uint32_t bits[4] = {
+            g_projectionReadbackWrittenBits[0].load(std::memory_order_relaxed),
+            g_projectionReadbackWrittenBits[1].load(std::memory_order_relaxed),
+            g_projectionReadbackEngineBits[0].load(std::memory_order_relaxed),
+            g_projectionReadbackEngineBits[1].load(std::memory_order_relaxed)};
+        if (status &&
+            (status != g_projectionReadbackLoggedStatus ||
+             std::memcmp(bits, g_projectionReadbackLoggedBits, sizeof(bits)) != 0))
+        {
+            g_projectionReadbackLoggedStatus = status;
+            std::memcpy(g_projectionReadbackLoggedBits, bits, sizeof(bits));
+            float values[4]{};
+            std::memcpy(values, bits, sizeof(values));
+            constexpr float kDegrees = 57.29578f;
+            if (status == 3)
+            {
+                LOG("Halo 2 classic eye projection read-back: UNREADABLE "
+                    "(popped raster context slot missing or not this eye's); "
+                    "the headset crop uses the written cover %.1f x %.1f deg "
+                    "(full angles) - unreadable=%llu of %llu",
+                    2.0f * values[0] * kDegrees, 2.0f * values[1] * kDegrees,
+                    static_cast<unsigned long long>(current.projectionUnreadable),
+                    static_cast<unsigned long long>(current.projectionReadbacks));
+            }
+            else
+            {
+                LOG("Halo 2 classic eye projection read-back: written cover "
+                    "%.1f x %.1f deg, engine rasterised %.1f x %.1f deg (full "
+                    "angles) - %s; the headset crop follows the engine "
+                    "(mismatches=%llu of %llu)",
+                    2.0f * values[0] * kDegrees, 2.0f * values[1] * kDegrees,
+                    2.0f * values[2] * kDegrees, 2.0f * values[3] * kDegrees,
+                    status == 1 ? "AGREES" : "MISMATCH: the engine did not "
+                                             "render the cover the mod wrote",
+                    static_cast<unsigned long long>(current.projectionMismatches),
+                    static_cast<unsigned long long>(current.projectionReadbacks));
+            }
         }
         g_lastTelemetryMs = now;
     }

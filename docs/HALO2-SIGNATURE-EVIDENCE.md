@@ -1512,3 +1512,66 @@ through `SizeOfImage`, and every possible RVA was scanned. Raw files were also
 scanned independently, including certificate/overlay bytes. Function semantics
 and call topology were inspected in offline Ghidra projects under ignored
 `out/ghidra`; no MCC process was launched or accessed.
+
+## E-H2-12: the projection each eye was really rasterised with (C-H2-17)
+
+Offline decompilation of the pinned `halo2.dll`, 2026-08-21 (all RVAs). The
+C-H2-12 baseline (`5d713cf`) was headset-reported as real stereo with a
+cropped, magnified image in BOTH graphics modes ("the world feels too big,
+the gun is huge, I can't see enough of the world"). Its log crops each eye
+to the headset's native frustum out of the cover the mod WROTE (classic
+126.6 x 110.2 deg, Anniversary 108.1 x 110.1 deg); nothing in that build
+reads back what the engine rendered with. A narrower real frustum under
+that crop is exactly a magnified, cropped image. C-H2-17 therefore derives
+the crop from the projection the engine built for each eye pass, and names
+any disagreement with the written cover.
+
+### Classic: `0x7DF7A0` and the raster-context stack
+
+- `0x7DF7A0(camera, asymmetric, out)` builds the projection straight from
+  the camera: `tan(camera+0x28 * 0.5)` is the vertical half-tangent, the
+  rectangle at `+0x30` supplies `aspect = width/height`, and it stores
+  `out+0x78 = 1/(aspect * tanY)` and `out+0x8C = 1/tanY` (plus `+0x68..+0x74`
+  frustum planes, `+0xB8/+0xBC` half-pixel extents). **No global FOV scale
+  is applied here**; the `0xE13470..78` scales live in the camera builder
+  `0x7DF5A0`, upstream of the mod's write.
+- Callers of `0x7DF7A0` (Ghidra): `0x7E3269` and `0x7E32F8` in render_view
+  `0x7E30D0` (render camera -> `g_projection 0x165C2D4`, then raster camera
+  `r8` copied to a local block -> that block's `+0x100`), `0x7E183D/0x7E18BE`
+  in `0x7E1780`, `0x7E1C03`, `0x7E2001/0x7E20A2`, `0x7E0FE1`, `0x960623`,
+  `0x7DF2C8`, `0x7E2EA3/0x7E2FC3`, and `0x9560BE` in `0x955F60`.
+- `0x955EC0(block)`: `++depth` (int32 at `0xE19208`), copies the 0x318-byte
+  block verbatim into `0x1996D30 + depth*0x318`, then `0x955310(slot)`
+  applies it. The block layout (from `0x7E1780`): raster camera `+0x18`
+  (0x74 bytes), its projection `+0x100`.
+- `0x955F60()`: `--depth`, re-applies `slot[depth]`, copies that slot's
+  camera back to `g_render_camera 0x165C260` and **rebuilds `g_projection`
+  from the restored OUTER camera**. So after render_view returns,
+  `g_projection` is the wrong thing to read; `slot[depth+1]` is untouched
+  and still holds the eye pass's raster camera and projection.
+- Capacity: three slots fit before the window array `0x19976E0`.
+
+`ReadEngineProjection` (classic core) reads `depth`, resolves `slot[depth+1]`,
+proves the slot is this eye's by comparing its camera bytes with the raster
+basis and cover FOV the mod wrote (copied verbatim by `0x955EC0`), and takes
+`+0x100+0x78/+0x8C`.
+
+### Anniversary: `record+0x4AC`
+
+`0x1C6D80(record,0,0,0)` calls `0x1C82C0(record+0x20, near, far,
+record + 299*4 = +0x4AC)`, which writes `[0] = 1/tan(+0x150/2)` and
+`[5] = 1/tan(+0x154/2)` (degrees, `0x1C82CF`/`0x1C8328`). The Anniversary
+core reads `[0]`/`[5]` after the scene render returns and before its own
+restore rebuilds the record from the stock camera.
+
+### Shared helper and log lines
+
+`Halo2HalfFovsFromProjectionScales` (`atan(1/|P00|)`, `atan(1/|P11|)`) feeds
+`VR_Halo2CompleteSynchronousEye` in both cores; the written cover is used
+only when the read-back is unreadable, and that is counted. Each core logs
+`Halo 2 <classic|Anniversary> eye projection read-back: written cover H x V
+deg, engine rasterised H x V deg - AGREES|MISMATCH ...` whenever the verdict
+or the numbers change. A MISMATCH line is the evidence that the engine did
+not render the written cover; the crop follows the engine either way, so the
+headset image keeps its true scale (with the loud whole-slice fallback in
+`vr.cpp` if the real frustum is narrower than the native one).

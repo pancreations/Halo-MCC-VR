@@ -73,6 +73,18 @@ namespace
     std::atomic<uint64_t> g_drops{0};
     std::atomic<uint64_t> g_stockPasses{0};
     std::atomic<uint64_t> g_exceptions{0};
+    // E-H2-12: per eye pass, the projection read back from record+0x4AC
+    // after the scene render returned. Unreadable means that eye's crop used
+    // the written cover; a mismatch means Saber rasterised a different
+    // frustum than the degrees the mod wrote, which the crop then follows.
+    std::atomic<uint64_t> g_projectionReadbacks{0};
+    std::atomic<uint64_t> g_projectionUnreadable{0};
+    std::atomic<uint64_t> g_projectionMismatches{0};
+    std::atomic<uint32_t> g_projectionReadbackWrittenBits[2]{};
+    std::atomic<uint32_t> g_projectionReadbackEngineBits[2]{};
+    std::atomic<uint32_t> g_projectionReadbackStatus{0};
+    uint32_t g_projectionReadbackLoggedStatus = 0;
+    uint32_t g_projectionReadbackLoggedBits[4]{};
     // Every way EyeLoopBody can decline to render a pair, counted by
     // reason. 790 of 791 callbacks took one of these on 2026-08-21 and the
     // log could not say which; that is never allowed to happen again.
@@ -614,8 +626,52 @@ namespace
                 ok = false;
                 break;
             }
+            // E-H2-12: the crop follows the projection the engine baked for
+            // this eye, not the degrees the mod wrote. Read before the
+            // restore below rebuilds the record from the stock camera.
+            float eyeHalfFovX = halfFovX;
+            float eyeHalfFovY = halfFovY;
+            {
+                g_projectionReadbacks.fetch_add(1, std::memory_order_relaxed);
+                uint32_t writtenBits[2]{};
+                std::memcpy(&writtenBits[0], &halfFovX, sizeof(float));
+                std::memcpy(&writtenBits[1], &halfFovY, sizeof(float));
+                g_projectionReadbackWrittenBits[0].store(
+                    writtenBits[0], std::memory_order_relaxed);
+                g_projectionReadbackWrittenBits[1].store(
+                    writtenBits[1], std::memory_order_relaxed);
+                float scaleX = 0.0f;
+                float scaleY = 0.0f;
+                Halo2SymmetricHalfFovs engine{};
+                if (ReadGuarded(record + kHalo2SaberProjectionScaleXOffset, scaleX) &&
+                    ReadGuarded(record + kHalo2SaberProjectionScaleYOffset, scaleY) &&
+                    Halo2HalfFovsFromProjectionScales(scaleX, scaleY, engine))
+                {
+                    uint32_t engineBits[2]{};
+                    std::memcpy(&engineBits[0], &engine.horizontal, sizeof(float));
+                    std::memcpy(&engineBits[1], &engine.vertical, sizeof(float));
+                    g_projectionReadbackEngineBits[0].store(
+                        engineBits[0], std::memory_order_relaxed);
+                    g_projectionReadbackEngineBits[1].store(
+                        engineBits[1], std::memory_order_relaxed);
+                    const Halo2SymmetricHalfFovs written{halfFovX, halfFovY};
+                    const bool agrees = Halo2HalfFovsAgree(
+                        engine, written, kHalo2ProjectionReadbackToleranceRadians);
+                    if (!agrees)
+                        g_projectionMismatches.fetch_add(1, std::memory_order_relaxed);
+                    g_projectionReadbackStatus.store(
+                        agrees ? 1u : 2u, std::memory_order_release);
+                    eyeHalfFovX = engine.horizontal;
+                    eyeHalfFovY = engine.vertical;
+                }
+                else
+                {
+                    g_projectionUnreadable.fetch_add(1, std::memory_order_relaxed);
+                    g_projectionReadbackStatus.store(3u, std::memory_order_release);
+                }
+            }
             if (!VR_Halo2CompleteSynchronousEye(
-                    generation, serial, eye, halfFovX, halfFovY))
+                    generation, serial, eye, eyeHalfFovX, eyeHalfFovY))
             {
                 CountBail(Bail::EyeCompleteRefused);
                 ok = false;
@@ -904,6 +960,52 @@ namespace
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
             used ? reasons : "none");
+        // E-H2-12: the projection read-back, whenever its verdict or its
+        // numbers change. This line, not the written cover, says what
+        // frustum the headset image really has.
+        const uint32_t status =
+            g_projectionReadbackStatus.load(std::memory_order_acquire);
+        uint32_t bits[4] = {
+            g_projectionReadbackWrittenBits[0].load(std::memory_order_relaxed),
+            g_projectionReadbackWrittenBits[1].load(std::memory_order_relaxed),
+            g_projectionReadbackEngineBits[0].load(std::memory_order_relaxed),
+            g_projectionReadbackEngineBits[1].load(std::memory_order_relaxed)};
+        if (status &&
+            (status != g_projectionReadbackLoggedStatus ||
+             std::memcmp(bits, g_projectionReadbackLoggedBits, sizeof(bits)) != 0))
+        {
+            g_projectionReadbackLoggedStatus = status;
+            std::memcpy(g_projectionReadbackLoggedBits, bits, sizeof(bits));
+            float values[4]{};
+            std::memcpy(values, bits, sizeof(values));
+            constexpr float kDegrees = 57.29578f;
+            if (status == 3)
+            {
+                LOG("Halo 2 Anniversary eye projection read-back: UNREADABLE "
+                    "(record+0x4AC); the headset crop uses the written cover "
+                    "%.1f x %.1f deg (full angles) - unreadable=%llu of %llu",
+                    2.0f * values[0] * kDegrees, 2.0f * values[1] * kDegrees,
+                    static_cast<unsigned long long>(
+                        g_projectionUnreadable.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(
+                        g_projectionReadbacks.load(std::memory_order_relaxed)));
+            }
+            else
+            {
+                LOG("Halo 2 Anniversary eye projection read-back: written "
+                    "cover %.1f x %.1f deg, engine rasterised %.1f x %.1f deg "
+                    "(full angles) - %s; the headset crop follows the engine "
+                    "(mismatches=%llu of %llu)",
+                    2.0f * values[0] * kDegrees, 2.0f * values[1] * kDegrees,
+                    2.0f * values[2] * kDegrees, 2.0f * values[3] * kDegrees,
+                    status == 1 ? "AGREES" : "MISMATCH: the engine did not "
+                                             "render the cover the mod wrote",
+                    static_cast<unsigned long long>(
+                        g_projectionMismatches.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(
+                        g_projectionReadbacks.load(std::memory_order_relaxed)));
+            }
+        }
     }
 }
 
