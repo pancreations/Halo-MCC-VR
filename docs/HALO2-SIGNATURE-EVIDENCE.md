@@ -1672,3 +1672,24 @@ with it. The weapon's projection/placement path is the next target; the
 classic camera `+0x2C` "FOV ratio" is NOT it (its three readers 0x708D90 /
 0x7E4D30 / 0x76DC90 scale an object distance for LOD), and 0x7DF7A0's other
 callers (0x7E2D50, 0x7E1F80, 0x7DF1A0) build ordinary render/raster pairs.
+
+## E-H2-16: headset-owned pitch, walk-where-you-look (C-H2-23)
+
+Until C-H2-22 the Halo 2 observer composed the head orientation (relative to
+a yaw-only recenter reference) onto the engine's FULL stock camera, so the
+engine's own look pitch (right stick / aim) added to the head's pitch: the
+horizon moved with the stick and the view pitched twice. C-H2-23 mirrors the
+accepted Halo 4 construction (E-H4-9):
+
+- `Halo2BuildTrackedCenterCamera` flattens the stock camera to its yaw
+  (horizontal forward, world +Z up) before composing the head, so pitch and
+  roll are the headset's alone and yaw still adds (the stick turns the body).
+- `Game_ComputeHalo2PitchStick` drives the right stick's vertical axis with
+  the shared pitch servo (`Halo4PitchServoStep`, direction and resolution
+  measured) from the engine pitch in the observer's published `stock` camera
+  to the head's pitch, so the engine's aim - the shot line - follows the
+  view. It steps once per observer publication and idles loudly.
+- `Game_MapMoveStick` rotates the walk vector by the yaw between the
+  published `tracked` and `stock` cameras, so forward goes where you look.
+- The input hook passes the horizontal turn stick through and feeds the
+  servo on the vertical axis (`Game_Halo2OwnsLookPitch`).

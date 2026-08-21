@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c22-controller-input-capability-',
+            $head.Substring(0, 7) + '-halo2-c23-headset-owns-pitch-walk-where-you-look-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,7 +200,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-22' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-23' -or
         [string]$manifest.halo2_candidate.status -cne
             'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or

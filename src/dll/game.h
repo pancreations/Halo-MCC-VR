@@ -206,6 +206,12 @@ void Game_Halo4UpdateVrTurn(const VrPadState& pad);
 // shot line - under the headset. Returns false when the loop has nothing to
 // command; the caller must still hold the axis at zero.
 bool Game_ComputeHalo4PitchStick(float& outRy);
+// C-H2-23: Halo 2's headset-owned pitch. The observer core flattens the
+// engine's pitch out of the camera and composes the head's; this loop feeds
+// the right stick's vertical axis so the engine's own aim pitch follows the
+// view (the shot line follows where you look), exactly as Halo 4 does.
+bool Game_Halo2OwnsLookPitch();
+bool Game_ComputeHalo2PitchStick(float& outRy);
 // Hooks XInputGetState in every loaded xinput DLL; returns how many are
 // hooked. Safe to call repeatedly until it succeeds.
 int Input_InstallXInputHook();

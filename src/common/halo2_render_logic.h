@@ -835,7 +835,63 @@ struct Halo2TrackedHeadInput
     // by it directly; its default 0.33 is 1/3.048 to two places).
     bool positional = true;
     float worldScale = kHalo2WorldUnitsPerMeter;
+    // C-H2-23: the headset owns pitch and roll. The engine's own look pitch
+    // (right stick / aim) is flattened out of the stock camera before the
+    // head orientation is composed, so looking up or down is the head's
+    // alone and the stick's pitch never adds on top of it. Yaw still adds,
+    // so the stick turns the body and the head turns relative to it.
+    bool headOwnsPitch = true;
 };
+
+// Engine look pitch in radians from a Halo-world (+Z up) camera forward:
+// positive looks up. Used by the pitch loop that keeps the engine's aim on
+// the headset's view (the shot line follows the view).
+inline bool Halo2EnginePitchRadians(
+    const Halo2CameraBasis& camera, float& pitch) noexcept
+{
+    const float horizontal = std::sqrt(
+        camera.forward[0] * camera.forward[0] +
+        camera.forward[1] * camera.forward[1]);
+    if (!std::isfinite(horizontal) || !std::isfinite(camera.forward[2]))
+        return false;
+    pitch = std::atan2(camera.forward[2], horizontal);
+    return std::isfinite(pitch);
+}
+
+// Headset pitch in radians from an OpenXR orientation (+Y up, -Z forward):
+// positive looks up, the same convention as Halo2EnginePitchRadians.
+inline bool Halo2HeadPitchRadians(const float q[4], float& pitch) noexcept
+{
+    float n[4]{};
+    if (!q || !Halo2NormalizeQuaternion(q, n))
+        return false;
+    const float x = n[0], y = n[1], z = n[2], w = n[3];
+    float forwardY = 2.0f * (w * x - y * z);
+    if (!std::isfinite(forwardY))
+        return false;
+    forwardY = forwardY < -1.0f ? -1.0f : (forwardY > 1.0f ? 1.0f : forwardY);
+    pitch = std::asin(forwardY);
+    return std::isfinite(pitch);
+}
+
+// Yaw of the tracked camera relative to the stock camera, in the game's
+// horizontal plane: how far the head has turned away from the body's facing.
+// Walking is rotated by this so forward goes where the player looks.
+inline bool Halo2HeadYawDeltaRadians(
+    const Halo2CameraBasis& stock, const Halo2CameraBasis& tracked,
+    float& delta) noexcept
+{
+    constexpr float kPi = 3.14159265f;
+    const float stockYaw = std::atan2(stock.forward[1], stock.forward[0]);
+    const float trackedYaw = std::atan2(tracked.forward[1], tracked.forward[0]);
+    if (!std::isfinite(stockYaw) || !std::isfinite(trackedYaw))
+        return false;
+    float d = trackedYaw - stockYaw;
+    while (d > kPi) d -= 2.0f * kPi;
+    while (d < -kPi) d += 2.0f * kPi;
+    delta = d;
+    return std::isfinite(delta);
+}
 
 // The yaw-only part of an OpenXR head orientation: the rotation about room
 // +Y that carries (0,0,-1) onto the head's horizontal forward. Halo 3, Reach
@@ -970,6 +1026,24 @@ inline bool Halo2BuildTrackedCenterCamera(
             if (offset < -kHalo2MaxHeadTranslationWorldUnits)
                 offset = -kHalo2MaxHeadTranslationWorldUnits;
             candidate.position[axis] += offset;
+        }
+    }
+
+    if (input.headOwnsPitch)
+    {
+        // Keep only the engine's yaw: horizontal forward, world +Z up. A
+        // camera looking straight along world Z has no yaw; keep it whole.
+        const float horizontal = std::sqrt(
+            stock.forward[0] * stock.forward[0] +
+            stock.forward[1] * stock.forward[1]);
+        if (std::isfinite(horizontal) && horizontal >= 1.0e-4f)
+        {
+            candidate.forward[0] = stock.forward[0] / horizontal;
+            candidate.forward[1] = stock.forward[1] / horizontal;
+            candidate.forward[2] = 0.0f;
+            candidate.up[0] = 0.0f;
+            candidate.up[1] = 0.0f;
+            candidate.up[2] = 1.0f;
         }
     }
 

@@ -36499,6 +36499,110 @@ bool Game_ComputeHalo4PitchStick(float& outRy)
 #endif
 }
 
+bool Game_Halo2OwnsLookPitch()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    return TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        Halo2Observer6Dof_Armed() &&
+        g_enabled.load(std::memory_order_acquire) &&
+        VR_IsStereoEnabled();
+#else
+    return false;
+#endif
+}
+
+// C-H2-23. Same construction as Game_ComputeHalo4PitchStick: the engine's
+// pitch is read from the observer the core already publishes every frame
+// (the stock camera it found), the target is the head's pitch, and the
+// shared servo measures the stick's direction and resolution itself. The
+// observer core composes the head onto a yaw-only camera, so the view never
+// double-pitches while the engine converges.
+bool Game_ComputeHalo2PitchStick(float& outRy)
+{
+    outRy = 0.0f;
+#if HALOMCCVR_HALO2_STEREO6DOF
+    static Halo4PitchServo servo;
+    static uint64_t lastSerial = 0;
+    static uint64_t lastSerialChangeMs = 0;
+    static float heldCommand = 0.0f;
+    static std::atomic<int> lastBlock{-1};
+    auto blocked = [](int reason, const char* what) {
+        if (lastBlock.exchange(reason) != reason)
+            LOG("Halo 2 look pitch: loop idle: %s", what);
+        return false;
+    };
+    if (!Game_Halo2OwnsLookPitch())
+    {
+        Halo4ResetPitchServo(servo);
+        lastSerial = 0;
+        lastSerialChangeMs = 0;
+        heldCommand = 0.0f;
+        return false;
+    }
+    Halo2ObserverPosePublication publication{};
+    if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
+        !publication.generation || !publication.serial)
+    {
+        return blocked(1, "the observer has not published a camera yet");
+    }
+    const uint64_t now = GetTickCount64();
+    bool freshFrame = false;
+    if (publication.serial != lastSerial)
+    {
+        lastSerial = publication.serial;
+        lastSerialChangeMs = now;
+        freshFrame = true;
+    }
+    else if (!lastSerialChangeMs || now - lastSerialChangeMs > 250)
+    {
+        Halo4ResetPitchServo(servo);
+        heldCommand = 0.0f;
+        return blocked(2, "no observer-owned Halo 2 frame in the last 250 ms");
+    }
+    // MCC polls XInput several times per rendered frame (E-H4-9): step once
+    // per new publication and hold the command across the polls in between.
+    if (!freshFrame)
+    {
+        outRy = heldCommand;
+        return true;
+    }
+    float q[4], p[3];
+    float headPitch = 0.0f;
+    float enginePitch = 0.0f;
+    if (!VR_GetHeadPose(q, p) || !Halo2HeadPitchRadians(q, headPitch))
+    {
+        Halo4ResetPitchServo(servo);
+        heldCommand = 0.0f;
+        return blocked(3, "headset not tracked");
+    }
+    if (!Halo2EnginePitchRadians(publication.stock, enginePitch))
+    {
+        Halo4ResetPitchServo(servo);
+        heldCommand = 0.0f;
+        return blocked(4, "the engine camera pitch could not be read");
+    }
+    lastBlock.store(0, std::memory_order_relaxed);
+    const float target = Clamp(headPitch, -1.5f, 1.5f);
+    outRy = Halo4PitchServoStep(servo, enginePitch, target, kHalo4PitchServoGain);
+    heldCommand = outRy;
+    static uint64_t lastReportMs = 0;
+    if (now - lastReportMs >= 5000)
+    {
+        lastReportMs = now;
+        LOG("Halo 2 look pitch: head %.1f deg, engine %.1f deg, command %.2f, "
+            "direction %+.0f, commanded=%llu parked=%llu",
+            headPitch * 57.29578f, enginePitch * 57.29578f, outRy,
+            servo.direction,
+            static_cast<unsigned long long>(servo.commandedFrames),
+            static_cast<unsigned long long>(servo.parkedFrames));
+    }
+    return true;
+#else
+    (void)outRy;
+    return false;
+#endif
+}
+
 bool Game_ProcessPresentationDetachRequest()
 {
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
@@ -38706,6 +38810,32 @@ void Game_MapMoveStick(float& mx, float& my)
             g_yawSign.load() * WrapPi(hy - headYawReference);
         const float aimYaw = atan2f(aimForward[1], aimForward[0]);
         const float delta = WrapPi(gaze - aimYaw);
+        const float c = cosf(delta), s = sinf(delta);
+        const float nx = mx * c - my * s;
+        const float ny = mx * s + my * c;
+        mx = nx;
+        my = ny;
+        return;
+    }
+#endif
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // C-H2-23. Halo 2 walks relative to the body's facing (the engine yaw the
+    // right stick turns) while the view adds the head's yaw on top. Rotate
+    // the move vector by that head yaw so forward goes where you look. The
+    // observer publishes both cameras every frame; without a publication the
+    // stick passes through unrotated.
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+    {
+        Halo2ObserverPosePublication publication{};
+        float delta = 0.0f;
+        if (!Halo2Observer6Dof_Armed() || !g_enabled.load() ||
+            !Halo2Observer6Dof_ReadPublishedPose(publication) ||
+            !publication.serial ||
+            !Halo2HeadYawDeltaRadians(
+                publication.stock, publication.tracked, delta))
+        {
+            return;
+        }
         const float c = cosf(delta), s = sinf(delta);
         const float nx = mx * c - my * s;
         const float ny = mx * s + my * c;

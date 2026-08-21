@@ -334,6 +334,17 @@ namespace
             state->Gamepad.sThumbRX = 0;
             state->Gamepad.sThumbRY = 0;
         }
+        else if (Game_Halo2OwnsLookPitch())
+        {
+            // Halo 2 (C-H2-23): the headset owns pitch, the engine keeps yaw.
+            // Horizontal turns the body as stock; the vertical axis is the
+            // closed loop that keeps the engine's aim pitch on the view.
+            if (fabsf(pad.turnX) > 0.15f)
+                state->Gamepad.sThumbRX = ToRawStick(pad.turnX);
+            float servoRy = 0.0f;
+            state->Gamepad.sThumbRY =
+                Game_ComputeHalo2PitchStick(servoRy) ? ToRawStick(servoRy) : 0;
+        }
         else if (Game_Halo4OwnsLookPitch())
         {
             // Halo 4 (C-H4-9): the headset owns pitch, the engine keeps yaw.

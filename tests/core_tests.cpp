@@ -6534,6 +6534,7 @@ int main()
         };
 
         Halo2TrackedHeadInput sameReference{};
+        sameReference.headOwnsPitch = false;
         sameReference.orientation[1] = 0.5f;
         sameReference.orientation[3] = 0.866025404f;
         sameReference.referenceOrientation[1] = 0.5f;
@@ -6549,6 +6550,7 @@ int main()
             "stock center camera");
 
         Halo2TrackedHeadInput translatedHead{};
+        translatedHead.headOwnsPitch = false;
         translatedHead.position[0] = 3.048f;
         translatedHead.position[1] = -1.524f;
         translatedHead.position[2] = 0.762f;
@@ -6566,6 +6568,7 @@ int main()
         // A long walk from the recenter point is clamped, like Halo 3, Reach
         // and Halo 4 do, never rejected: rejection cost the frame its pair.
         Halo2TrackedHeadInput tooFarHead{};
+        tooFarHead.headOwnsPitch = false;
         tooFarHead.position[0] = kHalo2MaxHeadTranslationMeters + 10.0f;
         Halo2CameraBasis clampedFar{};
         Check(Halo2BuildTrackedCenterCamera(
@@ -6587,6 +6590,7 @@ int main()
         haloCamera.forward[0] = 1.0f;
         haloCamera.up[2] = 1.0f;
         Halo2TrackedHeadInput leanHead{};
+        leanHead.headOwnsPitch = false;
         leanHead.position[0] = 1.524f;   // room right
         leanHead.position[1] = 1.524f;   // room up
         leanHead.position[2] = -0.762f;  // room forward (OpenXR -Z)
@@ -7150,6 +7154,68 @@ int main()
                       untouched.verticalDegrees == 9.0f,
                 "E-H2-13 a zero or NaN aspect is refused without touching the "
                 "caller's cover");
+        }
+
+        // E-H2-16 (C-H2-23): the headset owns pitch. A stock camera pitched
+        // 30 deg up by the engine composes an identity head onto a LEVEL
+        // camera; the engine pitch is read back from the stock basis and
+        // the head pitch from the OpenXR quaternion with the same sign.
+        {
+            const float deg = pi / 180.0f;
+            Halo2CameraBasis pitched{};
+            pitched.forward[0] = std::cos(30.0f * deg);
+            pitched.forward[2] = std::sin(30.0f * deg);
+            pitched.up[0] = -std::sin(30.0f * deg);
+            pitched.up[2] = std::cos(30.0f * deg);
+            Halo2TrackedHeadInput levelHead{};
+            Halo2CameraBasis composed{};
+            Check(Halo2BuildTrackedCenterCamera(pitched, levelHead, composed) &&
+                      std::fabs(composed.forward[0] - 1.0f) < 1.0e-4f &&
+                      std::fabs(composed.forward[2]) < 1.0e-4f &&
+                      std::fabs(composed.up[2] - 1.0f) < 1.0e-4f,
+                "E-H2-16 the engine's own pitch is flattened out of the camera "
+                "before the head is composed");
+            float enginePitch = 0.0f;
+            Check(Halo2EnginePitchRadians(pitched, enginePitch) &&
+                      std::fabs(enginePitch - 30.0f * deg) < 1.0e-4f,
+                "E-H2-16 engine pitch reads positive looking up");
+            // Head pitched 20 deg up about +X (OpenXR): q = (sin10, 0, 0, cos10).
+            const float headUp[4] = {std::sin(10.0f * deg), 0.0f, 0.0f,
+                                     std::cos(10.0f * deg)};
+            float headPitch = 0.0f;
+            Check(Halo2HeadPitchRadians(headUp, headPitch) &&
+                      std::fabs(headPitch - 20.0f * deg) < 1.0e-4f,
+                "E-H2-16 head pitch reads positive looking up, same sign as "
+                "the engine");
+            Halo2TrackedHeadInput lookUp{};
+            std::memcpy(lookUp.orientation, headUp, sizeof(headUp));
+            Halo2CameraBasis lookedUp{};
+            float composedPitch = 0.0f;
+            Check(Halo2BuildTrackedCenterCamera(pitched, lookUp, lookedUp) &&
+                      Halo2EnginePitchRadians(lookedUp, composedPitch) &&
+                      std::fabs(composedPitch - 20.0f * deg) < 1.0e-3f,
+                "E-H2-16 the composed camera pitch is the head's alone, not "
+                "engine plus head");
+            // Walking: tracked yaw 90 deg left of stock rotates the move vector.
+            Halo2CameraBasis stockFacing{};
+            stockFacing.forward[0] = 1.0f;
+            stockFacing.up[2] = 1.0f;
+            Halo2CameraBasis trackedFacing{};
+            trackedFacing.forward[1] = 1.0f;
+            trackedFacing.up[2] = 1.0f;
+            float yawDelta = 0.0f;
+            Check(Halo2HeadYawDeltaRadians(stockFacing, trackedFacing, yawDelta) &&
+                      std::fabs(yawDelta - 90.0f * deg) < 1.0e-4f,
+                "E-H2-16 the head yaw delta is tracked minus stock, wrapped");
+            Halo2CameraBasis wrapped{};
+            wrapped.forward[0] = std::cos(170.0f * deg);
+            wrapped.forward[1] = std::sin(170.0f * deg);
+            Halo2CameraBasis wrappedTracked{};
+            wrappedTracked.forward[0] = std::cos(-170.0f * deg);
+            wrappedTracked.forward[1] = std::sin(-170.0f * deg);
+            Check(Halo2HeadYawDeltaRadians(wrapped, wrappedTracked, yawDelta) &&
+                      std::fabs(yawDelta - 20.0f * deg) < 1.0e-3f,
+                "E-H2-16 the yaw delta wraps across +-180");
         }
 
         // E-H2-12: the crop follows the projection the engine built, read
