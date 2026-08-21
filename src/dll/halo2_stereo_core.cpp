@@ -454,7 +454,7 @@ namespace
         }
         return Halo2BuildSynchronousEyeCamera(
             trackedCenter, snapshot.eyes[eye].position,
-            snapshot.eyes[eye].orientation, output);
+            snapshot.eyes[eye].orientation, output, Game_GetWorldScale());
     }
 
     bool DeriveRuntimeCover(

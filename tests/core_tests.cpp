@@ -6578,7 +6578,8 @@ int main()
         leanHead.position[0] = 1.524f;   // room right
         leanHead.position[1] = 1.524f;   // room up
         leanHead.position[2] = -0.762f;  // room forward (OpenXR -Z)
-        leanHead.worldScale = 2.0f;      // 1.5 wu per-axis bound stays clear
+        // world_scale is world units per metre; twice the default here.
+        leanHead.worldScale = 2.0f * kHalo2WorldUnitsPerMeter;
         Halo2CameraBasis leaned{};
         Check(Halo2BuildTrackedCenterCamera(
                   haloCamera, leanHead, leaned) &&

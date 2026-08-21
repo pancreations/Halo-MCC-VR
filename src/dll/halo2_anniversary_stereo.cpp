@@ -444,7 +444,8 @@ namespace
         {
             if (!Halo2BuildSynchronousEyeCamera(
                     tracked, snapshot.eyes[eye].position,
-                    snapshot.eyes[eye].orientation, eyes[eye]))
+                    snapshot.eyes[eye].orientation, eyes[eye],
+                    Game_GetWorldScale()))
             {
                 CountBail(Bail::EyeCameraFailed);
                 CallStock(original, ctx, rdx, viewIndex);

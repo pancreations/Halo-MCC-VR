@@ -742,9 +742,11 @@ struct Halo2TrackedHeadInput
     float referenceOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float referencePosition[3]{};
     // The universal halomccvr.cfg / F-key knobs every accepted title reads:
-    // F6 positional (leaning) toggle and the lean world scale.
+    // the F6 positional (leaning) toggle and world_scale, which IS the
+    // metres-to-world-units factor (Halo 3 multiplies lean and eye offset
+    // by it directly; its default 0.33 is 1/3.048 to two places).
     bool positional = true;
-    float worldScale = 1.0f;
+    float worldScale = kHalo2WorldUnitsPerMeter;
 };
 
 // The yaw-only part of an OpenXR head orientation: the rotation about room
@@ -781,8 +783,8 @@ inline void Halo2YawOnlyQuaternion(
 //    and roll are the headset's own and yaw adds to the game's;
 //  - lean is the room-space displacement from the recenter point, taken in
 //    the recentered horizontal frame and re-applied in the GAME's horizontal
-//    frame (room up -> world +Z) at 1/3.048 world units per metre times the
-//    universal world scale, clamped per axis and never rejected.
+//    frame (room up -> world +Z) at world_scale world units per metre
+//    (0.33 = 1/3.048 by default), clamped per axis and never rejected.
 // A camera looking straight along world Z has no horizontal frame; the
 // displacement then follows the camera basis itself.
 inline bool Halo2BuildTrackedCenterCamera(
@@ -866,7 +868,7 @@ inline bool Halo2BuildTrackedCenterCamera(
             rightAxis[2] = stock.forward[0] * stock.up[1] -
                 stock.forward[1] * stock.up[0];
         }
-        const float scale = kHalo2WorldUnitsPerMeter * input.worldScale;
+        const float scale = input.worldScale;
         for (int axis = 0; axis < 3; ++axis)
         {
             float offset =
@@ -969,12 +971,16 @@ inline Halo2PoseOwnerDecision Halo2SelectPoseOwner(
         : Halo2PoseOwnerDecision::RederiveFromPublishedStock;
 }
 
+// `worldUnitsPerMeter` is the universal world_scale, exactly as Halo 3 scales
+// its eye offset (game.cpp eyeScale = g_worldScale).
 inline bool Halo2BuildSynchronousEyeCamera(
     const Halo2CameraBasis& trackedCenter, const float eyePositionMeters[3],
-    const float eyeOrientation[4], Halo2CameraBasis& output) noexcept
+    const float eyeOrientation[4], Halo2CameraBasis& output,
+    float worldUnitsPerMeter = kHalo2WorldUnitsPerMeter) noexcept
 {
     if (!eyePositionMeters || !eyeOrientation ||
-        !Halo2ValidateCameraBasis(trackedCenter))
+        !Halo2ValidateCameraBasis(trackedCenter) ||
+        !std::isfinite(worldUnitsPerMeter) || worldUnitsPerMeter <= 0.0f)
     {
         return false;
     }
@@ -996,7 +1002,7 @@ inline bool Halo2BuildSynchronousEyeCamera(
             (right[axis] * eyePositionMeters[0] +
              candidate.up[axis] * eyePositionMeters[1] -
              candidate.forward[axis] * eyePositionMeters[2]) *
-            kHalo2WorldUnitsPerMeter;
+            worldUnitsPerMeter;
     }
     if (!Halo2ApplyLocalQuaternion(candidate, eyeOrientation))
         return false;
