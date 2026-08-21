@@ -5316,13 +5316,20 @@ int main()
                       true, true, true, false, false, 11111111, 22222222),
             "H2 cannot claim outside its intended usable stereo context");
         Check(Halo2PreparedSerialMayFollowCompletedPair(0, 400) &&
-                  Halo2PreparedSerialMayFollowCompletedPair(400, 401),
-            "H2 preserves loading before its first pair then admits the exact next serial");
+                  Halo2PreparedSerialMayFollowCompletedPair(400, 401) &&
+                  Halo2PreparedSerialMayFollowCompletedPair(400, 402) &&
+                  Halo2PreparedSerialMayFollowCompletedPair(7031, 7038),
+            "H2 preserves loading before its first pair, then admits any serial "
+            "that moves forward - the headset advances prepared serials at its "
+            "own rate, so a game rendering slower than the panel skips them "
+            "normally and a gap is not half-rate stereo");
         Check(!Halo2PreparedSerialMayFollowCompletedPair(400, 400) &&
-                  !Halo2PreparedSerialMayFollowCompletedPair(400, 402) &&
+                  !Halo2PreparedSerialMayFollowCompletedPair(400, 399) &&
                   !Halo2PreparedSerialMayFollowCompletedPair(400, 0) &&
                   !Halo2PreparedSerialMayFollowCompletedPair(UINT64_MAX, 1),
-            "H2 rejects duplicate, skipped, missing, and wrapped serials after first Complete");
+            "H2 still rejects a repeated, backwards, missing, or wrapped serial "
+            "after the first Complete, because those are what a stale or reused "
+            "eye actually looks like");
         Check(!Halo2StructuralFailureRequiresQuarantine(
                   0, false, false, false, false),
             "A clean zero-eye H2 failure retains its one stock replay");

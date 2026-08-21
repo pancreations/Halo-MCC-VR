@@ -621,7 +621,8 @@ bool Halo2AnniversaryStereo_Poll(
     const bool vrAvailable = !vrFailure || generation != vrFailure;
     const bool desired = moduleBase && generation &&
         moduleSize == kHalo2RetailImageSize && activeAndRange && levelRunning &&
-        coldPassed && vrAvailable && observerResultArray != 0;
+        coldPassed && vrAvailable && observerResultArray != 0 &&
+        remasteredRendererLive;
 
     g_levelLive.store(levelRunning, std::memory_order_release);
     g_remasteredLive.store(remasteredRendererLive, std::memory_order_release);

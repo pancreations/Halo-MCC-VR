@@ -97,6 +97,18 @@ inline bool Halo2PresentationMayClaim(
             targetPeriodNs, predictedDisplayDeltaNs);
 }
 
+// Forward progress only. This used to demand exactly previousCompleted + 1,
+// which was wrong: OpenXR prepared serials advance at the HEADSET's rate while
+// the game renders at its own. A title running at 34 fps against a 90 Hz panel
+// skips prepared serials as a matter of course, and the strict rule quarantined
+// Halo 2 stereo 140 ms after its first accepted pair - observed 2026-08-21,
+// "expected prepared serial 7031 after the first complete pair, saw 7038".
+//
+// A gap is not half-rate stereo. Half-rate is prevented by the two guarantees
+// that actually describe it: both eyes must be freshly rendered inside ONE game
+// frame at the CURRENT prepared serial, and the cadence gate must hold. What
+// must still be refused is going backwards or repeating a serial, because that
+// is what a stale or reused eye looks like.
 inline constexpr bool Halo2PreparedSerialMayFollowCompletedPair(
     uint64_t lastCompletedSerial, uint64_t preparedSerial) noexcept
 {
@@ -105,7 +117,7 @@ inline constexpr bool Halo2PreparedSerialMayFollowCompletedPair(
     if (!lastCompletedSerial)
         return true;
     return lastCompletedSerial != UINT64_MAX &&
-        preparedSerial == lastCompletedSerial + 1;
+        preparedSerial > lastCompletedSerial;
 }
 
 // A completed engine eye is not the only point of no safe retry. If an owned
