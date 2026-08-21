@@ -38,6 +38,32 @@ typedef void(STDMETHODCALLTYPE* DrawIndexedFn)(ID3D11DeviceContext*, UINT, UINT,
 typedef void(STDMETHODCALLTYPE* CopyResourceFn)(ID3D11DeviceContext*,
     ID3D11Resource*, ID3D11Resource*);
 #endif
+#if HALOMCCVR_HALO2_STEREO6DOF
+typedef void(STDMETHODCALLTYPE* Halo2DrawIndexedFn)(
+    ID3D11DeviceContext*, UINT, UINT, INT);
+typedef void(STDMETHODCALLTYPE* Halo2DrawFn)(ID3D11DeviceContext*, UINT, UINT);
+static Halo2DrawIndexedFn g_origHalo2DrawIndexed = nullptr;
+static Halo2DrawFn g_origHalo2Draw = nullptr;
+
+// E-H2-8 draw census. One title check and one atomic increment per draw,
+// nothing else; the engine's call is always forwarded unchanged.
+static void STDMETHODCALLTYPE Halo2DrawIndexedCensusHook(
+    ID3D11DeviceContext* context, UINT indexCount, UINT startIndex,
+    INT baseVertex)
+{
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+        VR_Halo2NoteDraw();
+    g_origHalo2DrawIndexed(context, indexCount, startIndex, baseVertex);
+}
+
+static void STDMETHODCALLTYPE Halo2DrawCensusHook(
+    ID3D11DeviceContext* context, UINT vertexCount, UINT startVertex)
+{
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+        VR_Halo2NoteDraw();
+    g_origHalo2Draw(context, vertexCount, startVertex);
+}
+#endif
 
 static PresentFn g_origPresent = nullptr;
 static Present1Fn g_origPresent1 = nullptr;
@@ -1143,6 +1169,19 @@ bool InstallD3D11Hooks()
     {
         LOG("REACHDRAW: DrawIndexed diagnostic hook intentionally disabled; "
             "no draw calls are intercepted");
+    }
+#endif
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // DrawIndexed is slot 12 and Draw slot 13. The Reach diagnostic above is
+    // compile-time off, so these slots are free; never part of `ok`, so a
+    // failure here cannot gate Present or any title camera core.
+    if (MH_CreateHook(contextVtbl[12], (void*)&Halo2DrawIndexedCensusHook,
+                      (void**)&g_origHalo2DrawIndexed) != MH_OK ||
+        MH_CreateHook(contextVtbl[13], (void*)&Halo2DrawCensusHook,
+                      (void**)&g_origHalo2Draw) != MH_OK)
+    {
+        LOG("Halo 2 draw census: DrawIndexed/Draw hooks failed; the "
+            "census line will not appear");
     }
 #endif
 

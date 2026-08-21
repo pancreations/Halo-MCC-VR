@@ -466,6 +466,11 @@ bool VR_CaptureRenderedEye(int eye);
 bool VR_CaptureBackbufferEye(int eye);
 void VR_BeginRasterEye(int eye);
 void VR_EndRasterEye();
+// Halo 2 draw census (E-H2-8): counts every DrawIndexed/Draw the title
+// issues, split by whether a per-eye raster scope was open, so the log can
+// say whether the classic world is drawn INSIDE the render_view the core
+// wraps or after it. One atomic increment per draw; reported every 2 s.
+void VR_Halo2NoteDraw();
 // One-shot Halo 2 evidence: describes the textures behind three engine RTV
 // slots and the render target bound at the moment of the call. COM work,
 // caller gates it to once per module generation; never per frame.

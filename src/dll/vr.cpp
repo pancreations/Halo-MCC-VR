@@ -345,6 +345,9 @@ namespace
     std::atomic<uint32_t> g_halo2SynchronousPairResourceEpoch{};
     std::atomic<uint64_t> g_halo2SynchronousTargetSerial{};
     std::atomic<ID3D11RenderTargetView*> g_halo2SynchronousFinalRtv{};
+    // E-H2-8 draw census counters (see VR_Halo2NoteDraw).
+    std::atomic<uint64_t> g_halo2DrawsInsideEye[2]{};
+    std::atomic<uint64_t> g_halo2DrawsOutsideEye{0};
     std::atomic<uint64_t> g_halo2SynchronousEyeSerial[2]{};
     std::atomic<uint32_t> g_halo2SynchronousEyeGeneration[2]{};
     std::atomic<uint32_t> g_halo2SynchronousEyeResourceEpoch[2]{};
@@ -4847,12 +4850,42 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     }
 
 #if HALOMCCVR_HALO2_STEREO6DOF
+    // E-H2-8: where do the classic draws happen relative to the per-eye
+    // render_view scopes? Zero inside and thousands outside means the world
+    // is submitted AFTER render_view returns, which is what identical eye
+    // copies plus a stock-FOV picture look like.
+    void ReportHalo2DrawCensus()
+    {
+        static uint64_t lastInside[2]{};
+        static uint64_t lastOutside = 0;
+        const uint64_t inside0 =
+            g_halo2DrawsInsideEye[0].load(std::memory_order_relaxed);
+        const uint64_t inside1 =
+            g_halo2DrawsInsideEye[1].load(std::memory_order_relaxed);
+        const uint64_t outside =
+            g_halo2DrawsOutsideEye.load(std::memory_order_relaxed);
+        const uint64_t dInside0 = inside0 - lastInside[0];
+        const uint64_t dInside1 = inside1 - lastInside[1];
+        const uint64_t dOutside = outside - lastOutside;
+        lastInside[0] = inside0;
+        lastInside[1] = inside1;
+        lastOutside = outside;
+        if (!dInside0 && !dInside1 && !dOutside)
+            return;
+        LOG("Halo 2 draw census (last 2s): DrawIndexed/Draw inside eye 0 = "
+            "%llu, inside eye 1 = %llu, outside any eye scope = %llu",
+            static_cast<unsigned long long>(dInside0),
+            static_cast<unsigned long long>(dInside1),
+            static_cast<unsigned long long>(dOutside));
+    }
+
     // Halo 2 acceptance is "two different images from two different cameras",
     // not "our hooks ran". This reads both eye caches back every two seconds
     // while a live exact-serial pair is being presented and says, in the log,
     // whether the engine actually rendered distinct eyes. Staging textures
     // are created once per eye-cache shape and reused; the GPU stall of the
     // readback is paid once every two seconds on the present path only.
+    void ReportHalo2DrawCensus();
     void ValidateHalo2EyePairPeriodic()
     {
         static ID3D11Texture2D* staging[2]{};
@@ -4863,6 +4896,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (nowMs - lastCheckMs < 2000)
             return;
         lastCheckMs = nowMs;
+        ReportHalo2DrawCensus();
         if (!g_device || !g_context || !g_eyeHasImage[0] ||
             !g_eyeHasImage[1] || !g_eyeCache[0] || !g_eyeCache[1])
         {
@@ -12145,6 +12179,17 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
     }
     texture->Release();
     return copied;
+}
+#endif
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+void VR_Halo2NoteDraw()
+{
+    const int eye = g_rasterEye.load(std::memory_order_relaxed);
+    if (eye == 0 || eye == 1)
+        g_halo2DrawsInsideEye[eye].fetch_add(1, std::memory_order_relaxed);
+    else
+        g_halo2DrawsOutsideEye.fetch_add(1, std::memory_order_relaxed);
 }
 #endif
 
