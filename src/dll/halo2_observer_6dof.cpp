@@ -74,6 +74,7 @@ namespace
     std::atomic<uint64_t> g_exceptions{0};
     uint64_t g_lastReportMs = 0;
     uint64_t g_lastAppliedReported = 0;
+    uint64_t g_lastCallbacks = 0;
 
     // Written and read only from the owned detour, which the engine calls on
     // one thread inside observer_update_all.
@@ -658,9 +659,19 @@ namespace
             return;
         g_lastReportMs = now;
         const uint64_t applied = g_appliedPoses.load(std::memory_order_relaxed);
-        if (applied == g_lastAppliedReported)
+        // Report even when nothing is being applied. A silent zero is exactly
+        // the failure this telemetry exists to expose: it distinguishes "the
+        // hook never fired" from "the hook fired but every head sample was
+        // rejected", which look identical from the player's seat.
+        static bool reportedOnce = false;
+        if (reportedOnce && applied == g_lastAppliedReported &&
+            g_callbacks.load(std::memory_order_relaxed) == g_lastCallbacks)
+        {
             return;
+        }
+        reportedOnce = true;
         g_lastAppliedReported = applied;
+        g_lastCallbacks = g_callbacks.load(std::memory_order_relaxed);
         LOG("Halo 2 observer 6DOF: %llu observer transforms seen, %llu head "
             "poses applied, %llu rejected samples, %llu unreadable, %llu "
             "exceptions",

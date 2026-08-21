@@ -39,6 +39,7 @@ namespace
     int32_t g_appliedRenderMode = 0;
     bool g_appliedRenderModeValid = false;
     uintptr_t g_observerResultArray = 0;
+    uintptr_t g_classicRenderDisabledByteAddress = 0;
 
     int HexNibble(char c) noexcept
     {
@@ -363,6 +364,7 @@ namespace
         g_appliedRenderMode = 0;
         g_appliedRenderModeValid = false;
         g_observerResultArray = 0;
+        g_classicRenderDisabledByteAddress = 0;
     }
 
     bool PrepareGate() noexcept
@@ -615,6 +617,7 @@ namespace
         g_graphicsModeValid = false;
         g_appliedRenderModeValid = false;
         g_observerResultArray = 0;
+        g_classicRenderDisabledByteAddress = 0;
 
         uintptr_t gateMatch = 0;
         if (!ResolveUniqueAnchor(
@@ -686,6 +689,7 @@ namespace
             }
         }
 
+        g_classicRenderDisabledByteAddress = gateByteAddress;
         g_classicRenderDisabledByte = classicDisabled;
         g_appliedRenderMode = appliedMode;
         g_appliedRenderModeValid = appliedModeRead;
@@ -970,9 +974,34 @@ Halo2GraphicsMode Halo2ColdObservation_GraphicsMode(
     return Halo2GraphicsMode::Unknown;
 #else
     if (!generation || !g_graphicsModeValid ||
-        g_graphicsModeGeneration != generation)
+        g_graphicsModeGeneration != generation ||
+        !g_classicRenderDisabledByteAddress)
     {
         return Halo2GraphicsMode::Unknown;
+    }
+    // The player can toggle Halo 2's graphics mode at any moment, and the
+    // engine flips this byte the instant they do. Reading it once at
+    // cold-observation time would freeze the answer for the whole module
+    // generation and leave the classic stereo core withheld in a mode where
+    // its hooks demonstrably fire; the D-H2-1 census caught exactly that.
+    // The ADDRESS is proven once; the VALUE is re-read every call.
+    uint8_t live = 0;
+    if (!ReadGuardedByte(g_classicRenderDisabledByteAddress, live))
+        return Halo2GraphicsMode::Unknown;
+    if (live != g_classicRenderDisabledByte)
+    {
+        g_classicRenderDisabledByte = live;
+        g_graphicsMode = Halo2ClassicRenderTreeRuns(live)
+            ? Halo2GraphicsMode::Classic
+            : Halo2GraphicsMode::Remastered;
+        LOG("Halo 2 live renderer CHANGED to %s (gate byte RVA 0x%X = %u); "
+            "the classic render tree %s execute now",
+            g_graphicsMode == Halo2GraphicsMode::Classic
+                ? "CLASSIC (legacy Blam)"
+                : "REMASTERED (Anniversary / Saber)",
+            kHalo2ClassicRenderDisabledByteRva,
+            static_cast<unsigned>(live),
+            Halo2ClassicRenderTreeRuns(live) ? "DOES" : "does NOT");
     }
     return g_graphicsMode;
 #endif
