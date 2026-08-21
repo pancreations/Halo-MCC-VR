@@ -219,6 +219,9 @@ namespace
     std::atomic<uint32_t> g_projectionReadbackWrittenBits[2]{};
     std::atomic<uint32_t> g_projectionReadbackEngineBits[2]{};
     std::atomic<uint32_t> g_projectionReadbackStatus{0};
+    // E-H2-14: claimed frames dropped this generation (reset on install).
+    std::atomic<uint32_t> g_claimedFrameFailures{0};
+    uint64_t g_claimedFrameFailureLogMs = 0;
     uint32_t g_projectionReadbackLoggedStatus = 0;
     uint32_t g_projectionReadbackLoggedBits[4]{};
 
@@ -1871,6 +1874,8 @@ namespace
     {
 #define H2_RESET_TELEMETRY(field) \
         g_telemetry.field.store(0, std::memory_order_relaxed)
+        g_claimedFrameFailures.store(0, std::memory_order_relaxed);
+        g_claimedFrameFailureLogMs = 0;
         H2_RESET_TELEMETRY(outerCallbacks);
         H2_RESET_TELEMETRY(innerCallbacks);
         H2_RESET_TELEMETRY(stockOuterCalls);
@@ -2700,19 +2705,35 @@ bool Halo2Stereo_Poll(
 
     if (runtimeQuarantined)
     {
+        // E-H2-14 (C-H2-20): a failed claimed frame is DROPPED, never a
+        // reason to disarm. The generation-wide quarantine this used to
+        // raise unhooked the classic core after one failed frame and left
+        // the rest of the level on the stock flat screen (16:55:12 in the
+        // C-H2-18 log: "classic dropped out of the hook"). AGENTS.md:
+        // "reject means drop that frame and keep going". The frame that
+        // failed was already rejected by its transaction; clear the word,
+        // count it, say so at most every two seconds, and stay armed.
         const Halo2StereoQuarantineReason quarantineReason =
             RuntimeQuarantineReason(runtimeQuarantine);
         const char* const reason = QuarantineReasonName(quarantineReason);
-        if (g_rejectedGeneration != generation)
+        g_runtimeQuarantine.compare_exchange_strong(
+            runtimeQuarantine, 0, std::memory_order_acq_rel,
+            std::memory_order_acquire);
+        const uint32_t drops =
+            g_claimedFrameFailures.fetch_add(1, std::memory_order_relaxed) + 1;
+        const uint64_t nowMs = GetTickCount64();
+        if (!g_claimedFrameFailureLogMs ||
+            nowMs - g_claimedFrameFailureLogMs >= 2000)
         {
+            g_claimedFrameFailureLogMs = nowMs;
             if (quarantineReason ==
                 Halo2StereoQuarantineReason::CorePreparedSerialGap)
             {
-                LOG("Halo 2 stereo generation %u QUARANTINED (%s): expected "
-                    "prepared serial %llu after the first complete pair, saw "
-                    "%llu; no eye rendered for the gap frame and later frames "
-                    "use stock screen presentation",
-                    generation, reason,
+                LOG("Halo 2 stereo: claimed frame DROPPED (%s, drop #%u this "
+                    "generation): expected prepared serial %llu after the "
+                    "last complete pair, saw %llu; the core stays armed and "
+                    "the next frame renders its own pair",
+                    reason, drops,
                     static_cast<unsigned long long>(
                         g_serialGapExpected.load(std::memory_order_acquire)),
                     static_cast<unsigned long long>(
@@ -2720,16 +2741,12 @@ bool Halo2Stereo_Poll(
             }
             else
             {
-                LOG("Halo 2 stereo generation %u QUARANTINED (%s): the current "
-                    "claimed frame remains dropped; later frames use "
-                    "stock screen presentation until a new module generation",
-                    generation, reason);
+                LOG("Halo 2 stereo: claimed frame DROPPED (%s, drop #%u this "
+                    "generation); the core stays armed and the next frame "
+                    "renders its own pair - it is never quarantined",
+                    reason, drops);
             }
         }
-        g_rejectedGeneration = generation;
-        if ((g_outerTarget || g_innerTarget) && !RemoveCore(reason))
-            return false;
-        return false;
     }
 
     if ((g_outerTarget || g_innerTarget) &&

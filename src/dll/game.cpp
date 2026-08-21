@@ -37372,8 +37372,8 @@ void Game_AutoVrTick()
                 LOG("Halo 2 C-H2-6 camera core armed: a complete exact-current "
                     "pair will use simultaneous stereo + 6DOF; an unclaimed "
                     "no-pair frame keeps the stock screen-quad path, while a "
-                    "partially claimed failure drops that frame and quarantines "
-                    "H2 stereo for this module generation");
+                    "partially claimed failure drops that frame only and the "
+                    "core stays armed (E-H2-14)");
             }
             // Publish last: g_enabled, recenter, and the shared stereo path are
             // fully ready before a game render is allowed to claim ownership.

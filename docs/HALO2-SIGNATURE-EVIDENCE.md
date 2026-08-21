@@ -1618,3 +1618,24 @@ left-stick click -> Back, added for ODST's map screen). In Halo 2 that
 button is the instant renderer switch, so C-H2-18 never synthesises Back
 while Halo 2 is the active title (the click stays a stick click) and logs
 once that it did so.
+
+## E-H2-14: "Classic dropped out of the hook" = the generation quarantine (C-H2-20)
+
+C-H2-18 log (`out/test-runs/18e4877-halo2-c18-goggles-20260821-1656`),
+16:55:12.621: `Halo 2 stereo generation 1 QUARANTINED
+(CoreClaimedTransactionFailed): the current claimed frame remains dropped;
+later frames use stock screen presentation until a new module generation`,
+followed by `stereo core removed (CoreClaimedTransactionFailed)` and
+`Runtime mode: gameplay -> loading`. From then until the user quit, every
+switch to Classic graphics logged the renderer change and nothing else: the
+classic core's poll refused to reinstall for the rest of the level
+(`g_rejectedGeneration == generation`), the adapter cleared the Halo 2
+heartbeat because no core was ready, and the headset stayed on the stock
+flat screen. That is the silent fallback the project forbids.
+
+C-H2-20 removes the generation-wide quarantine in the classic core: a
+failed claimed frame is dropped by its own transaction (as before), the
+quarantine word is cleared on the next poll, the drop is counted and logged
+at most every two seconds (`Halo 2 stereo: claimed frame DROPPED (<reason>,
+drop #N this generation); the core stays armed`), and the core is never
+removed for it. Install/enable failures keep their own rejection path.
