@@ -54,6 +54,7 @@
 #include "halo2_stereo_core.h"
 #include "halo2_observer_6dof.h"
 #include "halo2_render_probe.h"
+#include "halo2_anniversary_stereo.h"
 #endif
 #include "halo4_adapter.h"
 #include "halo4_cold_observation.h"
@@ -35590,6 +35591,29 @@ namespace
                     halo2Active && halo2GateSampled, activeLevelRunning,
                     Halo2ColdObservation_Passed(halo2ProbeGeneration));
             }
+            {
+                // C-H2-10. The classic core cannot serve Anniversary: with
+                // those graphics selected render_player_window is never
+                // called at all. This runs the remastered scene render once
+                // per eye instead, and only while that renderer is live.
+                const uint32_t halo2AnniversaryGeneration =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                const bool halo2AnniversaryVrAvailable =
+                    !g_vrRuntimeFailureLatched.load(
+                        std::memory_order_acquire);
+                (void)Halo2AnniversaryStereo_Poll(
+                    halo2GateBase, halo2GateSize,
+                    halo2AnniversaryGeneration,
+                    halo2Active && halo2GateSampled &&
+                        halo2AnniversaryVrAvailable,
+                    activeLevelRunning,
+                    Halo2ColdObservation_Passed(
+                        halo2AnniversaryGeneration),
+                    !Halo2ColdObservation_ClassicRenderTreeRuns(
+                        halo2AnniversaryGeneration),
+                    Halo2ColdObservation_ObserverResultArray(
+                        halo2AnniversaryGeneration));
+            }
 #if HALOMCCVR_HALO2_STEREO6DOF
             {
                 const uint32_t halo2Generation =
@@ -36688,6 +36712,7 @@ void Game_DetachForVrRuntimeFailure()
 #if HALOMCCVR_HALO2_STEREO6DOF
         Halo2Stereo_ShutdownForVrFailure();
         Halo2Observer6Dof_ShutdownForVrFailure();
+        Halo2AnniversaryStereo_ShutdownForVrFailure();
 #else
         Halo2TemporalStereo_ShutdownForVrFailure();
 #endif
@@ -37324,6 +37349,7 @@ void Game_AutoVrTick()
                 g_needRecenter.store(true, std::memory_order_release);
                 Halo2Stereo_RequestRecenter();
                 Halo2Observer6Dof_RequestRecenter();
+                Halo2AnniversaryStereo_RequestRecenter();
                 g_autoVrOwned.store(true, std::memory_order_release);
                 if (!VR_IsStereoEnabled())
                     VR_ToggleStereo();

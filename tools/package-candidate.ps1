@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c9-classic-stereo-live-gate',
+        'halo2-c10-both-modes-stereo',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 19
+        schema_version = 20
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -187,7 +187,7 @@ try {
             reach = $true
             reach_render = $true
             halo4 = $true
-            halo2 = 'CLASSIC_STEREO_6DOF_LIVE_MODE_GATE'
+            halo2 = 'BOTH_MODES_STEREO_6DOF'
         }
         deployment_policy = [ordered]@{
             automatic_after_package = $true
@@ -253,8 +253,8 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-9'
-            status = 'HEADSET_CLASSIC_STEREO_6DOF_VALIDATION_REQUIRED'
+            id = 'C-H2-10'
+            status = 'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
@@ -267,6 +267,9 @@ try {
             # pose in the classic and the remastered mode alike.
             render_topology_probe = $false
             render_topology_probe_changes_behavior = $false
+            anniversary_stereo = $true
+            anniversary_stereo_hook_rva = '0x002DF190'
+            anniversary_stereo_eye_camera = 'view-record-embedded-camera-rebuilt-by-engine'
             observer_6dof = $true
             observer_6dof_hook_rva = '0x006F0250'
             observer_6dof_owned_user = 0

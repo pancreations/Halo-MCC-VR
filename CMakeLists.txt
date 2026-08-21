@@ -95,6 +95,8 @@ option(HALOMCCVR_HALO2_STEREO6DOF
     "Enable Halo 2 same-frame stereo and headset 6DOF (C-H2-6)" ON)
 option(HALOMCCVR_HALO2_OBSERVER_6DOF
     "Enable Halo 2 headset 6DOF through the shared observer camera (C-H2-8)" ON)
+option(HALOMCCVR_HALO2_ANNIVERSARY_STEREO
+    "Enable Halo 2 Anniversary per-eye stereo (C-H2-10)" ON)
 option(HALOMCCVR_HALO2_RENDER_PROBE
     "Enable the Halo 2 read-only render-topology census (D-H2-1, diagnostic)" OFF)
 if(HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO AND
@@ -265,6 +267,7 @@ add_library(halo3xr SHARED
     src/dll/halo2_observer_6dof.cpp
     src/dll/halo2_render_probe.cpp
     src/dll/halo2_saber_camera.cpp
+    src/dll/halo2_anniversary_stereo.cpp
     src/dll/halo4_adapter.cpp
     src/dll/halo4_cold_observation.cpp)
 set_target_properties(halo3xr PROPERTIES OUTPUT_NAME "HaloMCCVR")
@@ -289,6 +292,7 @@ target_compile_definitions(halo3xr PRIVATE
     HALOMCCVR_HALO2_STEREO6DOF=$<BOOL:${HALOMCCVR_HALO2_STEREO6DOF}>
     HALOMCCVR_HALO2_OBSERVER_6DOF=$<BOOL:${HALOMCCVR_HALO2_OBSERVER_6DOF}>
     HALOMCCVR_HALO2_RENDER_PROBE=$<BOOL:${HALOMCCVR_HALO2_RENDER_PROBE}>
+    HALOMCCVR_HALO2_ANNIVERSARY_STEREO=$<BOOL:${HALOMCCVR_HALO2_ANNIVERSARY_STEREO}>
     HALOMCCVR_BUILD_COMMIT="${HALOMCCVR_BUILD_COMMIT}"
     HALOMCCVR_BUILD_ODST="${HALOMCCVR_BUILD_ODST}"
     HALOMCCVR_BUILD_REACH="${HALOMCCVR_BUILD_REACH}"
@@ -360,7 +364,8 @@ if(BUILD_TESTING)
         HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO=$<BOOL:${HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO}>
         HALOMCCVR_HALO2_STEREO6DOF=$<BOOL:${HALOMCCVR_HALO2_STEREO6DOF}>
         HALOMCCVR_HALO2_OBSERVER_6DOF=$<BOOL:${HALOMCCVR_HALO2_OBSERVER_6DOF}>
-        HALOMCCVR_HALO2_RENDER_PROBE=$<BOOL:${HALOMCCVR_HALO2_RENDER_PROBE}>)
+        HALOMCCVR_HALO2_RENDER_PROBE=$<BOOL:${HALOMCCVR_HALO2_RENDER_PROBE}>
+        HALOMCCVR_HALO2_ANNIVERSARY_STEREO=$<BOOL:${HALOMCCVR_HALO2_ANNIVERSARY_STEREO}>)
     add_test(NAME halomccvr_core_tests COMMAND halomccvr_core_tests)
 endif()
 

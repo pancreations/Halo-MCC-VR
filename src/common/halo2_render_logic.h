@@ -1385,3 +1385,41 @@ inline bool Halo2SaberVerticalFovDegrees(
     return std::isfinite(outVerticalDegrees) && outVerticalDegrees > 0.0f &&
         outVerticalDegrees < 180.0f;
 }
+
+// ---------------------------------------------------------------------------
+// The remastered renderer's per-view record. Byte-verified at 0x2DF2C5:
+//   record = *(halo2 + kHalo2SaberViewCollectionSlotRva)
+//          + kHalo2SaberViewRecordArrayOffset
+//          + viewIndex * kHalo2SaberViewRecordStride
+// The scene render latches the embedded camera copy at record+0x20 and the
+// record itself into its render context, and never reads the Saber camera
+// object. A per-eye camera therefore lives here, not in that object.
+// ---------------------------------------------------------------------------
+inline constexpr uint32_t kHalo2SaberViewCollectionSlotRva = 0x01A250F8;
+inline constexpr uint32_t kHalo2SaberViewCountOffset = 0x148;
+inline constexpr uint32_t kHalo2SaberViewRecordArrayOffset = 0x150;
+inline constexpr uint32_t kHalo2SaberViewRecordStride = 0x758;
+inline constexpr uint32_t kHalo2SaberViewRecordCapacity = 0x50;
+inline constexpr uint32_t kHalo2SaberViewRecordCameraOffset = 0x20;
+inline constexpr uint32_t kHalo2SaberViewRecordCameraBytes = 0x398;
+inline constexpr uint32_t kHalo2SaberViewRecordViewIdOffset = 0x10;
+
+// The engine's own rebuild of every derived matrix in the record, called with
+// both pointer arguments null exactly as 0x1C7740 calls it.
+inline constexpr uint32_t kHalo2SaberRebuildViewMatricesRva = 0x001C6D80;
+// Normalises the camera basis rows and produces the inverse at camera+0x40.
+inline constexpr uint32_t kHalo2SaberCameraCommitRvaAlias =
+    kHalo2SaberCameraCommitRva;
+
+// The scene render consumes a once-per-frame latch and clears it to -1, so a
+// second pass in the same frame must restore it or silently skip work.
+inline constexpr uint32_t kHalo2SaberSceneOnceLatchRva = 0x00E21D30;
+// Its callers zero this span of the render context before every call.
+inline constexpr uint32_t kHalo2SaberSceneContextResetOffset = 0x10;
+inline constexpr uint32_t kHalo2SaberSceneContextResetBytes = 0xC8;
+
+// Screen-space reflections read a single frame-to-frame history colour target.
+// One engine-owned byte disables that pass outright, which is the only way to
+// keep two eyes in one frame from sharing one history.
+inline constexpr uint32_t kHalo2SaberRenderSettingsSlotRva = 0x01A6E588;
+inline constexpr uint32_t kHalo2SaberSsrEnableOffset = 0x108;
