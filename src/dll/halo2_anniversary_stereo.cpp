@@ -177,7 +177,7 @@ namespace
             return false;
         for (int a = 0; a < 3; ++a)
             if (!std::isfinite(p[a]) ||
-                std::fabs(p[a]) > kHalo2MaxHeadTranslationMeters)
+                std::fabs(p[a]) > kHalo2MaxHeadPositionMeters)
                 return false;
         return true;
     }

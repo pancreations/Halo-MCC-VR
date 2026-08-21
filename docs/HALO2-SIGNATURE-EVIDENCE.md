@@ -1326,6 +1326,41 @@ The Anniversary eye reports the engine's own stock field of view (degrees at
 camera `+0x150/+0x154`) as its cover; widening that cover to the headset's
 native frustum is the next step once DISTINCT pairs are logged in this mode.
 
+## C-H2-12: tracking brought to Halo 3 / Reach / Halo 4 parity
+
+A side-by-side audit of the three accepted camera cores against Halo 2's
+(2026-08-21) found four divergences, all in the shared pure logic
+`Halo2BuildTrackedCenterCamera` and its callers, none in engine facts:
+
+1. The recenter reference was the FULL head quaternion; the accepted titles
+   recenter against YAW ONLY. A recenter taken while pitched or rolled tilted
+   Halo 2's world permanently. Now `Halo2YawOnlyQuaternion` extracts the yaw
+   about room +Y and the head's pitch/roll are absolute, composed onto the
+   game camera in its local axes (`Halo2ApplyLocalQuaternion`), yaw adding
+   to the game's own.
+2. Room-scale lean was mapped through the live camera's 3-D basis, so engine
+   pitch tilted the lean plane every frame. Now the displacement is taken in
+   the recentered horizontal frame and re-applied in the GAME's horizontal
+   frame with room up on world +Z, exactly Halo 3's `fwdComp/rightComp/dy`
+   model (game.cpp ~5938-5975); a camera looking straight along world Z
+   falls back to its own basis.
+3. A head more than 4 m from the recenter point, or more than 4 m from the
+   tracking origin (`ValidHeadPose` in the observer and Anniversary cores),
+   REJECTED the sample, which cost the frame its stereo pair. The accepted
+   titles clamp. The per-axis delta is now clamped to +/-4 m, the absolute
+   sanity bound is 64 m, and the existing +/-1.5 world-unit write bound is
+   the real limit, as in the other three titles.
+4. Halo 2 read none of the universal knobs. The F6 positional toggle and the
+   lean world scale are now honoured (`Game_IsPositionalTracking`,
+   `Game_GetWorldScale`). Pitch trim / pitch and yaw sign remain unused
+   because Halo 2's observer composes the head quaternion whole.
+
+Tests: `C-H2-12` cases in `tests/core_tests.cpp` pin room forward/right/up
+onto a +Z-up Halo camera at 1/3.048 world units per metre times world scale,
+the F6 toggle, re-application along a yawed game camera, the out-of-range
+clamp, an absolute pitch surviving a pitched recenter, and an exact yaw
+cancel.
+
 ## Accepted C-H2-1 runtime contract
 
 - Existing registry row/slot only; no new title descriptor or alias. These are

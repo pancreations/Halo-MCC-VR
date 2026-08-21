@@ -6527,15 +6527,97 @@ int main()
             "C-H2-3 maps tracked right/up/back displacement through the H2 "
             "camera basis at exactly 1/3.048 world units per metre");
 
+        // A long walk from the recenter point is clamped, like Halo 3, Reach
+        // and Halo 4 do, never rejected: rejection cost the frame its pair.
         Halo2TrackedHeadInput tooFarHead{};
-        tooFarHead.position[0] = kHalo2MaxHeadTranslationMeters + 0.01f;
-        Halo2CameraBasis rejectedHead{};
-        rejectedHead.position[0] = 123.0f;
-        Check(!Halo2BuildTrackedCenterCamera(
-                   renderCamera, tooFarHead, rejectedHead) &&
-                  rejectedHead.position[0] == 123.0f,
-            "C-H2-3 rejects an unbounded tracked translation without changing "
-            "the output camera");
+        tooFarHead.position[0] = kHalo2MaxHeadTranslationMeters + 10.0f;
+        Halo2CameraBasis clampedFar{};
+        Check(Halo2BuildTrackedCenterCamera(
+                  renderCamera, tooFarHead, clampedFar) &&
+                  nearlyEqual(
+                      clampedFar.position[0],
+                      renderCamera.position[0] +
+                          kHalo2MaxHeadTranslationMeters *
+                              kHalo2WorldUnitsPerMeter),
+            "C-H2-12 clamps an out-of-range room displacement per axis "
+            "instead of rejecting the sample");
+
+        // Halo-world camera (+Z up): room forward/right/up land in the game's
+        // horizontal frame at 1/3.048 world units per metre times world scale.
+        Halo2CameraBasis haloCamera{};
+        haloCamera.position[0] = 10.0f;
+        haloCamera.position[1] = 20.0f;
+        haloCamera.position[2] = 30.0f;
+        haloCamera.forward[0] = 1.0f;
+        haloCamera.up[2] = 1.0f;
+        Halo2TrackedHeadInput leanHead{};
+        leanHead.position[0] = 1.524f;   // room right
+        leanHead.position[1] = 1.524f;   // room up
+        leanHead.position[2] = -0.762f;  // room forward (OpenXR -Z)
+        leanHead.worldScale = 2.0f;      // 1.5 wu per-axis bound stays clear
+        Halo2CameraBasis leaned{};
+        Check(Halo2BuildTrackedCenterCamera(
+                  haloCamera, leanHead, leaned) &&
+                  nearlyEqual(leaned.position[0], 10.5f) &&
+                  nearlyEqual(leaned.position[1], 19.0f) &&
+                  nearlyEqual(leaned.position[2], 31.0f) &&
+                  nearlyEqual(leaned.forward[0], 1.0f) &&
+                  nearlyEqual(leaned.up[2], 1.0f),
+            "C-H2-12 applies room lean in the game's horizontal frame with "
+            "room up on world +Z, scaled by the universal world scale");
+
+        Halo2TrackedHeadInput noLeanHead = leanHead;
+        noLeanHead.positional = false;
+        Halo2CameraBasis unleaned{};
+        Check(Halo2BuildTrackedCenterCamera(
+                  haloCamera, noLeanHead, unleaned) &&
+                  cameraNearlyEqual(unleaned, haloCamera),
+            "C-H2-12 honours the F6 positional toggle: no lean when it is OFF");
+
+        // A game camera yawed 90 degrees left: room forward is world +Y.
+        Halo2CameraBasis yawedCamera = haloCamera;
+        yawedCamera.forward[0] = 0.0f;
+        yawedCamera.forward[1] = 1.0f;
+        Halo2TrackedHeadInput forwardHead{};
+        forwardHead.position[2] = -3.048f;
+        Halo2CameraBasis yawedLean{};
+        Check(Halo2BuildTrackedCenterCamera(
+                  yawedCamera, forwardHead, yawedLean) &&
+                  nearlyEqual(yawedLean.position[0], 10.0f) &&
+                  nearlyEqual(yawedLean.position[1], 21.0f) &&
+                  nearlyEqual(yawedLean.position[2], 30.0f),
+            "C-H2-12 re-applies room forward along the game's own yaw");
+
+        // Recenter reference is YAW ONLY: a reference taken while pitched
+        // 30 degrees down still shows the 30-degree pitch, while a reference
+        // taken yawed 30 degrees cancels the yaw exactly.
+        const float halfThirty = pi / 12.0f;
+        Halo2TrackedHeadInput pitchedReference{};
+        pitchedReference.orientation[0] = -std::sin(halfThirty);
+        pitchedReference.orientation[3] = std::cos(halfThirty);
+        std::memcpy(pitchedReference.referenceOrientation,
+                    pitchedReference.orientation,
+                    sizeof(pitchedReference.referenceOrientation));
+        Halo2CameraBasis pitchedOut{};
+        Check(Halo2BuildTrackedCenterCamera(
+                  haloCamera, pitchedReference, pitchedOut) &&
+                  nearlyEqual(pitchedOut.forward[2], -0.5f) &&
+                  nearlyEqual(pitchedOut.forward[0], 0.866025404f) &&
+                  nearlyEqual(pitchedOut.forward[1], 0.0f),
+            "C-H2-12 keeps the headset's absolute pitch across a recenter "
+            "taken while looking down");
+
+        Halo2TrackedHeadInput yawedReference{};
+        yawedReference.orientation[1] = std::sin(halfThirty);
+        yawedReference.orientation[3] = std::cos(halfThirty);
+        std::memcpy(yawedReference.referenceOrientation,
+                    yawedReference.orientation,
+                    sizeof(yawedReference.referenceOrientation));
+        Halo2CameraBasis yawedOut{};
+        Check(Halo2BuildTrackedCenterCamera(
+                  haloCamera, yawedReference, yawedOut) &&
+                  cameraNearlyEqual(yawedOut, haloCamera),
+            "C-H2-12 cancels the recenter yaw exactly");
 
         Halo2CameraBasis diagonalCamera{};
         diagonalCamera.forward[0] = -0.408248290f;
@@ -6543,6 +6625,9 @@ int main()
         diagonalCamera.forward[2] = 0.816496581f;
         diagonalCamera.up[0] = 0.707106781f;
         diagonalCamera.up[1] = -0.707106781f;
+        // Diagonal camera, horizontal forward (-1,-1,0)/sqrt2, right
+        // (-1,1,0)/sqrt2. Room (4,4,4): forward -4 m, right +4 m, up +4 m ->
+        // (0, 5.657, 4) m -> (0, 1.856, 1.312) wu; the Y axis hits the bound.
         Halo2TrackedHeadInput boundedHead{};
         boundedHead.position[0] = 4.0f;
         boundedHead.position[1] = 4.0f;
@@ -6551,9 +6636,13 @@ int main()
         Check(Halo2ValidateCameraBasis(diagonalCamera) &&
                   Halo2BuildTrackedCenterCamera(
                       diagonalCamera, boundedHead, boundedCenter) &&
+                  nearlyEqual(boundedCenter.position[0], 0.0f) &&
                   nearlyEqual(
-                      boundedCenter.position[0],
-                      kHalo2MaxHeadTranslationWorldUnits),
+                      boundedCenter.position[1],
+                      kHalo2MaxHeadTranslationWorldUnits) &&
+                  nearlyEqual(
+                      boundedCenter.position[2],
+                      4.0f * kHalo2WorldUnitsPerMeter),
             "C-H2-3 clamps a finite in-range head displacement at the exact "
             "per-axis world-space write bound");
 

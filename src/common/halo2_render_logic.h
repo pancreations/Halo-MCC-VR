@@ -235,7 +235,14 @@ inline constexpr float kHalo2WorldUnitsPerMeter =
 // generous bound turns a corrupt/torn runtime pose into a stock frame instead
 // of allowing an unbounded engine-camera write.
 inline constexpr float kHalo2MaxEyeOffsetMeters = 0.5f;
+// Room-scale lean is CLAMPED per axis to this, never rejected: Halo 3,
+// Reach and Halo 4 all clamp, and a rejected sample here costs the frame
+// its stereo pair instead of a few centimetres of lean.
 inline constexpr float kHalo2MaxHeadTranslationMeters = 4.0f;
+// Sanity bound on the ABSOLUTE tracked head position (a torn or corrupt
+// pose), deliberately far beyond any play space so a long walk from the
+// tracking origin never disables the headset camera.
+inline constexpr float kHalo2MaxHeadPositionMeters = 64.0f;
 inline constexpr float kHalo2MaxHeadTranslationWorldUnits = 1.5f;
 inline constexpr uint32_t kHalo2KitMetersPerWorldUnitRva = 0x007AD4F8;
 inline constexpr uint32_t kHalo2RetailMetersPerWorldUnitFileOffset =
@@ -722,11 +729,50 @@ struct Halo2TrackedHeadInput
     float position[3]{};
     float referenceOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float referencePosition[3]{};
+    // The universal halomccvr.cfg / F-key knobs every accepted title reads:
+    // F6 positional (leaning) toggle and the lean world scale.
+    bool positional = true;
+    float worldScale = 1.0f;
 };
 
-// Builds a tracked center camera from the stock H2 camera. Translation is first
-// expressed in the recentered headset basis, then mapped through H2's proven
-// right=forward x up camera basis at the title-specific 1/3.048 scale.
+// The yaw-only part of an OpenXR head orientation: the rotation about room
+// +Y that carries (0,0,-1) onto the head's horizontal forward. Halo 3, Reach
+// and Halo 4 all recenter against yaw only, so a recenter taken with the
+// head pitched or rolled does not tilt the world. Looking straight up or
+// down has no horizontal forward; identity yaw is returned for that pole.
+inline void Halo2YawOnlyQuaternion(
+    const float orientation[4], float output[4]) noexcept
+{
+    const float forwardAxis[3] = {0.0f, 0.0f, -1.0f};
+    float forward[3]{};
+    Halo2RotateVectorByQuaternion(orientation, forwardAxis, forward);
+    const float horizontal =
+        std::sqrt(forward[0] * forward[0] + forward[2] * forward[2]);
+    if (!std::isfinite(horizontal) || horizontal < 1.0e-4f)
+    {
+        output[0] = output[1] = output[2] = 0.0f;
+        output[3] = 1.0f;
+        return;
+    }
+    // Rotation about +Y by theta maps (0,0,-1) to (-sin theta, 0, -cos theta).
+    const float theta = std::atan2(-forward[0], -forward[2]);
+    output[0] = 0.0f;
+    output[1] = std::sin(theta * 0.5f);
+    output[2] = 0.0f;
+    output[3] = std::cos(theta * 0.5f);
+}
+
+// Builds a tracked center camera from the stock H2 camera, the way the
+// three accepted titles do it:
+//  - orientation is the head's orientation relative to a YAW-ONLY recenter
+//    reference, composed onto the game camera in its local axes, so pitch
+//    and roll are the headset's own and yaw adds to the game's;
+//  - lean is the room-space displacement from the recenter point, taken in
+//    the recentered horizontal frame and re-applied in the GAME's horizontal
+//    frame (room up -> world +Z) at 1/3.048 world units per metre times the
+//    universal world scale, clamped per axis and never rejected.
+// A camera looking straight along world Z has no horizontal frame; the
+// displacement then follows the camera basis itself.
 inline bool Halo2BuildTrackedCenterCamera(
     const Halo2CameraBasis& stock, const Halo2TrackedHeadInput& input,
     Halo2CameraBasis& output) noexcept
@@ -735,54 +781,99 @@ inline bool Halo2BuildTrackedCenterCamera(
         return false;
     float current[4]{}, reference[4]{};
     if (!Halo2NormalizeQuaternion(input.orientation, current) ||
-        !Halo2NormalizeQuaternion(input.referenceOrientation, reference))
+        !Halo2NormalizeQuaternion(input.referenceOrientation, reference) ||
+        !std::isfinite(input.worldScale) || input.worldScale <= 0.0f)
     {
         return false;
     }
-    float rawDelta[3]{};
-    for (int axis = 0; axis < 3; ++axis)
-    {
-        if (!std::isfinite(input.position[axis]) ||
-            !std::isfinite(input.referencePosition[axis]))
-        {
-            return false;
-        }
-        rawDelta[axis] = input.position[axis] - input.referencePosition[axis];
-        if (!std::isfinite(rawDelta[axis]) ||
-            std::fabs(rawDelta[axis]) > kHalo2MaxHeadTranslationMeters)
-        {
-            return false;
-        }
-    }
-    const float inverseReference[4] = {
-        -reference[0], -reference[1], -reference[2], reference[3]};
-    float referenceLocalDelta[3]{};
-    Halo2RotateVectorByQuaternion(
-        inverseReference, rawDelta, referenceLocalDelta);
+    float yawReference[4]{};
+    Halo2YawOnlyQuaternion(reference, yawReference);
+    const float inverseYawReference[4] = {
+        -yawReference[0], -yawReference[1], -yawReference[2],
+        yawReference[3]};
 
     Halo2CameraBasis candidate = stock;
-    const float right[3] = {
-        stock.forward[1] * stock.up[2] - stock.forward[2] * stock.up[1],
-        stock.forward[2] * stock.up[0] - stock.forward[0] * stock.up[2],
-        stock.forward[0] * stock.up[1] - stock.forward[1] * stock.up[0]};
-    for (int axis = 0; axis < 3; ++axis)
+    if (input.positional)
     {
-        float offset =
-            (right[axis] * referenceLocalDelta[0] +
-             stock.up[axis] * referenceLocalDelta[1] -
-             stock.forward[axis] * referenceLocalDelta[2]) *
-            kHalo2WorldUnitsPerMeter;
-        if (!std::isfinite(offset))
-            return false;
-        if (offset > kHalo2MaxHeadTranslationWorldUnits)
-            offset = kHalo2MaxHeadTranslationWorldUnits;
-        if (offset < -kHalo2MaxHeadTranslationWorldUnits)
-            offset = -kHalo2MaxHeadTranslationWorldUnits;
-        candidate.position[axis] += offset;
+        float rawDelta[3]{};
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (!std::isfinite(input.position[axis]) ||
+                !std::isfinite(input.referencePosition[axis]))
+            {
+                return false;
+            }
+            rawDelta[axis] =
+                input.position[axis] - input.referencePosition[axis];
+            if (!std::isfinite(rawDelta[axis]))
+                return false;
+            if (rawDelta[axis] > kHalo2MaxHeadTranslationMeters)
+                rawDelta[axis] = kHalo2MaxHeadTranslationMeters;
+            if (rawDelta[axis] < -kHalo2MaxHeadTranslationMeters)
+                rawDelta[axis] = -kHalo2MaxHeadTranslationMeters;
+        }
+        // Room displacement in the recentered frame: +x right, +y up,
+        // -z forward.
+        float local[3]{};
+        Halo2RotateVectorByQuaternion(inverseYawReference, rawDelta, local);
+        const float rightMeters = local[0];
+        const float upMeters = local[1];
+        const float forwardMeters = -local[2];
+
+        float forwardAxis[3]{};
+        float rightAxis[3]{};
+        float upAxis[3]{};
+        const float horizontal = std::sqrt(
+            stock.forward[0] * stock.forward[0] +
+            stock.forward[1] * stock.forward[1]);
+        if (std::isfinite(horizontal) && horizontal >= 1.0e-4f)
+        {
+            // Halo world: +Z up. Horizontal forward (cos yaw, sin yaw, 0),
+            // right = forward x up = (sin yaw, -cos yaw, 0).
+            forwardAxis[0] = stock.forward[0] / horizontal;
+            forwardAxis[1] = stock.forward[1] / horizontal;
+            forwardAxis[2] = 0.0f;
+            rightAxis[0] = forwardAxis[1];
+            rightAxis[1] = -forwardAxis[0];
+            rightAxis[2] = 0.0f;
+            upAxis[0] = 0.0f;
+            upAxis[1] = 0.0f;
+            upAxis[2] = 1.0f;
+        }
+        else
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                forwardAxis[axis] = stock.forward[axis];
+                upAxis[axis] = stock.up[axis];
+            }
+            rightAxis[0] = stock.forward[1] * stock.up[2] -
+                stock.forward[2] * stock.up[1];
+            rightAxis[1] = stock.forward[2] * stock.up[0] -
+                stock.forward[0] * stock.up[2];
+            rightAxis[2] = stock.forward[0] * stock.up[1] -
+                stock.forward[1] * stock.up[0];
+        }
+        const float scale = kHalo2WorldUnitsPerMeter * input.worldScale;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            float offset =
+                (forwardAxis[axis] * forwardMeters +
+                 rightAxis[axis] * rightMeters +
+                 upAxis[axis] * upMeters) * scale;
+            if (!std::isfinite(offset))
+                return false;
+            if (offset > kHalo2MaxHeadTranslationWorldUnits)
+                offset = kHalo2MaxHeadTranslationWorldUnits;
+            if (offset < -kHalo2MaxHeadTranslationWorldUnits)
+                offset = -kHalo2MaxHeadTranslationWorldUnits;
+            candidate.position[axis] += offset;
+        }
     }
 
     float relativeOrientation[4]{};
-    Halo2MultiplyQuaternion(inverseReference, current, relativeOrientation);
+    Halo2MultiplyQuaternion(
+        inverseYawReference, current, relativeOrientation);
     if (!Halo2ApplyLocalQuaternion(candidate, relativeOrientation))
         return false;
     output = candidate;

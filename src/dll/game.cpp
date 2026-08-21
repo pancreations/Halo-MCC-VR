@@ -38845,6 +38845,10 @@ void Game_GunScale(int dir)
 }
 
 float Game_GetWorldScale() { return g_worldScale.load(); }
+bool Game_IsPositionalTracking()
+{
+    return g_positional.load(std::memory_order_relaxed);
+}
 float Game_GetZoomFactor() { return g_zoomFactor.load(); }
 
 void Game_GetProjectionTangents(float& tanX, float& tanY)

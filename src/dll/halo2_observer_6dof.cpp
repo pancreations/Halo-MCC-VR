@@ -10,6 +10,7 @@
 
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
+#include "game.h"
 #include "vr.h"
 
 #ifndef HALOMCCVR_HALO2_OBSERVER_6DOF
@@ -145,7 +146,7 @@ namespace
         for (int axis = 0; axis < 3; ++axis)
         {
             if (!std::isfinite(position[axis]) ||
-                std::fabs(position[axis]) > kHalo2MaxHeadTranslationMeters)
+                std::fabs(position[axis]) > kHalo2MaxHeadPositionMeters)
             {
                 return false;
             }
@@ -253,6 +254,8 @@ namespace
         std::memcpy(
             head.referencePosition, g_reference.position,
             sizeof(head.referencePosition));
+        head.positional = Game_IsPositionalTracking();
+        head.worldScale = Game_GetWorldScale();
 
         Halo2CameraBasis tracked{};
         if (!Halo2BuildTrackedCenterCamera(stock, head, tracked))
