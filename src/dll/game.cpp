@@ -53,6 +53,7 @@
 #if HALOMCCVR_HALO2_STEREO6DOF
 #include "halo2_stereo_core.h"
 #include "halo2_observer_6dof.h"
+#include "halo2_render_mode_guard.h"
 #include "halo2_render_probe.h"
 #include "halo2_anniversary_stereo.h"
 #endif
@@ -35586,6 +35587,16 @@ namespace
                     Halo2ColdObservation_Passed(halo2ObserverGeneration),
                     Halo2ColdObservation_ObserverResultArray(
                         halo2ObserverGeneration));
+            }
+            {
+                // E-H2-19. The renderer switch guard lives in both graphics
+                // modes: it is the applier that flips between them.
+                const uint32_t halo2GuardGeneration =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                (void)Halo2RenderModeGuard_Poll(
+                    halo2GateBase, halo2GateSize, halo2GuardGeneration,
+                    halo2Active && halo2GateSampled,
+                    Halo2ColdObservation_Passed(halo2GuardGeneration));
             }
             {
                 // D-H2-1 diagnostic census. Independent of OpenXR so the

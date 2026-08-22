@@ -10,6 +10,7 @@
 #include "title_adapter.h"
 #include "../common/log.h"
 #include "../common/config.h"
+#include "../common/halo2_render_logic.h"
 #include "../common/input_logic.h"
 #include "../common/odst_bringup_logic.h"
 #include "../common/scope_logic.h"
@@ -52,6 +53,7 @@ namespace
     std::atomic<uint64_t> g_fedButtonsMs[kFedButtonSlots]{};
     std::atomic<unsigned> g_fedHead{0};
     std::atomic<uint32_t> g_fedLastMask{0xFFFFFFFFu};
+    std::atomic<uint64_t> g_fedBackMs{0};
 
     void NoteFedButtons(WORD mask) noexcept
     {
@@ -62,7 +64,27 @@ namespace
             g_fedHead.fetch_add(1, std::memory_order_relaxed) % kFedButtonSlots;
         g_fedButtonsMs[slot].store(GetTickCount64(), std::memory_order_relaxed);
         g_fedButtons[slot].store(mask, std::memory_order_release);
+        if (mask & XINPUT_GAMEPAD_BACK)
+            g_fedBackMs.store(GetTickCount64(), std::memory_order_relaxed);
     }
+
+    // E-H2-19: what the PHYSICAL pad reported, before any swallowing, so a
+    // renderer switch can be tied to (or cleared of) the player's own pad.
+    std::atomic<uint32_t> g_physicalLastMask{0};
+    std::atomic<uint64_t> g_physicalBackMs{0};
+    void NotePhysicalButtons(WORD mask) noexcept
+    {
+        g_physicalLastMask.store(mask, std::memory_order_relaxed);
+        if (mask & XINPUT_GAMEPAD_BACK)
+            g_physicalBackMs.store(GetTickCount64(), std::memory_order_relaxed);
+    }
+    // E-H2-19: the head-gesture stick click in Halo 2 is a deliberate
+    // renderer switch only when HELD (a brief click does nothing), so the
+    // moment it is honoured is unmistakable in the log and it can never
+    // flip the renderer by accident.
+    std::atomic<uint64_t> g_halo2GestureClickSinceMs{0};
+    std::atomic<bool> g_halo2GestureClickSent{false};
+    constexpr uint64_t kHalo2GestureClickHoldMs = 350;
 
     // Map |v| in 0..1 to a raw stick value that clears MCC's inner deadzone,
     // so small corrections still produce movement.
@@ -255,29 +277,48 @@ namespace
             // way to reach it. This is deliberately scoped to the gesture: the
             // stick is already acting as a D-pad here, so its click has no
             // other meaning, and normal play keeps L3 untouched.
+            const bool halo2 = TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
             if (pad.clickL && !chord.consumeClicks)
             {
-                // C-H2-25 (E-H2-17): in Halo 2 the Back button has exactly one
-                // job - it is MCC's instant Classic <-> Anniversary graphics
-                // switch (there is no map screen). The C-H2-24 log proved the
-                // gesture click was behind every renderer flip (0x0020 fed
-                // right before each CHANGED line), so Halo 2 follows the same
-                // rule as the physical pad: Back reaches the game only with
-                // halo2_gamepad_graphics_switch = 1. Every other title keeps
-                // the ODST behaviour (click = Back).
                 btn &= ~XINPUT_GAMEPAD_LEFT_THUMB;
-                const bool halo2 = TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
-                if (!halo2 || g_config.halo2_gamepad_graphics_switch)
+                if (!halo2)
+                {
+                    // ODST/Reach/Halo 3/Halo 4: the click is the Back button.
                     btn |= XINPUT_GAMEPAD_BACK;
+                }
                 else
                 {
-                    static std::atomic<bool> loggedGestureSwallow{false};
-                    if (!loggedGestureSwallow.exchange(true))
-                        LOG("M3: Halo 2 - the D-pad gesture's stick click (Back) was "
-                            "swallowed: in Halo 2 Back is the Classic/Anniversary "
-                            "graphics switch; set halo2_gamepad_graphics_switch = 1 "
-                            "to make the click switch renderers");
+                    // E-H2-19 (C-H2-27): in Halo 2 Back IS the Classic <->
+                    // Anniversary switch. The click switches renderers on
+                    // purpose: hold it at the head for 350 ms and Back is
+                    // pressed once (the renderer switch guard honours it
+                    // because the mod fed it); a brief click does nothing.
+                    const uint64_t now = GetTickCount64();
+                    uint64_t since = g_halo2GestureClickSinceMs.load(std::memory_order_relaxed);
+                    if (!since)
+                    {
+                        since = now;
+                        g_halo2GestureClickSinceMs.store(now, std::memory_order_relaxed);
+                        g_halo2GestureClickSent.store(false, std::memory_order_relaxed);
+                    }
+                    if (now - since >= kHalo2GestureClickHoldMs &&
+                        !g_halo2GestureClickSent.load(std::memory_order_relaxed))
+                    {
+                        btn |= XINPUT_GAMEPAD_BACK;
+                        if (now - since >= kHalo2GestureClickHoldMs + 120)
+                        {
+                            g_halo2GestureClickSent.store(true, std::memory_order_relaxed);
+                            LOG("M3: Halo 2 - head-gesture stick click held %llu ms: "
+                                "Back pressed once (the Classic/Anniversary switch)",
+                                static_cast<unsigned long long>(now - since));
+                        }
+                    }
                 }
+            }
+            else if (halo2)
+            {
+                g_halo2GestureClickSinceMs.store(0, std::memory_order_relaxed);
+                g_halo2GestureClickSent.store(false, std::memory_order_relaxed);
             }
             state->Gamepad.wButtons = btn;
         NoteFedButtons(btn);
@@ -442,6 +483,8 @@ namespace
         // Classic <-> Anniversary renderer switch. A physical pad (Steam
         // Controller) reaches the game through this same hook, so unless the
         // player opted in, that button never reaches Halo 2.
+        if (!ownVirtualSlot)
+            NotePhysicalButtons(state->Gamepad.wButtons);
         if (!ownVirtualSlot && !g_config.halo2_gamepad_graphics_switch &&
             (state->Gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0 &&
             TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
@@ -648,6 +691,22 @@ void Input_DescribeRecentButtons(char* buffer, size_t bytes, uint64_t sinceMs)
         _snprintf_s(buffer, bytes, _TRUNCATE, "none (mask unchanged for >%llu ms; last 0x%04X)",
                     static_cast<unsigned long long>(sinceMs),
                     g_fedLastMask.load(std::memory_order_relaxed) & 0xFFFFu);
+}
+
+void Input_Halo2SwitchInputEvidence(Halo2SwitchInputEvidence& evidence)
+{
+    evidence = {};
+    const uint64_t now = GetTickCount64();
+    evidence.tabDown = (GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
+    evidence.physicalBackDown =
+        (g_physicalLastMask.load(std::memory_order_relaxed) & XINPUT_GAMEPAD_BACK) != 0;
+    const uint64_t physicalBackMs = g_physicalBackMs.load(std::memory_order_relaxed);
+    evidence.physicalBackAgeMs =
+        physicalBackMs && physicalBackMs <= now ? now - physicalBackMs : UINT64_MAX;
+    evidence.physicalBackPassThrough = g_config.halo2_gamepad_graphics_switch;
+    const uint64_t fedBackMs = g_fedBackMs.load(std::memory_order_relaxed);
+    evidence.virtualBackAgeMs =
+        fedBackMs && fedBackMs <= now ? now - fedBackMs : UINT64_MAX;
 }
 
 void Input_RequestPauseToggle()

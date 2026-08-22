@@ -7218,6 +7218,57 @@ int main()
                 "E-H2-16 the yaw delta wraps across +-180");
         }
 
+        // E-H2-20: the classic first-person FOV constant is the same 49.594
+        // degrees Saber bakes, stored as radians.
+        {
+            float stock = 0.0f;
+            const uint32_t bits = kHalo2ClassicFirstPersonFovStockBits;
+            std::memcpy(&stock, &bits, sizeof(stock));
+            Check(std::fabs(stock * 180.0f / pi - kHalo2SaberFirstPersonVerticalFovDegrees) < 0.01f,
+                "E-H2-20 0x3F5D9734 is 49.594 degrees in radians, the Saber "
+                "first-person constant");
+        }
+
+        // E-H2-19: the renderer switch guard decides from the request, the
+        // applied mode and whether a switch input is present.
+        {
+            Halo2SwitchInputEvidence none{};
+            Check(!Halo2SwitchInputPresent(none),
+                "E-H2-19 no Tab, no pad, no fed Back: no switch input");
+            Halo2SwitchInputEvidence tab{};
+            tab.tabDown = true;
+            Check(Halo2SwitchInputPresent(tab), "E-H2-19 keyboard Tab is a switch input");
+            Halo2SwitchInputEvidence padBlocked{};
+            padBlocked.physicalBackDown = true;
+            padBlocked.physicalBackPassThrough = false;
+            Check(!Halo2SwitchInputPresent(padBlocked),
+                "E-H2-19 the physical pad's Back is swallowed unless it passes "
+                "through");
+            padBlocked.physicalBackPassThrough = true;
+            Check(Halo2SwitchInputPresent(padBlocked),
+                "E-H2-19 the physical pad's Back with pass-through is a switch "
+                "input");
+            Halo2SwitchInputEvidence fed{};
+            fed.virtualBackAgeMs = 100;
+            Check(Halo2SwitchInputPresent(fed),
+                "E-H2-19 the mod's own Back fed 100 ms ago is a switch input");
+            fed.virtualBackAgeMs = 900;
+            Check(!Halo2SwitchInputPresent(fed),
+                "E-H2-19 a Back fed 900 ms ago is no longer behind a switch");
+            Check(Halo2DecideRenderModeSwitch(1, 1, false) ==
+                      Halo2RenderModeSwitchDecision::NoChange,
+                "E-H2-19 request == applied: nothing to decide");
+            Check(Halo2DecideRenderModeSwitch(0, 1, true) ==
+                      Halo2RenderModeSwitchDecision::Honour,
+                "E-H2-19 a switch with an input behind it is honoured");
+            Check(Halo2DecideRenderModeSwitch(0, 1, false) ==
+                      Halo2RenderModeSwitchDecision::Suppress,
+                "E-H2-19 a switch with nothing behind it is suppressed");
+            Check(Halo2DecideRenderModeSwitch(1, 0, false) ==
+                      Halo2RenderModeSwitchDecision::Suppress,
+                "E-H2-19 suppression works in both directions");
+        }
+
         // E-H2-18: the Saber view record's second, first-person projection.
         {
             const float deg = pi / 180.0f;

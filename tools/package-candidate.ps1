@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c26-fp-projection-hud-per-eye-published-pose',
+        'halo2-c27-classic-fp-fov-switch-guard-hud-eye1-restore',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-26'
+            id = 'C-H2-27'
             status = 'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'
             behavior =
-                'both-cores-saber-fp-projection-unified-hud-replayed-per-eye-observer-published-pose'
+                'both-cores-fp-weapon-through-world-frustum-switch-guard-hud-replay-restores-both-eyes'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.

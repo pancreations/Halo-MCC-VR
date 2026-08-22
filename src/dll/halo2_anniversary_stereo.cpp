@@ -904,8 +904,17 @@ namespace
         bool ok = true;
         __try
         {
-            original(param);                                    // HUD over eye 1
-            ok = VR_Halo2RecaptureEyeFromFinalTarget(generation, serial, 1);
+            // E-H2-19: the backbuffer is NOT guaranteed to hold eye 1 here -
+            // a second Saber view rendered after the pair (serialRepeated
+            // stock passes, the C-H2-26 "flash to the flat screen" in one
+            // eye). Eye 1's finished scene is put back first, always.
+            ok = VR_Halo2RestoreEyeToFinalTarget(generation, serial, 1);
+            if (!ok)
+                reason = "eye 1 restore refused";
+            if (ok)
+                original(param);                                // HUD over eye 1
+            if (ok)
+                ok = VR_Halo2RecaptureEyeFromFinalTarget(generation, serial, 1);
             if (!ok)
                 reason = "eye 1 recapture refused";
             if (ok && !VR_Halo2RestoreEyeToFinalTarget(generation, serial, 0))
@@ -1366,7 +1375,7 @@ namespace
             g_hudLoggedReplays = replays;
             LOG("Halo 2 Anniversary HUD: host UI callback +0x%X (-> 0x960230(1) "
                 "-> 0x7E1990 interface draw) fired %llu times; replayed per eye "
-                "(eye 1 drawn+recaptured, eye 0 restored+drawn+recaptured) on "
+                "(eye 1 restored+drawn+recaptured, eye 0 restored+drawn+recaptured) on "
                 "%llu frames, run once untouched on %llu (no complete pair), "
                 "%llu failures; last reason: %s",
                 static_cast<unsigned>(kHalo2SaberHostUiCallbackRva),

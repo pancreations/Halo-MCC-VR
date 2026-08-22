@@ -231,6 +231,131 @@ namespace
     CoreState g_coreState = CoreState::StockFallback;
     uint32_t g_rejectedGeneration = 0;
     uint32_t g_pinFailureLoggedGeneration = 0;
+    // E-H2-20: the classic first-person FOV constant (see the header).
+    std::atomic<uintptr_t> g_fpConstantAddress{0};
+    std::atomic<uint32_t> g_fpConstantWrittenBits{0};
+    std::atomic<uint64_t> g_fpConstantWrites{0};
+    std::atomic<uint64_t> g_fpConstantRestores{0};
+    std::atomic<uint64_t> g_fpConstantWriteFailures{0};
+    std::atomic<bool> g_fpConstantPinned{false};
+    uint32_t g_fpConstantLoggedBits = 0;
+
+    bool WriteDwordGuarded(uintptr_t address, uint32_t value) noexcept
+    {
+        if (!address)
+            return false;
+        __try
+        {
+            *reinterpret_cast<volatile uint32_t*>(address) = value;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    bool ReadDwordGuarded(uintptr_t address, uint32_t& value) noexcept
+    {
+        if (!address)
+            return false;
+        __try
+        {
+            value = *reinterpret_cast<const volatile uint32_t*>(address);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    // Pins the constant by its only reader and the stock value, and makes
+    // its page writable. Anything that does not match leaves the weapon as
+    // the engine draws it and says so once per generation.
+    bool PinFirstPersonFovConstant(uintptr_t base, uint32_t generation) noexcept
+    {
+        g_fpConstantPinned.store(false, std::memory_order_release);
+        g_fpConstantAddress.store(0, std::memory_order_release);
+        const uintptr_t load = base + kHalo2ClassicFirstPersonFovLoadRva;
+        const uintptr_t entry = base + kHalo2ClassicDrawFirstPersonRva;
+        const uintptr_t constant = base + kHalo2ClassicFirstPersonFovConstantRva;
+        uint8_t loadBytes[sizeof(kHalo2ClassicFirstPersonFovLoadBytes)]{};
+        uint8_t entryBytes[sizeof(kHalo2ClassicDrawFirstPersonEntryBytes)]{};
+        uint32_t stock = 0;
+        __try
+        {
+            std::memcpy(loadBytes, reinterpret_cast<const void*>(load), sizeof(loadBytes));
+            std::memcpy(entryBytes, reinterpret_cast<const void*>(entry), sizeof(entryBytes));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        if (std::memcmp(loadBytes, kHalo2ClassicFirstPersonFovLoadBytes, sizeof(loadBytes)) != 0 ||
+            std::memcmp(entryBytes, kHalo2ClassicDrawFirstPersonEntryBytes, sizeof(entryBytes)) != 0 ||
+            !ReadDwordGuarded(constant, stock) ||
+            (stock != kHalo2ClassicFirstPersonFovStockBits &&
+             stock != g_fpConstantWrittenBits.load(std::memory_order_relaxed)))
+        {
+            LOG("Halo 2 classic first-person FOV constant NOT pinned for generation "
+                "%u: draw_first_person entry / its MOVSS / the stock value do not "
+                "match the proven module; the weapon keeps the engine's 49.6 deg",
+                generation);
+            return false;
+        }
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(constant), sizeof(uint32_t),
+                            PAGE_READWRITE, &oldProtect))
+        {
+            LOG("Halo 2 classic first-person FOV constant NOT pinned: VirtualProtect "
+                "failed (%lu)", GetLastError());
+            return false;
+        }
+        g_fpConstantAddress.store(constant, std::memory_order_release);
+        g_fpConstantPinned.store(true, std::memory_order_release);
+        LOG("Halo 2 classic first-person FOV constant pinned: draw_first_person "
+            "+0x%X loads %.3f deg from +0x%X (its only reader, MOVSS at +0x%X); "
+            "while an eye pair renders it holds the eye's vertical cover so the "
+            "weapon is drawn through the world's frustum, restored with the cameras",
+            static_cast<unsigned>(kHalo2ClassicDrawFirstPersonRva),
+            49.594f,
+            static_cast<unsigned>(kHalo2ClassicFirstPersonFovConstantRva),
+            static_cast<unsigned>(kHalo2ClassicFirstPersonFovLoadRva));
+        return true;
+    }
+
+    bool WriteFirstPersonFovConstant(float verticalCoverRadians) noexcept
+    {
+        const uintptr_t address = g_fpConstantAddress.load(std::memory_order_acquire);
+        if (!address || !g_fpConstantPinned.load(std::memory_order_acquire))
+            return true;   // not pinned: the engine's own constant stays
+        if (!std::isfinite(verticalCoverRadians) || verticalCoverRadians < 0.1f ||
+            verticalCoverRadians > 3.0f)
+            return false;
+        uint32_t bits = 0;
+        std::memcpy(&bits, &verticalCoverRadians, sizeof(bits));
+        if (!WriteDwordGuarded(address, bits))
+        {
+            g_fpConstantWriteFailures.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        g_fpConstantWrittenBits.store(bits, std::memory_order_relaxed);
+        g_fpConstantWrites.fetch_add(1, std::memory_order_relaxed);
+        if (bits != g_fpConstantLoggedBits)
+        {
+            g_fpConstantLoggedBits = bits;
+            LOG("Halo 2 classic first-person weapon: FOV constant written %.1f deg "
+                "(the eye's vertical cover) for this and every following eye pair",
+                verticalCoverRadians * 57.29578f);
+        }
+        return true;
+    }
+
+    bool RestoreFirstPersonFovConstant() noexcept
+    {
+        const uintptr_t address = g_fpConstantAddress.load(std::memory_order_acquire);
+        if (!address)
+            return true;
+        if (!WriteDwordGuarded(address, kHalo2ClassicFirstPersonFovStockBits))
+        {
+            g_fpConstantWriteFailures.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        g_fpConstantRestores.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
     uint32_t g_remasteredNoticeGeneration = 0;
 
     thread_local StereoScope* g_stereoScope = nullptr;
@@ -722,7 +847,7 @@ namespace
 
     bool RestoreOwnedSpans(StereoScope& scope) noexcept
     {
-        bool restored = true;
+        bool restored = RestoreFirstPersonFovConstant();
         for (unsigned index = 0; index < kOwnedCameraSpanCount; ++index)
         {
             if (!scope.dirty[index])
@@ -773,6 +898,12 @@ namespace
         constexpr unsigned kRenderFovSpan = 3;
         constexpr unsigned kRasterFovSpan = 7;
         const unsigned spans[2] = {kRenderFovSpan, kRasterFovSpan};
+        // E-H2-20: the first-person weapon's FOV follows the raster cover.
+        if (!WriteFirstPersonFovConstant(scope.rasterCoverVerticalFov))
+        {
+            RestoreOwnedSpans(scope);
+            return false;
+        }
         for (unsigned index : spans)
         {
             if (!OwnedSpanAllowed(index))
@@ -2325,6 +2456,8 @@ namespace
 
     bool RemoveCore(const char* reason) noexcept
     {
+        (void)RestoreFirstPersonFovConstant();
+        g_fpConstantPinned.store(false, std::memory_order_release);
         g_stereoRequested.store(false, std::memory_order_release);
         g_presentationReady.store(false, std::memory_order_release);
         g_teardownRequested.store(true, std::memory_order_release);
@@ -2571,6 +2704,7 @@ namespace
             return false;
         }
 
+        (void)PinFirstPersonFovConstant(base, generation);
         g_moduleReference = module;
         g_innerTarget = innerTarget;
         g_outerTarget = outerTarget;

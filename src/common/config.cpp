@@ -949,9 +949,9 @@ void ConfigSave()
     fprintf(f, "# Halo 2 only: the gamepad's Back/View button is MCC's instant\n");
     fprintf(f, "# Classic <-> Anniversary graphics switch. 0 = the mod swallows that\n");
     fprintf(f, "# button in Halo 2 so a physical pad (Steam Controller) cannot flip the\n");
-    fprintf(f, "# renderer mid-game, and the D-pad gesture's stick click (Back) is\n");
-    fprintf(f, "# swallowed there too; 1 = pass both through (the click switches\n");
-    fprintf(f, "# renderers). Y+B still pauses on the pad.\n");
+    fprintf(f, "# renderer mid-game; 1 = pass it through. Holding the left stick\n");
+    fprintf(f, "# click with the controller at your head switches renderers on\n");
+    fprintf(f, "# purpose in either setting. Y+B still pauses on the pad.\n");
     fprintf(f, "# (default %d)\n", d.halo2_gamepad_graphics_switch ? 1 : 0);
     fprintf(f, "halo2_gamepad_graphics_switch = %d\n\n",
             g_config.halo2_gamepad_graphics_switch ? 1 : 0);

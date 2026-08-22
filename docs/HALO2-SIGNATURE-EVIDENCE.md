@@ -1787,3 +1787,64 @@ its eyes from THAT sample whenever the observer's tracked camera is in hand,
 and the pair is submitted with those view poses (`VR_Halo2GetSynchronousPairPoses`),
 so the compositor reprojects from the pose the image was really drawn at.
 Self-tracked frames keep the prepared serial's own sample and located poses.
+
+## E-H2-19: the self-flipping renderer, and a switch that needs a hand behind it (C-H2-27)
+
+The C-H2-26 Steam log (05:14:30-05:14:48) shows TWELVE `live renderer
+CHANGED` lines in eighteen seconds, alternating Classic/Anniversary about
+once a second, every one with `virtual pad buttons fed ... none` - the mod
+fed nothing, and the physical pad's Back is swallowed. That is the "flashing
+back to the flat screen" in the headset: each flip tears one core down and
+installs the other.
+
+Offline: the request dword 0xE21278 is written only by the frame driver
+0x515E0 and the start-up writer 0x6CCA0; it is applied by 0x511E0, which
+writes the mode dword 0xE21280 and the gate byte 0xE70CF8 and tells Saber
+`isLegacy`. 0x515E0 toggles the request when its switch-input flag is set
+(pad Back / keyboard Tab / SSL `switch_render_mode`), and separately, when
+the "forced legacy fading" flag 0x15A3D91 (0x6AFA00) is set, drives the
+request from the fade target byte *(0x15A3D88)+0x12A (0x6AFA10) every
+frame and clears the flag (0x6B03B0(1)). The flag is set by 0x6B03C0,
+0x6AF7E0 and 0x6AF600.
+
+C-H2-27 detours the applier 0x511E0 (entry bytes pinned). A request that
+differs from the applied mode is honoured only while a switch input is
+present at that instant: keyboard Tab held (GetAsyncKeyState), the physical
+pad's Back held with `halo2_gamepad_graphics_switch = 1` (the raw pad mask is
+now recorded before the swallow), or the mod's own Back fed within 250 ms.
+Otherwise the request is written back to the applied mode and the event is
+logged with the evidence read at that instant (both inputs, the fading flag,
+the fade target byte). The CHANGED line now carries the guard's verdict.
+
+The head-gesture stick click is back in Halo 2 as a deliberate switch: hold
+the click at the head for 350 ms and Back is pressed once (logged); a brief
+click does nothing, so it can never flip the renderer by accident.
+
+The same log explains the second flash: after the eye pair, the Saber frame
+rendered a second view (`serialRepeated` stock passes climbing 126 -> 253)
+INTO THE BACKBUFFER, and the C-H2-26 HUD replay then recaptured "eye 1"
+from it - a stock, mono, full-FOV frame in one eye for that frame. The
+replay now restores eye 1's finished scene into the backbuffer before its
+first HUD draw, always.
+
+## E-H2-20: the classic first-person weapon (C-H2-27)
+
+H2EK names it: `draw_first_person` (profile string, H2EK 0x29D8F0, next to
+render_view 0x2A0160). It copies the render camera globals, stores
+`0x3F5D9734` - 0.86557 rad = **49.594 degrees**, the very constant Saber
+bakes - into the copy's vertical FOV, rebuilds the projection with the
+asymmetric-frustum helper and the projection builder, sets it as the
+rasterizer camera and draws the first-person models, then restores the
+world camera. Retail: 0x7E0C60 does exactly that with the globals at
+0x1996A28 (camera) / 0x1996B10 (projection), helpers 0x7DFCD0 / 0x7DF7A0 /
+0x955590, and the constant lives in .rdata at 0xB3D99C with exactly one
+reader, the MOVSS at 0x7E0F35 (`F3 0F 10 05 5F CA 35 00`). A byte scan of
+halo2.dll finds the float only there and in an unrelated .data global read
+by the interface model widget (0x81BFB0).
+
+C-H2-27: the classic core pins the constant (entry bytes of 0x7E0C60, the
+MOVSS bytes, the stock value), makes its page writable, writes the eye's
+vertical cover into it when it writes the cover FOVs for a pair, and
+restores 0x3F5D9734 whenever it restores the cameras and on removal. The
+weapon is therefore drawn through the same frustum as the world, per eye,
+in Classic exactly as in Anniversary.

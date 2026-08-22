@@ -226,6 +226,10 @@ void Input_RequestPauseToggle();
 // The game sees no other pad, so this is the whole input story behind an
 // engine event such as the Halo 2 renderer switch.
 void Input_DescribeRecentButtons(char* buffer, size_t bytes, uint64_t sinceMs);
+// E-H2-19: the switch inputs visible right now (keyboard Tab, raw physical
+// pad Back, the mod's own fed Back), for the renderer switch guard.
+struct Halo2SwitchInputEvidence;
+void Input_Halo2SwitchInputEvidence(Halo2SwitchInputEvidence& evidence);
 // True when Halo's signature-resolved native pause flag is available. Once
 // true, presentation follows the engine rather than controller-edge guesses.
 bool Game_HasAuthoritativePauseState();

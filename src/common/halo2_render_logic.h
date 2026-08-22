@@ -1506,6 +1506,78 @@ inline constexpr char kHalo2ClassicRenderGatePattern[] =
 inline constexpr uint32_t kHalo2ClassicRenderGateDispOffset = 8;
 inline constexpr uint32_t kHalo2ClassicRenderGateNextOffset = 13;
 
+// E-H2-19: the applier's entry (push rbx/rsi/rdi; sub rsp,0x80; mov [rsp+0x30],-2;
+// mov ebx,[request]) and the two "forced legacy fading" globals the frame
+// driver consults: the flag 0x15A3D91 (0x6AFA00 returns it; 0x6B03B0(1)
+// clears it every frame it is honoured) and the fade target byte at
+// *(0x15A3D88)+0x12A (0x6AFA10), which becomes the request when the flag is
+// set. Read for evidence only; never written.
+inline constexpr uint8_t kHalo2RenderModeApplierEntryBytes[] = {
+    0x40, 0x53, 0x56, 0x57, 0x48, 0x81, 0xEC, 0x80, 0x00, 0x00, 0x00,
+    0x48, 0xC7, 0x44, 0x24, 0x30, 0xFE, 0xFF, 0xFF, 0xFF, 0x8B, 0x1D};
+// E-H2-20: classic draw_first_person 0x7E0C60 (H2EK 0x29D8F0, profile
+// string "draw_first_person") copies the render camera globals, overwrites
+// the copy's vertical FOV (+0x28) with the .rdata float at 0xB3D99C =
+// 0x3F5D9734 = 0.86557 rad = 49.594 degrees - the SAME constant the Saber
+// renderer bakes into its first-person projection - rebuilds the projection
+// with the world's own builders (0x7DFCD0 / 0x7DF7A0), sets it as the
+// rasterizer camera (0x955590) and draws the first-person models, then puts
+// the world camera back. The constant has exactly one reader, the MOVSS at
+// 0x7E0F35 (F3 0F 10 05 disp32 -> 0xB3D99C). While a classic eye pair is
+// being rendered the constant holds the eye's vertical cover, so the weapon
+// is drawn through the world's frustum; it is restored with the cameras.
+inline constexpr uint32_t kHalo2ClassicDrawFirstPersonRva = 0x007E0C60;
+inline constexpr uint8_t kHalo2ClassicDrawFirstPersonEntryBytes[] = {
+    0x48, 0x8B, 0xC4, 0x57, 0x48, 0x81, 0xEC, 0xB0, 0x01, 0x00, 0x00, 0x8B, 0x0D};
+inline constexpr uint32_t kHalo2ClassicFirstPersonFovConstantRva = 0x00B3D99C;
+inline constexpr uint32_t kHalo2ClassicFirstPersonFovLoadRva = 0x007E0F35;
+inline constexpr uint8_t kHalo2ClassicFirstPersonFovLoadBytes[] = {
+    0xF3, 0x0F, 0x10, 0x05, 0x5F, 0xCA, 0x35, 0x00};
+inline constexpr uint32_t kHalo2ClassicFirstPersonFovStockBits = 0x3F5D9734u;
+static_assert(0x007E0F35 + 8 + 0x0035CA5F == 0x00B3D99C,
+    "the MOVSS at 0x7E0F35 must address the first-person FOV constant");
+
+inline constexpr uint32_t kHalo2ForcedLegacyFadingFlagRva = 0x015A3D91;
+inline constexpr uint32_t kHalo2ForcedLegacyFadeStateSlotRva = 0x015A3D88;
+inline constexpr uint32_t kHalo2ForcedLegacyFadeTargetOffset = 0x12A;
+
+// The switch inputs the mod can see at the instant the applier runs.
+struct Halo2SwitchInputEvidence
+{
+    bool tabDown = false;              // GetAsyncKeyState(VK_TAB) high bit
+    bool physicalBackDown = false;     // raw pad Back in the most recent poll
+    uint64_t physicalBackAgeMs = UINT64_MAX;   // since the raw pad last had Back
+    bool physicalBackPassThrough = false;      // halo2_gamepad_graphics_switch
+    uint64_t virtualBackAgeMs = UINT64_MAX;    // since the mod last FED Back
+};
+
+// A switch has an input behind it when Tab is held, the physical pad's Back
+// is held AND passes through, or the mod itself fed Back within the last
+// 250 ms (the head-gesture held click).
+constexpr uint64_t kHalo2SwitchInputWindowMs = 250;
+constexpr bool Halo2SwitchInputPresent(const Halo2SwitchInputEvidence& e) noexcept
+{
+    return e.tabDown ||
+        (e.physicalBackDown && e.physicalBackPassThrough) ||
+        e.virtualBackAgeMs <= kHalo2SwitchInputWindowMs;
+}
+
+enum class Halo2RenderModeSwitchDecision : uint8_t
+{
+    NoChange = 0,   // request equals the applied mode: nothing to decide
+    Honour,         // a switch input is present: the engine switches
+    Suppress,       // no input behind it: write the request back
+};
+
+constexpr Halo2RenderModeSwitchDecision Halo2DecideRenderModeSwitch(
+    int32_t requested, int32_t applied, bool switchInputPresent) noexcept
+{
+    if (requested == applied)
+        return Halo2RenderModeSwitchDecision::NoChange;
+    return switchInputPresent ? Halo2RenderModeSwitchDecision::Honour
+                              : Halo2RenderModeSwitchDecision::Suppress;
+}
+
 constexpr Halo2GraphicsMode Halo2GraphicsModeFromAppliedMode(
     int32_t appliedMode) noexcept
 {

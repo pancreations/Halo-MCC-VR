@@ -265,6 +265,7 @@ add_library(halo3xr SHARED
     src/dll/halo2_temporal_stereo.cpp
     src/dll/halo2_stereo_core.cpp
     src/dll/halo2_observer_6dof.cpp
+    src/dll/halo2_render_mode_guard.cpp
     src/dll/halo2_render_probe.cpp
     src/dll/halo2_saber_camera.cpp
     src/dll/halo2_anniversary_stereo.cpp
