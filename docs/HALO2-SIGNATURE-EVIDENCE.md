@@ -1985,3 +1985,52 @@ two eyes differ, at which point the existing switch takes it as the capture
 source. The probe cost per eye is unchanged - still two copies - and the log
 names the candidate and its pointer, so the target is identified by evidence
 rather than by another guess.
+
+## E-H2-23 addendum: C-H2-30 REJECTED, C-H2-31 witnesses the tick instead
+
+C-H2-30 (`c011a8b`, Steam, 16:46-16:49) made the camera markedly worse. Its
+own report says why: `1890 weapon placements` in ~30 s = 60/s, the game TICK,
+against ~200 observer updates per second. `first_person_weapons` is a tick
+function, not a frame function; the latch fed every observer update between
+two ticks the same stale sample, so the camera updated at 60 Hz with a tick
+of added lag. The observer update is now UNTOUCHED again.
+
+The same numbers prove the weapon is placed at tick rate and interpolated
+between ticks (E-H2-22), so no choice of observer publication can make it
+rigid. C-H2-31 keeps the hook on `first_person_weapons` but as a WITNESS:
+
+- before the placement it reads the observer record, checks bit for bit that
+  it still holds the newest publication's tracked pose, and records that
+  publication's serial (`Halo2Observer6Dof_WeaponTickSerial`); a record the
+  engine moved is counted and not witnessed;
+- after the placement it calls the engine's own interpolator reset
+  `0x723010(player, slot)` (`*(u32*)(cur + 0x1A06008 + (player*4+slot)*0x33D4)
+  = 0`, a no-op while `0x164B2E0` is null) for the owned player's four slots,
+  so the renderer draws that tick's placement un-blended;
+- the Anniversary core renders the eyes from the ring entry with that serial
+  and submits its poses. Weapon and world are then one pose, at most one
+  tick old, and the compositor reprojects both together. A witness serial
+  that has left the ring falls back to the frame's own sample and is counted.
+
+## E-H2-24 addendum: the `0x975230` claim is RETRACTED; C-H2-31 measures
+
+The C-H2-30 text read the `DAT_181996a17` early-out of `0x975230` as "skips
+the bound output". That byte is block+7 of the applied raster context, which
+render_view fills from its fourth argument - render_player_window's flag,
+which is 0 for the player window and 1 only for the camera-object
+render-to-texture path (`0x7F07B0`). The early-out does not apply to the
+player window; the per-eye image is NOT explained by it. The probe rotation
+also could not sample the extra bound targets (`pair changed -1.0%`): they
+are a different shape from the backbuffer.
+
+C-H2-31 therefore adds the two measurements that decide between the only two
+remaining explanations, both in the existing 2-second pixel check:
+
+- the captured target is copied once at PAIR BEGIN (one copy per check, not
+  per frame) and compared with each eye's copy. `~0% vs both eyes` = the eye
+  pass never wrote the captured target (capture-side); `>0% vs both, eyes
+  identical` = two passes drew the same picture (camera-side);
+- the classic core logs the two render-camera positions it actually wrote for
+  the last pair and their separation in millimetres;
+- the eye-end census lists every distinct target bound inside the eye with
+  its texture, size, format and sample count, once per generation.

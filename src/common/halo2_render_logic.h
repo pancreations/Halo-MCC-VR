@@ -2220,6 +2220,8 @@ inline bool Halo2CameraBasisMatchesExactly(
 // and the CHUD (0x7FFD70) reach the backbuffer afterwards. The per-eye image
 // therefore lives in a target the two learned candidates never name.
 //
+// (The 0x975230 reading above is RETRACTED in E-H2-24's addendum: that
+// early-out is the render-to-texture path, flag 0 for the player window.)
 // C-H2-30 stops enumerating two fixed slots: the eye scope records every
 // distinct slot-0 target the engine binds inside the eye, and the two probe
 // caches rotate across that whole set until a candidate's two eyes differ.

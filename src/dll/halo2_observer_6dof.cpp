@@ -72,30 +72,32 @@ namespace
     std::atomic<uintptr_t> g_observerResult{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
 
-    // E-H2-23: the one head sample this game frame owns. Written at the
-    // first-person weapon placement and consumed by the observer update, both
-    // of which run on the game's frame thread (0x67A220), so no lock is
-    // needed here; the render threads only ever read the publication ring.
-    struct FrameHeadSample
-    {
-        bool valid = false;
-        uint32_t generation = 0;
-        uint64_t preparedSerial = 0;
-        float orientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
-        float position[3]{};
-    };
-    FrameHeadSample g_frameSample{};
+    // E-H2-23 (C-H2-31): the weapon tick witness. first_person_weapons runs
+    // at the game tick (~60/s, the C-H2-30 log: 1890 placements against ~200
+    // observer updates per second) and places the weapon against the observer
+    // record as it stands at that moment - the pose the mod published at the
+    // last observer update before the tick. The witness records WHICH
+    // publication that was (its serial), and the interpolator's first-person
+    // slots are reset after every placement so the weapon the renderer draws
+    // is that tick's placement and not a blend towards the previous one. The
+    // Anniversary core renders the eyes from that publication and submits its
+    // poses, so weapon and world are one pose and the compositor reprojects
+    // both together. The observer update itself is UNTOUCHED (C-H2-30 fed it
+    // the tick's sample and cut the camera to tick rate).
     void* g_weaponsTarget = nullptr;
     std::atomic<uintptr_t> g_weaponsOriginal{0};
     std::atomic<uint32_t> g_weaponsActiveCallbacks{0};
     std::atomic<uint64_t> g_weaponsCalls{0};
-    std::atomic<uint64_t> g_weaponsLatched{0};
-    std::atomic<uint64_t> g_weaponsRecordRewritten{0};
+    std::atomic<uint64_t> g_weaponsWitnessed{0};
     std::atomic<uint64_t> g_weaponsRecordForeign{0};
-    std::atomic<uint64_t> g_weaponsNoSample{0};
-    std::atomic<uint64_t> g_observerUsedFrameSample{0};
-    std::atomic<uint64_t> g_observerUsedLiveSample{0};
-    uint64_t g_lastLatchedReported = 0;
+    std::atomic<uint64_t> g_weaponsNoPublication{0};
+    std::atomic<uint64_t> g_weaponsSlotResets{0};
+    // generation << 32 is not enough for a 64-bit serial; two atomics, the
+    // serial written last (release) and read first (acquire).
+    std::atomic<uint32_t> g_weaponTickGeneration{0};
+    std::atomic<uint64_t> g_weaponTickSerial{0};
+    std::atomic<uintptr_t> g_interpolatorResetAddress{0};
+    uint64_t g_lastWitnessedReported = 0;
 
     // E-H2-6 publication: seqlock (even = stable), plain payload.
     std::atomic<uint32_t> g_publicationVersion{0};
@@ -330,27 +332,6 @@ namespace
             g_rejectedSamples.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        // E-H2-23: the weapon for this frame was already placed against the
-        // sample latched at the placement. Publishing a NEWER one here would
-        // hand the camera a head pose the weapon never saw - the Anniversary
-        // "swim". The live sample is used only when the placement did not run
-        // this frame, and that case is counted rather than hidden.
-        const uint32_t generation = g_generation.load(std::memory_order_acquire);
-        if (g_frameSample.valid && g_frameSample.generation == generation)
-        {
-            std::memcpy(
-                snapshot.headOrientation, g_frameSample.orientation,
-                sizeof(snapshot.headOrientation));
-            std::memcpy(
-                snapshot.headPosition, g_frameSample.position,
-                sizeof(snapshot.headPosition));
-            snapshot.preparedSerial = g_frameSample.preparedSerial;
-            g_observerUsedFrameSample.fetch_add(1, std::memory_order_relaxed);
-        }
-        else
-        {
-            g_observerUsedLiveSample.fetch_add(1, std::memory_order_relaxed);
-        }
 
         Halo2CameraBasis stock{};
         if (!ReadObserverPose(result, stock))
@@ -403,90 +384,54 @@ namespace
         g_appliedPoses.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // E-H2-23. Runs at the head of first_person_weapons, before the weapon is
-    // placed and before this frame's observer update. It fixes the sample the
-    // whole frame will use, and re-places the observer record on that sample so
-    // the weapon is placed against it too. The record still holds the tracked
-    // pose the mod wrote at the previous observer update, so re-deriving from
-    // it would apply the head delta twice: the rewrite happens only while the
-    // record still matches that exact published pose, and it derives from the
-    // STOCK pose published with it.
-    void LatchFrameSample() noexcept
+    // E-H2-23 (C-H2-31). Runs around first_person_weapons. Before the
+    // placement: record which publication the observer record holds right
+    // now - that is the pose the weapon is about to be placed against. The
+    // record is compared bit for bit with the newest publication's tracked
+    // pose; if the engine moved it since, the tick is counted as foreign and
+    // no witness is published for it. After the placement: reset the
+    // interpolator's four first-person slots for the owned player (the
+    // engine's own reset, pinned by entry bytes; a no-op while the
+    // interpolator is unallocated), so the renderer draws this tick's
+    // placement and not a blend towards the previous tick's.
+    void WitnessWeaponTick() noexcept
     {
-        g_frameSample.valid = false;
         const uint32_t generation = g_generation.load(std::memory_order_acquire);
         if (!generation)
             return;
-        Halo2SynchronousVrRenderSnapshot snapshot{};
-        bool snapshotReady = false;
-        __try
-        {
-            snapshotReady = VR_Halo2GetSynchronousRenderSnapshot(snapshot);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            snapshotReady = false;
-        }
-        if (!snapshotReady || !snapshot.headPoseValid ||
-            !ValidHeadPose(snapshot.headOrientation, snapshot.headPosition) ||
-            !g_referenceValid.load(std::memory_order_acquire))
-        {
-            g_weaponsNoSample.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        std::memcpy(
-            g_frameSample.orientation, snapshot.headOrientation,
-            sizeof(g_frameSample.orientation));
-        std::memcpy(
-            g_frameSample.position, snapshot.headPosition,
-            sizeof(g_frameSample.position));
-        g_frameSample.preparedSerial = snapshot.preparedSerial;
-        g_frameSample.generation = generation;
-        g_frameSample.valid = true;
-        g_weaponsLatched.fetch_add(1, std::memory_order_relaxed);
-
         const uintptr_t base = g_observerResult.load(std::memory_order_acquire);
         if (!base)
             return;
         const uintptr_t result = base + Halo2ObserverRecordOffset(kOwnedUser);
         Halo2ObserverPosePublication published{};
         if (!Halo2Observer6Dof_ReadPublishedPose(published) ||
-            published.generation != generation)
+            published.generation != generation || !published.serial)
         {
-            g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
+            g_weaponsNoPublication.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         Halo2CameraBasis current{};
         if (!ReadObserverPose(result, current) ||
             !Halo2CameraBasisMatchesExactly(current, published.tracked))
         {
-            // The engine moved the record since the mod last wrote it, so the
-            // pose in hand is not the mod's to re-derive. Stock placement.
             g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        Halo2TrackedHeadInput head{};
-        std::memcpy(
-            head.orientation, g_frameSample.orientation,
-            sizeof(head.orientation));
-        std::memcpy(
-            head.position, g_frameSample.position, sizeof(head.position));
-        std::memcpy(
-            head.referenceOrientation, g_reference.orientation,
-            sizeof(head.referenceOrientation));
-        std::memcpy(
-            head.referencePosition, g_reference.position,
-            sizeof(head.referencePosition));
-        head.positional = Game_IsPositionalTracking();
-        head.worldScale = Game_GetWorldScale();
-        Halo2CameraBasis tracked{};
-        if (!Halo2BuildTrackedCenterCamera(published.stock, head, tracked) ||
-            !WriteObserverPose(result, tracked))
-        {
-            g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
+        g_weaponTickGeneration.store(generation, std::memory_order_relaxed);
+        g_weaponTickSerial.store(published.serial, std::memory_order_release);
+        g_weaponsWitnessed.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void ResetFirstPersonInterpolation() noexcept
+    {
+        using ResetFn = void(__fastcall*)(int, int);
+        const auto reset = reinterpret_cast<ResetFn>(
+            g_interpolatorResetAddress.load(std::memory_order_acquire));
+        if (!reset)
             return;
-        }
-        g_weaponsRecordRewritten.fetch_add(1, std::memory_order_relaxed);
+        for (int slot = 0; slot < kHalo2FrameInterpolatorFirstPersonSlots; ++slot)
+            reset(static_cast<int>(kOwnedUser), slot);
+        g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
     }
 
     __declspec(noinline) void __fastcall Halo2FirstPersonWeaponsDetour(
@@ -498,11 +443,12 @@ namespace
             return;
         g_weaponsActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
         g_weaponsCalls.fetch_add(1, std::memory_order_relaxed);
-        if (g_armed.load(std::memory_order_acquire) &&
+        const bool owned = g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
-            !g_teardownRequested.load(std::memory_order_acquire))
+            !g_teardownRequested.load(std::memory_order_acquire);
+        if (owned)
         {
-            __try { LatchFrameSample(); }
+            __try { WitnessWeaponTick(); }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
                 g_exceptions.fetch_add(1, std::memory_order_relaxed);
@@ -512,6 +458,14 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             g_exceptions.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (owned)
+        {
+            __try { ResetFirstPersonInterpolation(); }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
@@ -788,7 +742,9 @@ namespace
             g_weaponsTarget = nullptr;
         }
         g_weaponsOriginal.store(0, std::memory_order_release);
-        g_frameSample = {};
+        g_interpolatorResetAddress.store(0, std::memory_order_release);
+        g_weaponTickSerial.store(0, std::memory_order_release);
+        g_weaponTickGeneration.store(0, std::memory_order_release);
         g_originalAddress.store(0, std::memory_order_release);
         g_observerResult.store(0, std::memory_order_release);
         g_moduleBase.store(0, std::memory_order_release);
@@ -913,10 +869,28 @@ namespace
             return false;
         }
 
-        // E-H2-23: the frame's head-sample latch. Pinned by the entry bytes
-        // of first_person_weapons (the single caller of the interpolator's
-        // first-person slot reset). Its absence is loud and leaves the
-        // observer exactly as it was before this candidate.
+        // E-H2-23: the weapon tick witness. Pinned by the entry bytes of
+        // first_person_weapons (the single caller of the interpolator's
+        // first-person slot reset) and of the reset itself. Absence is loud
+        // and leaves the observer exactly as it was before this candidate.
+        const uintptr_t resetAddress =
+            base + kHalo2FrameInterpolatorResetFirstPersonSlotRva;
+        uint8_t resetBytes[sizeof(kHalo2FrameInterpolatorResetFirstPersonSlotEntryBytes)]{};
+        bool resetReadable = false;
+        __try
+        {
+            std::memcpy(
+                resetBytes, reinterpret_cast<const void*>(resetAddress),
+                sizeof(resetBytes));
+            resetReadable = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { resetReadable = false; }
+        const bool resetPinned = resetReadable &&
+            std::memcmp(
+                resetBytes, kHalo2FrameInterpolatorResetFirstPersonSlotEntryBytes,
+                sizeof(resetBytes)) == 0;
+        g_interpolatorResetAddress.store(
+            resetPinned ? resetAddress : 0, std::memory_order_release);
         const uintptr_t weapons = base + kHalo2FirstPersonWeaponsRva;
         uint8_t weaponsBytes[sizeof(kHalo2FirstPersonWeaponsEntryBytes)]{};
         bool weaponsReadable = false;
@@ -933,10 +907,10 @@ namespace
                 weaponsBytes, kHalo2FirstPersonWeaponsEntryBytes,
                 sizeof(weaponsBytes)) != 0)
         {
-            LOG("Halo 2 first-person weapon sample latch WITHHELD: the entry "
-                "bytes at +0x%X are not first_person_weapons in this module; "
-                "the observer keeps publishing its live sample and the "
-                "Anniversary weapon stays one sample behind the camera",
+            LOG("Halo 2 weapon tick witness WITHHELD: the entry bytes at "
+                "+0x%X are not first_person_weapons in this module; the "
+                "Anniversary weapon stays placed against a pose the eyes "
+                "cannot name",
                 static_cast<unsigned>(kHalo2FirstPersonWeaponsRva));
         }
         else
@@ -949,8 +923,8 @@ namespace
                 &weaponsTrampoline);
             if (weaponsCreated != MH_OK || !weaponsTrampoline)
             {
-                LOG("Halo 2 first-person weapon sample latch WITHHELD: hook "
-                    "create=%d", static_cast<int>(weaponsCreated));
+                LOG("Halo 2 weapon tick witness WITHHELD: hook create=%d",
+                    static_cast<int>(weaponsCreated));
                 if (weaponsCreated == MH_OK)
                     (void)MH_RemoveHook(weaponsTarget);
             }
@@ -963,25 +937,30 @@ namespace
                 const MH_STATUS weaponsEnabled = MH_EnableHook(weaponsTarget);
                 if (weaponsEnabled != MH_OK)
                 {
-                    LOG("Halo 2 first-person weapon sample latch WITHHELD: "
-                        "hook enable=%d", static_cast<int>(weaponsEnabled));
+                    LOG("Halo 2 weapon tick witness WITHHELD: hook enable=%d",
+                        static_cast<int>(weaponsEnabled));
                     (void)MH_RemoveHook(weaponsTarget);
                     g_weaponsTarget = nullptr;
                     g_weaponsOriginal.store(0, std::memory_order_release);
                 }
                 else
                 {
-                    LOG("Halo 2 first-person weapon sample latch installed on "
-                        "first_person_weapons +0x%X (the only caller of the "
-                        "frame interpolator's first-person slot reset +0x%X, "
-                        "and it runs BEFORE observer_update_all in the same "
-                        "frame): one head sample is latched there and the "
-                        "observer update consumes that same sample, so the "
-                        "weapon, the camera and the submitted eye poses are "
-                        "all built from one sample",
+                    LOG("Halo 2 weapon tick witness installed on "
+                        "first_person_weapons +0x%X (the game tick's weapon "
+                        "placement, the only caller of the interpolator's "
+                        "first-person slot reset +0x%X, %s): every tick "
+                        "records which observer publication the weapon was "
+                        "placed against%s; the observer update itself is "
+                        "untouched",
                         static_cast<unsigned>(kHalo2FirstPersonWeaponsRva),
                         static_cast<unsigned>(
-                            kHalo2FrameInterpolatorResetFirstPersonSlotRva));
+                            kHalo2FrameInterpolatorResetFirstPersonSlotRva),
+                        resetPinned ? "reset pinned" : "reset NOT pinned",
+                        resetPinned
+                            ? " and resets the four first-person interpolation "
+                              "slots after the placement so the renderer draws "
+                              "that tick's placement un-blended"
+                            : "; the interpolator keeps blending the weapon");
                 }
             }
         }
@@ -1013,14 +992,14 @@ namespace
         // hook never fired" from "the hook fired but every head sample was
         // rejected", which look identical from the player's seat.
         static bool reportedOnce = false;
-        const uint64_t latched = g_weaponsLatched.load(std::memory_order_relaxed);
+        const uint64_t witnessed = g_weaponsWitnessed.load(std::memory_order_relaxed);
         if (reportedOnce && applied == g_lastAppliedReported &&
             g_callbacks.load(std::memory_order_relaxed) == g_lastCallbacks &&
-            latched == g_lastLatchedReported)
+            witnessed == g_lastWitnessedReported)
         {
             return;
         }
-        g_lastLatchedReported = latched;
+        g_lastWitnessedReported = witnessed;
         reportedOnce = true;
         g_lastAppliedReported = applied;
         g_lastCallbacks = g_callbacks.load(std::memory_order_relaxed);
@@ -1043,11 +1022,9 @@ namespace
         LOG("Halo 2 observer 6DOF: %llu observer transforms seen, %llu head "
             "poses applied, %llu rejected samples, %llu unreadable, %llu "
             "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional "
-            "%s); frame sample latch: %llu weapon placements, %llu samples "
-            "latched, %llu records re-placed on the frame's sample, %llu left "
-            "stock (the engine had moved the record), %llu with no head sample; "
-            "observer updates consumed the frame's sample %llu times, a live "
-            "sample %llu times",
+            "%s); weapon tick witness: %llu placements, %llu witnessed, %llu "
+            "with a record the engine had moved, %llu with no publication, "
+            "%llu interpolation-slot resets; last witnessed serial %llu",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1062,17 +1039,15 @@ namespace
             static_cast<unsigned long long>(
                 g_weaponsCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponsLatched.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(
-                g_weaponsRecordRewritten.load(std::memory_order_relaxed)),
+                g_weaponsWitnessed.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponsRecordForeign.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponsNoSample.load(std::memory_order_relaxed)),
+                g_weaponsNoPublication.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_observerUsedFrameSample.load(std::memory_order_relaxed)),
+                g_weaponsSlotResets.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_observerUsedLiveSample.load(std::memory_order_relaxed)));
+                g_weaponTickSerial.load(std::memory_order_relaxed)));
     }
 }
 
@@ -1205,6 +1180,14 @@ int Halo2Observer6Dof_ReadPublishedPoses(
     return count;
 }
 
+bool Halo2Observer6Dof_WeaponTickSerial(
+    uint32_t generation, uint64_t& serial) noexcept
+{
+    serial = g_weaponTickSerial.load(std::memory_order_acquire);
+    return serial != 0 && generation != 0 &&
+        g_weaponTickGeneration.load(std::memory_order_relaxed) == generation;
+}
+
 void Halo2Observer6Dof_RequestRecenter() noexcept
 {
     g_recenterRequested.store(true, std::memory_order_release);
@@ -1233,6 +1216,11 @@ bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication&) noexcept { return false; }
 int Halo2Observer6Dof_ReadPublishedPoses(
     Halo2ObserverPosePublication*, int) noexcept { return 0; }
+bool Halo2Observer6Dof_WeaponTickSerial(uint32_t, uint64_t& serial) noexcept
+{
+    serial = 0;
+    return false;
+}
 void Halo2Observer6Dof_RequestRecenter() noexcept {}
 void Halo2Observer6Dof_ShutdownForVrFailure() noexcept {}
 

@@ -87,6 +87,11 @@ namespace
     std::atomic<uint64_t> g_sampleMatchedOlder{0};
     std::atomic<uint64_t> g_sampleUnmatched{0};
     std::atomic<uint64_t> g_sampleNoOlder{0};
+    // E-H2-23 (C-H2-31): the pair was rendered from the publication the
+    // game tick's weapon placement was witnessed against / that serial was
+    // not in the ring any more (the frame's own sample was used instead).
+    std::atomic<uint64_t> g_sampleWitnessed{0};
+    std::atomic<uint64_t> g_sampleWitnessMissing{0};
     std::atomic<uintptr_t> g_rebuildMatrices{0};
     std::atomic<uintptr_t> g_cameraCommit{0};
     std::atomic<uintptr_t> g_cameraRefreshRect{0};
@@ -514,14 +519,41 @@ namespace
             }
             if (matched >= 0)
             {
-                // E-H2-23: the frame's own sample, exactly. C-H2-29 rendered
-                // the eyes from the publication BEFORE this one because the
-                // weapon had been placed against the previous frame's sample;
-                // the observer core now latches ONE sample per frame at the
-                // weapon placement itself, so the sample that built this
-                // frame's camera is the sample the weapon was placed with and
-                // shifting the choice would re-introduce the lag.
-                publication = ring[matched];
+                // E-H2-23 (C-H2-31): the weapon was placed at the game tick
+                // against the publication the observer core witnessed there,
+                // and its interpolation is reset each tick, so the weapon the
+                // Saber renderer draws is placed against exactly that
+                // publication. The eyes are rendered from it and submitted
+                // as its poses; the world is then at most one tick behind the
+                // head and the compositor reprojects weapon and world
+                // together. If that serial has already left the ring, the
+                // frame's own sample is used and the miss is counted.
+                int chosen = matched;
+                uint64_t witnessSerial = 0;
+                bool witnessed = false;
+                __try
+                {
+                    witnessed = Halo2Observer6Dof_WeaponTickSerial(
+                        generation, witnessSerial);
+                }
+                __except (EXCEPTION_EXECUTE_HANDLER) { witnessed = false; }
+                if (witnessed)
+                {
+                    int found = -1;
+                    for (int i = 0; i < ringCount && found < 0; ++i)
+                        if (ring[i].serial == witnessSerial)
+                            found = i;
+                    if (found >= 0)
+                    {
+                        chosen = found;
+                        g_sampleWitnessed.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        g_sampleWitnessMissing.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                publication = ring[chosen];
                 published = true;
                 // The camera in hand becomes that sample's tracked camera
                 // for the owner decision below (the view record is
@@ -1319,9 +1351,9 @@ namespace
             "(of which %llu rendered from an older observer serial, as that "
             "sample) self=%llu; frame camera matched the latest sample %llu "
             "times, an older sample %llu times, no sample %llu times; eyes "
-            "rendered from the frame's own latched sample (the one the weapon "
-            "was placed with), unused counter %llu; "
-            "views seen mask=0x%X last=%u; bail reasons: %s",
+            "rendered from the publication the weapon tick was witnessed "
+            "against %llu times, witness serial already out of the ring %llu "
+            "times; views seen mask=0x%X last=%u; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
@@ -1333,7 +1365,8 @@ namespace
             static_cast<unsigned long long>(g_sampleMatchedLatest.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_sampleMatchedOlder.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_sampleUnmatched.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(g_sampleNoOlder.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_sampleWitnessed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_sampleWitnessMissing.load(std::memory_order_relaxed)),
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
             used ? reasons : "none");

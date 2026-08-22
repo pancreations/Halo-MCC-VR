@@ -219,6 +219,16 @@ namespace
     std::atomic<uint32_t> g_projectionReadbackWrittenBits[2]{};
     std::atomic<uint32_t> g_projectionReadbackEngineBits[2]{};
     std::atomic<uint32_t> g_projectionReadbackStatus{0};
+    // E-H2-24 (C-H2-31): the two render-camera positions written for the
+    // last pair, as float bits, so the telemetry line states the eye
+    // separation the engine was actually given (not the one intended).
+    std::atomic<uint32_t> g_lastEyePositionBits[2][3]{};
+    // E-H2-24 (C-H2-31): the window render camera the engine built for the
+    // last pair against the observer pose the mod published - if the lean
+    // never reaches the window camera, the classic world cannot follow it.
+    std::atomic<uint32_t> g_lastWindowPositionBits[3]{};
+    std::atomic<uint32_t> g_lastPublishedPositionBits[3]{};
+    std::atomic<bool> g_lastPublishedValid{false};
     // E-H2-14: claimed frames dropped this generation (reset on install).
     std::atomic<uint32_t> g_claimedFrameFailures{0};
     uint64_t g_claimedFrameFailureLogMs = 0;
@@ -889,6 +899,12 @@ namespace
                 RestoreOwnedSpans(scope);
                 return false;
             }
+        }
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &scope.eyes[eye].render.position[axis], sizeof(bits));
+            g_lastEyePositionBits[eye][axis].store(bits, std::memory_order_relaxed);
         }
         return true;
     }
@@ -1669,6 +1685,15 @@ namespace
         {
             published = false;
         }
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &render.basis.position[axis], sizeof(bits));
+            g_lastWindowPositionBits[axis].store(bits, std::memory_order_relaxed);
+            std::memcpy(&bits, &publication.tracked.position[axis], sizeof(bits));
+            g_lastPublishedPositionBits[axis].store(bits, std::memory_order_relaxed);
+        }
+        g_lastPublishedValid.store(published, std::memory_order_relaxed);
         Halo2CameraBasis renderCenter{};
         Halo2CameraBasis rasterCenter{};
         if (!ResolveTrackedCenter(
@@ -2082,6 +2107,51 @@ namespace
                 static_cast<unsigned long long>(current.poseRederived),
                 static_cast<unsigned long long>(current.poseSelfTracked),
                 static_cast<unsigned long long>(current.poseUnavailable));
+            {
+                float eyePosition[2][3]{};
+                for (int eye = 0; eye < 2; ++eye)
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        const uint32_t bits =
+                            g_lastEyePositionBits[eye][axis].load(std::memory_order_relaxed);
+                        std::memcpy(&eyePosition[eye][axis], &bits, sizeof(bits));
+                    }
+                float separation = 0.0f;
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    const float d = eyePosition[1][axis] - eyePosition[0][axis];
+                    separation += d * d;
+                }
+                separation = std::sqrt(separation);
+                float windowPosition[3]{};
+                float publishedPosition[3]{};
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    uint32_t bits = g_lastWindowPositionBits[axis].load(std::memory_order_relaxed);
+                    std::memcpy(&windowPosition[axis], &bits, sizeof(bits));
+                    bits = g_lastPublishedPositionBits[axis].load(std::memory_order_relaxed);
+                    std::memcpy(&publishedPosition[axis], &bits, sizeof(bits));
+                }
+                float windowDelta = 0.0f;
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    const float d = windowPosition[axis] - publishedPosition[axis];
+                    windowDelta += d * d;
+                }
+                windowDelta = std::sqrt(windowDelta);
+                LOG("Halo 2 stereo core: render cameras written for the last "
+                    "pair - eye 0 (%.4f, %.4f, %.4f) eye 1 (%.4f, %.4f, %.4f), "
+                    "separation %.4f wu = %.1f mm; the engine's window camera "
+                    "stood at (%.4f, %.4f, %.4f), %.1f mm from the observer "
+                    "pose the mod published%s",
+                    eyePosition[0][0], eyePosition[0][1], eyePosition[0][2],
+                    eyePosition[1][0], eyePosition[1][1], eyePosition[1][2],
+                    separation, separation * kHalo2MetersPerWorldUnit * 1000.0f,
+                    windowPosition[0], windowPosition[1], windowPosition[2],
+                    windowDelta * kHalo2MetersPerWorldUnit * 1000.0f,
+                    g_lastPublishedValid.load(std::memory_order_relaxed)
+                        ? "" : " (no publication was available)");
+            }
             g_lastTelemetry = current;
         }
         // E-H2-12: the projection read-back, whenever its verdict or its

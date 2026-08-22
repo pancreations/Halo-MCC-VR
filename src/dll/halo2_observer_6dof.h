@@ -40,6 +40,12 @@ bool Halo2Observer6Dof_ReadPublishedPose(
 int Halo2Observer6Dof_ReadPublishedPoses(
     Halo2ObserverPosePublication* out, int maximum) noexcept;
 
+// E-H2-23 (C-H2-31): the serial of the publication the game tick's weapon
+// placement was witnessed against, for this generation. False until the
+// first witnessed tick.
+bool Halo2Observer6Dof_WeaponTickSerial(
+    uint32_t generation, uint64_t& serial) noexcept;
+
 // Atomic-only. The next valid sample becomes the new orientation/translation
 // reference; safe to call from the universal recenter path.
 void Halo2Observer6Dof_RequestRecenter() noexcept;

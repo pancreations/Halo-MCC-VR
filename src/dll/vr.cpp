@@ -425,6 +425,15 @@ namespace
     std::atomic<uintptr_t> g_halo2ProbeCandidatePtr[2]{};
     std::atomic<int> g_halo2CaptureCandidateCount{2};
     std::atomic<int> g_halo2ProbeRotation{0};
+    // E-H2-24 (C-H2-31): the capture source as it stood BEFORE the pair's
+    // first eye rendered, copied on request (one copy every pixel check, not
+    // every frame). Comparing it with the two eye copies says whether the
+    // engine's eye pass changed the target at all (capture-side problem) or
+    // changed it to the same picture twice (camera-side problem).
+    ID3D11Texture2D* g_halo2PrePairCache = nullptr;
+    std::atomic<bool> g_halo2PrePairWanted{false};
+    std::atomic<bool> g_halo2PrePairHasImage{false};
+    std::atomic<uint64_t> g_halo2PrePairSerial{0};
     D3D11_TEXTURE2D_DESC g_halo2ProbeDesc{};
 #endif
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
@@ -5258,16 +5267,80 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     }
                 }
             }
+            // E-H2-24 (C-H2-31): the pre-pair copy against each eye. Both
+            // eyes equal to the pre-pair picture means the eye pass never
+            // changed the captured target; both eyes different from it but
+            // equal to each other means two passes drew the same picture.
+            double prePairVsEye[2] = {-1.0, -1.0};
+            if (staging[0] && staging[1] && g_halo2PrePairCache &&
+                g_halo2PrePairHasImage.load(std::memory_order_acquire))
+            {
+                D3D11_TEXTURE2D_DESC preDesc{};
+                g_halo2PrePairCache->GetDesc(&preDesc);
+                if (preDesc.Width == g_eyeCacheDesc.Width &&
+                    preDesc.Height == g_eyeCacheDesc.Height &&
+                    preDesc.Format == g_eyeCacheDesc.Format)
+                {
+                    g_context->Unmap(staging[0], 0);
+                    g_context->Unmap(staging[1], 0);
+                    g_context->CopyResource(staging[0], g_halo2PrePairCache);
+                    for (int eye = 0; eye < 2; ++eye)
+                    {
+                        g_context->CopyResource(staging[1], g_eyeCache[eye]);
+                        D3D11_MAPPED_SUBRESOURCE pm[2]{};
+                        if (FAILED(g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &pm[0])))
+                            break;
+                        if (FAILED(g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &pm[1])))
+                        {
+                            g_context->Unmap(staging[0], 0);
+                            break;
+                        }
+                        unsigned pSamples = 0, pChanged = 0;
+                        for (unsigned y = step / 2; y < g_eyeCacheDesc.Height; y += step)
+                        {
+                            const auto* l = static_cast<const unsigned char*>(pm[0].pData) +
+                                y * pm[0].RowPitch;
+                            const auto* r = static_cast<const unsigned char*>(pm[1].pData) +
+                                y * pm[1].RowPitch;
+                            for (unsigned x = step / 2; x < g_eyeCacheDesc.Width; x += step)
+                            {
+                                const unsigned o = x * 4;
+                                unsigned d = 0;
+                                for (unsigned c = 0; c < 3; ++c)
+                                {
+                                    const int dd = (int)l[o + c] - (int)r[o + c];
+                                    d += (unsigned)(dd < 0 ? -dd : dd);
+                                }
+                                if (d > 12) ++pChanged;
+                                ++pSamples;
+                            }
+                        }
+                        prePairVsEye[eye] = pSamples ? 100.0 * pChanged / pSamples : 0.0;
+                        g_context->Unmap(staging[0], 0);
+                        g_context->Unmap(staging[1], 0);
+                    }
+                    g_context->CopyResource(staging[0], g_eyeCache[0]);
+                    g_context->CopyResource(staging[1], g_eyeCache[1]);
+                    (void)g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
+                    (void)g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
+                }
+                g_halo2PrePairHasImage.store(false, std::memory_order_release);
+            }
+            g_halo2PrePairWanted.store(true, std::memory_order_release);
             if (identical)
             {
                 LOG("Halo 2 eye-pair pixel check: IDENTICAL eyes (0/%u "
                     "samples differ, %.1f%% lit) - this is FAKE stereo: the "
-                    "engine produced the same image for both eye passes%s",
+                    "engine produced the same image for both eye passes%s; "
+                    "captured target before the pair vs eye 0: %.1f%% changed, "
+                    "vs eye 1: %.1f%% changed (negative = not sampled; ~0 = "
+                    "the eye pass never wrote the captured target)",
                     samples, litPercent,
                     identicalRuns >= 3
                         ? "; persistent, the per-eye camera is NOT reaching "
                           "the renderer"
-                        : "");
+                        : "",
+                    prePairVsEye[0], prePairVsEye[1]);
             }
             else
             {
@@ -10898,6 +10971,9 @@ bool VR_Halo2GetCurrentPreparedCadence(
     return true;
 }
 
+static ID3D11Texture2D* Halo2TextureBehind(
+    ID3D11RenderTargetView* view, D3D11_TEXTURE2D_DESC& desc);
+
 bool VR_Halo2BeginSynchronousPair(
     uint32_t generation, uint64_t preparedSerial,
     ID3D11RenderTargetView* finalRtv, ID3D11RenderTargetView* sceneRtv)
@@ -10940,6 +11016,45 @@ bool VR_Halo2BeginSynchronousPair(
     g_halo2SynchronousPairResourceEpoch.store(
         resourceEpoch, std::memory_order_relaxed);
     g_halo2SynchronousFinalRtv.store(finalRtv, std::memory_order_relaxed);
+    if (g_halo2PrePairWanted.exchange(false, std::memory_order_acq_rel) &&
+        g_context && g_device)
+    {
+        D3D11_TEXTURE2D_DESC desc{};
+        ID3D11Texture2D* texture = Halo2TextureBehind(finalRtv, desc);
+        if (texture)
+        {
+            if (g_halo2PrePairCache)
+            {
+                D3D11_TEXTURE2D_DESC have{};
+                g_halo2PrePairCache->GetDesc(&have);
+                if (have.Width != desc.Width || have.Height != desc.Height ||
+                    have.Format != desc.Format)
+                {
+                    g_halo2PrePairCache->Release();
+                    g_halo2PrePairCache = nullptr;
+                }
+            }
+            if (!g_halo2PrePairCache)
+            {
+                D3D11_TEXTURE2D_DESC make = desc;
+                make.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                make.MiscFlags = 0;
+                make.CPUAccessFlags = 0;
+                make.Usage = D3D11_USAGE_DEFAULT;
+                make.MipLevels = 1;
+                make.ArraySize = 1;
+                if (FAILED(g_device->CreateTexture2D(&make, nullptr, &g_halo2PrePairCache)))
+                    g_halo2PrePairCache = nullptr;
+            }
+            if (g_halo2PrePairCache)
+            {
+                g_context->CopyResource(g_halo2PrePairCache, texture);
+                g_halo2PrePairSerial.store(preparedSerial, std::memory_order_relaxed);
+                g_halo2PrePairHasImage.store(true, std::memory_order_release);
+            }
+            texture->Release();
+        }
+    }
     g_halo2SynchronousSceneRtv.store(
         (sceneRtv == g_eyeCacheRtvs[0] || sceneRtv == g_eyeCacheRtvs[1])
             ? nullptr : sceneRtv,
@@ -12679,6 +12794,21 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
         LOG("Halo 2 eye capture: %d distinct targets were bound inside this "
             "eye; %d capture candidates (final slot, scene slot, then the "
             "bound targets)", scope.boundCount, candidateCount);
+        for (int i = 0; i < scope.boundCount; ++i)
+        {
+            D3D11_TEXTURE2D_DESC boundDesc{};
+            ID3D11Texture2D* boundTexture =
+                Halo2TextureBehind(scope.bound[i], boundDesc);
+            LOG("Halo 2 eye capture: bound target #%d = RTV %p -> tex %p "
+                "%ux%u fmt %u samples %u%s%s", i, scope.bound[i],
+                boundTexture, boundDesc.Width, boundDesc.Height,
+                static_cast<unsigned>(boundDesc.Format),
+                boundDesc.SampleDesc.Count,
+                scope.bound[i] == scope.finalRtv ? " (= final slot)" : "",
+                scope.bound[i] == scope.sceneRtv ? " (= scene slot)" : "");
+            if (boundTexture)
+                boundTexture->Release();
+        }
         uintptr_t slots[3] = {
             reinterpret_cast<uintptr_t>(scope.finalRtv),
             reinterpret_cast<uintptr_t>(scope.sceneRtv), 0};
