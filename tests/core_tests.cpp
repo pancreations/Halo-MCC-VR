@@ -7282,6 +7282,46 @@ int main()
                 "E-H2-24 an empty round resets the rotation");
         }
 
+        // E-H2-26: the matrix helpers the weapon view is built with.
+        {
+            float identity[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+            float a[16] = {1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16};
+            float out[16]{};
+            Halo2MultiplyMatrix4x4(a, identity, out);
+            Check(Halo2MatricesClose(out, a, 1.0e-6f),
+                "E-H2-26 multiplying by the identity returns the matrix");
+            // A camera matrix with basis ROWS and a translation row: the
+            // view without translation is the transpose of its rotation.
+            float camera[16] = {0,1,0,0,  -1,0,0,0,  0,0,1,0,  7,8,9,1};
+            float view[16]{};
+            Halo2SaberViewWithoutTranslation(camera, view);
+            Check(view[0] == 0.0f && view[1] == -1.0f && view[4] == 1.0f &&
+                      view[5] == 0.0f && view[10] == 1.0f && view[15] == 1.0f &&
+                      view[12] == 0.0f && view[13] == 0.0f && view[14] == 0.0f,
+                "E-H2-26 the view without translation transposes the rotation");
+            float product[16]{};
+            Halo2MultiplyMatrix4x4(view, camera, product);
+            Check(std::fabs(product[0] - 1.0f) < 1.0e-5f &&
+                      std::fabs(product[5] - 1.0f) < 1.0e-5f &&
+                      std::fabs(product[1]) < 1.0e-5f,
+                "E-H2-26 the view rotation undoes the camera rotation");
+            float differs[16]{};
+            for (int i = 0; i < 16; ++i) differs[i] = a[i];
+            differs[7] += 0.5f;
+            Check(!Halo2MatricesClose(differs, a, 1.0e-3f),
+                "E-H2-26 a changed element fails the match");
+        }
+
+        // E-H2-27: typeless capture formats are named concretely.
+        {
+            Check(Halo2ConcreteFormat(90) == 87 && Halo2ConcreteFormat(27) == 28 &&
+                      Halo2ConcreteFormat(92) == 88,
+                "E-H2-27 typeless formats map to their unorm view format");
+            Check(Halo2FormatIsTypeless(90) && !Halo2FormatIsTypeless(28) &&
+                      Halo2ConcreteFormat(28) == 28,
+                "E-H2-27 a concrete format is left alone");
+        }
+
         // E-H2-21: main-view flags and Saber matrix matching.
         {
             Check(Halo2SaberViewRecordIsMainView(0) &&

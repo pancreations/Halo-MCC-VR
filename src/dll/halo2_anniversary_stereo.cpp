@@ -92,6 +92,16 @@ namespace
     // not in the ring any more (the frame's own sample was used instead).
     std::atomic<uint64_t> g_sampleWitnessed{0};
     std::atomic<uint64_t> g_sampleWitnessMissing{0};
+    // E-H2-26 (C-H2-33): the first-person weapon's own view. The eyes render
+    // from the FRAME's sample (full frame rate); the weapon was placed at the
+    // game tick against an older one, so its view-projection is rebuilt from
+    // THAT pose. Written on the Saber thread before each eye's rebuild.
+    float g_weaponViewNoTranslation[kHalo2SaberMatrixFloats]{};
+    std::atomic<bool> g_weaponViewValid{false};
+    std::atomic<uint64_t> g_weaponViewApplied{0};
+    std::atomic<uint64_t> g_weaponViewRejected{0};
+    std::atomic<uint32_t> g_weaponViewCheckGeneration{0};
+    std::atomic<bool> g_weaponViewCheckPassed{false};
     std::atomic<uintptr_t> g_rebuildMatrices{0};
     std::atomic<uintptr_t> g_cameraCommit{0};
     std::atomic<uintptr_t> g_cameraRefreshRect{0};
@@ -500,6 +510,8 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { ringCount = 0; }
         Halo2ObserverPosePublication publication{};
         bool published = false;
+        Halo2CameraBasis weaponBasis{};
+        bool weaponBasisValid = false;
         {
             float frameMatrix[16]{};
             const bool haveFrameMatrix = CopyGuarded(
@@ -528,7 +540,13 @@ namespace
                 // head and the compositor reprojects weapon and world
                 // together. If that serial has already left the ring, the
                 // frame's own sample is used and the miss is counted.
-                int chosen = matched;
+                // C-H2-33: the eyes ALWAYS render from the frame's own
+                // sample, so the camera runs at the frame rate the player
+                // set (72-144 Hz). C-H2-31/32 rendered them from the game
+                // tick's sample and cut the camera to the 60 Hz tick - the
+                // "fighting to follow my head". The tick's sample is used
+                // for the WEAPON's own view instead (weaponBasis below).
+                weaponBasisValid = false;
                 uint64_t witnessIndex = 0;
                 bool witnessed = false;
                 __try
@@ -545,7 +563,8 @@ namespace
                             found = i;
                     if (found >= 0)
                     {
-                        chosen = found;
+                        weaponBasis = ring[found].tracked;
+                        weaponBasisValid = true;
                         g_sampleWitnessed.fetch_add(1, std::memory_order_relaxed);
                     }
                     else
@@ -553,7 +572,7 @@ namespace
                         g_sampleWitnessMissing.fetch_add(1, std::memory_order_relaxed);
                     }
                 }
-                publication = ring[chosen];
+                publication = ring[matched];
                 published = true;
                 // The camera in hand becomes that sample's tracked camera
                 // for the owner decision below (the view record is
@@ -774,6 +793,27 @@ namespace
             // prepared and rendered unifies the first-person projection
             // with the eye's world projection (RebuildDetour).
             g_fpPatchRecord.store(record, std::memory_order_release);
+            // C-H2-33: the weapon's view for THIS eye - the tick pose the
+            // weapon was placed against, plus this eye's own offset, so the
+            // weapon sits where the engine put it while the world moves at
+            // frame rate. Cleared when there is no witness, and the rebuild
+            // then keeps the engine's own first-person view.
+            g_weaponViewValid.store(false, std::memory_order_release);
+            if (weaponBasisValid)
+            {
+                Halo2CameraBasis weaponEye{};
+                Halo2SaberViewMatrix weaponMatrix{};
+                if (Halo2BuildSynchronousEyeCamera(
+                        weaponBasis, eyeOffsetPosition[eye],
+                        eyeOffsetOrientation[eye], weaponEye,
+                        Game_GetWorldScale()) &&
+                    Halo2BuildSaberViewMatrix(weaponEye, constants, weaponMatrix))
+                {
+                    Halo2SaberViewWithoutTranslation(
+                        weaponMatrix.m, g_weaponViewNoTranslation);
+                    g_weaponViewValid.store(true, std::memory_order_release);
+                }
+            }
             if (!ApplyEyeCamera(record, eyes[eye], constants, cover))
             {
                 CountBail(Bail::EyeApplyFailed);
@@ -943,15 +983,66 @@ namespace
         {
             return;
         }
+        // C-H2-33: the weapon's view-projection. The engine has just written
+        // viewNoTranslation(this eye) x world projection at +0x56C; the mod
+        // reconstructs exactly that product from the eye camera it wrote and
+        // compares. Only when the reconstruction MATCHES (proving the
+        // convention) is the weapon's own product - built from the tick pose
+        // the weapon was placed against - used instead. Otherwise the engine's
+        // own +0x56C stands, exactly as C-H2-26 shipped it.
+        float weaponViewProjection[kHalo2SaberMatrixFloats]{};
+        bool useWeaponView = false;
+        if (g_weaponViewValid.load(std::memory_order_acquire))
+        {
+            float eyeCamera[kHalo2SaberMatrixFloats]{};
+            float eyeViewNoTranslation[kHalo2SaberMatrixFloats]{};
+            float reconstructed[kHalo2SaberMatrixFloats]{};
+            if (CopyGuarded(eyeCamera,
+                            reinterpret_cast<const void*>(
+                                target + kHalo2SaberViewRecordCameraOffset),
+                            sizeof(eyeCamera)))
+            {
+                Halo2SaberViewWithoutTranslation(eyeCamera, eyeViewNoTranslation);
+                Halo2MultiplyMatrix4x4(eyeViewNoTranslation, world, reconstructed);
+                const bool matches =
+                    Halo2MatricesClose(reconstructed, viewProjection, 2.0e-3f);
+                const uint32_t generation = g_generation.load(std::memory_order_acquire);
+                if (g_weaponViewCheckGeneration.exchange(
+                        generation, std::memory_order_acq_rel) != generation)
+                {
+                    g_weaponViewCheckPassed.store(matches, std::memory_order_release);
+                    LOG("Halo 2 Anniversary first-person weapon view: the mod's "
+                        "reconstruction of the engine's own view-projection "
+                        "(+0x%X) %s, so the weapon %s drawn with the view of the "
+                        "game tick it was placed at while the world keeps the "
+                        "frame's own view",
+                        static_cast<unsigned>(
+                            kHalo2SaberViewRecordViewProjectionNoTranslationOffset),
+                        matches ? "MATCHES" : "does NOT match",
+                        matches ? "is" : "is NOT");
+                }
+                if (matches)
+                {
+                    Halo2MultiplyMatrix4x4(
+                        g_weaponViewNoTranslation, world, weaponViewProjection);
+                    useWeaponView = true;
+                }
+            }
+        }
         if (!WriteFloatsGuarded(
                 target + kHalo2SaberViewRecordFirstPersonProjectionOffset,
                 world, kHalo2SaberMatrixFloats) ||
             !WriteFloatsGuarded(
                 target + kHalo2SaberViewRecordFirstPersonViewProjectionOffset,
-                viewProjection, kHalo2SaberMatrixFloats))
+                useWeaponView ? weaponViewProjection : viewProjection,
+                kHalo2SaberMatrixFloats))
         {
             return;
         }
+        if (useWeaponView)
+            g_weaponViewApplied.fetch_add(1, std::memory_order_relaxed);
+        else
+            g_weaponViewRejected.fetch_add(1, std::memory_order_relaxed);
         g_fpPatches.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -1351,9 +1442,10 @@ namespace
             "(of which %llu rendered from an older observer serial, as that "
             "sample) self=%llu; frame camera matched the latest sample %llu "
             "times, an older sample %llu times, no sample %llu times; eyes "
-            "rendered from the publication the weapon tick was witnessed "
-            "against %llu times, witness serial already out of the ring %llu "
-            "times; views seen mask=0x%X last=%u; bail reasons: %s",
+            "rendered from the frame's own sample; the weapon's view came "
+            "from the witnessed game tick %llu times, the witness was out of "
+            "the ring %llu times (weapon view applied %llu, engine's own view "
+            "kept %llu); views seen mask=0x%X last=%u; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
@@ -1367,6 +1459,8 @@ namespace
             static_cast<unsigned long long>(g_sampleUnmatched.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_sampleWitnessed.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_sampleWitnessMissing.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_weaponViewApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_weaponViewRejected.load(std::memory_order_relaxed)),
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
             used ? reasons : "none");

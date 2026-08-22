@@ -2089,6 +2089,76 @@ inline constexpr uint8_t kHalo2SaberRebuildViewMatricesEntryBytes[] = {
 // slider with this second projection; at the headset's 126 x 110 degree
 // cover that draws the weapon tan(55)/tan(24.8) = 3.1x larger than the
 // world around it, and moves it 3.1x further per eye than the world does.
+// E-H2-26 (C-H2-33): row-major 4x4 multiply and the view-without-translation
+// of a Saber camera matrix. The engine's own +0x56C is
+// viewNoTranslation(frame camera) x world projection; the mod reconstructs
+// that same product and only uses its own matrices once the reconstruction
+// MATCHES what the engine wrote, so no matrix convention is assumed.
+inline void Halo2MultiplyMatrix4x4(
+    const float* a, const float* b, float* out) noexcept
+{
+    for (int row = 0; row < 4; ++row)
+    {
+        for (int column = 0; column < 4; ++column)
+        {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; ++k)
+                sum += a[row * 4 + k] * b[k * 4 + column];
+            out[row * 4 + column] = sum;
+        }
+    }
+}
+
+// The camera matrix holds basis ROWS and a translation row; the view without
+// translation is therefore the transpose of its 3x3 rotation.
+inline void Halo2SaberViewWithoutTranslation(
+    const float* cameraMatrix, float* out) noexcept
+{
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column)
+            out[row * 4 + column] = cameraMatrix[column * 4 + row];
+    out[3] = 0.0f; out[7] = 0.0f; out[11] = 0.0f;
+    out[12] = 0.0f; out[13] = 0.0f; out[14] = 0.0f; out[15] = 1.0f;
+}
+
+inline bool Halo2MatricesClose(
+    const float* a, const float* b, float tolerance) noexcept
+{
+    for (int index = 0; index < 16; ++index)
+    {
+        if (!std::isfinite(a[index]) || !std::isfinite(b[index]))
+            return false;
+        const float scale = std::fabs(b[index]) > 1.0f ? std::fabs(b[index]) : 1.0f;
+        if (std::fabs(a[index] - b[index]) > tolerance * scale)
+            return false;
+    }
+    return true;
+}
+
+// E-H2-27 (C-H2-33): a typeless render target cannot back a default shader
+// resource view, so the classic capture could never sample the engine's own
+// scene target (the 93cdc1a/8cb89b6 census: bound target #0 is 3788x2732
+// format 90 = B8G8R8A8_TYPELESS, two pixels wider than the backbuffer, and
+// every probe of it reported "not sampled").
+inline uint32_t Halo2ConcreteFormat(uint32_t format) noexcept
+{
+    switch (format)
+    {
+    case 90: return 87;   // B8G8R8A8_TYPELESS -> B8G8R8A8_UNORM
+    case 92: return 88;   // B8G8R8X8_TYPELESS -> B8G8R8X8_UNORM
+    case 27: return 28;   // R8G8B8A8_TYPELESS -> R8G8B8A8_UNORM
+    case 10: return 11;   // R16G16B16A16_TYPELESS -> _UNORM
+    case 1:  return 2;    // R32G32B32A32_TYPELESS -> _FLOAT
+    case 23: return 24;   // R10G10B10A2_TYPELESS -> _UNORM
+    default: return format;
+    }
+}
+
+inline bool Halo2FormatIsTypeless(uint32_t format) noexcept
+{
+    return Halo2ConcreteFormat(format) != format;
+}
+
 inline constexpr uint32_t kHalo2SaberViewRecordFirstPersonProjectionOffset = 0x4EC;
 inline constexpr uint32_t kHalo2SaberViewRecordViewProjectionNoTranslationOffset = 0x56C;
 inline constexpr uint32_t kHalo2SaberViewRecordFirstPersonViewProjectionOffset = 0x5EC;

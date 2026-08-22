@@ -426,6 +426,14 @@ namespace
     std::atomic<int> g_halo2ProbeCandidate[2][2]{{{-1}, {-1}}, {{-1}, {-1}}};
     std::atomic<uintptr_t> g_halo2ProbeCandidatePtr[2][2]{};
     std::atomic<uint64_t> g_halo2CaptureSourceFallbacks{0};
+    // E-H2-27: the probe used to demand the backbuffer's exact shape, so the
+    // engine's own scene target (3788x2732, typeless) was never sampled -
+    // every probe of it read "not sampled". A small centre box copied with
+    // CopySubresourceRegion works for ANY shape and any 32-bit format.
+    constexpr unsigned kHalo2ProbeBoxSize = 256;
+    ID3D11Texture2D* g_halo2ProbeBox[2][2]{};
+    DXGI_FORMAT g_halo2ProbeBoxFormat[2][2]{};
+    bool g_halo2ProbeBoxHasImage[2][2]{};
     std::atomic<bool> g_halo2PrePairCreateFailed{false};
     std::atomic<int> g_halo2CaptureCandidateCount{2};
     std::atomic<int> g_halo2ProbeRotation{0};
@@ -1807,7 +1815,21 @@ float4 ps_pass(VSOut i) : SV_Target
                 return static_cast<ID3D11ShaderResourceView*>(cached.view);
 
             ID3D11ShaderResourceView* fresh = nullptr;
-            if (SUCCEEDED(g_device->CreateShaderResourceView(src, nullptr, &fresh)) &&
+            // E-H2-27: a TYPELESS target has no default view; name the
+            // concrete format explicitly or the source can never be sampled.
+            D3D11_SHADER_RESOURCE_VIEW_DESC typedDesc{};
+            const bool typeless =
+                Halo2FormatIsTypeless(static_cast<uint32_t>(srcDesc.Format));
+            if (typeless)
+            {
+                typedDesc.Format = static_cast<DXGI_FORMAT>(
+                    Halo2ConcreteFormat(static_cast<uint32_t>(srcDesc.Format)));
+                typedDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                typedDesc.Texture2D.MostDetailedMip = 0;
+                typedDesc.Texture2D.MipLevels = 1;
+            }
+            if (SUCCEEDED(g_device->CreateShaderResourceView(
+                    src, typeless ? &typedDesc : nullptr, &fresh)) &&
                 fresh)
             {
                 ++g_srcViewCreated;
@@ -5127,6 +5149,55 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             const int currentSource =
                 g_halo2CaptureSource.load(std::memory_order_relaxed);
             double probeChanged[2] = {-1.0, -1.0};
+            bool boxCompared[2] = {false, false};
+            // E-H2-27: the shape-agnostic centre box. Any candidate the
+            // full-size copy could not take is compared here instead, so
+            // the engine's own scene target is finally sampled.
+            for (int probe = 0; probe < 2; ++probe)
+            {
+                if (!g_halo2ProbeBoxHasImage[probe][0] ||
+                    !g_halo2ProbeBoxHasImage[probe][1] ||
+                    !g_halo2ProbeBox[probe][0] || !g_halo2ProbeBox[probe][1] ||
+                    g_halo2ProbeBoxFormat[probe][0] != g_halo2ProbeBoxFormat[probe][1])
+                {
+                    continue;
+                }
+                D3D11_MAPPED_SUBRESOURCE bm[2]{};
+                if (FAILED(g_context->Map(g_halo2ProbeBox[probe][0], 0, D3D11_MAP_READ, 0, &bm[0])))
+                    continue;
+                if (FAILED(g_context->Map(g_halo2ProbeBox[probe][1], 0, D3D11_MAP_READ, 0, &bm[1])))
+                {
+                    g_context->Unmap(g_halo2ProbeBox[probe][0], 0);
+                    continue;
+                }
+                unsigned bSamples = 0, bChanged = 0;
+                for (unsigned y = 0; y < kHalo2ProbeBoxSize; y += 2)
+                {
+                    const auto* l = static_cast<const unsigned char*>(bm[0].pData) +
+                        y * bm[0].RowPitch;
+                    const auto* r = static_cast<const unsigned char*>(bm[1].pData) +
+                        y * bm[1].RowPitch;
+                    for (unsigned x = 0; x < kHalo2ProbeBoxSize; x += 2)
+                    {
+                        const unsigned o = x * 4;
+                        unsigned d = 0;
+                        for (unsigned c = 0; c < 3; ++c)
+                        {
+                            const int dd = (int)l[o + c] - (int)r[o + c];
+                            d += (unsigned)(dd < 0 ? -dd : dd);
+                        }
+                        if (d > 12) ++bChanged;
+                        ++bSamples;
+                    }
+                }
+                g_context->Unmap(g_halo2ProbeBox[probe][0], 0);
+                g_context->Unmap(g_halo2ProbeBox[probe][1], 0);
+                if (bSamples)
+                {
+                    probeChanged[probe] = 100.0 * bChanged / bSamples;
+                    boxCompared[probe] = true;
+                }
+            }
             if (staging[0] && staging[1])
             {
                 for (int probe = 0; probe < 2; ++probe)
@@ -5186,6 +5257,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     probeChanged[probe] = pSamples ? 100.0 * pChanged / pSamples : 0.0;
                     g_context->Unmap(staging[0], 0);
                     g_context->Unmap(staging[1], 0);
+                    boxCompared[probe] = false;
                     g_context->CopyResource(staging[0], g_eyeCache[0]);
                     g_context->CopyResource(staging[1], g_eyeCache[1]);
                     stagingMapped[0] = SUCCEEDED(g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]));
@@ -5234,11 +5306,13 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     probeCandidate[1],
                     g_halo2ProbeCandidatePtr[1][1].load(std::memory_order_relaxed),
                     names[2], sizeof(names[2]));
-                LOG("Halo 2 capture probes: source=%s; %s pair changed %.1f%%; "
-                    "%s pair changed %.1f%% (negative = not sampled); %d "
+                LOG("Halo 2 capture probes: source=%s; %s pair changed %.1f%%%s; "
+                    "%s pair changed %.1f%%%s (negative = not sampled); %d "
                     "candidates this eye, rotation at %d",
-                    names[0], names[1], probeChanged[0], names[2],
-                    probeChanged[1], candidateCount,
+                    names[0], names[1], probeChanged[0],
+                    boxCompared[0] ? " (centre box)" : "",
+                    names[2], probeChanged[1],
+                    boxCompared[1] ? " (centre box)" : "", candidateCount,
                     g_halo2ProbeRotation.load(std::memory_order_relaxed));
                 if (identical && identicalRuns >= 2)
                 {
@@ -11384,6 +11458,20 @@ void VR_ResetHalo2SynchronousStereo()
     g_halo2LastPair = {};
     g_halo2SynchronousSceneRtv.store(nullptr, std::memory_order_release);
     std::memset(g_halo2ProbeHasImage, 0, sizeof(g_halo2ProbeHasImage));
+    for (auto& slot : g_halo2ProbeBox)
+        for (auto*& box : slot)
+        {
+            if (box) box->Release();
+            box = nullptr;
+        }
+    std::memset(g_halo2ProbeBoxHasImage, 0, sizeof(g_halo2ProbeBoxHasImage));
+    std::memset(g_halo2ProbeBoxFormat, 0, sizeof(g_halo2ProbeBoxFormat));
+    if (g_halo2PrePairCache)
+    {
+        g_halo2PrePairCache->Release();
+        g_halo2PrePairCache = nullptr;
+    }
+    g_halo2PrePairHasImage.store(false, std::memory_order_release);
     const uint32_t generation =
         g_halo2SynchronousPairGeneration.load(std::memory_order_acquire);
     g_halo2SynchronousPairToken.store(0, std::memory_order_release);
@@ -12904,9 +12992,11 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
             if (candidate < 0)
             {
                 g_halo2ProbeHasImage[slot][scope.eye] = false;
+                g_halo2ProbeBoxHasImage[slot][scope.eye] = false;
                 continue;
             }
             g_halo2ProbeHasImage[slot][scope.eye] = false;
+            g_halo2ProbeBoxHasImage[slot][scope.eye] = false;
             D3D11_TEXTURE2D_DESC otherDesc{};
             ID3D11Texture2D* other =
                 Halo2TextureBehind(candidates[candidate], otherDesc);
@@ -12918,15 +13008,99 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
                 g_context->CopyResource(g_halo2ProbeCache[slot][scope.eye], other);
                 g_halo2ProbeHasImage[slot][scope.eye] = true;
             }
+            // E-H2-27: shape-agnostic centre box, for candidates the
+            // same-shape copy above cannot take (the engine's scene target).
+            if (otherDesc.Width >= kHalo2ProbeBoxSize &&
+                otherDesc.Height >= kHalo2ProbeBoxSize &&
+                otherDesc.SampleDesc.Count == 1)
+            {
+                ID3D11Texture2D*& box = g_halo2ProbeBox[slot][scope.eye];
+                if (box && g_halo2ProbeBoxFormat[slot][scope.eye] != otherDesc.Format)
+                {
+                    box->Release();
+                    box = nullptr;
+                }
+                if (!box)
+                {
+                    D3D11_TEXTURE2D_DESC boxDesc{};
+                    boxDesc.Width = kHalo2ProbeBoxSize;
+                    boxDesc.Height = kHalo2ProbeBoxSize;
+                    boxDesc.MipLevels = 1;
+                    boxDesc.ArraySize = 1;
+                    boxDesc.Format = otherDesc.Format;
+                    boxDesc.SampleDesc.Count = 1;
+                    boxDesc.Usage = D3D11_USAGE_STAGING;
+                    boxDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                    if (SUCCEEDED(g_device->CreateTexture2D(&boxDesc, nullptr, &box)))
+                        g_halo2ProbeBoxFormat[slot][scope.eye] = otherDesc.Format;
+                    else
+                        box = nullptr;
+                }
+                if (box)
+                {
+                    D3D11_BOX region{};
+                    region.left = (otherDesc.Width - kHalo2ProbeBoxSize) / 2;
+                    region.top = (otherDesc.Height - kHalo2ProbeBoxSize) / 2;
+                    region.right = region.left + kHalo2ProbeBoxSize;
+                    region.bottom = region.top + kHalo2ProbeBoxSize;
+                    region.front = 0;
+                    region.back = 1;
+                    g_context->CopySubresourceRegion(
+                        box, 0, 0, 0, 0, other, 0, &region);
+                    g_halo2ProbeBoxHasImage[slot][scope.eye] = true;
+                }
+            }
             other->Release();
         }
     }
-    bool copied = false;
-    if (EnsureEyeCaches(desc) && g_eyeCache[scope.eye])
+    // E-H2-27: the eye caches keep the FINAL slot's shape, so learning a
+    // differently shaped source (the engine's scene target) cannot churn every
+    // Halo 2 resource per eye; the blit resizes and resolves the format.
+    D3D11_TEXTURE2D_DESC cacheDesc = desc;
+    if (source != 0 && candidates[0])
     {
-        g_context->CopyResource(g_eyeCache[scope.eye], texture);
-        copied = true;
-        if (!loggedShape)
+        D3D11_TEXTURE2D_DESC finalDesc{};
+        ID3D11Texture2D* finalTexture = Halo2TextureBehind(candidates[0], finalDesc);
+        if (finalTexture)
+        {
+            cacheDesc = finalDesc;
+            finalTexture->Release();
+        }
+    }
+    if (Halo2FormatIsTypeless(static_cast<uint32_t>(cacheDesc.Format)))
+    {
+        cacheDesc.Format = static_cast<DXGI_FORMAT>(
+            Halo2ConcreteFormat(static_cast<uint32_t>(cacheDesc.Format)));
+    }
+    bool copied = false;
+    if (EnsureEyeCaches(cacheDesc) && g_eyeCache[scope.eye])
+    {
+        if (desc.Width == g_eyeCacheDesc.Width &&
+            desc.Height == g_eyeCacheDesc.Height &&
+            desc.Format == g_eyeCacheDesc.Format)
+        {
+            g_context->CopyResource(g_eyeCache[scope.eye], texture);
+            copied = true;
+        }
+        else
+        {
+            copied = Blit(texture, desc, g_eyeCache[scope.eye],
+                          g_eyeCacheDesc.Width, g_eyeCacheDesc.Height,
+                          g_eyeCacheRtvs[scope.eye]);
+            static bool loggedBlit = false;
+            if (copied && !loggedBlit)
+            {
+                loggedBlit = true;
+                LOG("Halo 2 eye capture: the learned source is %ux%u fmt %u "
+                    "and the eye cache is %ux%u fmt %u, so the finished eye is "
+                    "blitted rather than copied",
+                    desc.Width, desc.Height,
+                    static_cast<unsigned>(desc.Format),
+                    g_eyeCacheDesc.Width, g_eyeCacheDesc.Height,
+                    static_cast<unsigned>(g_eyeCacheDesc.Format));
+            }
+        }
+        if (copied && !loggedShape)
         {
             loggedShape = true;
             LOG("Halo 2 eye capture: copying the engine's finished %ux%u "

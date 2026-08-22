@@ -2110,3 +2110,55 @@ Confirmed defects, all fixed before the headset saw C-H2-31:
   creation is logged once.
 - The pixel check's final Unmap followed the FIRST map result after several
   unmap/re-map rounds; it now follows the last.
+
+## E-H2-26: the weapon gets its own view; the eyes keep the frame rate (C-H2-33)
+
+C-H2-31/32 rendered the eyes from the publication the game tick placed the
+weapon against. The 8cb89b6 log shows what that costs: `1283 placements` in
+~21 s = 60/s (the tick) against ~200 observer updates per second, and `eyes
+rendered from the publication the weapon tick was witnessed against 951` of
+952 pairs - so the CAMERA ran at the 60 Hz tick. The player runs 72-144 Hz;
+that is the "fighting to follow my head".
+
+C-H2-33 separates them. The eyes always render from the frame own matched
+sample (frame rate). The weapon keeps its tick pose, and the FIRST-PERSON
+view-projection the Saber renderer draws it with (record+0x5EC) is rebuilt
+from THAT pose plus the eye offset, so the weapon sits where the engine put
+it while the world moves with the head.
+
+No matrix convention is assumed. The engine writes
+`viewNoTranslation(frame eye) x world projection` at +0x56C immediately
+before the rebuild detour runs; the mod reconstructs exactly that product
+from the eye camera it just wrote (`Halo2SaberViewWithoutTranslation` +
+`Halo2MultiplyMatrix4x4`) and compares (`Halo2MatricesClose`). Only when the
+reconstruction MATCHES is the weapon own product written; otherwise the
+engine +0x56C stands exactly as C-H2-26 shipped it. The verdict is logged
+once per generation and the applied/kept counts appear in the stereo line.
+
+## E-H2-27: the classic eye image is in a TYPELESS target of a different shape
+
+The 8cb89b6 log settles the classic question that E-H2-25 left open:
+
+- `render cameras written for the last pair - eye 0 (...) eye 1 (...),
+  separation 0.0214 wu = 65.3 mm; the engine window camera stood ... 0.0 mm
+  from the observer pose the mod published` - the per-eye positions AND the
+  lean both reach the engine.
+- `captured target before the pair vs eye 0: 93.5% changed, vs eye 1: 93.5%` -
+  the captured target IS written during the pair, and identically for both.
+- the eye census names the reason: `bound target #0 = ... 3788x2732 fmt 90`,
+  two pixels wider than the backbuffer and format 90 = `B8G8R8A8_TYPELESS`,
+  while every probe of it reported `-1.0%` (not sampled).
+
+Two things kept that target out of reach, both fixed in C-H2-33:
+
+1. The probe only copied candidates of the backbuffer exact shape and format.
+   It now also takes a 256x256 centre box with `CopySubresourceRegion`, which
+   works for any shape and any 32-bit format, and the report marks those
+   comparisons `(centre box)`.
+2. A TYPELESS resource has no default shader resource view, so the blit could
+   never sample it. `Halo2ConcreteFormat` names the view format explicitly
+   (90 -> 87, 27 -> 28, 92 -> 88, ...) and `AcquireSrcSrv` uses it.
+
+When a differently shaped source wins, the eye caches keep the FINAL slot
+shape (so nothing else in the pipeline churns) and the finished eye is
+blitted rather than copied; the switch and the blit are both logged.
