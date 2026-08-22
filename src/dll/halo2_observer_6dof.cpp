@@ -72,6 +72,13 @@ namespace
     std::atomic<uint32_t> g_publicationVersion{0};
     Halo2ObserverPosePublication g_publication{};
     std::atomic<uint64_t> g_publicationTornReads{0};
+    // E-H2-21: the last few publications, newest first, so a renderer on
+    // another thread can pick the sample the engine's OWN frame camera was
+    // built from instead of whatever was published most recently.
+    constexpr unsigned kPublicationRing = 8;
+    std::atomic<uint32_t> g_ringVersion[kPublicationRing]{};
+    Halo2ObserverPosePublication g_ring[kPublicationRing]{};
+    std::atomic<unsigned> g_ringHead{0};
 
     void PublishPose(
         uint32_t generation, uint64_t serial, const Halo2CameraBasis& stock,
@@ -111,6 +118,19 @@ namespace
                         sizeof(snapshot.eyeOrientation[eye]));
         }
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
+        // The ring keeps one entry per DISTINCT tracked camera (the observer
+        // runs many times per frame with the same sample).
+        const unsigned head = g_ringHead.load(std::memory_order_acquire);
+        const unsigned last = (head + kPublicationRing - 1) % kPublicationRing;
+        const bool same = head != 0 &&
+            std::memcmp(&g_ring[last].tracked, &tracked, sizeof(tracked)) == 0 &&
+            g_ring[last].serial == serial;
+        const unsigned slot = same ? last : head % kPublicationRing;
+        g_ringVersion[slot].fetch_add(1, std::memory_order_acq_rel);
+        g_ring[slot] = g_publication;
+        g_ringVersion[slot].fetch_add(1, std::memory_order_acq_rel);
+        if (!same)
+            g_ringHead.store(head + 1, std::memory_order_release);
     }
 
     void ClearPublication() noexcept
@@ -118,6 +138,13 @@ namespace
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
         g_publication = {};
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
+        for (unsigned i = 0; i < kPublicationRing; ++i)
+        {
+            g_ringVersion[i].fetch_add(1, std::memory_order_acq_rel);
+            g_ring[i] = {};
+            g_ringVersion[i].fetch_add(1, std::memory_order_acq_rel);
+        }
+        g_ringHead.store(0, std::memory_order_release);
     }
 
     std::atomic<uint64_t> g_callbacks{0};
@@ -864,6 +891,34 @@ bool Halo2Observer6Dof_ReadPublishedPose(
     return false;
 }
 
+int Halo2Observer6Dof_ReadPublishedPoses(
+    Halo2ObserverPosePublication* out, int maximum) noexcept
+{
+    if (!out || maximum <= 0 || !g_armed.load(std::memory_order_acquire))
+        return 0;
+    const unsigned head = g_ringHead.load(std::memory_order_acquire);
+    int count = 0;
+    for (unsigned back = 1; back <= kPublicationRing && back <= head &&
+         count < maximum; ++back)
+    {
+        const unsigned slot = (head - back) % kPublicationRing;
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            const uint32_t before = g_ringVersion[slot].load(std::memory_order_acquire);
+            if (before & 1u)
+                continue;
+            Halo2ObserverPosePublication candidate = g_ring[slot];
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (g_ringVersion[slot].load(std::memory_order_acquire) != before)
+                continue;
+            if (candidate.generation && candidate.serial)
+                out[count++] = candidate;
+            break;
+        }
+    }
+    return count;
+}
+
 void Halo2Observer6Dof_RequestRecenter() noexcept
 {
     g_recenterRequested.store(true, std::memory_order_release);
@@ -890,6 +945,8 @@ bool Halo2Observer6Dof_Installed() noexcept { return false; }
 bool Halo2Observer6Dof_Armed() noexcept { return false; }
 bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication&) noexcept { return false; }
+int Halo2Observer6Dof_ReadPublishedPoses(
+    Halo2ObserverPosePublication*, int) noexcept { return 0; }
 void Halo2Observer6Dof_RequestRecenter() noexcept {}
 void Halo2Observer6Dof_ShutdownForVrFailure() noexcept {}
 

@@ -5242,6 +5242,7 @@ int main()
         Check(TitleSpecificPauseToggleOwner(GameTitle::Unknown, true) &&
                   TitleSpecificPauseToggleOwner(GameTitle::HaloReach, false) &&
                   TitleSpecificPauseToggleOwner(GameTitle::Halo4, false) &&
+                  TitleSpecificPauseToggleOwner(GameTitle::Halo2, false) &&
                   !TitleSpecificPauseToggleOwner(GameTitle::Halo3, false) &&
                   !TitleSpecificPauseToggleOwner(GameTitle::Unknown, false),
             "the title-specific Y+B admission includes Halo 4 without broadening unsupported ownership");
@@ -7216,6 +7217,32 @@ int main()
             Check(Halo2HeadYawDeltaRadians(wrapped, wrappedTracked, yawDelta) &&
                       std::fabs(yawDelta - 20.0f * deg) < 1.0e-3f,
                 "E-H2-16 the yaw delta wraps across +-180");
+        }
+
+        // E-H2-21: main-view flags and Saber matrix matching.
+        {
+            Check(Halo2SaberViewRecordIsMainView(0) &&
+                      Halo2SaberViewRecordIsMainView(0x100) &&
+                      !Halo2SaberViewRecordIsMainView(0x8) &&
+                      !Halo2SaberViewRecordIsMainView(0x40) &&
+                      !Halo2SaberViewRecordIsMainView(0x4),
+                "E-H2-21 a record with any of flags 0x4C is not a main view");
+            float a[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 1.0f,2.0f,3.0f,1};
+            float b[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 1.0f,2.0f,3.0f,1};
+            Check(Halo2SaberViewMatricesMatch(a, b, 2.0e-3f, 0.02f),
+                "E-H2-21 identical matrices match");
+            b[12] += 0.015f;
+            Check(Halo2SaberViewMatricesMatch(a, b, 2.0e-3f, 0.02f),
+                "E-H2-21 a 15 mm translation difference is within tolerance");
+            b[12] += 0.02f;
+            Check(!Halo2SaberViewMatricesMatch(a, b, 2.0e-3f, 0.02f),
+                "E-H2-21 a 35 mm translation difference is not");
+            b[12] = a[12];
+            b[5] += 0.01f;
+            Check(!Halo2SaberViewMatricesMatch(a, b, 2.0e-3f, 0.02f),
+                "E-H2-21 a rotation row difference of 0.01 is not");
+            Check(!Halo2SaberViewMatricesMatch(nullptr, b, 2.0e-3f, 0.02f),
+                "E-H2-21 null never matches");
         }
 
         // E-H2-20: the classic first-person FOV constant is the same 49.594

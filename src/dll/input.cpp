@@ -288,31 +288,22 @@ namespace
                 }
                 else
                 {
-                    // E-H2-19 (C-H2-27): in Halo 2 Back IS the Classic <->
-                    // Anniversary switch. The click switches renderers on
-                    // purpose: hold it at the head for 350 ms and Back is
-                    // pressed once (the renderer switch guard honours it
-                    // because the mod fed it); a brief click does nothing.
+                    // C-H2-28: in Halo 2 the click IS the Back button, as in
+                    // ODST - one Back press per click (the C-H2-27 hold was
+                    // not what the player asked for). Back is the engine's
+                    // Classic <-> Anniversary switch; the renderer switch
+                    // guard honours it because the mod fed it.
                     const uint64_t now = GetTickCount64();
-                    uint64_t since = g_halo2GestureClickSinceMs.load(std::memory_order_relaxed);
-                    if (!since)
+                    if (!g_halo2GestureClickSinceMs.load(std::memory_order_relaxed))
                     {
-                        since = now;
                         g_halo2GestureClickSinceMs.store(now, std::memory_order_relaxed);
                         g_halo2GestureClickSent.store(false, std::memory_order_relaxed);
+                        LOG("M3: Halo 2 - head-gesture stick click: Back pressed "
+                            "(the Classic/Anniversary switch)");
                     }
-                    if (now - since >= kHalo2GestureClickHoldMs &&
-                        !g_halo2GestureClickSent.load(std::memory_order_relaxed))
-                    {
+                    if (now - g_halo2GestureClickSinceMs.load(std::memory_order_relaxed) <
+                        kHalo2GestureClickHoldMs)
                         btn |= XINPUT_GAMEPAD_BACK;
-                        if (now - since >= kHalo2GestureClickHoldMs + 120)
-                        {
-                            g_halo2GestureClickSent.store(true, std::memory_order_relaxed);
-                            LOG("M3: Halo 2 - head-gesture stick click held %llu ms: "
-                                "Back pressed once (the Classic/Anniversary switch)",
-                                static_cast<unsigned long long>(now - since));
-                        }
-                    }
                 }
             }
             else if (halo2)

@@ -35,6 +35,10 @@ bool Halo2Observer6Dof_Armed() noexcept;
 struct Halo2ObserverPosePublication;
 bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication& out) noexcept;
+// E-H2-21: up to `maximum` recent publications, newest first, one per
+// distinct tracked camera. Returns how many were filled.
+int Halo2Observer6Dof_ReadPublishedPoses(
+    Halo2ObserverPosePublication* out, int maximum) noexcept;
 
 // Atomic-only. The next valid sample becomes the new orientation/translation
 // reference; safe to call from the universal recenter path.

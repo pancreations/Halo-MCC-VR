@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c27-classic-fp-fov-switch-guard-hud-eye1-restore-',
+            $head.Substring(0, 7) + '-halo2-c28-frame-sample-match-main-view-yb-click-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-27' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-28' -or
         [string]$manifest.halo2_candidate.status -cne
             'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-classic-only-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'both-cores-fp-weapon-through-world-frustum-switch-guard-hud-replay-restores-both-eyes' -or
+            'both-cores-fp-weapon-world-frustum-eyes-from-frame-sample-main-view-only-yb-gesture-click' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or

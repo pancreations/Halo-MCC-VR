@@ -82,6 +82,10 @@ namespace
     const char* g_hudLastReason = "none";
     uint64_t g_hudLoggedReplays = UINT64_MAX;
     std::atomic<uint64_t> g_posePublishedOlderSerial{0};
+    // E-H2-21: which published sample the frame's own camera matched.
+    std::atomic<uint64_t> g_sampleMatchedLatest{0};
+    std::atomic<uint64_t> g_sampleMatchedOlder{0};
+    std::atomic<uint64_t> g_sampleUnmatched{0};
     std::atomic<uintptr_t> g_rebuildMatrices{0};
     std::atomic<uintptr_t> g_cameraCommit{0};
     std::atomic<uintptr_t> g_cameraRefreshRect{0};
@@ -134,6 +138,7 @@ namespace
         EyeCompleteRefused,
         CameraRestoreFailed,
         PairCompleteRefused,
+        NotMainView,
         Count
     };
     constexpr const char* kBailNames[] = {
@@ -144,7 +149,8 @@ namespace
         "trackedCameraFailed", "eyeCameraFailed", "cameraSaveFailed",
         "coverFovInvalid", "finalRtvNull", "pairBeginRefused", "secondPassPreambleFaulted",
         "eyeApplyFailed", "eyeBeginRefused", "sceneRenderFaulted",
-        "eyeCompleteRefused", "cameraRestoreFailed", "pairCompleteRefused"};
+        "eyeCompleteRefused", "cameraRestoreFailed", "pairCompleteRefused",
+        "notMainView"};
     static_assert(sizeof(kBailNames) / sizeof(kBailNames[0]) ==
         static_cast<size_t>(Bail::Count));
     std::atomic<uint64_t> g_bails[static_cast<size_t>(Bail::Count)]{};
@@ -410,6 +416,7 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { ready = false; }
 
         uintptr_t record = 0;
+        uint32_t recordFlags = 0;
         Halo2CameraBasis stock{};
         Halo2SaberCameraConstants constants{};
         const uint64_t serial = snapshot.preparedSerial;
@@ -432,6 +439,9 @@ namespace
             bail = Bail::CadenceUnsupported;
         else if (!ResolveViewRecord(base, viewIndex, record))
             bail = Bail::ViewRecordUnresolved;
+        else if (!ReadGuarded(record + kHalo2SaberViewRecordFlagsOffset, recordFlags) ||
+                 !Halo2SaberViewRecordIsMainView(recordFlags))
+            bail = Bail::NotMainView;
         else if (!ReadObserverBasis(observer, stock))
             bail = Bail::ObserverBasisInvalid;
         else if (!Halo2SaberCamera_ReadConstants(base, constants))
@@ -470,10 +480,58 @@ namespace
         // Saber scene renders on its own thread, so its serial frequently
         // differs from the observer's: rebuild from the published stock
         // with THIS snapshot and the observer's own reference in that case.
+        // E-H2-21: the engine built THIS record's camera (the matrix at
+        // record+0x20, read before anything is written) from the observer
+        // pose its frame pushed. Among the recent publications, the one
+        // whose tracked camera reproduces that matrix is the sample every
+        // object of this frame - the first-person weapon included - was
+        // placed against; the eyes are built from it. The most recent
+        // publication is newer than the frame on the frames where the
+        // observer ran again before the Saber thread got here.
+        Halo2ObserverPosePublication ring[8]{};
+        int ringCount = 0;
+        __try { ringCount = Halo2Observer6Dof_ReadPublishedPoses(ring, 8); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ringCount = 0; }
         Halo2ObserverPosePublication publication{};
         bool published = false;
-        __try { published = Halo2Observer6Dof_ReadPublishedPose(publication); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { published = false; }
+        {
+            float frameMatrix[16]{};
+            const bool haveFrameMatrix = CopyGuarded(
+                frameMatrix,
+                reinterpret_cast<const void*>(record + kHalo2SaberViewRecordCameraOffset),
+                sizeof(frameMatrix));
+            int matched = -1;
+            if (haveFrameMatrix)
+            {
+                for (int i = 0; i < ringCount && matched < 0; ++i)
+                {
+                    Halo2SaberViewMatrix candidate{};
+                    if (Halo2BuildSaberViewMatrix(ring[i].tracked, constants, candidate) &&
+                        Halo2SaberViewMatricesMatch(candidate.m, frameMatrix, 2.0e-3f, 0.02f))
+                        matched = i;
+                }
+            }
+            if (matched >= 0)
+            {
+                publication = ring[matched];
+                published = true;
+                // The camera in hand is, by construction, this sample's.
+                stock = publication.tracked;
+                if (matched == 0)
+                    g_sampleMatchedLatest.fetch_add(1, std::memory_order_relaxed);
+                else
+                    g_sampleMatchedOlder.fetch_add(1, std::memory_order_relaxed);
+            }
+            else if (ringCount > 0)
+            {
+                // No sample reproduces the frame's camera (a non-observer
+                // camera, or the observer skipped): counted, and the latest
+                // publication is offered to the owner decision as before.
+                g_sampleUnmatched.fetch_add(1, std::memory_order_relaxed);
+                publication = ring[0];
+                published = true;
+            }
+        }
         Halo2CameraBasis tracked{};
         Halo2CameraBasis eyes[kHalo2EyeCount]{};
         bool centerOk = false;
@@ -1249,8 +1307,9 @@ namespace
         LOG("Halo 2 Anniversary stereo: %llu scene callbacks, %llu eye pairs, "
             "%llu drops, %llu stock passes, %llu exceptions; pose published=%llu "
             "(of which %llu rendered from an older observer serial, as that "
-            "sample) self=%llu; views seen mask=0x%X last=%u; "
-            "bail reasons: %s",
+            "sample) self=%llu; frame camera matched the latest sample %llu "
+            "times, an older sample %llu times, no sample %llu times; "
+            "views seen mask=0x%X last=%u; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
@@ -1259,6 +1318,9 @@ namespace
             static_cast<unsigned long long>(g_posePublished.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_posePublishedOlderSerial.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_poseSelfTracked.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_sampleMatchedLatest.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_sampleMatchedOlder.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_sampleUnmatched.load(std::memory_order_relaxed)),
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
             used ? reasons : "none");

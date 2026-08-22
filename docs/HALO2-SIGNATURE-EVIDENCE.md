@@ -1848,3 +1848,37 @@ vertical cover into it when it writes the cover FOVs for a pair, and
 restores 0x3F5D9734 whenever it restores the cameras and on removal. The
 weapon is therefore drawn through the same frustum as the world, per eye,
 in Classic exactly as in Anniversary.
+
+## E-H2-21: the frame's own sample, main views only, Y+B and the click (C-H2-28)
+
+The C-H2-27 Steam log (13:09-13:11): zero renderer flips (the guard stood),
+HUD replayed on every pair, both eye pictures correct and static - yet the
+weapon still "moves around" in Anniversary while Classic is rigid. Classic
+is rigid because `draw_first_person` places the weapon against the camera
+at DRAW time (E-H2-20); Anniversary's weapon is an object the game frame
+placed against the observer pose that frame pushed (0x51510 -> 0x5F510), and
+the Saber thread renders after the main thread has moved on: the log counts
+45% of pairs rendered "from an older observer serial", i.e. the newest
+publication was NOT the one the frame was built from, and the observer
+republishes thousands of times per second.
+
+C-H2-28 stops guessing which sample the frame used and READS it: the view
+record's camera matrix at record+0x20, saved before anything is written, is
+the matrix 0x5F510 built from the observer pose of this frame. The observer
+keeps a ring of its last eight distinct publications; the Anniversary core
+rebuilds each candidate's matrix with the same `Halo2BuildSaberViewMatrix`
+it uses to write eyes and takes the one that reproduces the frame's matrix
+(rotation rows within 2e-3, translation within 2 cm). The eyes are built
+from THAT sample and submitted as its view poses. The report line counts
+matches against the latest sample, an older sample, and no sample.
+
+The same decompile of the Saber frame (0x2DEC00) renders water-mirror
+records first (`(flags >> 3) & 1`) and main records after (`(flags & 0x4C)
+== 0`); the detour now claims the pair only for a main view (new bail
+reason `notMainView`), so a mirror view can no longer claim the serial and
+leave the main view rendering stock - the "occasional flash".
+
+Y+B: `TitleSpecificPauseToggleOwner` named Reach, Halo 4 and ODST only;
+Halo 2 is added. The head-gesture stick click is one Back press per click
+again (ODST behaviour), which in Halo 2 is the renderer switch - deliberate,
+honoured by the guard because the mod fed it.

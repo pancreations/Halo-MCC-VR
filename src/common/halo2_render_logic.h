@@ -1995,6 +1995,41 @@ inline constexpr uint32_t kHalo2SaberViewCountOffset = 0x148;
 inline constexpr uint32_t kHalo2SaberViewRecordArrayOffset = 0x150;
 inline constexpr uint32_t kHalo2SaberViewRecordStride = 0x758;
 inline constexpr uint32_t kHalo2SaberViewRecordCapacity = 0x50;
+// E-H2-21: the view record's first dword is its flags; 0x2DEC00 renders a
+// record as a MAIN view only when (flags & 0x4C) == 0 and as a water-mirror
+// view when bit 3 is set. Only a main view may claim the eye pair.
+inline constexpr uint32_t kHalo2SaberViewRecordFlagsOffset = 0x0;
+inline constexpr uint32_t kHalo2SaberViewRecordNonMainFlags = 0x4C;
+constexpr bool Halo2SaberViewRecordIsMainView(uint32_t flags) noexcept
+{
+    return (flags & kHalo2SaberViewRecordNonMainFlags) == 0;
+}
+
+// E-H2-21: two Saber camera matrices describe the same pose when their
+// rotation rows agree to `rotationTolerance` and their translations (metres)
+// to `translationToleranceMeters`.
+inline bool Halo2SaberViewMatricesMatch(
+    const float a[16], const float b[16], float rotationTolerance,
+    float translationToleranceMeters) noexcept
+{
+    if (!a || !b)
+        return false;
+    for (int i = 0; i < 16; ++i)
+    {
+        if (!std::isfinite(a[i]) || !std::isfinite(b[i]))
+            return false;
+        const bool translation = i >= 12 && i < 15;
+        const bool homogeneous = (i % 4) == 3;
+        if (homogeneous)
+            continue;
+        const float tolerance =
+            translation ? translationToleranceMeters : rotationTolerance;
+        if (std::fabs(a[i] - b[i]) > tolerance)
+            return false;
+    }
+    return true;
+}
+
 inline constexpr uint32_t kHalo2SaberViewRecordCameraOffset = 0x20;
 inline constexpr uint32_t kHalo2SaberViewRecordCameraBytes = 0x398;
 inline constexpr uint32_t kHalo2SaberViewRecordViewIdOffset = 0x10;
