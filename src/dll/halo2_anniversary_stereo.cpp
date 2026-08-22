@@ -529,19 +529,19 @@ namespace
                 // together. If that serial has already left the ring, the
                 // frame's own sample is used and the miss is counted.
                 int chosen = matched;
-                uint64_t witnessSerial = 0;
+                uint64_t witnessIndex = 0;
                 bool witnessed = false;
                 __try
                 {
-                    witnessed = Halo2Observer6Dof_WeaponTickSerial(
-                        generation, witnessSerial);
+                    witnessed = Halo2Observer6Dof_WeaponTickPublication(
+                        generation, witnessIndex);
                 }
                 __except (EXCEPTION_EXECUTE_HANDLER) { witnessed = false; }
                 if (witnessed)
                 {
                     int found = -1;
                     for (int i = 0; i < ringCount && found < 0; ++i)
-                        if (ring[i].serial == witnessSerial)
+                        if (ring[i].index == witnessIndex)
                             found = i;
                     if (found >= 0)
                     {

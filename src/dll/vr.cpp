@@ -421,8 +421,12 @@ namespace
     bool g_halo2ProbeHasImage[2][2]{};
     // E-H2-24: which candidate each probe slot copied, the pointer it copied,
     // how many candidates the eye offered, and where the rotation stands.
-    std::atomic<int> g_halo2ProbeCandidate[2]{{-1}, {-1}};
-    std::atomic<uintptr_t> g_halo2ProbeCandidatePtr[2]{};
+    // [probe slot][eye]: the candidate index AND the RTV copied, so the
+    // 2 s comparison only compares two copies of the SAME target.
+    std::atomic<int> g_halo2ProbeCandidate[2][2]{{{-1}, {-1}}, {{-1}, {-1}}};
+    std::atomic<uintptr_t> g_halo2ProbeCandidatePtr[2][2]{};
+    std::atomic<uint64_t> g_halo2CaptureSourceFallbacks{0};
+    std::atomic<bool> g_halo2PrePairCreateFailed{false};
     std::atomic<int> g_halo2CaptureCandidateCount{2};
     std::atomic<int> g_halo2ProbeRotation{0};
     // E-H2-24 (C-H2-31): the capture source as it stood BEFORE the pair's
@@ -5007,6 +5011,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
         const HRESULT hr1 =
             g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
+        // The probe and pre-pair comparisons below unmap and re-map these;
+        // the final Unmap follows the LAST map result, not the first.
+        bool stagingMapped[2] = {SUCCEEDED(hr0), SUCCEEDED(hr1)};
         if (SUCCEEDED(hr0) && SUCCEEDED(hr1))
         {
             unsigned long long rgbDelta = 0;
@@ -5130,7 +5137,13 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         !g_halo2ProbeCache[probe][1] ||
                         g_halo2ProbeDesc.Width != g_eyeCacheDesc.Width ||
                         g_halo2ProbeDesc.Height != g_eyeCacheDesc.Height ||
-                        g_halo2ProbeDesc.Format != g_eyeCacheDesc.Format)
+                        g_halo2ProbeDesc.Format != g_eyeCacheDesc.Format ||
+                        // Both eyes must have copied the SAME target, or the
+                        // "pair" compares two different textures.
+                        g_halo2ProbeCandidate[probe][0].load(std::memory_order_relaxed) !=
+                            g_halo2ProbeCandidate[probe][1].load(std::memory_order_relaxed) ||
+                        g_halo2ProbeCandidatePtr[probe][0].load(std::memory_order_relaxed) !=
+                            g_halo2ProbeCandidatePtr[probe][1].load(std::memory_order_relaxed))
                     {
                         continue;
                     }
@@ -5146,8 +5159,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         // unmap below by remapping the eye caches.
                         g_context->CopyResource(staging[0], g_eyeCache[0]);
                         g_context->CopyResource(staging[1], g_eyeCache[1]);
-                        (void)g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
-                        (void)g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
+                        stagingMapped[0] = SUCCEEDED(g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]));
+                        stagingMapped[1] = SUCCEEDED(g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]));
                         break;
                     }
                     unsigned pSamples = 0, pChanged = 0;
@@ -5175,15 +5188,23 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     g_context->Unmap(staging[1], 0);
                     g_context->CopyResource(staging[0], g_eyeCache[0]);
                     g_context->CopyResource(staging[1], g_eyeCache[1]);
-                    (void)g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
-                    (void)g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
+                    stagingMapped[0] = SUCCEEDED(g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]));
+                    stagingMapped[1] = SUCCEEDED(g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]));
                 }
                 // E-H2-24: which candidate each probe slot actually copied
                 // this round (the rotation walks the whole candidate set, two
                 // at a time, so the probe cost per eye is unchanged).
-                const int probeCandidate[2] = {
-                    g_halo2ProbeCandidate[0].load(std::memory_order_relaxed),
-                    g_halo2ProbeCandidate[1].load(std::memory_order_relaxed)};
+                // A slot whose two eyes copied different targets reports -1
+                // (its comparison was skipped above).
+                int probeCandidate[2] = {-1, -1};
+                for (int probe = 0; probe < 2; ++probe)
+                {
+                    const int c0 = g_halo2ProbeCandidate[probe][0].load(std::memory_order_relaxed);
+                    const int c1 = g_halo2ProbeCandidate[probe][1].load(std::memory_order_relaxed);
+                    const uintptr_t p0 = g_halo2ProbeCandidatePtr[probe][0].load(std::memory_order_relaxed);
+                    const uintptr_t p1 = g_halo2ProbeCandidatePtr[probe][1].load(std::memory_order_relaxed);
+                    probeCandidate[probe] = (c0 == c1 && p0 == p1) ? c0 : -1;
+                }
                 const int candidateCount =
                     g_halo2CaptureCandidateCount.load(std::memory_order_relaxed);
                 auto candidateName =
@@ -5207,11 +5228,11 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 candidateName(currentSource, 0, names[0], sizeof(names[0]));
                 candidateName(
                     probeCandidate[0],
-                    g_halo2ProbeCandidatePtr[0].load(std::memory_order_relaxed),
+                    g_halo2ProbeCandidatePtr[0][1].load(std::memory_order_relaxed),
                     names[1], sizeof(names[1]));
                 candidateName(
                     probeCandidate[1],
-                    g_halo2ProbeCandidatePtr[1].load(std::memory_order_relaxed),
+                    g_halo2ProbeCandidatePtr[1][1].load(std::memory_order_relaxed),
                     names[2], sizeof(names[2]));
                 LOG("Halo 2 capture probes: source=%s; %s pair changed %.1f%%; "
                     "%s pair changed %.1f%% (negative = not sampled); %d "
@@ -5236,7 +5257,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         candidateName(
                             best,
                             g_halo2ProbeCandidatePtr[
-                                probeChanged[0] == bestChanged ? 0 : 1]
+                                probeChanged[0] == bestChanged ? 0 : 1][1]
                                 .load(std::memory_order_relaxed),
                             bestName, sizeof(bestName));
                         g_halo2CaptureSource.store(best, std::memory_order_relaxed);
@@ -5321,8 +5342,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     }
                     g_context->CopyResource(staging[0], g_eyeCache[0]);
                     g_context->CopyResource(staging[1], g_eyeCache[1]);
-                    (void)g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
-                    (void)g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
+                    stagingMapped[0] = SUCCEEDED(g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]));
+                    stagingMapped[1] = SUCCEEDED(g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]));
                 }
                 g_halo2PrePairHasImage.store(false, std::memory_order_release);
             }
@@ -5356,8 +5377,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             LOG("Halo 2 eye-pair pixel check: staging map failed "
                 "(0x%08X, 0x%08X)", (unsigned)hr0, (unsigned)hr1);
         }
-        if (SUCCEEDED(hr0)) g_context->Unmap(staging[0], 0);
-        if (SUCCEEDED(hr1)) g_context->Unmap(staging[1], 0);
+        if (stagingMapped[0]) g_context->Unmap(staging[0], 0);
+        if (stagingMapped[1]) g_context->Unmap(staging[1], 0);
     }
 #endif
 
@@ -11019,8 +11040,15 @@ bool VR_Halo2BeginSynchronousPair(
     if (g_halo2PrePairWanted.exchange(false, std::memory_order_acq_rel) &&
         g_context && g_device)
     {
+        // The comparison must be against the SAME target the eyes are copied
+        // from. Only the two named slots exist at pair begin; a learned
+        // bound-target source leaves the pre-pair copy unsampled.
+        const int source = g_halo2CaptureSource.load(std::memory_order_relaxed);
+        ID3D11RenderTargetView* const sourceRtv =
+            source == 0 ? finalRtv : (source == 1 ? sceneRtv : nullptr);
         D3D11_TEXTURE2D_DESC desc{};
-        ID3D11Texture2D* texture = Halo2TextureBehind(finalRtv, desc);
+        ID3D11Texture2D* texture =
+            sourceRtv ? Halo2TextureBehind(sourceRtv, desc) : nullptr;
         if (texture)
         {
             if (g_halo2PrePairCache)
@@ -11044,7 +11072,17 @@ bool VR_Halo2BeginSynchronousPair(
                 make.MipLevels = 1;
                 make.ArraySize = 1;
                 if (FAILED(g_device->CreateTexture2D(&make, nullptr, &g_halo2PrePairCache)))
+                {
                     g_halo2PrePairCache = nullptr;
+                    if (!g_halo2PrePairCreateFailed.exchange(true, std::memory_order_relaxed))
+                    {
+                        LOG("Halo 2 pre-pair witness: the %ux%u fmt %u copy "
+                            "could not be created; 'captured target before the "
+                            "pair' stays unsampled",
+                            desc.Width, desc.Height,
+                            static_cast<unsigned>(desc.Format));
+                    }
+                }
             }
             if (g_halo2PrePairCache)
             {
@@ -12787,7 +12825,20 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
     g_halo2CaptureCandidateCount.store(candidateCount, std::memory_order_relaxed);
     int source = g_halo2CaptureSource.load(std::memory_order_relaxed);
     if (source < 0 || source >= candidateCount || !candidates[source])
+    {
+        const uint64_t n =
+            g_halo2CaptureSourceFallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n == 1 || (n % 600) == 0)
+        {
+            LOG("Halo 2 eye capture: learned source #%d is not available in "
+                "this eye (%d candidates); the final-output slot is used and "
+                "re-learned from here (fallback #%llu)",
+                source, candidateCount, static_cast<unsigned long long>(n));
+        }
         source = 0;
+        g_halo2CaptureSource.store(0, std::memory_order_relaxed);
+        g_halo2ProbeRotation.store(0, std::memory_order_relaxed);
+    }
     if (censusGeneration != scope.generation)
     {
         censusGeneration = scope.generation;
@@ -12843,8 +12894,9 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
         {
             const int candidate = Halo2ProbeCandidateForSlot(
                 rotation, slot, source, candidateCount);
-            g_halo2ProbeCandidate[slot].store(candidate, std::memory_order_relaxed);
-            g_halo2ProbeCandidatePtr[slot].store(
+            g_halo2ProbeCandidate[slot][scope.eye].store(
+                candidate, std::memory_order_relaxed);
+            g_halo2ProbeCandidatePtr[slot][scope.eye].store(
                 candidate >= 0
                     ? reinterpret_cast<uintptr_t>(candidates[candidate])
                     : 0,

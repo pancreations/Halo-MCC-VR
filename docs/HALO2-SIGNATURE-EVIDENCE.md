@@ -2077,3 +2077,36 @@ not an engine result. Either the eye pass did not write the texture the mod
 copies (C-H2-31 measures this: "captured target before the pair vs eye 0/1"),
 or the two calls were given the same position (C-H2-31 logs the written eye
 separation and the window camera's distance from the published observer pose).
+
+## E-H2-23/24 addendum: C-H2-32 review fixes (15-agent adversarial review of the C-H2-31 diff)
+
+Confirmed defects, all fixed before the headset saw C-H2-31:
+
+- `Halo2FirstPersonWeaponsDetour` loaded the trampoline BEFORE raising its
+  active-callback count, so `RemoveCore`'s drain could free the trampoline
+  under a thread already holding it (level exit / generation change). The
+  count is now raised first, mirroring the observer detour.
+- An unwitnessed tick (record moved by the engine, or no publication) left the
+  PREVIOUS witness standing, so the eyes rendered from a pose older than both
+  the weapon and the frame camera for ~2.5 ticks. The witness is cleared on
+  those paths; the Anniversary core then uses the frame's own sample.
+- The witness was keyed on the VR serial, which several ring entries share
+  (observer ~200/s vs 90-120 VR frames): the lookup took the NEWEST entry with
+  that serial, not the witnessed one. Each publication now carries a unique
+  `index` (one per ring write) and the witness/lookup use it.
+- The interpolator reset ran in Classic too, stepping the Classic weapon at
+  the 60 Hz tick. It is gated on the classic-disabled byte `0xE70CF8`
+  (remastered renderer live) and the skips are counted.
+- Probe candidates >= 2 are per-eye bind-order indices; the 2 s comparison
+  could compare two different targets and learn an unstable source. The
+  candidate index and RTV are recorded per [slot][eye] and must match before
+  a pair is compared or a switch is taken.
+- A learned source index that a later eye could not offer silently fell back
+  to the final slot while the report still named the learned one; now logged
+  and written back.
+- The pre-pair reference copy always came from the final-output slot while the
+  eye copies come from the learned source; it now copies the learned source
+  (a learned bound target leaves it unsampled and says so), and a failed
+  creation is logged once.
+- The pixel check's final Unmap followed the FIRST map result after several
+  unmap/re-map rounds; it now follows the last.

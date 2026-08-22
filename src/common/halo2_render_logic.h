@@ -1088,6 +1088,11 @@ struct Halo2ObserverPosePublication
 {
     uint32_t generation = 0;
     uint64_t serial = 0;
+    // E-H2-23 (C-H2-32): one number per ring WRITE. Several ring entries can
+    // share a VR serial (the observer runs ~200/s against 90-120 VR frames),
+    // so a witness keyed on the serial could name the wrong entry; this key
+    // names exactly one.
+    uint64_t index = 0;
     Halo2CameraBasis stock{};
     Halo2CameraBasis tracked{};
     float referenceOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};

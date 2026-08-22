@@ -95,7 +95,9 @@ namespace
     // generation << 32 is not enough for a 64-bit serial; two atomics, the
     // serial written last (release) and read first (acquire).
     std::atomic<uint32_t> g_weaponTickGeneration{0};
-    std::atomic<uint64_t> g_weaponTickSerial{0};
+    std::atomic<uint64_t> g_weaponTickIndex{0};
+    std::atomic<uint64_t> g_weaponsResetSkippedClassic{0};
+    std::atomic<uint64_t> g_publicationIndex{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     uint64_t g_lastWitnessedReported = 0;
 
@@ -119,6 +121,8 @@ namespace
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
         g_publication.generation = generation;
         g_publication.serial = serial;
+        g_publication.index =
+            g_publicationIndex.fetch_add(1, std::memory_order_relaxed) + 1;
         g_publication.stock = stock;
         g_publication.tracked = tracked;
         std::memcpy(g_publication.referenceOrientation, reference.orientation,
@@ -405,8 +409,12 @@ namespace
         const uintptr_t result = base + Halo2ObserverRecordOffset(kOwnedUser);
         Halo2ObserverPosePublication published{};
         if (!Halo2Observer6Dof_ReadPublishedPose(published) ||
-            published.generation != generation || !published.serial)
+            published.generation != generation || !published.index)
         {
+            // No witness for this tick: the previous one must not stand, or
+            // the eyes would render from a pose older than both the weapon
+            // and the frame camera until it left the ring.
+            g_weaponTickIndex.store(0, std::memory_order_release);
             g_weaponsNoPublication.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -414,12 +422,28 @@ namespace
         if (!ReadObserverPose(result, current) ||
             !Halo2CameraBasisMatchesExactly(current, published.tracked))
         {
+            g_weaponTickIndex.store(0, std::memory_order_release);
             g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         g_weaponTickGeneration.store(generation, std::memory_order_relaxed);
-        g_weaponTickSerial.store(published.serial, std::memory_order_release);
+        g_weaponTickIndex.store(published.index, std::memory_order_release);
         g_weaponsWitnessed.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool RemasteredRendererLive() noexcept
+    {
+        const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
+        if (!base)
+            return false;
+        uint8_t classicDisabled = 0;
+        __try
+        {
+            classicDisabled = *reinterpret_cast<const volatile uint8_t*>(
+                base + kHalo2ClassicRenderDisabledByteRva);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return classicDisabled != 0;
     }
 
     void ResetFirstPersonInterpolation() noexcept
@@ -429,6 +453,14 @@ namespace
             g_interpolatorResetAddress.load(std::memory_order_acquire));
         if (!reset)
             return;
+        // Classic draws the weapon against the camera at draw time
+        // (E-H2-20) and wants the engine's inter-tick blending; only the
+        // Saber renderer draws the placed, interpolated object.
+        if (!RemasteredRendererLive())
+        {
+            g_weaponsResetSkippedClassic.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         for (int slot = 0; slot < kHalo2FrameInterpolatorFirstPersonSlots; ++slot)
             reset(static_cast<int>(kOwnedUser), slot);
         g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
@@ -437,11 +469,16 @@ namespace
     __declspec(noinline) void __fastcall Halo2FirstPersonWeaponsDetour(
         uint32_t a, uint32_t b, uint8_t c)
     {
+        // Count the callback BEFORE taking the trampoline, so RemoveCore's
+        // drain cannot free it under a thread that already holds it.
+        g_weaponsActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
         const auto original = reinterpret_cast<Halo2FirstPersonWeaponsFn>(
             g_weaponsOriginal.load(std::memory_order_acquire));
         if (!original)
+        {
+            g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
             return;
-        g_weaponsActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        }
         g_weaponsCalls.fetch_add(1, std::memory_order_relaxed);
         const bool owned = g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
@@ -743,7 +780,7 @@ namespace
         }
         g_weaponsOriginal.store(0, std::memory_order_release);
         g_interpolatorResetAddress.store(0, std::memory_order_release);
-        g_weaponTickSerial.store(0, std::memory_order_release);
+        g_weaponTickIndex.store(0, std::memory_order_release);
         g_weaponTickGeneration.store(0, std::memory_order_release);
         g_originalAddress.store(0, std::memory_order_release);
         g_observerResult.store(0, std::memory_order_release);
@@ -1024,7 +1061,8 @@ namespace
             "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional "
             "%s); weapon tick witness: %llu placements, %llu witnessed, %llu "
             "with a record the engine had moved, %llu with no publication, "
-            "%llu interpolation-slot resets; last witnessed serial %llu",
+            "%llu interpolation-slot resets (%llu skipped in Classic); last "
+            "witnessed publication #%llu",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1047,7 +1085,9 @@ namespace
             static_cast<unsigned long long>(
                 g_weaponsSlotResets.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponTickSerial.load(std::memory_order_relaxed)));
+                g_weaponsResetSkippedClassic.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponTickIndex.load(std::memory_order_relaxed)));
     }
 }
 
@@ -1180,11 +1220,11 @@ int Halo2Observer6Dof_ReadPublishedPoses(
     return count;
 }
 
-bool Halo2Observer6Dof_WeaponTickSerial(
-    uint32_t generation, uint64_t& serial) noexcept
+bool Halo2Observer6Dof_WeaponTickPublication(
+    uint32_t generation, uint64_t& index) noexcept
 {
-    serial = g_weaponTickSerial.load(std::memory_order_acquire);
-    return serial != 0 && generation != 0 &&
+    index = g_weaponTickIndex.load(std::memory_order_acquire);
+    return index != 0 && generation != 0 &&
         g_weaponTickGeneration.load(std::memory_order_relaxed) == generation;
 }
 
@@ -1216,9 +1256,9 @@ bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication&) noexcept { return false; }
 int Halo2Observer6Dof_ReadPublishedPoses(
     Halo2ObserverPosePublication*, int) noexcept { return 0; }
-bool Halo2Observer6Dof_WeaponTickSerial(uint32_t, uint64_t& serial) noexcept
+bool Halo2Observer6Dof_WeaponTickPublication(uint32_t, uint64_t& index) noexcept
 {
-    serial = 0;
+    index = 0;
     return false;
 }
 void Halo2Observer6Dof_RequestRecenter() noexcept {}
