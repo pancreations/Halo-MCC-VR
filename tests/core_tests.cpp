@@ -7218,6 +7218,52 @@ int main()
                 "E-H2-16 the yaw delta wraps across +-180");
         }
 
+        // E-H2-18: the Saber view record's second, first-person projection.
+        {
+            const float deg = pi / 180.0f;
+            // 0x1C6D80's literal 0x424660D5 = 49.594 deg vertical; the
+            // horizontal follows the record aspect (h/w 0.721 in the logs).
+            Halo2SymmetricHalfFovs stockFp{};
+            Check(Halo2SaberFirstPersonStockHalfFovs(0.721f, stockFp) &&
+                      std::fabs(stockFp.vertical - 24.797f * deg) < 1.0e-4f &&
+                      std::fabs(stockFp.horizontal - 32.65f * deg) < 0.05f * deg,
+                "E-H2-18 the engine's stock first-person frustum is 65.3 x "
+                "49.6 deg at the record aspect");
+            Check(!Halo2SaberFirstPersonStockHalfFovs(0.0f, stockFp) &&
+                      !Halo2SaberFirstPersonStockHalfFovs(-1.0f, stockFp),
+                "E-H2-18 a degenerate aspect is refused");
+            // At the 126.5 x 110.1 deg eye cover the weapon is drawn 3.1x
+            // larger than the world: tan(55.05) / tan(24.797).
+            const float magnification =
+                std::tan(55.05f * deg) / std::tan(24.797f * deg);
+            Check(magnification > 3.0f && magnification < 3.2f,
+                "E-H2-18 the stock first-person projection magnifies the weapon "
+                "about 3.1x against the eye's world");
+            float world[16]{};
+            world[0] = 1.0f / std::tan(63.25f * deg);
+            world[5] = 1.0f / std::tan(55.05f * deg);
+            world[11] = 1.0f;
+            float firstPerson[16]{};
+            firstPerson[0] = 1.0f / std::tan(32.65f * deg);
+            firstPerson[5] = 1.0f / std::tan(24.797f * deg);
+            firstPerson[11] = 1.0f;
+            Check(!Halo2SaberProjectionScalesMatch(firstPerson, world, 0.01f),
+                "E-H2-18 the stock first-person projection does not match the "
+                "world projection");
+            float unified[16]{};
+            std::memcpy(unified, world, sizeof(unified));
+            Check(Halo2SaberProjectionScalesMatch(unified, world, 0.01f),
+                "E-H2-18 the unified first-person projection matches the world");
+            unified[5] *= 1.02f;
+            Check(!Halo2SaberProjectionScalesMatch(unified, world, 0.01f),
+                "E-H2-18 a 2 percent scale difference is a mismatch at 1 percent");
+            Check(!Halo2SaberProjectionScalesMatch(nullptr, world, 0.01f),
+                "E-H2-18 a null projection never matches");
+            Halo2ObserverPosePublication publication{};
+            Check(!publication.snapshot.valid,
+                "E-H2-18 a fresh publication carries no sample");
+        }
+
         // E-H2-12: the crop follows the projection the engine built, read
         // back as its two diagonal scales.
         {

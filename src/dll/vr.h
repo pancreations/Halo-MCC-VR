@@ -72,6 +72,10 @@ struct Halo2VrEyeSnapshot
     float orientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float fov[4]{};
     bool fovValid = false;
+    // E-H2-18: the absolute OpenXR view pose of this sample (what the pair
+    // is submitted with when an eye was rendered from this sample).
+    float absolutePosition[3]{};
+    float absoluteOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
 };
 
 struct Halo2VrRenderSnapshot
@@ -357,9 +361,30 @@ bool VR_Halo2BeginSynchronousPair(
     ID3D11RenderTargetView* sceneRtv = nullptr);
 bool VR_Halo2BeginSynchronousEye(
     uint32_t generation, uint64_t preparedSerial, int eye);
+// E-H2-18: `renderedPosition`/`renderedOrientation` name the absolute OpenXR
+// view pose the eye image was rendered from when that is NOT the prepared
+// frame's own located view (the Anniversary core renders from the observer's
+// published sample); null means the located view of `preparedSerial`.
 bool VR_Halo2CompleteSynchronousEye(
     uint32_t generation, uint64_t preparedSerial, int eye,
-    float halfFovX, float halfFovY);
+    float halfFovX, float halfFovY,
+    const float* renderedPosition = nullptr,
+    const float* renderedOrientation = nullptr);
+// True only when BOTH eyes of the complete pair for `preparedSerial` were
+// rendered from an explicitly named pose; fills those poses.
+bool VR_Halo2GetSynchronousPairPoses(
+    uint32_t generation, uint64_t preparedSerial,
+    float position[2][3], float orientation[2][4]);
+// E-H2-18 HUD replay (Anniversary). The complete pair for `preparedSerial`
+// must exist with both eye images; the final-output target must be the
+// texture the eyes were copied from. Recapture copies that target into the
+// eye cache; Restore copies the eye cache back into that target.
+bool VR_Halo2HudReplayEligible(
+    uint32_t generation, uint64_t preparedSerial, const char** reason);
+bool VR_Halo2RecaptureEyeFromFinalTarget(
+    uint32_t generation, uint64_t preparedSerial, int eye);
+bool VR_Halo2RestoreEyeToFinalTarget(
+    uint32_t generation, uint64_t preparedSerial, int eye);
 bool VR_Halo2CompleteSynchronousPair(
     uint32_t generation, uint64_t preparedSerial);
 // Claim immediately before the first original eye render_view call. A failed

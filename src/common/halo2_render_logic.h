@@ -1065,6 +1065,25 @@ inline bool Halo2BuildTrackedCenterCamera(
 // rendered as if it were tracked, and what keeps a director/playback camera
 // (0x960780's override branch, not observer-derived) from being mistaken
 // for one.
+// E-H2-18: the exact headset sample the observer composed its tracked camera
+// from, so a renderer on another thread (the Saber scene) can draw and
+// submit from the SAME head pose the engine placed the first-person weapon
+// against, instead of rebuilding the centre from a newer sample.
+struct Halo2ObserverPoseSnapshot
+{
+    bool valid = false;
+    float headOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float headPosition[3]{};
+    // Per eye: offset from the head (metres, head-local) and the absolute
+    // OpenXR view pose of that sample, the pose the image is submitted with.
+    float eyeOffsetPosition[2][3]{};
+    float eyeOffsetOrientation[2][4]{{0.0f, 0.0f, 0.0f, 1.0f},
+                                     {0.0f, 0.0f, 0.0f, 1.0f}};
+    float eyePosition[2][3]{};
+    float eyeOrientation[2][4]{{0.0f, 0.0f, 0.0f, 1.0f},
+                               {0.0f, 0.0f, 0.0f, 1.0f}};
+};
+
 struct Halo2ObserverPosePublication
 {
     uint32_t generation = 0;
@@ -1073,6 +1092,7 @@ struct Halo2ObserverPosePublication
     Halo2CameraBasis tracked{};
     float referenceOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float referencePosition[3]{};
+    Halo2ObserverPoseSnapshot snapshot{};
 };
 
 inline bool Halo2CameraBasisMatches(
@@ -1927,6 +1947,73 @@ static_assert(kHalo2SaberViewRecordProjectionOffset + 16 * sizeof(float) <=
 inline constexpr uint32_t kHalo2SaberRebuildViewMatricesRva = 0x001C6D80;
 inline constexpr uint8_t kHalo2SaberRebuildViewMatricesEntryBytes[] = {
     0x4C, 0x8B, 0xDC, 0x55, 0x49, 0x8D, 0xAB, 0xA8, 0xFB, 0xFF, 0xFF};
+
+// E-H2-18: 0x1C6D80 builds TWO projections into the view record. The world
+// one (record+0x4AC, from the camera's +0x150/+0x154 degrees) and a
+// first-person one at record+0x4EC built from a camera copy whose vertical
+// FOV is the literal 0x424660D5 = 49.594 degrees (tanf(0.43279424) = tan of
+// its half-angle is precomputed) with the horizontal derived through the
+// record's own aspect. It then stores view-without-translation x world
+// projection at +0x56C (the product whose inverse goes to +0x5AC) and
+// view-without-translation x first-person projection at +0x5EC. MCC keeps
+// the first-person weapon at a constant screen fraction across its FOV
+// slider with this second projection; at the headset's 126 x 110 degree
+// cover that draws the weapon tan(55)/tan(24.8) = 3.1x larger than the
+// world around it, and moves it 3.1x further per eye than the world does.
+inline constexpr uint32_t kHalo2SaberViewRecordFirstPersonProjectionOffset = 0x4EC;
+inline constexpr uint32_t kHalo2SaberViewRecordViewProjectionNoTranslationOffset = 0x56C;
+inline constexpr uint32_t kHalo2SaberViewRecordFirstPersonViewProjectionOffset = 0x5EC;
+inline constexpr uint32_t kHalo2SaberMatrixFloats = 16;
+inline constexpr float kHalo2SaberFirstPersonVerticalFovDegrees = 49.594f;
+
+// The engine's stock first-person half-angles for a record aspect (h/w):
+// vertical = 49.594/2, horizontal = atan(tan(vertical) / aspect).
+inline bool Halo2SaberFirstPersonStockHalfFovs(
+    float aspectHeightOverWidth, Halo2SymmetricHalfFovs& out) noexcept
+{
+    if (!std::isfinite(aspectHeightOverWidth) || aspectHeightOverWidth <= 0.05f ||
+        aspectHeightOverWidth > 20.0f)
+    {
+        return false;
+    }
+    const float vertical =
+        kHalo2SaberFirstPersonVerticalFovDegrees * 0.5f * 3.14159265f / 180.0f;
+    out.vertical = vertical;
+    out.horizontal = std::atan(std::tan(vertical) / aspectHeightOverWidth);
+    return std::isfinite(out.horizontal) && out.horizontal > 0.0f;
+}
+
+// Two Saber projections describe the same frustum when their diagonal scales
+// agree (P[0] = 1/tan(h/2), P[5] = 1/tan(v/2)); the depth terms are shared.
+inline bool Halo2SaberProjectionScalesMatch(
+    const float a[16], const float b[16], float relativeTolerance) noexcept
+{
+    if (!a || !b || !std::isfinite(relativeTolerance) || relativeTolerance < 0.0f)
+        return false;
+    const int diagonals[2] = {0, 5};
+    for (int d : diagonals)
+    {
+        if (!std::isfinite(a[d]) || !std::isfinite(b[d]) ||
+            std::fabs(a[d]) < 1.0e-3f || std::fabs(b[d]) < 1.0e-3f)
+        {
+            return false;
+        }
+        if (std::fabs(a[d] - b[d]) > relativeTolerance * std::fabs(b[d]))
+            return false;
+    }
+    return true;
+}
+
+// E-H2-18: the Saber host's post-scene callback. 0x2819A0 (reached from the
+// frame at 0x2DEC00 after every view has rendered, on the Saber render
+// thread) calls the function pointer the host stored at 0x1A6E538 during
+// start-up (0x69730): 0x696A0 -> 0x69540 -> 0x960230(1) -> 0x7E1990 ->
+// 0x831CB0, the same Blam interface/HUD draw the classic render_view
+// (0x7E30D0) calls. It runs ONCE per frame over whatever the backbuffer
+// holds, which is why the remastered HUD never reached the eye images.
+inline constexpr uint32_t kHalo2SaberHostUiCallbackRva = 0x000696A0;
+inline constexpr uint8_t kHalo2SaberHostUiCallbackEntryBytes[] = {
+    0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x83, 0x3D};
 // Normalises the camera basis rows and produces the inverse at camera+0x40.
 inline constexpr uint32_t kHalo2SaberCameraCommitRvaAlias =
     kHalo2SaberCameraCommitRva;

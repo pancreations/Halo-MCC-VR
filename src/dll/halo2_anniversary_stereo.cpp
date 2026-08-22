@@ -40,6 +40,7 @@ namespace
     using RebuildViewMatricesFn = void(__fastcall*)(void*, void*, void*, void*);
     using CameraCommitFn = void(__fastcall*)(void*);
     using CameraRefreshRectFn = void(__fastcall*)(void*);
+    using HostUiCallbackFn = void(__fastcall*)(void*);
 
     enum class CoreState : uint8_t { StockFallback = 0, CleanupRequired, Installed };
 
@@ -61,6 +62,26 @@ namespace
     std::atomic<uintptr_t> g_moduleBase{0};
     std::atomic<uintptr_t> g_observerResult{0};
     std::atomic<uintptr_t> g_originalScene{0};
+    // E-H2-18: trampolines of the two extra detours (view-record rebuild,
+    // host UI callback) and the record whose first-person projection the
+    // rebuild detour unifies with the world projection (0 = none).
+    std::atomic<uintptr_t> g_originalRebuild{0};
+    std::atomic<uintptr_t> g_originalHostUi{0};
+    std::atomic<uintptr_t> g_fpPatchRecord{0};
+    std::atomic<uint64_t> g_fpPatches{0};
+    std::atomic<uint64_t> g_fpReadbacks{0};
+    std::atomic<uint64_t> g_fpOverwritten{0};
+    std::atomic<uint32_t> g_fpReadbackStatus{0};   // 1 AGREES, 2 OVERWRITTEN, 3 UNREADABLE
+    std::atomic<uint32_t> g_fpStockBits[2]{};       // engine's stock FP scales (last mismatch)
+    std::atomic<uint32_t> g_fpWorldBits[2]{};       // world scales the FP was unified to
+    uint32_t g_fpLoggedStatus = 0;
+    std::atomic<uint64_t> g_hudCallbacks{0};
+    std::atomic<uint64_t> g_hudReplays{0};
+    std::atomic<uint64_t> g_hudStockPasses{0};
+    std::atomic<uint64_t> g_hudFailures{0};
+    const char* g_hudLastReason = "none";
+    uint64_t g_hudLoggedReplays = UINT64_MAX;
+    std::atomic<uint64_t> g_posePublishedOlderSerial{0};
     std::atomic<uintptr_t> g_rebuildMatrices{0};
     std::atomic<uintptr_t> g_cameraCommit{0};
     std::atomic<uintptr_t> g_cameraRefreshRect{0};
@@ -146,6 +167,8 @@ namespace
     HeadReference g_reference{};
     HMODULE g_moduleReference = nullptr;
     void* g_sceneTarget = nullptr;
+    void* g_rebuildTarget = nullptr;
+    void* g_hostUiTarget = nullptr;
     CoreState g_coreState = CoreState::StockFallback;
     uint32_t g_rejectedGeneration = 0;
     uint32_t g_armedLoggedGeneration = 0;
@@ -332,6 +355,42 @@ namespace
         }
     }
 
+    // E-H2-18 read-back of what the engine holds for the weapon after the
+    // scene render: first-person projection vs world projection diagonals.
+    void ReadBackFirstPersonProjection(uintptr_t record) noexcept
+    {
+        g_fpReadbacks.fetch_add(1, std::memory_order_relaxed);
+        float world[kHalo2SaberMatrixFloats]{};
+        float firstPerson[kHalo2SaberMatrixFloats]{};
+        if (!CopyGuarded(world,
+                         reinterpret_cast<const void*>(
+                             record + kHalo2SaberViewRecordProjectionOffset),
+                         sizeof(world)) ||
+            !CopyGuarded(firstPerson,
+                         reinterpret_cast<const void*>(
+                             record + kHalo2SaberViewRecordFirstPersonProjectionOffset),
+                         sizeof(firstPerson)))
+        {
+            g_fpReadbackStatus.store(3u, std::memory_order_release);
+            return;
+        }
+        uint32_t bits[2]{};
+        std::memcpy(&bits[0], &world[0], sizeof(float));
+        std::memcpy(&bits[1], &world[5], sizeof(float));
+        g_fpWorldBits[0].store(bits[0], std::memory_order_relaxed);
+        g_fpWorldBits[1].store(bits[1], std::memory_order_relaxed);
+        const bool agrees = Halo2SaberProjectionScalesMatch(firstPerson, world, 0.01f);
+        if (!agrees)
+        {
+            g_fpOverwritten.fetch_add(1, std::memory_order_relaxed);
+            std::memcpy(&bits[0], &firstPerson[0], sizeof(float));
+            std::memcpy(&bits[1], &firstPerson[5], sizeof(float));
+            g_fpStockBits[0].store(bits[0], std::memory_order_relaxed);
+            g_fpStockBits[1].store(bits[1], std::memory_order_relaxed);
+        }
+        g_fpReadbackStatus.store(agrees ? 1u : 2u, std::memory_order_release);
+    }
+
     void EyeLoopBody(
         SaberSceneFn original, void* ctx, void* rdx, uint32_t viewIndex) noexcept
     {
@@ -418,24 +477,31 @@ namespace
         Halo2CameraBasis tracked{};
         Halo2CameraBasis eyes[kHalo2EyeCount]{};
         bool centerOk = false;
+        bool usePublishedSample = false;
         switch (Halo2SelectPoseOwner(
             published, publication.generation, publication.serial,
             publication.tracked, stock, generation, serial))
         {
         case Halo2PoseOwnerDecision::UsePublishedTracked:
-            g_posePublished.fetch_add(1, std::memory_order_relaxed);
-            tracked = stock;
-            centerOk = true;
-            break;
         case Halo2PoseOwnerDecision::RederiveFromPublishedStock:
-            g_poseRederived.fetch_add(1, std::memory_order_relaxed);
-            std::memcpy(head.referenceOrientation,
-                        publication.referenceOrientation,
-                        sizeof(head.referenceOrientation));
-            std::memcpy(head.referencePosition, publication.referencePosition,
-                        sizeof(head.referencePosition));
-            centerOk = Halo2BuildTrackedCenterCamera(
-                publication.stock, head, tracked);
+            // E-H2-18: the camera in hand IS the observer's tracked camera,
+            // the one the engine placed the first-person weapon against. The
+            // eyes are built from it with the observer's OWN sample (eye
+            // offsets) and submitted as that sample's view poses - never
+            // rebuilt from a newer head sample, which put the weapon and the
+            // world at two different head poses on every frame whose serial
+            // differed from the observer's (the C-H2-24 "gun shifting").
+            if (!publication.snapshot.valid)
+            {
+                centerOk = false;
+                break;
+            }
+            g_posePublished.fetch_add(1, std::memory_order_relaxed);
+            if (publication.serial != serial)
+                g_posePublishedOlderSerial.fetch_add(1, std::memory_order_relaxed);
+            tracked = stock;
+            usePublishedSample = true;
+            centerOk = true;
             break;
         case Halo2PoseOwnerDecision::SelfTrack:
             g_poseSelfTracked.fetch_add(1, std::memory_order_relaxed);
@@ -452,11 +518,32 @@ namespace
             CallStock(original, ctx, rdx, viewIndex);
             return;
         }
+        // The sample the eyes are built from and submitted as: the
+        // observer's published one when its tracked camera is in hand, this
+        // core's own prepared-serial sample otherwise (self-tracked).
+        const float* eyeOffsetPosition[kHalo2EyeCount]{};
+        const float* eyeOffsetOrientation[kHalo2EyeCount]{};
+        const float* submitPosition[kHalo2EyeCount]{};
+        const float* submitOrientation[kHalo2EyeCount]{};
         for (int eye = 0; eye < kHalo2EyeCount; ++eye)
         {
+            if (usePublishedSample)
+            {
+                eyeOffsetPosition[eye] = publication.snapshot.eyeOffsetPosition[eye];
+                eyeOffsetOrientation[eye] = publication.snapshot.eyeOffsetOrientation[eye];
+                submitPosition[eye] = publication.snapshot.eyePosition[eye];
+                submitOrientation[eye] = publication.snapshot.eyeOrientation[eye];
+            }
+            else
+            {
+                eyeOffsetPosition[eye] = snapshot.eyes[eye].position;
+                eyeOffsetOrientation[eye] = snapshot.eyes[eye].orientation;
+                submitPosition[eye] = snapshot.eyes[eye].absolutePosition;
+                submitOrientation[eye] = snapshot.eyes[eye].absoluteOrientation;
+            }
             if (!Halo2BuildSynchronousEyeCamera(
-                    tracked, snapshot.eyes[eye].position,
-                    snapshot.eyes[eye].orientation, eyes[eye],
+                    tracked, eyeOffsetPosition[eye],
+                    eyeOffsetOrientation[eye], eyes[eye],
                     Game_GetWorldScale()))
             {
                 CountBail(Bail::EyeCameraFailed);
@@ -583,6 +670,10 @@ namespace
                     break;
                 }
             }
+            // E-H2-18: every rebuild of THIS record while the eye is being
+            // prepared and rendered unifies the first-person projection
+            // with the eye's world projection (RebuildDetour).
+            g_fpPatchRecord.store(record, std::memory_order_release);
             if (!ApplyEyeCamera(record, eyes[eye], constants, cover))
             {
                 CountBail(Bail::EyeApplyFailed);
@@ -675,8 +766,14 @@ namespace
                     g_projectionReadbackStatus.store(3u, std::memory_order_release);
                 }
             }
+            // E-H2-18: what the engine holds NOW for the weapon: the
+            // first-person projection must equal the world projection the
+            // scene was rasterised with, or a rebuild this core did not see
+            // rebuilt the stock 49.6-degree one.
+            ReadBackFirstPersonProjection(record);
             if (!VR_Halo2CompleteSynchronousEye(
-                    generation, serial, eye, eyeHalfFovX, eyeHalfFovY))
+                    generation, serial, eye, eyeHalfFovX, eyeHalfFovY,
+                    submitPosition[eye], submitOrientation[eye]))
             {
                 CountBail(Bail::EyeCompleteRefused);
                 ok = false;
@@ -684,7 +781,9 @@ namespace
             }
         }
 
-        // The engine's own state is put back before anything else, always.
+        // The engine's own state is put back before anything else, always:
+        // the stock camera AND the stock first-person projection.
+        g_fpPatchRecord.store(0, std::memory_order_release);
         const bool restored = RestoreCamera(record, savedCamera);
         if (haveLatch)
         {
@@ -711,6 +810,132 @@ namespace
 
         VR_Halo2InvalidateSynchronousPair(generation, serial);
         g_drops.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // E-H2-18: detour on the view-record rebuild 0x1C6D80. The engine (and
+    // this core's ApplyEyeCamera) rebuild the record from its camera; after
+    // the original has built both projections, the record being prepared
+    // for an eye gets its first-person projection (+0x4EC) and first-person
+    // view-projection (+0x5EC) replaced by the world ones (+0x4AC, +0x56C),
+    // so the weapon is drawn with the eye's frustum. A rebuild with a clip
+    // plane (the water-mirror view) and every other record pass untouched.
+    __declspec(noinline) void __fastcall RebuildDetour(
+        void* record, void* viewMatrix, void* projectionMatrix, void* clipPlane)
+    {
+        const auto original = reinterpret_cast<RebuildViewMatricesFn>(
+            g_originalRebuild.load(std::memory_order_acquire));
+        if (!original)
+            return;
+        original(record, viewMatrix, projectionMatrix, clipPlane);
+        const uintptr_t target = g_fpPatchRecord.load(std::memory_order_acquire);
+        if (!target || reinterpret_cast<uintptr_t>(record) != target || clipPlane)
+            return;
+        float world[kHalo2SaberMatrixFloats]{};
+        float viewProjection[kHalo2SaberMatrixFloats]{};
+        if (!CopyGuarded(world,
+                         reinterpret_cast<const void*>(
+                             target + kHalo2SaberViewRecordProjectionOffset),
+                         sizeof(world)) ||
+            !CopyGuarded(viewProjection,
+                         reinterpret_cast<const void*>(
+                             target + kHalo2SaberViewRecordViewProjectionNoTranslationOffset),
+                         sizeof(viewProjection)))
+        {
+            return;
+        }
+        if (!WriteFloatsGuarded(
+                target + kHalo2SaberViewRecordFirstPersonProjectionOffset,
+                world, kHalo2SaberMatrixFloats) ||
+            !WriteFloatsGuarded(
+                target + kHalo2SaberViewRecordFirstPersonViewProjectionOffset,
+                viewProjection, kHalo2SaberMatrixFloats))
+        {
+            return;
+        }
+        g_fpPatches.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // E-H2-18: detour on the Saber host's post-scene callback 0x696A0, the
+    // Blam interface/HUD draw (-> 0x960230(1) -> 0x7E1990 -> 0x831CB0). The
+    // engine runs it once over the backbuffer, which at this point holds the
+    // LAST eye rendered (eye 1). Replay: let it draw over eye 1 and recapture
+    // eye 1; put eye 0's finished scene back into the backbuffer, run it
+    // again, recapture eye 0. Both eyes then carry the HUD, the way the
+    // classic render_view draws it per eye. A frame without a complete pair
+    // of its own runs the callback once, untouched.
+    thread_local bool g_insideHudReplay = false;
+    __declspec(noinline) void __fastcall HostUiDetour(void* param)
+    {
+        const auto original = reinterpret_cast<HostUiCallbackFn>(
+            g_originalHostUi.load(std::memory_order_acquire));
+        if (!original)
+            return;
+        g_hudCallbacks.fetch_add(1, std::memory_order_relaxed);
+        if (g_insideHudReplay || g_insideEyeLoop ||
+            !g_armed.load(std::memory_order_acquire) ||
+            !g_levelLive.load(std::memory_order_acquire) ||
+            !g_remasteredLive.load(std::memory_order_acquire) ||
+            g_teardown.load(std::memory_order_acquire))
+        {
+            original(param);
+            return;
+        }
+        g_activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_insideHudReplay = true;
+        const uint32_t generation = g_generation.load(std::memory_order_acquire);
+        const uint64_t serial = g_lastCompletedSerial.load(std::memory_order_acquire);
+        const char* reason = "none";
+        bool eligible = false;
+        __try { eligible = VR_Halo2HudReplayEligible(generation, serial, &reason); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { eligible = false; reason = "eligibility faulted"; }
+        if (!eligible)
+        {
+            g_hudStockPasses.fetch_add(1, std::memory_order_relaxed);
+            g_hudLastReason = reason;
+            __try { original(param); }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            }
+            g_insideHudReplay = false;
+            g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+            return;
+        }
+        bool ok = true;
+        __try
+        {
+            original(param);                                    // HUD over eye 1
+            ok = VR_Halo2RecaptureEyeFromFinalTarget(generation, serial, 1);
+            if (!ok)
+                reason = "eye 1 recapture refused";
+            if (ok && !VR_Halo2RestoreEyeToFinalTarget(generation, serial, 0))
+            {
+                ok = false;
+                reason = "eye 0 restore refused";
+            }
+            if (ok)
+            {
+                original(param);                                // HUD over eye 0
+                ok = VR_Halo2RecaptureEyeFromFinalTarget(generation, serial, 0);
+                if (!ok)
+                    reason = "eye 0 recapture refused";
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            ok = false;
+            reason = "replay faulted";
+        }
+        if (ok)
+            g_hudReplays.fetch_add(1, std::memory_order_relaxed);
+        else
+        {
+            g_hudFailures.fetch_add(1, std::memory_order_relaxed);
+            g_hudLastReason = reason;
+        }
+        g_insideHudReplay = false;
+        g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     __declspec(noinline) void __fastcall SaberSceneDetour(
@@ -790,6 +1015,10 @@ namespace
         {
             if (MH_DisableHook(g_sceneTarget) != MH_OK)
                 return false;
+            if (g_rebuildTarget && MH_DisableHook(g_rebuildTarget) != MH_OK)
+                return false;
+            if (g_hostUiTarget && MH_DisableHook(g_hostUiTarget) != MH_OK)
+                return false;
             for (int i = 0; i < 200 &&
                  g_activeCallbacks.load(std::memory_order_acquire); ++i)
             {
@@ -799,8 +1028,21 @@ namespace
                 return false;
             (void)MH_RemoveHook(g_sceneTarget);
             g_sceneTarget = nullptr;
+            if (g_rebuildTarget)
+            {
+                (void)MH_RemoveHook(g_rebuildTarget);
+                g_rebuildTarget = nullptr;
+            }
+            if (g_hostUiTarget)
+            {
+                (void)MH_RemoveHook(g_hostUiTarget);
+                g_hostUiTarget = nullptr;
+            }
         }
         g_originalScene.store(0, std::memory_order_release);
+        g_originalRebuild.store(0, std::memory_order_release);
+        g_originalHostUi.store(0, std::memory_order_release);
+        g_fpPatchRecord.store(0, std::memory_order_release);
         g_rebuildMatrices.store(0, std::memory_order_release);
         g_cameraCommit.store(0, std::memory_order_release);
         g_cameraRefreshRect.store(0, std::memory_order_release);
@@ -833,8 +1075,10 @@ namespace
         const uintptr_t rebuild = base + kHalo2SaberRebuildViewMatricesRva;
         const uintptr_t commit = base + kHalo2SaberCameraCommitRva;
         const uintptr_t refresh = base + kHalo2SaberCameraRefreshRectRva;
+        const uintptr_t hostUi = base + kHalo2SaberHostUiCallbackRva;
         if (!IsExecutable(scene) || !IsExecutable(rebuild) ||
-            !IsExecutable(commit) || !IsExecutable(refresh))
+            !IsExecutable(commit) || !IsExecutable(refresh) ||
+            !IsExecutable(hostUi))
         {
             LOG("Halo 2 Anniversary stereo WITHHELD: scene=%d rebuild=%d "
                 "commit=%d refresh=%d executable; stock rendering is untouched",
@@ -851,7 +1095,9 @@ namespace
             EntryBytesMatch(commit, kHalo2SaberCameraCommitEntryBytes,
                             sizeof(kHalo2SaberCameraCommitEntryBytes)) &&
             EntryBytesMatch(refresh, kHalo2SaberCameraRefreshRectEntryBytes,
-                            sizeof(kHalo2SaberCameraRefreshRectEntryBytes));
+                            sizeof(kHalo2SaberCameraRefreshRectEntryBytes)) &&
+            EntryBytesMatch(hostUi, kHalo2SaberHostUiCallbackEntryBytes,
+                            sizeof(kHalo2SaberHostUiCallbackEntryBytes));
         if (!entriesPinned)
         {
             LOG("Halo 2 Anniversary stereo WITHHELD: the engine's matrix "
@@ -884,10 +1130,45 @@ namespace
             return false;
         }
 
+        // E-H2-18: the rebuild and host-UI detours. All three hooks are
+        // created before any is enabled; a failure leaves nothing installed.
+        void* rebuildTrampoline = nullptr;
+        void* hostUiTrampoline = nullptr;
+        const MH_STATUS createdRebuild = MH_CreateHook(
+            reinterpret_cast<void*>(rebuild),
+            reinterpret_cast<void*>(&RebuildDetour), &rebuildTrampoline);
+        const MH_STATUS createdHostUi = createdRebuild == MH_OK
+            ? MH_CreateHook(reinterpret_cast<void*>(hostUi),
+                            reinterpret_cast<void*>(&HostUiDetour),
+                            &hostUiTrampoline)
+            : MH_ERROR_NOT_CREATED;
+        if (createdRebuild != MH_OK || !rebuildTrampoline ||
+            createdHostUi != MH_OK || !hostUiTrampoline)
+        {
+            LOG("Halo 2 Anniversary stereo WITHHELD: rebuild hook create=%d, "
+                "host UI hook create=%d",
+                static_cast<int>(createdRebuild), static_cast<int>(createdHostUi));
+            (void)MH_RemoveHook(reinterpret_cast<void*>(scene));
+            if (createdRebuild == MH_OK)
+                (void)MH_RemoveHook(reinterpret_cast<void*>(rebuild));
+            if (createdHostUi == MH_OK)
+                (void)MH_RemoveHook(reinterpret_cast<void*>(hostUi));
+            FreeLibrary(module);
+            g_rejectedGeneration = generation;
+            return false;
+        }
+
         g_moduleReference = module;
         g_sceneTarget = reinterpret_cast<void*>(scene);
+        g_rebuildTarget = reinterpret_cast<void*>(rebuild);
+        g_hostUiTarget = reinterpret_cast<void*>(hostUi);
         g_originalScene.store(
             reinterpret_cast<uintptr_t>(trampoline), std::memory_order_release);
+        g_originalRebuild.store(
+            reinterpret_cast<uintptr_t>(rebuildTrampoline), std::memory_order_release);
+        g_originalHostUi.store(
+            reinterpret_cast<uintptr_t>(hostUiTrampoline), std::memory_order_release);
+        g_fpPatchRecord.store(0, std::memory_order_release);
         g_rebuildMatrices.store(rebuild, std::memory_order_release);
         g_cameraCommit.store(commit, std::memory_order_release);
         g_cameraRefreshRect.store(refresh, std::memory_order_release);
@@ -901,9 +1182,11 @@ namespace
         g_installed.store(true, std::memory_order_release);
         g_coreState = CoreState::CleanupRequired;
 
-        if (MH_EnableHook(reinterpret_cast<void*>(scene)) != MH_OK)
+        if (MH_EnableHook(reinterpret_cast<void*>(scene)) != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(rebuild)) != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(hostUi)) != MH_OK)
         {
-            LOG("Halo 2 Anniversary stereo WITHHELD: scene hook enable failed");
+            LOG("Halo 2 Anniversary stereo WITHHELD: hook enable failed");
             (void)RemoveCore("install rollback");
             g_rejectedGeneration = generation;
             return false;
@@ -912,9 +1195,13 @@ namespace
         LOG("Halo 2 Anniversary stereo installed: scene render +0x%X run twice "
             "per frame, per-eye camera written into the view record at "
             "collection+0x150+view*0x758+0x20 and rebuilt by the engine's own "
-            "+0x%X; every owned byte is restored",
+            "+0x%X (detoured: the eye's first-person projection +0x4EC/+0x5EC "
+            "is unified with its world projection +0x4AC/+0x56C); host UI "
+            "callback +0x%X (the Blam interface/HUD draw) replayed per eye; "
+            "every owned byte is restored",
             static_cast<unsigned>(kHalo2SaberSceneRenderRva),
-            static_cast<unsigned>(kHalo2SaberRebuildViewMatricesRva));
+            static_cast<unsigned>(kHalo2SaberRebuildViewMatricesRva),
+            static_cast<unsigned>(kHalo2SaberHostUiCallbackRva));
         return true;
     }
 
@@ -952,7 +1239,8 @@ namespace
         }
         LOG("Halo 2 Anniversary stereo: %llu scene callbacks, %llu eye pairs, "
             "%llu drops, %llu stock passes, %llu exceptions; pose published=%llu "
-            "rederived=%llu self=%llu; views seen mask=0x%X last=%u; "
+            "(of which %llu rendered from an older observer serial, as that "
+            "sample) self=%llu; views seen mask=0x%X last=%u; "
             "bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
@@ -960,7 +1248,7 @@ namespace
             static_cast<unsigned long long>(g_stockPasses.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_exceptions.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_posePublished.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(g_poseRederived.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_posePublishedOlderSerial.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_poseSelfTracked.load(std::memory_order_relaxed)),
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
@@ -1010,6 +1298,83 @@ namespace
                     static_cast<unsigned long long>(
                         g_projectionReadbacks.load(std::memory_order_relaxed)));
             }
+        }
+        // E-H2-18: the first-person projection, whenever its verdict changes.
+        const uint32_t fpStatus = g_fpReadbackStatus.load(std::memory_order_acquire);
+        if (fpStatus && fpStatus != g_fpLoggedStatus)
+        {
+            g_fpLoggedStatus = fpStatus;
+            constexpr float kDegrees = 57.29578f;
+            float worldScales[2]{}, stockScales[2]{};
+            uint32_t wb[2] = {g_fpWorldBits[0].load(std::memory_order_relaxed),
+                              g_fpWorldBits[1].load(std::memory_order_relaxed)};
+            uint32_t sb[2] = {g_fpStockBits[0].load(std::memory_order_relaxed),
+                              g_fpStockBits[1].load(std::memory_order_relaxed)};
+            std::memcpy(worldScales, wb, sizeof(worldScales));
+            std::memcpy(stockScales, sb, sizeof(stockScales));
+            Halo2SymmetricHalfFovs world{}, stock{};
+            const bool worldOk = Halo2HalfFovsFromProjectionScales(
+                worldScales[0], worldScales[1], world);
+            const bool stockOk = Halo2HalfFovsFromProjectionScales(
+                stockScales[0], stockScales[1], stock);
+            if (fpStatus == 1)
+            {
+                LOG("Halo 2 Anniversary first-person weapon projection: the engine "
+                    "builds it from a hard-coded %.3f deg vertical FOV (0x1C6D80, "
+                    "record+0x4EC), %.1fx the eye's frustum; unified with the "
+                    "eye's world projection %.1f x %.1f deg on %llu rebuilds; "
+                    "read-back after the scene render AGREES (%llu of %llu)",
+                    kHalo2SaberFirstPersonVerticalFovDegrees,
+                    worldOk ? std::tan(world.vertical) /
+                                  std::tan(kHalo2SaberFirstPersonVerticalFovDegrees *
+                                           0.5f / kDegrees)
+                            : 0.0f,
+                    worldOk ? 2.0f * world.horizontal * kDegrees : 0.0f,
+                    worldOk ? 2.0f * world.vertical * kDegrees : 0.0f,
+                    static_cast<unsigned long long>(g_fpPatches.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(
+                        g_fpReadbacks.load(std::memory_order_relaxed) -
+                        g_fpOverwritten.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(g_fpReadbacks.load(std::memory_order_relaxed)));
+            }
+            else if (fpStatus == 2)
+            {
+                LOG("Halo 2 Anniversary first-person weapon projection: OVERWRITTEN - "
+                    "after the scene render the record holds %.1f x %.1f deg at "
+                    "+0x4EC against the world's %.1f x %.1f deg; a rebuild this "
+                    "core did not detour rebuilt the stock one (%llu of %llu "
+                    "read-backs, %llu patches applied)",
+                    stockOk ? 2.0f * stock.horizontal * kDegrees : 0.0f,
+                    stockOk ? 2.0f * stock.vertical * kDegrees : 0.0f,
+                    worldOk ? 2.0f * world.horizontal * kDegrees : 0.0f,
+                    worldOk ? 2.0f * world.vertical * kDegrees : 0.0f,
+                    static_cast<unsigned long long>(g_fpOverwritten.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(g_fpReadbacks.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(g_fpPatches.load(std::memory_order_relaxed)));
+            }
+            else
+            {
+                LOG("Halo 2 Anniversary first-person weapon projection: UNREADABLE "
+                    "(record+0x4AC/+0x4EC)");
+            }
+        }
+        // E-H2-18: the HUD replay, whenever the replay count moves.
+        const uint64_t replays = g_hudReplays.load(std::memory_order_relaxed);
+        if (g_hudCallbacks.load(std::memory_order_relaxed) &&
+            replays != g_hudLoggedReplays)
+        {
+            g_hudLoggedReplays = replays;
+            LOG("Halo 2 Anniversary HUD: host UI callback +0x%X (-> 0x960230(1) "
+                "-> 0x7E1990 interface draw) fired %llu times; replayed per eye "
+                "(eye 1 drawn+recaptured, eye 0 restored+drawn+recaptured) on "
+                "%llu frames, run once untouched on %llu (no complete pair), "
+                "%llu failures; last reason: %s",
+                static_cast<unsigned>(kHalo2SaberHostUiCallbackRva),
+                static_cast<unsigned long long>(g_hudCallbacks.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(replays),
+                static_cast<unsigned long long>(g_hudStockPasses.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(g_hudFailures.load(std::memory_order_relaxed)),
+                g_hudLastReason);
         }
     }
 }

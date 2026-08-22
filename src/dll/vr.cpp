@@ -370,6 +370,11 @@ namespace
     std::atomic<uint32_t> g_halo2SynchronousEyeResourceEpoch[2]{};
     std::atomic<float> g_halo2SynchronousEyeHalfFovX[2]{};
     std::atomic<float> g_halo2SynchronousEyeHalfFovY[2]{};
+    // E-H2-18: the absolute OpenXR view pose each eye image was rendered
+    // from, when the renderer named one (position xyz, orientation xyzw).
+    std::atomic<float> g_halo2SynchronousEyePose[2][7]{};
+    std::atomic<bool> g_halo2SynchronousEyePoseOwned[2]{};
+    std::atomic<uint64_t> g_halo2XrPairsPosedFromObserver{0};
     std::atomic<uint64_t> g_halo2SynchronousCaptureSerial[2]{};
     std::atomic<uint32_t> g_halo2SynchronousCaptureCount[2]{};
     std::atomic<uint32_t> g_halo2SynchronousResourceEpoch{1};
@@ -7736,6 +7741,13 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 return false;
             }
             next.eyes[eye].fovValid = true;
+            next.eyes[eye].absolutePosition[0] = g_views[eye].pose.position.x;
+            next.eyes[eye].absolutePosition[1] = g_views[eye].pose.position.y;
+            next.eyes[eye].absolutePosition[2] = g_views[eye].pose.position.z;
+            next.eyes[eye].absoluteOrientation[0] = g_views[eye].pose.orientation.x;
+            next.eyes[eye].absoluteOrientation[1] = g_views[eye].pose.orientation.y;
+            next.eyes[eye].absoluteOrientation[2] = g_views[eye].pose.orientation.z;
+            next.eyes[eye].absoluteOrientation[3] = g_views[eye].pose.orientation.w;
         }
 
         const uint32_t current =
@@ -8782,6 +8794,33 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         halo2Generation, g_preparedFrame.serial,
                         halo2HalfX, halo2HalfY);
                 const bool halo2ProjectionReady = projection.viewCount == 2;
+                // E-H2-18: a pair the Anniversary core rendered from the
+                // observer's published sample is submitted AS that sample's
+                // view poses, so the compositor reprojects the image from
+                // the pose it was really drawn at (the weapon and the world
+                // share it); the located views of this serial are newer.
+                if (halo2LiveExactPair)
+                {
+                    float pairPosition[2][3]{};
+                    float pairOrientation[2][4]{};
+                    if (VR_Halo2GetSynchronousPairPoses(
+                            halo2Generation, g_preparedFrame.serial,
+                            pairPosition, pairOrientation))
+                    {
+                        for (size_t view = 0;
+                             view < projectionViews.size() && view < 2; ++view)
+                        {
+                            projectionViews[view].pose.position = {
+                                pairPosition[view][0], pairPosition[view][1],
+                                pairPosition[view][2]};
+                            projectionViews[view].pose.orientation = {
+                                pairOrientation[view][0], pairOrientation[view][1],
+                                pairOrientation[view][2], pairOrientation[view][3]};
+                        }
+                        g_halo2XrPairsPosedFromObserver.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
                 // The game runs below the panel rate, so some prepared
                 // serials have no pair of their own. Re-presenting the last
                 // complete pair with its own pose is what every title does
@@ -10899,13 +10938,30 @@ bool VR_Halo2BeginSynchronousEye(
 
 bool VR_Halo2CompleteSynchronousEye(
     uint32_t generation, uint64_t preparedSerial, int eye,
-    float halfFovX, float halfFovY)
+    float halfFovX, float halfFovY,
+    const float* renderedPosition, const float* renderedOrientation)
 {
     if (eye < 0 || eye > 1 ||
         !Halo2SynchronousHalfFovValid(halfFovX) ||
         !Halo2SynchronousHalfFovValid(halfFovY))
     {
         return false;
+    }
+    const bool poseOwned = renderedPosition && renderedOrientation;
+    if (poseOwned)
+    {
+        for (int i = 0; i < 3; ++i)
+            if (!std::isfinite(renderedPosition[i]))
+                return false;
+        float lengthSquared = 0.0f;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (!std::isfinite(renderedOrientation[i]))
+                return false;
+            lengthSquared += renderedOrientation[i] * renderedOrientation[i];
+        }
+        if (std::fabs(lengthSquared - 1.0f) > 0.05f)
+            return false;
     }
     const uint32_t resourceEpoch =
         g_halo2SynchronousPairResourceEpoch.load(std::memory_order_relaxed);
@@ -10934,6 +10990,15 @@ bool VR_Halo2CompleteSynchronousEye(
         halfFovX, std::memory_order_relaxed);
     g_halo2SynchronousEyeHalfFovY[eye].store(
         halfFovY, std::memory_order_relaxed);
+    for (int i = 0; i < 3; ++i)
+        g_halo2SynchronousEyePose[eye][i].store(
+            poseOwned ? renderedPosition[i] : 0.0f, std::memory_order_relaxed);
+    for (int i = 0; i < 4; ++i)
+        g_halo2SynchronousEyePose[eye][3 + i].store(
+            poseOwned ? renderedOrientation[i] : (i == 3 ? 1.0f : 0.0f),
+            std::memory_order_relaxed);
+    g_halo2SynchronousEyePoseOwned[eye].store(
+        poseOwned, std::memory_order_relaxed);
     g_halo2SynchronousEyeSerial[eye].store(
         preparedSerial, std::memory_order_release);
 
@@ -11175,6 +11240,48 @@ bool VR_Halo2GetRepeatableHalfFovs(
         halfY[eye] = last.halfY[eye];
     }
     return true;
+}
+
+bool VR_Halo2GetSynchronousPairPoses(
+    uint32_t generation, uint64_t preparedSerial,
+    float position[2][3], float orientation[2][4])
+{
+    if (!position || !orientation || !generation || !preparedSerial ||
+        Halo2SynchronousSerialIsReserved(preparedSerial))
+    {
+        return false;
+    }
+    const uint32_t resourceEpoch =
+        g_halo2SynchronousPairResourceEpoch.load(std::memory_order_relaxed);
+    if (g_halo2SynchronousPairToken.load(std::memory_order_acquire) !=
+            preparedSerial ||
+        g_halo2SynchronousPairGeneration.load(std::memory_order_relaxed) !=
+            generation ||
+        !Halo2SynchronousContextCurrent(
+            generation, preparedSerial, resourceEpoch))
+    {
+        return false;
+    }
+    for (int eye = 0; eye < 2; ++eye)
+    {
+        if (g_halo2SynchronousEyeSerial[eye].load(
+                    std::memory_order_acquire) != preparedSerial ||
+            g_halo2SynchronousEyeGeneration[eye].load(
+                    std::memory_order_relaxed) != generation ||
+            !g_halo2SynchronousEyePoseOwned[eye].load(
+                    std::memory_order_relaxed))
+        {
+            return false;
+        }
+        for (int i = 0; i < 3; ++i)
+            position[eye][i] =
+                g_halo2SynchronousEyePose[eye][i].load(std::memory_order_relaxed);
+        for (int i = 0; i < 4; ++i)
+            orientation[eye][i] =
+                g_halo2SynchronousEyePose[eye][3 + i].load(std::memory_order_relaxed);
+    }
+    return g_halo2SynchronousPairToken.load(std::memory_order_acquire) ==
+        preparedSerial;
 }
 
 bool VR_Halo2GetSynchronousHalfFovs(
@@ -12684,6 +12791,98 @@ void VR_EndRasterEye()
     // stereo) instead of closing at the first find.
     g_rasterEye = -1;
 }
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+// E-H2-18 HUD replay support. All three run on the Saber render thread,
+// after the pair for `preparedSerial` completed on that same thread.
+namespace
+{
+    bool Halo2HudReplayTarget(
+        uint32_t generation, uint64_t preparedSerial, const char** reason,
+        ID3D11Texture2D** outTexture)
+    {
+        if (outTexture)
+            *outTexture = nullptr;
+        auto fail = [&](const char* why) {
+            if (reason)
+                *reason = why;
+            return false;
+        };
+        if (!g_context || !generation || !preparedSerial ||
+            Halo2SynchronousSerialIsReserved(preparedSerial))
+            return fail("no context or serial");
+        const uint32_t resourceEpoch =
+            g_halo2SynchronousPairResourceEpoch.load(std::memory_order_relaxed);
+        if (g_halo2SynchronousPairToken.load(std::memory_order_acquire) !=
+                preparedSerial ||
+            g_halo2SynchronousPairGeneration.load(std::memory_order_relaxed) !=
+                generation ||
+            !Halo2SynchronousContextCurrent(
+                generation, preparedSerial, resourceEpoch))
+            return fail("the pair for this serial is not the complete one");
+        for (int eye = 0; eye < 2; ++eye)
+        {
+            if (g_halo2SynchronousEyeSerial[eye].load(std::memory_order_acquire) !=
+                    preparedSerial ||
+                !g_eyeHasImage[eye] || !g_eyeCache[eye])
+                return fail("an eye image of this serial is missing");
+        }
+        ID3D11RenderTargetView* finalRtv =
+            g_halo2SynchronousFinalRtv.load(std::memory_order_relaxed);
+        if (!finalRtv)
+            return fail("no final-output target recorded for the pair");
+        D3D11_TEXTURE2D_DESC desc{};
+        ID3D11Texture2D* texture = Halo2TextureBehind(finalRtv, desc);
+        if (!texture)
+            return fail("the final-output target is not a 2D texture");
+        D3D11_TEXTURE2D_DESC cacheDesc{};
+        g_eyeCache[0]->GetDesc(&cacheDesc);
+        if (cacheDesc.Width != desc.Width || cacheDesc.Height != desc.Height ||
+            cacheDesc.Format != desc.Format || desc.SampleDesc.Count != 1)
+        {
+            texture->Release();
+            return fail("the final-output target no longer matches the eye cache");
+        }
+        if (outTexture)
+            *outTexture = texture;
+        else
+            texture->Release();
+        return true;
+    }
+}
+
+bool VR_Halo2HudReplayEligible(
+    uint32_t generation, uint64_t preparedSerial, const char** reason)
+{
+    return Halo2HudReplayTarget(generation, preparedSerial, reason, nullptr);
+}
+
+bool VR_Halo2RecaptureEyeFromFinalTarget(
+    uint32_t generation, uint64_t preparedSerial, int eye)
+{
+    if (eye < 0 || eye > 1)
+        return false;
+    ID3D11Texture2D* texture = nullptr;
+    if (!Halo2HudReplayTarget(generation, preparedSerial, nullptr, &texture))
+        return false;
+    g_context->CopyResource(g_eyeCache[eye], texture);
+    texture->Release();
+    return true;
+}
+
+bool VR_Halo2RestoreEyeToFinalTarget(
+    uint32_t generation, uint64_t preparedSerial, int eye)
+{
+    if (eye < 0 || eye > 1)
+        return false;
+    ID3D11Texture2D* texture = nullptr;
+    if (!Halo2HudReplayTarget(generation, preparedSerial, nullptr, &texture))
+        return false;
+    g_context->CopyResource(texture, g_eyeCache[eye]);
+    texture->Release();
+    return true;
+}
+#endif
 
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
 bool VR_BeginNativeHudEyeDraw(int eye)

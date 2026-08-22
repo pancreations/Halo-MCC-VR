@@ -75,7 +75,8 @@ namespace
 
     void PublishPose(
         uint32_t generation, uint64_t serial, const Halo2CameraBasis& stock,
-        const Halo2CameraBasis& tracked, const HeadReference& reference) noexcept
+        const Halo2CameraBasis& tracked, const HeadReference& reference,
+        const Halo2SynchronousVrRenderSnapshot& sample) noexcept
     {
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
         g_publication.generation = generation;
@@ -86,6 +87,29 @@ namespace
                     sizeof(g_publication.referenceOrientation));
         std::memcpy(g_publication.referencePosition, reference.position,
                     sizeof(g_publication.referencePosition));
+        // E-H2-18: the sample this tracked camera was composed from, so the
+        // Saber scene (another thread, another serial) renders the eyes from
+        // the head pose the weapon was placed against and submits them as
+        // that pose.
+        Halo2ObserverPoseSnapshot& snapshot = g_publication.snapshot;
+        snapshot.valid = sample.headPoseValid;
+        std::memcpy(snapshot.headOrientation, sample.headOrientation,
+                    sizeof(snapshot.headOrientation));
+        std::memcpy(snapshot.headPosition, sample.headPosition,
+                    sizeof(snapshot.headPosition));
+        for (int eye = 0; eye < 2; ++eye)
+        {
+            std::memcpy(snapshot.eyeOffsetPosition[eye], sample.eyes[eye].position,
+                        sizeof(snapshot.eyeOffsetPosition[eye]));
+            std::memcpy(snapshot.eyeOffsetOrientation[eye],
+                        sample.eyes[eye].orientation,
+                        sizeof(snapshot.eyeOffsetOrientation[eye]));
+            std::memcpy(snapshot.eyePosition[eye], sample.eyes[eye].absolutePosition,
+                        sizeof(snapshot.eyePosition[eye]));
+            std::memcpy(snapshot.eyeOrientation[eye],
+                        sample.eyes[eye].absoluteOrientation,
+                        sizeof(snapshot.eyeOrientation[eye]));
+        }
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
     }
 
@@ -298,7 +322,7 @@ namespace
         }
         PublishPose(
             g_generation.load(std::memory_order_acquire),
-            snapshot.preparedSerial, stock, tracked, g_reference);
+            snapshot.preparedSerial, stock, tracked, g_reference, snapshot);
         g_appliedPoses.fetch_add(1, std::memory_order_relaxed);
     }
 

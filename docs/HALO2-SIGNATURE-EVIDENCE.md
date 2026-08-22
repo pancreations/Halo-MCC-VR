@@ -1715,3 +1715,75 @@ The recording also shows the first-person weapon filling roughly half of the
 frame in BOTH renderers (E-H2-15) - that remains the open framing item; the
 large black shape in the Classic frames near 0:06 is a crashed Warthog on its
 side in front of the player, ordinary scene geometry.
+
+## E-H2-18: the Anniversary weapon, the Anniversary HUD, and one head pose (C-H2-26)
+
+Three facts from the C-H2-24 session (screen recording + log + the saved
+eye pictures of C-H2-21), each with its offline proof in halo2.dll:
+
+### (a) The weapon is drawn through a SECOND projection
+
+`0x1C6D80` (the view-record rebuild this core already calls after writing
+the eye camera) builds two projections. The world one goes to record+0x4AC
+from the camera's +0x150/+0x154 degrees (E-H2-12). It then copies the camera
+to the stack, overwrites the copy's vertical FOV with the literal
+`0x424660D5` = **49.594 degrees** (`tanf(0.43279424)` - the tangent of its
+half-angle - is precomputed), derives the horizontal through the record's own
+aspect (`atanf(tan / aspect)`), rebuilds the copy with `0xBC380`, and stores
+the result at **record+0x4EC** through the same `0x1C82C0`. Disassembly at
+`0x1C7593`: `LEA R8,[RDI+0x56C]; MOV RCX,R12; CALL 0x9FCE0` stores
+view-without-translation (+0x52C, translation row zeroed) x world projection
+at +0x56C (inverse at +0x5AC), and the earlier product stores
+view-without-translation x first-person projection at **+0x5EC**.
+
+That is MCC's "the weapon looks the same at every FOV" rule. At the
+headset's 126.5 x 110.1 degree cover the weapon is drawn
+tan(55.05)/tan(24.797) = **3.1x larger** than the world around it (the
+"6-foot gun", "goggles", "squished"), and every per-eye offset moves it 3.1x
+further across the frame than the world moves (the saved eye pictures: the
+world shifts a few pixels between eyes, the weapon shifts ~120 of 728).
+
+C-H2-26 detours `0x1C6D80` (MinHook, entry bytes already pinned): after the
+original returns, and only for the record the eye loop is preparing
+(`g_fpPatchRecord`) and only when no clip plane was passed (the water-mirror
+rebuild passes one), +0x4EC := +0x4AC and +0x5EC := +0x56C. The stock camera
+restore at the end of the pair clears the record first, so the engine's own
+rebuild puts the 49.6-degree projection back. A read-back after each scene
+render compares the two projections' diagonals and logs
+`first-person weapon projection ... AGREES` or `OVERWRITTEN`.
+
+### (b) The HUD is the Blam interface draw, run once, after the views
+
+`0x2DEC00` renders every view, then `0x2E3F70 -> 0x2819A0` invokes the
+function pointer the host stored at `0x1A6E538` during start-up (`0x69730`,
+`LEA RAX,[0x696A0]; MOV [0x1A6E538],RAX`). `0x696A0 -> 0x69540 ->
+0x960230(1) -> 0x7E1990 -> 0x831CB0`: `0x831CB0` has exactly two callers,
+`0x7E1990` and the classic `render_view 0x7E30D0` - it is the interface/HUD
+draw. In Anniversary it runs ONCE per frame on the Saber render thread over
+whatever the backbuffer holds, i.e. after this core's two eye copies, which
+is why the desktop shows a HUD and the headset never did (the C-H2-21 eye
+pictures have none).
+
+C-H2-26 detours `0x696A0` (entry bytes `40 53 48 83 EC 20 83 3D`). With a
+complete pair for the last completed serial: the original draws the HUD over
+eye 1 (the last eye rendered, still in the backbuffer) and eye 1 is
+recaptured; eye 0's finished scene is copied back into the backbuffer, the
+original runs again, eye 0 is recaptured. Both eyes carry the HUD the way
+the classic render_view draws it per eye. Without a complete pair the
+callback runs once, untouched. Logged as `Halo 2 Anniversary HUD: ...
+replayed per eye on N frames`.
+
+### (c) One head pose for the weapon and the world
+
+The observer writes the tracked camera once per game tick; the Saber scene
+renders per headset frame on its own thread, so ~1/3 of its frames saw a
+different prepared serial and REBUILT the centre from a newer head sample
+(`rederived=179` of 223 in the first 2 s of the C-H2-24 log). The engine had
+already placed the weapon against the observer's pose, so on those frames
+the weapon and the world were drawn at two different head poses - times
+3.1x from (a). C-H2-26 publishes the observer's full sample (head pose, eye
+offsets, absolute view poses) with its camera; the Anniversary core builds
+its eyes from THAT sample whenever the observer's tracked camera is in hand,
+and the pair is submitted with those view poses (`VR_Halo2GetSynchronousPairPoses`),
+so the compositor reprojects from the pose the image was really drawn at.
+Self-tracked frames keep the prepared serial's own sample and located poses.
