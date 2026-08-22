@@ -257,13 +257,27 @@ namespace
             // other meaning, and normal play keeps L3 untouched.
             if (pad.clickL && !chord.consumeClicks)
             {
-                // C-H2-24: the same in every title, Halo 2 included - the
-                // user asked for the ODST behaviour there (the stick click
-                // while the controller is at the head IS the Back button).
-                // E-H2-13's renderer flips were not this: the C-H2-23 log
-                // shows them with no pad button fed at all.
+                // C-H2-25 (E-H2-17): in Halo 2 the Back button has exactly one
+                // job - it is MCC's instant Classic <-> Anniversary graphics
+                // switch (there is no map screen). The C-H2-24 log proved the
+                // gesture click was behind every renderer flip (0x0020 fed
+                // right before each CHANGED line), so Halo 2 follows the same
+                // rule as the physical pad: Back reaches the game only with
+                // halo2_gamepad_graphics_switch = 1. Every other title keeps
+                // the ODST behaviour (click = Back).
                 btn &= ~XINPUT_GAMEPAD_LEFT_THUMB;
-                btn |= XINPUT_GAMEPAD_BACK;
+                const bool halo2 = TitleAdapter_GetActiveTitle() == GameTitle::Halo2;
+                if (!halo2 || g_config.halo2_gamepad_graphics_switch)
+                    btn |= XINPUT_GAMEPAD_BACK;
+                else
+                {
+                    static std::atomic<bool> loggedGestureSwallow{false};
+                    if (!loggedGestureSwallow.exchange(true))
+                        LOG("M3: Halo 2 - the D-pad gesture's stick click (Back) was "
+                            "swallowed: in Halo 2 Back is the Classic/Anniversary "
+                            "graphics switch; set halo2_gamepad_graphics_switch = 1 "
+                            "to make the click switch renderers");
+                }
             }
             state->Gamepad.wButtons = btn;
         NoteFedButtons(btn);

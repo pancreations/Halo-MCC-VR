@@ -1693,3 +1693,25 @@ accepted Halo 4 construction (E-H4-9):
   published `tracked` and `stock` cameras, so forward goes where you look.
 - The input hook passes the horizontal turn stick through and feeds the
   servo on the vertical axis (`Game_Halo2OwnsLookPitch`).
+
+## E-H2-17: the renderer flips were the gesture's Back button (C-H2-25)
+
+The C-H2-24 Steam log (20:01-20:03, source cb9f1f3) shows six
+`Halo 2 live renderer CHANGED` lines in two minutes, and every one is
+preceded within 0-47 ms by the virtual pad feeding `0x0020`
+(XINPUT_GAMEPAD_BACK) - the D-pad gesture's stick click. The user's screen
+recording of the same session shows the image alternating Classic /
+Anniversary at those times. The single C-H2-23 flip with no pad button fed
+(mask 0x0000) was the keyboard Tab path and stays a Steam Input setting.
+
+In Halo 2 campaign Back has exactly one meaning - MCC's Classic <->
+Anniversary switch - so "the stick click is Back like ODST" IS a renderer
+flip there. C-H2-25 applies one rule to every source: Back reaches Halo 2
+only with `halo2_gamepad_graphics_switch = 1`; the gesture click is
+swallowed with a logged `M3: Halo 2 - the D-pad gesture's stick click (Back)
+was swallowed` line otherwise. Other titles keep click = Back.
+
+The recording also shows the first-person weapon filling roughly half of the
+frame in BOTH renderers (E-H2-15) - that remains the open framing item; the
+large black shape in the Classic frames near 0:06 is a crashed Warthog on its
+side in front of the player, ordinary scene geometry.
