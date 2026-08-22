@@ -2034,3 +2034,46 @@ remaining explanations, both in the existing 2-second pixel check:
   the last pair and their separation in millimetres;
 - the eye-end census lists every distinct target bound inside the eye with
   its texture, size, format and sample count, once per generation.
+
+## E-H2-25: the classic world pass rebuilds the view matrix WITH translation per render_view (offline sweep, 2026-08-22)
+
+Four independent decompile lenses over the classic pipeline plus two refuters,
+all reading halo2.dll; every step below is PROVEN by code unless marked.
+
+- `render_view 0x7E30D0` copies its render camera into `0x165C260` (three
+  `movaps` at 0x7E3210/0x7E321C/0x7E3228) BEFORE `0x7DF7A0(&0x165C260, frustum,
+  &0x165C2D4)` at 0x7E3269, and copies the raster camera into its 0x318-byte
+  block at +0x18, builds block+0x100 with `0x7DF7A0`, pushes it (`0x955EC0 ->
+  0x955310`: block -> 0x1996A10, camera 0x1996A28, projection 0x1996B10).
+- `0x7DF7A0` stores the camera POSITION verbatim at record+0x5C..+0x64 inside a
+  3x4 at record+0x34 and calls `0x729C90(record+0x34, record)`, which writes
+  R^T at record+0x04..+0x24 and the translation row record+0x28/+0x2C/+0x30 =
+  -(R^T * pos) (loads at 0x729CEC/0x729CFC/0x729D0B, stores at 0x729DE9/
+  0x729DEE/0x729DF8). The view matrix carries the translation.
+- `0x955590(block+7, camera, projection, idx)` (from 0x955310 at 0x95544A)
+  composes view x projection through `0x954ED0` into VS constants c0..c3,
+  writes c4..c6 = basis and c7 = {pos.x, pos.y, pos.z, 767.8} into the VS
+  shadow `0x197DB40`, copying from the first differing float4 and clearing the
+  clean byte `0x197EB48` on ANY difference (value-equality only; no frame or
+  tick key). `0x82C070` (from the draw wrappers 0x964F80/0x965160/0x965270/
+  0x965430) maps the 0x1000-byte dynamic cbuffer `0x197EB40` with WRITE_DISCARD
+  and uploads the shadow whenever the clean byte is 0, then
+  VSSetConstantBuffers slot 0.
+- No reader of the observer array 0x15F297C, the interpolator buffers
+  0x164B2E8/0x164B2F0, or any "previous camera" exists on the world path.
+  Only two code writers touch the 0x1996A28 position fields (0x7E10C4 in
+  draw_first_person, 0x7F3BB2 in the water reflection), both restore-from-
+  saved-copy. `0x955F60` (stack pop, at the END of render_view) restores the
+  outer camera between the mod's two calls - not in flight.
+- Frame counters 0x165C154 / 0x165C158 / 0x165C15C gate nothing on the camera
+  path (readers enumerated).
+- `0x7DF5A0` (observer record -> window camera: pos +0x00, fwd +0x20, up +0x2C,
+  vfov +0x4C) has seven call sites; the player window's is in setup 0x960230,
+  before render_frame. INFERRED: none runs between the push and the draws.
+
+Consequence: two render_view calls whose raster blocks hold positions 3 cm
+apart CANNOT yield the same c0..c3/c7, so the identical classic eye copies are
+not an engine result. Either the eye pass did not write the texture the mod
+copies (C-H2-31 measures this: "captured target before the pair vs eye 0/1"),
+or the two calls were given the same position (C-H2-31 logs the written eye
+separation and the window camera's distance from the published observer pose).
