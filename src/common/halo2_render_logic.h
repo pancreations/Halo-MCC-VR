@@ -1537,6 +1537,23 @@ inline constexpr uint32_t kHalo2ClassicFirstPersonFovStockBits = 0x3F5D9734u;
 static_assert(0x007E0F35 + 8 + 0x0035CA5F == 0x00B3D99C,
     "the MOVSS at 0x7E0F35 must address the first-person FOV constant");
 
+// E-H2-22: MCC's halo_frame_interpolator (H2EK main\halo_frame_interpolator.cpp)
+// keeps four first-person-weapon slots per local player, stride 0x33D4, in
+// two buffers (previous 0x164B2E8, current 0x164B2F0; 0x164B2E0 non-null
+// while the interpolator is allocated). The weapon the Saber renderer draws
+// is INTERPOLATED between the previous and current game tick while the
+// observer camera is per frame - the Anniversary weapon "swims" against the
+// world by the interpolation. 0x723010(player, slot) is the engine's own
+// slot reset (H2EK 0xD8320, called by first_person_weapons on a weapon
+// change): it zeroes the slot's sample stamp (+0x1A06008) in the current
+// buffer so the next render uses the current tick's state un-interpolated.
+inline constexpr uint32_t kHalo2FrameInterpolatorResetFirstPersonSlotRva = 0x00723010;
+inline constexpr uint8_t kHalo2FrameInterpolatorResetFirstPersonSlotEntryBytes[] = {
+    0x48, 0x83, 0x3D, 0xC8, 0x82, 0xF2, 0x00, 0x00, 0x74, 0x23,
+    0x48, 0x63, 0xC2, 0x48, 0x63, 0xC9, 0x48, 0x8D, 0x0C, 0x88};
+inline constexpr uint32_t kHalo2FrameInterpolatorAllocatedSlotRva = 0x0164B2E0;
+inline constexpr int kHalo2FrameInterpolatorFirstPersonSlots = 4;
+
 inline constexpr uint32_t kHalo2ForcedLegacyFadingFlagRva = 0x015A3D91;
 inline constexpr uint32_t kHalo2ForcedLegacyFadeStateSlotRva = 0x015A3D88;
 inline constexpr uint32_t kHalo2ForcedLegacyFadeTargetOffset = 0x12A;

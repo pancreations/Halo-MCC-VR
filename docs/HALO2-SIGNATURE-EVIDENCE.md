@@ -1882,3 +1882,28 @@ Y+B: `TitleSpecificPauseToggleOwner` named Reach, Halo 4 and ODST only;
 Halo 2 is added. The head-gesture stick click is one Back press per click
 again (ODST behaviour), which in Halo 2 is the renderer switch - deliberate,
 honoured by the guard because the mod fed it.
+
+## E-H2-22: the Anniversary weapon is one frame behind the camera (C-H2-29)
+
+H2EK carries MCC's `main\halo_frame_interpolator.cpp` with four
+first-person-weapon slots per local player (stride 0x33D4; retail reset
+0x723010, read side 0x7228B2, buffers 0x164B2E8/0x164B2F0) - the weapon's
+animation is blended between ticks. Its camera-dependent placement, though,
+is per frame: the H2EK frame function 0x24950 calls the first-person update
+chain (0x6BD30 at 0x24FF3 -> 0x6B680 -> 0x30A656 -> 0x309553 ->
+first_person_weapons.cpp 0x307536) BEFORE observer_update_all (0x448B0 at
+0x250C1). So in every frame the weapon is placed against the observer pose
+of the PREVIOUS frame, while the frame's camera push (0x51510 -> 0x5F510)
+carries the CURRENT one. Rendering the eyes from the frame's own sample
+(E-H2-21) therefore still leaves the weapon one head-sample behind the
+world on every frame - the Anniversary "moving around like crazy". Classic
+has none of this: `draw_first_person` (E-H2-20) places the weapon against the
+camera at draw time.
+
+C-H2-29: the Anniversary core renders the eyes from the publication BEFORE
+the one the frame's camera matched (the sample the first-person update
+saw) and submits them as that sample's poses; the world is one frame older
+and the compositor reprojects it, the weapon is rigid to the view. The report
+line counts how often no older sample was available (start of a level).
+The tick-locking and interpolator-reset variants were considered and
+dropped: the placement is per frame, not per tick.

@@ -7219,6 +7219,15 @@ int main()
                 "E-H2-16 the yaw delta wraps across +-180");
         }
 
+        // E-H2-22: the interpolator reset's pinned entry decodes the buffer slot.
+        {
+            // 48 83 3D disp32 00: cmp qword [rip+disp],0 at 0x723010 (+8) -> 0x164B2E0.
+            Check(0x00723010 + 8 + 0x00F282C8 == kHalo2FrameInterpolatorAllocatedSlotRva,
+                "E-H2-22 the reset's guard tests the interpolator-allocated slot");
+            Check(kHalo2FrameInterpolatorFirstPersonSlots == 4,
+                "E-H2-22 four first-person slots per local player");
+        }
+
         // E-H2-21: main-view flags and Saber matrix matching.
         {
             Check(Halo2SaberViewRecordIsMainView(0) &&
