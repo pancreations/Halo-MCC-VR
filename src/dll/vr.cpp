@@ -42,6 +42,7 @@
 #include "../common/halo2_render_logic.h"
 #endif
 #if HALOMCCVR_HALO2_STEREO6DOF
+#include "../common/halo2_render_logic.h"
 #include "halo2_stereo_core.h"
 #endif
 #ifndef HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
@@ -403,17 +404,27 @@ namespace
         uint32_t captures = 0;
         ID3D11RenderTargetView* finalRtv = nullptr;
         ID3D11RenderTargetView* sceneRtv = nullptr;
-        // The last slot-0 target the engine bound while this eye's scope
-        // was open (pointer only; recorded in the OM hot hook).
+        // E-H2-24: every DISTINCT slot-0 target the engine bound while this
+        // eye's scope was open, oldest first (pointers only; recorded in the
+        // OM hot hook). The classic per-eye image is in one of these, not in
+        // either of the two slots the capture used to choose between.
         ID3D11RenderTargetView* lastBoundRtv = nullptr;
+        ID3D11RenderTargetView* bound[kHalo2EyeBoundRtvSlots]{};
+        int boundCount = 0;
         uint32_t binds = 0;
     };
     thread_local Halo2SynchronousEyeScope g_halo2SynchronousEyeScope{};
     // E-H2-8 capture-source learning. 0 = final-output slot 0x197EE58,
     // 1 = primary scene slot 0x197EE60, 2 = last target bound in the eye.
     std::atomic<int> g_halo2CaptureSource{0};
-    ID3D11Texture2D* g_halo2ProbeCache[2][2]{};   // [candidate][eye]
+    ID3D11Texture2D* g_halo2ProbeCache[2][2]{};   // [probe slot][eye]
     bool g_halo2ProbeHasImage[2][2]{};
+    // E-H2-24: which candidate each probe slot copied, the pointer it copied,
+    // how many candidates the eye offered, and where the rotation stands.
+    std::atomic<int> g_halo2ProbeCandidate[2]{{-1}, {-1}};
+    std::atomic<uintptr_t> g_halo2ProbeCandidatePtr[2]{};
+    std::atomic<int> g_halo2CaptureCandidateCount{2};
+    std::atomic<int> g_halo2ProbeRotation{0};
     D3D11_TEXTURE2D_DESC g_halo2ProbeDesc{};
 #endif
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
@@ -5158,25 +5169,47 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     (void)g_context->Map(staging[0], 0, D3D11_MAP_READ, 0, &mapped[0]);
                     (void)g_context->Map(staging[1], 0, D3D11_MAP_READ, 0, &mapped[1]);
                 }
-                // Map probe slot -> candidate index (the two candidates
-                // other than the current source, in order).
-                int probeCandidate[2] = {-1, -1};
+                // E-H2-24: which candidate each probe slot actually copied
+                // this round (the rotation walks the whole candidate set, two
+                // at a time, so the probe cost per eye is unchanged).
+                const int probeCandidate[2] = {
+                    g_halo2ProbeCandidate[0].load(std::memory_order_relaxed),
+                    g_halo2ProbeCandidate[1].load(std::memory_order_relaxed)};
+                const int candidateCount =
+                    g_halo2CaptureCandidateCount.load(std::memory_order_relaxed);
+                auto candidateName =
+                    [](int candidate, uintptr_t pointer, char* out, size_t bytes)
                 {
-                    int probeIndex = 0;
-                    for (int candidate = 0; candidate < 3 && probeIndex < 2; ++candidate)
-                        if (candidate != currentSource)
-                            probeCandidate[probeIndex++] = candidate;
-                }
-                static const char* const kSourceNames[3] = {
-                    "final-output slot 0x197EE58", "primary scene slot 0x197EE60",
-                    "last target bound in the eye"};
+                    if (candidate < 0)
+                        _snprintf_s(out, bytes, _TRUNCATE, "-");
+                    else if (candidate == 0)
+                        _snprintf_s(out, bytes, _TRUNCATE,
+                                    "final-output slot 0x197EE58");
+                    else if (candidate == 1)
+                        _snprintf_s(out, bytes, _TRUNCATE,
+                                    "primary scene slot 0x197EE60");
+                    else
+                        _snprintf_s(out, bytes, _TRUNCATE,
+                                    "target #%d bound in the eye (%p)",
+                                    candidate - 2,
+                                    reinterpret_cast<void*>(pointer));
+                };
+                char names[3][96];
+                candidateName(currentSource, 0, names[0], sizeof(names[0]));
+                candidateName(
+                    probeCandidate[0],
+                    g_halo2ProbeCandidatePtr[0].load(std::memory_order_relaxed),
+                    names[1], sizeof(names[1]));
+                candidateName(
+                    probeCandidate[1],
+                    g_halo2ProbeCandidatePtr[1].load(std::memory_order_relaxed),
+                    names[2], sizeof(names[2]));
                 LOG("Halo 2 capture probes: source=%s; %s pair changed %.1f%%; "
-                    "%s pair changed %.1f%% (negative = not sampled)",
-                    kSourceNames[currentSource],
-                    probeCandidate[0] >= 0 ? kSourceNames[probeCandidate[0]] : "-",
-                    probeChanged[0],
-                    probeCandidate[1] >= 0 ? kSourceNames[probeCandidate[1]] : "-",
-                    probeChanged[1]);
+                    "%s pair changed %.1f%% (negative = not sampled); %d "
+                    "candidates this eye, rotation at %d",
+                    names[0], names[1], probeChanged[0], names[2],
+                    probeChanged[1], candidateCount,
+                    g_halo2ProbeRotation.load(std::memory_order_relaxed));
                 if (identical && identicalRuns >= 2)
                 {
                     int best = -1;
@@ -5190,13 +5223,38 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         }
                     if (best >= 0)
                     {
+                        char bestName[96];
+                        candidateName(
+                            best,
+                            g_halo2ProbeCandidatePtr[
+                                probeChanged[0] == bestChanged ? 0 : 1]
+                                .load(std::memory_order_relaxed),
+                            bestName, sizeof(bestName));
                         g_halo2CaptureSource.store(best, std::memory_order_relaxed);
+                        g_halo2ProbeRotation.store(0, std::memory_order_relaxed);
                         LOG("Halo 2 capture source SWITCHED to %s: the published "
                             "pair was identical twice while that target's pair "
                             "differed by %.1f%% of samples - it is the one the "
                             "engine draws per eye",
-                            kSourceNames[best], bestChanged);
+                            bestName, bestChanged);
                         identicalRuns = 0;
+                    }
+                    else
+                    {
+                        // Nothing in this pair of candidates carried per-eye
+                        // content: walk the rotation on so the next round
+                        // probes the next two, instead of re-copying the same
+                        // two targets forever.
+                        int filled = 0;
+                        for (int probe = 0; probe < 2; ++probe)
+                            if (probeCandidate[probe] >= 0)
+                                ++filled;
+                        g_halo2ProbeRotation.store(
+                            Halo2NextProbeRotation(
+                                g_halo2ProbeRotation.load(
+                                    std::memory_order_relaxed),
+                                candidateCount, filled),
+                            std::memory_order_relaxed);
                     }
                 }
             }
@@ -12596,14 +12654,31 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
     // the primary scene slot, and the last target the engine bound during
     // this eye. Which one carries per-eye content is LEARNED from the
     // readback comparison, never assumed (E-H2-8).
-    ID3D11RenderTargetView* const candidates[3] = {
-        scope.finalRtv, scope.sceneRtv, scope.lastBoundRtv};
+    // E-H2-24: the two named slots first (their indices are stable across
+    // builds and logs), then every distinct target the engine bound inside
+    // this eye that is not already one of them.
+    ID3D11RenderTargetView* candidates[kHalo2CaptureCandidateSlots] = {
+        scope.finalRtv, scope.sceneRtv};
+    int candidateCount = 2;
+    for (int i = 0; i < scope.boundCount &&
+         candidateCount < kHalo2CaptureCandidateSlots; ++i)
+    {
+        bool duplicate = false;
+        for (int j = 0; j < candidateCount && !duplicate; ++j)
+            duplicate = candidates[j] == scope.bound[i];
+        if (!duplicate && scope.bound[i])
+            candidates[candidateCount++] = scope.bound[i];
+    }
+    g_halo2CaptureCandidateCount.store(candidateCount, std::memory_order_relaxed);
     int source = g_halo2CaptureSource.load(std::memory_order_relaxed);
-    if (source < 0 || source > 2 || !candidates[source])
+    if (source < 0 || source >= candidateCount || !candidates[source])
         source = 0;
     if (censusGeneration != scope.generation)
     {
         censusGeneration = scope.generation;
+        LOG("Halo 2 eye capture: %d distinct targets were bound inside this "
+            "eye; %d capture candidates (final slot, scene slot, then the "
+            "bound targets)", scope.boundCount, candidateCount);
         uintptr_t slots[3] = {
             reinterpret_cast<uintptr_t>(scope.finalRtv),
             reinterpret_cast<uintptr_t>(scope.sceneRtv), 0};
@@ -12633,12 +12708,22 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
     // cannot be the finished eye.
     if (Halo2EnsureProbeCaches(desc))
     {
-        int probeIndex = 0;
-        for (int candidate = 0; candidate < 3 && probeIndex < 2; ++candidate)
+        const int rotation = g_halo2ProbeRotation.load(std::memory_order_relaxed);
+        for (int slot = 0; slot < 2; ++slot)
         {
-            if (candidate == source)
+            const int candidate = Halo2ProbeCandidateForSlot(
+                rotation, slot, source, candidateCount);
+            g_halo2ProbeCandidate[slot].store(candidate, std::memory_order_relaxed);
+            g_halo2ProbeCandidatePtr[slot].store(
+                candidate >= 0
+                    ? reinterpret_cast<uintptr_t>(candidates[candidate])
+                    : 0,
+                std::memory_order_relaxed);
+            if (candidate < 0)
+            {
+                g_halo2ProbeHasImage[slot][scope.eye] = false;
                 continue;
-            const int slot = probeIndex++;
+            }
             g_halo2ProbeHasImage[slot][scope.eye] = false;
             D3D11_TEXTURE2D_DESC otherDesc{};
             ID3D11Texture2D* other =
@@ -13213,6 +13298,11 @@ bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
         {
             halo2Scope.lastBoundRtv = input[0];
             ++halo2Scope.binds;
+            bool known = false;
+            for (int i = 0; i < halo2Scope.boundCount && !known; ++i)
+                known = halo2Scope.bound[i] == input[0];
+            if (!known && halo2Scope.boundCount < kHalo2EyeBoundRtvSlots)
+                halo2Scope.bound[halo2Scope.boundCount++] = input[0];
         }
         return false;
     }

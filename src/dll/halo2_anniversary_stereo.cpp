@@ -514,24 +514,19 @@ namespace
             }
             if (matched >= 0)
             {
-                // E-H2-22: the engine's frame runs the first-person update
-                // BEFORE the observer update (H2EK 0x24950: 0x6BD30 at
-                // 0x24FF3, observer_update_all at 0x250C1), so the weapon
-                // was placed against the observer pose of the PREVIOUS
-                // frame - the sample before the one this frame's camera was
-                // built from. The eyes are rendered from that sample and
-                // submitted as its poses; the world is one frame older and
-                // the compositor reprojects it, the weapon is rigid.
-                const int weaponSample =
-                    matched + 1 < ringCount ? matched + 1 : matched;
-                publication = ring[weaponSample];
+                // E-H2-23: the frame's own sample, exactly. C-H2-29 rendered
+                // the eyes from the publication BEFORE this one because the
+                // weapon had been placed against the previous frame's sample;
+                // the observer core now latches ONE sample per frame at the
+                // weapon placement itself, so the sample that built this
+                // frame's camera is the sample the weapon was placed with and
+                // shifting the choice would re-introduce the lag.
+                publication = ring[matched];
                 published = true;
                 // The camera in hand becomes that sample's tracked camera
                 // for the owner decision below (the view record is
                 // rewritten per eye anyway).
                 stock = publication.tracked;
-                if (weaponSample == matched)
-                    g_sampleNoOlder.fetch_add(1, std::memory_order_relaxed);
                 if (matched == 0)
                     g_sampleMatchedLatest.fetch_add(1, std::memory_order_relaxed);
                 else
@@ -1324,8 +1319,8 @@ namespace
             "(of which %llu rendered from an older observer serial, as that "
             "sample) self=%llu; frame camera matched the latest sample %llu "
             "times, an older sample %llu times, no sample %llu times; eyes "
-            "rendered from the sample BEFORE the matched one (the first-person "
-            "update's), no older sample available %llu times; "
+            "rendered from the frame's own latched sample (the one the weapon "
+            "was placed with), unused counter %llu; "
             "views seen mask=0x%X last=%u; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),

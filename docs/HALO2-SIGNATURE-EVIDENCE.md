@@ -1907,3 +1907,81 @@ and the compositor reprojects it, the weapon is rigid to the view. The report
 line counts how often no older sample was available (start of a level).
 The tick-locking and interpolator-reset variants were considered and
 dropped: the placement is per frame, not per tick.
+
+## E-H2-23: one head sample per game frame (C-H2-30)
+
+C-H2-29 rendered the Anniversary eyes from the publication BEFORE the one the
+frame's camera matched, on the H2EK evidence that the first-person update runs
+before `observer_update_all`. The 93cdc1a headset run kept the swim, and the
+retail chain says why choosing a publication can never fix it.
+
+Retail proof, independent of the kit. The frame interpolator's first-person
+slot reset `0x723010` (E-H2-22) has exactly ONE caller: `0x818CA0`. That
+function IS `first_person_weapons`. Its callers are `0x81AE30` and `0x81BF20`,
+and `0x81BF20` is called from `0x3CAB0`, which the main frame function
+`0x67A220` calls at `+0x3FD`. `observer_update_all` is `0x6F1A60` - the only
+caller of the observer transform `0x6F0250` - and `0x67A220` calls it at
+`+0x428`, i.e. AFTER the weapon placement, in the same frame. The Saber camera
+push (`0x51510 -> 0x5F510`) then reads the observer record as it stands after
+that update. The observer republishes thousands of times per second, so a
+publication chosen at render time is a lottery: the weapon and the camera are
+built from two different head samples no matter which one is picked.
+
+C-H2-30 latches instead of choosing. The observer core takes a second hook on
+`first_person_weapons` (pinned by its entry bytes
+`48 8B C4 44 88 40 18 89 50 10 89 48 08 55 53 56 57`). On entry it:
+
+- reads one head sample and stores it as the frame's sample;
+- re-places the observer record on that sample, but only while the record still
+  holds, bit for bit, the tracked pose the mod published at the previous
+  observer update (`Halo2CameraBasisMatchesExactly`) - the record already
+  carries a mod-written pose, so re-deriving from it unguarded would apply the
+  head delta twice. The rewrite derives from the STOCK pose published with it;
+- lets `first_person_weapons` run, so the weapon is placed on that sample.
+
+`ApplyHeadPose` then consumes the same latched sample instead of a live one, so
+the observer publication, the Saber camera push and the submitted eye poses are
+all one sample. The Anniversary core drops the C-H2-29 shift and renders the
+eyes from the sample its frame camera matched. Failure is loud: the latch is
+WITHHELD with a named reason when the entry bytes do not match, and the
+observer report counts weapon placements, samples latched, records re-placed,
+records left stock because the engine had moved them, placements with no head
+sample, and observer updates that fell back to a live sample.
+
+## E-H2-24: the classic eye image is in neither learned slot (C-H2-30)
+
+93cdc1a, Steam, Classic: `IDENTICAL eyes (0/40527 samples differ)` on every
+check, and the two quarter-size dumps the mod writes next to the log were
+byte-identical files. In the same seconds the draw census counted a full render
+inside EACH eye (118327 and 118704 draws) and the projection read-back AGREED
+for both eyes, so the engine received the per-eye cameras and drew two
+different frames. Yet `capture probes` reported `pair changed 0.0%` for the
+primary scene slot as well: neither `0x197EE58` nor `0x197EE60` changed between
+the two passes.
+
+The classic final output explains it. `0x975230` (single caller `0x951EC0`,
+the postprocess) begins:
+
+```c
+if ((DAT_181996a17 != '\0') && (DAT_18186d300 == '\0')) {
+    uVar5 = FUN_1807f0590(); if (uVar5 == 0xffffffff) return;
+    FUN_1809513d0(FUN_1809519b0(param_1,0), 0, FUN_1809519b0(uVar5,0), 0);
+    return;                      /* resolved elsewhere; no bound output */
+}
+```
+
+With that render-to-texture flag set the finished frame is resolved into
+another target and the function returns without drawing to the bound output;
+only the interface (`0x831CB0`) and the CHUD (`0x7FFD70`) reach the backbuffer
+afterwards, which is why the backbuffer still shows a world at all and why it
+is the same world for both eyes.
+
+C-H2-30 therefore stops choosing between two fixed slots. The eye scope records
+every DISTINCT slot-0 target the engine binds inside that eye (up to
+`kHalo2EyeBoundRtvSlots`), the capture candidate set becomes the two named
+slots plus those targets, and the two probe caches ROTATE across the set
+(`Halo2ProbeCandidateForSlot` / `Halo2NextProbeRotation`) until a candidate's
+two eyes differ, at which point the existing switch takes it as the capture
+source. The probe cost per eye is unchanged - still two copies - and the log
+names the candidate and its pointer, so the target is identified by evidence
+rather than by another guess.

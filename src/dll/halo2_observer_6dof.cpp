@@ -42,6 +42,10 @@ namespace
     // their stock camera rather than inheriting one headset's pose.
     constexpr uint32_t kOwnedUser = 0;
 
+    // E-H2-23: the frame's first-person weapon placement.
+    using Halo2FirstPersonWeaponsFn = void(__fastcall*)(
+        uint32_t, uint32_t, uint8_t);
+
     enum class CoreState : uint8_t
     {
         StockFallback = 0,
@@ -67,6 +71,31 @@ namespace
     std::atomic<uintptr_t> g_originalAddress{0};
     std::atomic<uintptr_t> g_observerResult{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
+
+    // E-H2-23: the one head sample this game frame owns. Written at the
+    // first-person weapon placement and consumed by the observer update, both
+    // of which run on the game's frame thread (0x67A220), so no lock is
+    // needed here; the render threads only ever read the publication ring.
+    struct FrameHeadSample
+    {
+        bool valid = false;
+        uint32_t generation = 0;
+        uint64_t preparedSerial = 0;
+        float orientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+        float position[3]{};
+    };
+    FrameHeadSample g_frameSample{};
+    void* g_weaponsTarget = nullptr;
+    std::atomic<uintptr_t> g_weaponsOriginal{0};
+    std::atomic<uint32_t> g_weaponsActiveCallbacks{0};
+    std::atomic<uint64_t> g_weaponsCalls{0};
+    std::atomic<uint64_t> g_weaponsLatched{0};
+    std::atomic<uint64_t> g_weaponsRecordRewritten{0};
+    std::atomic<uint64_t> g_weaponsRecordForeign{0};
+    std::atomic<uint64_t> g_weaponsNoSample{0};
+    std::atomic<uint64_t> g_observerUsedFrameSample{0};
+    std::atomic<uint64_t> g_observerUsedLiveSample{0};
+    uint64_t g_lastLatchedReported = 0;
 
     // E-H2-6 publication: seqlock (even = stable), plain payload.
     std::atomic<uint32_t> g_publicationVersion{0};
@@ -301,6 +330,27 @@ namespace
             g_rejectedSamples.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        // E-H2-23: the weapon for this frame was already placed against the
+        // sample latched at the placement. Publishing a NEWER one here would
+        // hand the camera a head pose the weapon never saw - the Anniversary
+        // "swim". The live sample is used only when the placement did not run
+        // this frame, and that case is counted rather than hidden.
+        const uint32_t generation = g_generation.load(std::memory_order_acquire);
+        if (g_frameSample.valid && g_frameSample.generation == generation)
+        {
+            std::memcpy(
+                snapshot.headOrientation, g_frameSample.orientation,
+                sizeof(snapshot.headOrientation));
+            std::memcpy(
+                snapshot.headPosition, g_frameSample.position,
+                sizeof(snapshot.headPosition));
+            snapshot.preparedSerial = g_frameSample.preparedSerial;
+            g_observerUsedFrameSample.fetch_add(1, std::memory_order_relaxed);
+        }
+        else
+        {
+            g_observerUsedLiveSample.fetch_add(1, std::memory_order_relaxed);
+        }
 
         Halo2CameraBasis stock{};
         if (!ReadObserverPose(result, stock))
@@ -351,6 +401,119 @@ namespace
             g_generation.load(std::memory_order_acquire),
             snapshot.preparedSerial, stock, tracked, g_reference, snapshot);
         g_appliedPoses.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // E-H2-23. Runs at the head of first_person_weapons, before the weapon is
+    // placed and before this frame's observer update. It fixes the sample the
+    // whole frame will use, and re-places the observer record on that sample so
+    // the weapon is placed against it too. The record still holds the tracked
+    // pose the mod wrote at the previous observer update, so re-deriving from
+    // it would apply the head delta twice: the rewrite happens only while the
+    // record still matches that exact published pose, and it derives from the
+    // STOCK pose published with it.
+    void LatchFrameSample() noexcept
+    {
+        g_frameSample.valid = false;
+        const uint32_t generation = g_generation.load(std::memory_order_acquire);
+        if (!generation)
+            return;
+        Halo2SynchronousVrRenderSnapshot snapshot{};
+        bool snapshotReady = false;
+        __try
+        {
+            snapshotReady = VR_Halo2GetSynchronousRenderSnapshot(snapshot);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            snapshotReady = false;
+        }
+        if (!snapshotReady || !snapshot.headPoseValid ||
+            !ValidHeadPose(snapshot.headOrientation, snapshot.headPosition) ||
+            !g_referenceValid.load(std::memory_order_acquire))
+        {
+            g_weaponsNoSample.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        std::memcpy(
+            g_frameSample.orientation, snapshot.headOrientation,
+            sizeof(g_frameSample.orientation));
+        std::memcpy(
+            g_frameSample.position, snapshot.headPosition,
+            sizeof(g_frameSample.position));
+        g_frameSample.preparedSerial = snapshot.preparedSerial;
+        g_frameSample.generation = generation;
+        g_frameSample.valid = true;
+        g_weaponsLatched.fetch_add(1, std::memory_order_relaxed);
+
+        const uintptr_t base = g_observerResult.load(std::memory_order_acquire);
+        if (!base)
+            return;
+        const uintptr_t result = base + Halo2ObserverRecordOffset(kOwnedUser);
+        Halo2ObserverPosePublication published{};
+        if (!Halo2Observer6Dof_ReadPublishedPose(published) ||
+            published.generation != generation)
+        {
+            g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        Halo2CameraBasis current{};
+        if (!ReadObserverPose(result, current) ||
+            !Halo2CameraBasisMatchesExactly(current, published.tracked))
+        {
+            // The engine moved the record since the mod last wrote it, so the
+            // pose in hand is not the mod's to re-derive. Stock placement.
+            g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        Halo2TrackedHeadInput head{};
+        std::memcpy(
+            head.orientation, g_frameSample.orientation,
+            sizeof(head.orientation));
+        std::memcpy(
+            head.position, g_frameSample.position, sizeof(head.position));
+        std::memcpy(
+            head.referenceOrientation, g_reference.orientation,
+            sizeof(head.referenceOrientation));
+        std::memcpy(
+            head.referencePosition, g_reference.position,
+            sizeof(head.referencePosition));
+        head.positional = Game_IsPositionalTracking();
+        head.worldScale = Game_GetWorldScale();
+        Halo2CameraBasis tracked{};
+        if (!Halo2BuildTrackedCenterCamera(published.stock, head, tracked) ||
+            !WriteObserverPose(result, tracked))
+        {
+            g_weaponsRecordForeign.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        g_weaponsRecordRewritten.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    __declspec(noinline) void __fastcall Halo2FirstPersonWeaponsDetour(
+        uint32_t a, uint32_t b, uint8_t c)
+    {
+        const auto original = reinterpret_cast<Halo2FirstPersonWeaponsFn>(
+            g_weaponsOriginal.load(std::memory_order_acquire));
+        if (!original)
+            return;
+        g_weaponsActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_weaponsCalls.fetch_add(1, std::memory_order_relaxed);
+        if (g_armed.load(std::memory_order_acquire) &&
+            g_levelLive.load(std::memory_order_acquire) &&
+            !g_teardownRequested.load(std::memory_order_acquire))
+        {
+            __try { LatchFrameSample(); }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        __try { original(a, b, c); }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_exceptions.fetch_add(1, std::memory_order_relaxed);
+        }
+        g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     void DetourBody(uint32_t user) noexcept
@@ -598,6 +761,34 @@ namespace
             }
             g_target = nullptr;
         }
+        if (g_weaponsTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_weaponsTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 observer 6DOF: first-person weapons disable "
+                    "failed (%d); ownership retained for cleanup",
+                    static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_weaponsActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+            {
+                Sleep(10);
+            }
+            if (g_weaponsActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 observer 6DOF: first-person weapons callbacks did "
+                    "not drain; ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_weaponsTarget);
+            g_weaponsTarget = nullptr;
+        }
+        g_weaponsOriginal.store(0, std::memory_order_release);
+        g_frameSample = {};
         g_originalAddress.store(0, std::memory_order_release);
         g_observerResult.store(0, std::memory_order_release);
         g_moduleBase.store(0, std::memory_order_release);
@@ -722,6 +913,79 @@ namespace
             return false;
         }
 
+        // E-H2-23: the frame's head-sample latch. Pinned by the entry bytes
+        // of first_person_weapons (the single caller of the interpolator's
+        // first-person slot reset). Its absence is loud and leaves the
+        // observer exactly as it was before this candidate.
+        const uintptr_t weapons = base + kHalo2FirstPersonWeaponsRva;
+        uint8_t weaponsBytes[sizeof(kHalo2FirstPersonWeaponsEntryBytes)]{};
+        bool weaponsReadable = false;
+        __try
+        {
+            std::memcpy(
+                weaponsBytes, reinterpret_cast<const void*>(weapons),
+                sizeof(weaponsBytes));
+            weaponsReadable = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { weaponsReadable = false; }
+        if (!weaponsReadable ||
+            std::memcmp(
+                weaponsBytes, kHalo2FirstPersonWeaponsEntryBytes,
+                sizeof(weaponsBytes)) != 0)
+        {
+            LOG("Halo 2 first-person weapon sample latch WITHHELD: the entry "
+                "bytes at +0x%X are not first_person_weapons in this module; "
+                "the observer keeps publishing its live sample and the "
+                "Anniversary weapon stays one sample behind the camera",
+                static_cast<unsigned>(kHalo2FirstPersonWeaponsRva));
+        }
+        else
+        {
+            void* const weaponsTarget = reinterpret_cast<void*>(weapons);
+            void* weaponsTrampoline = nullptr;
+            const MH_STATUS weaponsCreated = MH_CreateHook(
+                weaponsTarget,
+                reinterpret_cast<void*>(&Halo2FirstPersonWeaponsDetour),
+                &weaponsTrampoline);
+            if (weaponsCreated != MH_OK || !weaponsTrampoline)
+            {
+                LOG("Halo 2 first-person weapon sample latch WITHHELD: hook "
+                    "create=%d", static_cast<int>(weaponsCreated));
+                if (weaponsCreated == MH_OK)
+                    (void)MH_RemoveHook(weaponsTarget);
+            }
+            else
+            {
+                g_weaponsTarget = weaponsTarget;
+                g_weaponsOriginal.store(
+                    reinterpret_cast<uintptr_t>(weaponsTrampoline),
+                    std::memory_order_release);
+                const MH_STATUS weaponsEnabled = MH_EnableHook(weaponsTarget);
+                if (weaponsEnabled != MH_OK)
+                {
+                    LOG("Halo 2 first-person weapon sample latch WITHHELD: "
+                        "hook enable=%d", static_cast<int>(weaponsEnabled));
+                    (void)MH_RemoveHook(weaponsTarget);
+                    g_weaponsTarget = nullptr;
+                    g_weaponsOriginal.store(0, std::memory_order_release);
+                }
+                else
+                {
+                    LOG("Halo 2 first-person weapon sample latch installed on "
+                        "first_person_weapons +0x%X (the only caller of the "
+                        "frame interpolator's first-person slot reset +0x%X, "
+                        "and it runs BEFORE observer_update_all in the same "
+                        "frame): one head sample is latched there and the "
+                        "observer update consumes that same sample, so the "
+                        "weapon, the camera and the submitted eye poses are "
+                        "all built from one sample",
+                        static_cast<unsigned>(kHalo2FirstPersonWeaponsRva),
+                        static_cast<unsigned>(
+                            kHalo2FrameInterpolatorResetFirstPersonSlotRva));
+                }
+            }
+        }
+
         g_coreState = CoreState::Installed;
         LOG("Halo 2 observer 6DOF installed: observer final transform "
             "+0x%X, observer results +0x%X stride 0x%X, user %u. Three "
@@ -749,11 +1013,14 @@ namespace
         // hook never fired" from "the hook fired but every head sample was
         // rejected", which look identical from the player's seat.
         static bool reportedOnce = false;
+        const uint64_t latched = g_weaponsLatched.load(std::memory_order_relaxed);
         if (reportedOnce && applied == g_lastAppliedReported &&
-            g_callbacks.load(std::memory_order_relaxed) == g_lastCallbacks)
+            g_callbacks.load(std::memory_order_relaxed) == g_lastCallbacks &&
+            latched == g_lastLatchedReported)
         {
             return;
         }
+        g_lastLatchedReported = latched;
         reportedOnce = true;
         g_lastAppliedReported = applied;
         g_lastCallbacks = g_callbacks.load(std::memory_order_relaxed);
@@ -775,7 +1042,12 @@ namespace
         }
         LOG("Halo 2 observer 6DOF: %llu observer transforms seen, %llu head "
             "poses applied, %llu rejected samples, %llu unreadable, %llu "
-            "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional %s)",
+            "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional "
+            "%s); frame sample latch: %llu weapon placements, %llu samples "
+            "latched, %llu records re-placed on the frame's sample, %llu left "
+            "stock (the engine had moved the record), %llu with no head sample; "
+            "observer updates consumed the frame's sample %llu times, a live "
+            "sample %llu times",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -786,7 +1058,21 @@ namespace
             static_cast<unsigned long long>(
                 g_exceptions.load(std::memory_order_relaxed)),
             leanMeters, Game_GetWorldScale(),
-            Game_IsPositionalTracking() ? "ON" : "OFF");
+            Game_IsPositionalTracking() ? "ON" : "OFF",
+            static_cast<unsigned long long>(
+                g_weaponsCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponsLatched.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponsRecordRewritten.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponsRecordForeign.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponsNoSample.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_observerUsedFrameSample.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_observerUsedLiveSample.load(std::memory_order_relaxed)));
     }
 }
 

@@ -2154,3 +2154,108 @@ inline constexpr uint32_t kHalo2SaberSceneContextResetBytes = 0xC8;
 // keep two eyes in one frame from sharing one history.
 inline constexpr uint32_t kHalo2SaberRenderSettingsSlotRva = 0x01A6E588;
 inline constexpr uint32_t kHalo2SaberSsrEnableOffset = 0x108;
+
+// E-H2-23 (C-H2-30): the first-person weapon placement, and the frame's own
+// head sample.
+//
+// Retail proof, independent of the H2EK kit: the interpolator's first-person
+// slot reset (kHalo2FrameInterpolatorResetFirstPersonSlotRva) has exactly ONE
+// caller, 0x818CA0 - that function IS first_person_weapons. Its two callers
+// (0x81AE30 and 0x81BF20) both reach the main frame function 0x67A220 at
+// +0x3FD (0x67A220 -> 0x3CAB0 -> 0x81BF20 -> 0x818CA0), while
+// observer_update_all (0x6F1A60, the only caller of the observer transform
+// 0x6F0250) runs LATER in the same frame at 0x67A220+0x428. So the weapon is
+// placed against the observer record as it stands BEFORE this frame's observer
+// update, and the Saber camera push (0x51510 -> 0x5F510) then carries the
+// record as it stands AFTER it. Whatever head sample the observer applies at
+// its own update time is therefore one frame newer than the one the weapon was
+// placed with, and the observer republishes thousands of times a second - which
+// is why choosing an older publication for the eyes (C-H2-29) could not make
+// the weapon rigid: it only moved which end of the pair was stale.
+//
+// C-H2-30 latches ONE head sample per game frame at the weapon placement and
+// makes the observer update consume that same sample, so the weapon, the
+// camera push and the submitted eye poses are all built from one sample.
+inline constexpr uint32_t kHalo2FirstPersonWeaponsRva = 0x00818CA0;
+inline constexpr uint8_t kHalo2FirstPersonWeaponsEntryBytes[] = {
+    0x48, 0x8B, 0xC4, 0x44, 0x88, 0x40, 0x18, 0x89, 0x50, 0x10,
+    0x89, 0x48, 0x08, 0x55, 0x53, 0x56, 0x57};
+
+// The record the weapon is placed against still holds the tracked pose the mod
+// wrote at the previous observer update. Re-deriving from it would apply the
+// head delta twice, so the latch rewrites it only while it still matches that
+// exact published pose, from the stock pose published with it.
+inline constexpr float kHalo2FrameLatchPoseEpsilon = 1.0e-6f;
+
+inline bool Halo2CameraBasisMatchesExactly(
+    const Halo2CameraBasis& a, const Halo2CameraBasis& b) noexcept
+{
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (std::fabs(a.position[axis] - b.position[axis]) >
+                kHalo2FrameLatchPoseEpsilon ||
+            std::fabs(a.forward[axis] - b.forward[axis]) >
+                kHalo2FrameLatchPoseEpsilon ||
+            std::fabs(a.up[axis] - b.up[axis]) > kHalo2FrameLatchPoseEpsilon)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// E-H2-24 (C-H2-30): the classic eye image is not in either slot the capture
+// learned from.
+//
+// The 93cdc1a Steam log, Classic: `IDENTICAL eyes (0/40527 samples differ)` on
+// every check, with the two quarter-size dumps byte-identical on disk, while
+// the draw census counted a full render inside EACH eye (118327 / 118704 draws)
+// and the projection read-back AGREED for both. So the engine received the
+// per-eye cameras and drew two different frames, but neither the final-output
+// slot 0x197EE58 nor the primary scene slot 0x197EE60 changed between the two
+// passes (`capture probes: ... pair changed 0.0%`). The classic final output
+// 0x975230 has exactly that shape: when the render-to-texture flag 0x1996A17
+// is set it resolves the frame into another target (0x9519B0 -> 0x9513D0) and
+// returns WITHOUT drawing to the bound output; only the interface (0x831CB0)
+// and the CHUD (0x7FFD70) reach the backbuffer afterwards. The per-eye image
+// therefore lives in a target the two learned candidates never name.
+//
+// C-H2-30 stops enumerating two fixed slots: the eye scope records every
+// distinct slot-0 target the engine binds inside the eye, and the two probe
+// caches rotate across that whole set until a candidate's two eyes differ.
+// The rotation costs the same two probe copies per eye as before.
+inline constexpr uint32_t kHalo2ClassicRenderToTextureFlagRva = 0x01996A17;
+inline constexpr int kHalo2EyeBoundRtvSlots = 6;
+inline constexpr int kHalo2CaptureCandidateSlots = 2 + kHalo2EyeBoundRtvSlots;
+
+// Advances the probe pair over the candidate set, skipping the live source.
+// Returns the candidate index to probe for `slot` (0 or 1), or -1 if the set
+// is too small to fill that slot.
+inline int Halo2ProbeCandidateForSlot(
+    int rotation, int slot, int source, int candidateCount) noexcept
+{
+    if (slot < 0 || slot > 1 || candidateCount <= 1 || rotation < 0)
+        return -1;
+    int seen = 0;
+    for (int step = 0; step < candidateCount; ++step)
+    {
+        const int candidate = (rotation + step) % candidateCount;
+        if (candidate == source)
+            continue;
+        if (seen == slot)
+            return candidate;
+        ++seen;
+    }
+    return -1;
+}
+
+// One full sweep of the probe pair is `candidateCount - 1` candidates, so the
+// rotation advances by the number of slots actually filled.
+inline int Halo2NextProbeRotation(
+    int rotation, int candidateCount, int filledSlots) noexcept
+{
+    if (candidateCount <= 1 || filledSlots <= 0)
+        return 0;
+    const int next = rotation + filledSlots;
+    return next % candidateCount;
+}

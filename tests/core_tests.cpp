@@ -7228,6 +7228,60 @@ int main()
                 "E-H2-22 four first-person slots per local player");
         }
 
+        // E-H2-23: the frame head-sample latch anchors and its pose guard.
+        {
+            // 0x818CA0 is first_person_weapons: mov rax,rsp / mov [rax+18],r8b
+            // / mov [rax+10],edx / mov [rax+8],ecx / push rbp rbx rsi rdi.
+            Check(sizeof(kHalo2FirstPersonWeaponsEntryBytes) == 17 &&
+                      kHalo2FirstPersonWeaponsEntryBytes[0] == 0x48 &&
+                      kHalo2FirstPersonWeaponsEntryBytes[1] == 0x8B &&
+                      kHalo2FirstPersonWeaponsEntryBytes[2] == 0xC4 &&
+                      kHalo2FirstPersonWeaponsEntryBytes[13] == 0x55,
+                "E-H2-23 the weapon placement is pinned by its entry bytes");
+            Check(kHalo2FirstPersonWeaponsRva == 0x00818CA0,
+                "E-H2-23 the weapon placement keeps its proven RVA");
+            Halo2CameraBasis a{};
+            a.forward[0] = 1.0f; a.up[2] = 1.0f;
+            a.position[0] = 12.5f;
+            Halo2CameraBasis b = a;
+            Check(Halo2CameraBasisMatchesExactly(a, b),
+                "E-H2-23 an untouched record matches the published pose");
+            b.position[0] += 0.001f;
+            Check(!Halo2CameraBasisMatchesExactly(a, b),
+                "E-H2-23 a record the engine moved does not match");
+        }
+
+        // E-H2-24: the capture probe rotation walks every candidate.
+        {
+            Check(kHalo2CaptureCandidateSlots == 2 + kHalo2EyeBoundRtvSlots,
+                "E-H2-24 the candidate set is the two slots plus the bound set");
+            // Four candidates, source 0: the rotation must reach 1, 2 and 3.
+            bool seen[4] = {false, false, false, false};
+            int rotation = 0;
+            for (int round = 0; round < 6; ++round)
+            {
+                int filled = 0;
+                for (int slot = 0; slot < 2; ++slot)
+                {
+                    const int candidate =
+                        Halo2ProbeCandidateForSlot(rotation, slot, 0, 4);
+                    if (candidate < 0)
+                        continue;
+                    Check(candidate != 0,
+                        "E-H2-24 the live source is never probed against itself");
+                    seen[candidate] = true;
+                    ++filled;
+                }
+                rotation = Halo2NextProbeRotation(rotation, 4, filled);
+            }
+            Check(seen[1] && seen[2] && seen[3],
+                "E-H2-24 every candidate is probed within a few rounds");
+            Check(Halo2ProbeCandidateForSlot(0, 0, 0, 1) < 0,
+                "E-H2-24 a single candidate leaves the probe slots empty");
+            Check(Halo2NextProbeRotation(3, 4, 0) == 0,
+                "E-H2-24 an empty round resets the rotation");
+        }
+
         // E-H2-21: main-view flags and Saber matrix matching.
         {
             Check(Halo2SaberViewRecordIsMainView(0) &&
