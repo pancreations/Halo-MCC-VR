@@ -3303,3 +3303,32 @@ installer preserved the preceding bytes independently and installed this exact
 DLL to Steam and Store; independent post-install SHA-256 checks match in both.
 MCC was not launched and neither configuration changed. This remains an
 unaccepted headset candidate.
+
+## E-H2-50 (C-H2-56 rejection / C-H2-57): successful writes, wrong consumers - 2026-08-23
+
+The player's Steam headset result rejects C-H2-56: the gun moved onto the
+player's face, shots behaved exactly as before, and the presentation regressed.
+The preserved exact-source log is
+`out/test-runs/74152be-halo2-c56-face-gun-aim-unchanged-20260823-1845/HaloMCCVR.log`,
+SHA-256 `DE01A1E99DC7479684C68B7ABA64C49C8D6F420E4C6A006BF753EEB30A80F401`.
+It records source `74152be45b51b3956e30a137032cabdb740f0ce7`, Steam,
+SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz.
+
+Runtime execution is positive and rules out another dead-hook explanation. The
+final packet reported 2,839 owned packets, 45,424 right nodes, 45,424 left
+nodes, 14,195 collapsed nodes, 11,356 gun nodes and zero refusals. Thus
+`controller * inverse(authored camera root)` is proven to execute and proven
+not to be a valid controller attachment: it carries Halo 2's face-relative
+first-person placement onto the controller replacement and leaves the gun at
+the face. The shot hook reported 69 applications out of 69 calls with no stock,
+non-owned, missing-unit or exception result before the last level transition,
+yet the player saw no projectile change. The completed helper direction is
+therefore not the visible projectile owner in this live firing path. Do not
+iterate another direction transform at that boundary.
+
+C-H2-57 sets the optional final-packet/shot master switch false. It preserves
+the failed code inert, keeps the already-false interpolator transaction inert,
+and leaves camera, stereo, observer 6DOF, OpenXR and lifecycle rehook untouched.
+The next implementation must compare Halo 4's accepted controller mount,
+two-hand/config consumption and final projectile owner, then find Halo 2's own
+homologous consumer from H2EK before any new runtime write.

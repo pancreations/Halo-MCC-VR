@@ -1,5 +1,27 @@
 # Current state
 
+> **HALO 2 C-H2-56 REJECTED; C-H2-57 SAFETY REVERT IN SOURCE -
+> 2026-08-23.** The player's Steam headset result reports that C-H2-56 moved
+> the gun onto the face, left projectile behavior unchanged, and regressed the
+> prior presentation. The exact run is preserved at
+> `out/test-runs/74152be-halo2-c56-face-gun-aim-unchanged-20260823-1845/HaloMCCVR.log`
+> (SHA-256
+> `DE01A1E99DC7479684C68B7ABA64C49C8D6F420E4C6A006BF753EEB30A80F401`).
+> It identifies source `74152be`, Steam, SteamVR/OpenXR 2.17.7, an Oculus
+> headset at 120 Hz. The final-packet transaction executed 2,839 times with
+> zero refusals; the direct-shot hook applied 69 of 69 admitted calls before
+> the last level transition. Therefore the face-mounted gun is the successful
+> root-replacement transform, and the live projectile path does not consume the
+> helper direction that was successfully rewritten. Neither failure is blamed
+> on missing execution.
+>
+> C-H2-57 disables the complete optional Halo 2 hands/gun/shot transaction at
+> its master switch. Both failed implementations remain dormant for evidence;
+> no code is deleted. Halo 2 stereo, observer 6DOF, head tracking, right-stick
+> turning, lifecycle rehook, OpenXR and every other title remain enabled. This
+> is the required source revert before a new Halo 4-parity implementation; it
+> is not a claim that Halo 2 hands or controller projectile aim are fixed.
+
 > **UNACCEPTED HALO 2 C-H2-56 HAND/GUN MOUNT + COMPLETE CROSSHAIR SHOT
 > CANDIDATE - 2026-08-23.** The C-H2-55 consecutive-level lifecycle remains
 > the accepted development baseline, but its C-H2-52-derived optional

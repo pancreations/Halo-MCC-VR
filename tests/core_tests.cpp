@@ -7713,9 +7713,9 @@ int main()
             }
 
             Check(!kHalo2RejectedInterpolatorControllerOwnershipEnabled &&
-                      kHalo2FinalPaletteControllerOwnershipEnabled,
-                "C-H2-52 leaves the rejected interpolator transaction dormant "
-                "and enables only final render-packet controller ownership");
+                      !kHalo2FinalPaletteControllerOwnershipEnabled,
+                "C-H2-57 leaves both headset-rejected Halo 2 controller "
+                "transactions dormant while stereo and 6DOF stay enabled");
             Check(kHalo2MatrixComposeRva == 0x0072A150 &&
                       kHalo2FirstPersonPrimaryComposeReturnRva == 0x00818623 &&
                       kHalo2FirstPersonSecondaryComposeReturnRva == 0x00818773 &&

@@ -1080,7 +1080,11 @@ inline constexpr bool kHalo2RejectedInterpolatorControllerOwnershipEnabled = fal
 // with the complete H2EK first-person packet boundary used by both renderers.
 // This switch arms the replacement transaction; neither rejected upstream
 // implementation is re-enabled.
-inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = true;
+// C-H2-57 safety revert: C-H2-56 executed continuously but placed the gun on
+// the player's face, while 69/69 admitted direction writes still did not move
+// the visible shot. Keep both disproven implementations available as dormant
+// evidence, but arm neither one while the replacement boundary is developed.
+inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
