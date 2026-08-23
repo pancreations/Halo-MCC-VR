@@ -33,10 +33,10 @@
 >
 > | C-H2-46 deployed identity | Value |
 > | --- | --- |
-> | Source | `PENDING` |
-> | Package | `PENDING` |
-> | `HaloMCCVR.dll` | `PENDING` |
-> | `HaloMCCVRLauncher.exe` | `PENDING` |
+> | Source | `ec01357e35322c89b816c784f260c168055d448b` |
+> | Package | `ec01357-halo2-c46-floaty-hands-shot-follows-gun-20260823-052343934Z` |
+> | `HaloMCCVR.dll` | `4C13A0B545F1FEDB33914B427E8AD230A441CF27BE4A985748CFF652106EFE2E` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
 > | Verification | Release build PASS; core tests PASS |
 >
