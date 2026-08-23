@@ -1,7 +1,7 @@
 # Current state
 
-> **C-H2-53 REJECTED; SHARED CONSECUTIVE-LOAD FIX C-H2-54 IMPLEMENTED,
-> UNPACKAGED - 2026-08-23.** The consecutive-level failure is not Halo 2- or
+> **C-H2-53 REJECTED; SHARED CONSECUTIVE-LOAD FIX C-H2-54 INSTALLED -
+> 2026-08-23.** The consecutive-level failure is not Halo 2- or
 > mission-specific. The rejected Steam C-H2-53 run unloaded one Halo 2 level,
 > kept `halo2.dll` visible as generation 1 because the mod's new session lease
 > held the Windows loader reference count, then faulted at
@@ -22,10 +22,25 @@
 > readiness proof and reinstall paths remain active. No camera, aiming, hands,
 > stereo, HUD, input or other player feature is disabled.
 >
-> Incremental Release build PASS, `halomccvr_core_tests` PASS, Reach consistency
-> gate PASS and `git diff --check` PASS. This block is not an accepted-build
-> pointer and has no deployed identity yet; packaging and automatic verified
-> installation to both editions follow the behavioral commit.
+> Release build PASS, `halomccvr_core_tests` PASS, Reach consistency gate PASS,
+> the 14-call loader-refcount source gate PASS, PowerShell producer/installer
+> parsing PASS, and `git diff --check` PASS. The manifest-backed packager
+> automatically installed the exact candidate to Steam and Microsoft Store,
+> preserved C-H2-53 separately for each, and did not launch MCC or change either
+> `halomccvr.cfg`. Independent post-install hashes match in both editions. This
+> is ready for the requested consecutive same-title loads, but remains
+> unaccepted until runtime/headset confirmation; the accepted pointer is not
+> advanced.
+>
+> | C-H2-54 deployed identity | Value |
+> | --- | --- |
+> | Source | `85afbd0bf4000b404038a167b66d5715f5489571` |
+> | C-H2-53 required revert | `f182e8c` |
+> | Package | `85afbd0-halo2-c54-shared-unload-safe-hook-epochs-20260823-222828978Z` |
+> | Manifest SHA-256 | `8C91A6C1CEB4C021FF19DDDCE27D2D494DB3AD5B68C641454B8C021709BA8B53` |
+> | `HaloMCCVR.dll` | `B0DCE4E27F7BD2A6A6173D44488E538ACC9DBA7B19E72415E1C31827E978D436` |
+> | `HaloMCCVRLauncher.exe` | `87F1DF6202BE26065BAEB769BC19E06B526F25DDC5FCBF6FE75FAE779C54A902` |
+> | Editions | installed and independently hash-verified in Steam and Microsoft Store; prior `039F70A3...` preserved separately for each |
 
 > **REJECTED CLAIM - HALO 2 C-H2-53 AIM + CONSECUTIVE-MISSION LOADING FIX INSTALLED - 2026-08-23.**
 > C-H2-52 replaces the non-executing C-H2-50 generic-composer experiment with

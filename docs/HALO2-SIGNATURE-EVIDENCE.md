@@ -3169,6 +3169,11 @@ is never written through.
 This is one shared loader-lifecycle correction, not a feature toggle. C-H2-52
 hands/gun/crosshair-shot behavior and all other title features remain enabled
 and reinstall after the next level proves live. Offline verification at this
-stage: Release build PASS, core tests PASS, Reach consistency gate PASS, and
-diff check PASS. Runtime acceptance remains pending for consecutive same-title
+stage: Release build PASS, core tests PASS, Reach consistency gate PASS, 14-call
+loader-refcount source gate PASS, producer/installer parser PASS, and diff check
+PASS. Exact source `85afbd0bf4000b404038a167b66d5715f5489571`, package
+`85afbd0-halo2-c54-shared-unload-safe-hook-epochs-20260823-222828978Z`, and DLL
+SHA-256 `B0DCE4E27F7BD2A6A6173D44488E538ACC9DBA7B19E72415E1C31827E978D436`
+were installed and independently hash-verified in both editions without launch
+or config change. Runtime acceptance remains pending for consecutive same-title
 loads plus the normal shared-change Halo 3 regression.
