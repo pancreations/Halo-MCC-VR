@@ -186,7 +186,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c55-consecutive-level-rehook',
+        'halo2-c56-authored-hand-weapon-mounts',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -300,12 +300,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-55'
+            id = 'C-H2-56'
             status = 'READY_FOR_BUILD_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-shared-unload-safe-hook-epochs-and-same-generation-level-rehook'
+                'h2ek-final-render-packet-authored-root-mounted-two-controller-hands-right-gun-all-local-presented-crosshair-shots-plus-c55-rehook'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -443,9 +443,9 @@ try {
             collapsed_nodes =
                 'every-final-hands-packet-node-outside-left-and-right-hand-subtrees'
             controller_rotation_space =
-                'final-world-rigid-delta-desired-controller-times-inverse-stock-wrist-turn-invariant'
+                'final-world-rigid-root-replacement-controller-times-inverse-authored-camera-root-preserves-live-wrist-and-gun-mounts'
             projectile_aim_source =
-                'local-player-stock-muzzle-to-exact-fresh-compositor-presented-crosshair-point'
+                'all-guarded-local-helper-results-stock-muzzle-to-exact-fresh-compositor-presented-crosshair-point-independent-of-use-unit-aim-flag'
             projectile_presented_reticle_freshness_ms = 250
             interpolation_reset_policy =
                 'stock-reset-preserved-rejected-interpolator-controller-path-remains-disabled'
@@ -551,7 +551,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-55 retains C-H2-52 final-packet hands/gun ownership and exact presented-crosshair projectile aim plus C-H2-54 unload-safe title-hook epochs. The C-H2-54 headset run proves the crash is gone but also proves that a second Halo 2 level in the same physical DLL generation cleared per-level graphics/observer bindings while cached image proof suppressed their reconstruction. C-H2-55 reuses that proven image and rebinds those derived addresses exactly once after each new level gate opens, allowing observer, Anniversary/Classic stereo, final-packet/firing, and renderer hooks to reinstall through their normal readiness checks. No feature is disabled. This candidate is offline-verified and unaccepted.'
+        note = 'C-H2-56 keeps the headset-accepted C-H2-55 same-generation level rehook and corrects only the optional Halo 2 hands/gun/shot transaction rejected by the next headset report. Final packets replace the authored camera root with each controller root, preserving the live authored root-to-wrist and wrist-to-gun attachment frames instead of aligning raw wrist bones to controller origins. The guarded local firing helper converges both useUnitAim modes on the exact fresh compositor-presented crosshair; AI and remote units stay stock. Camera, stereo, OpenXR, XInput, observer ownership and physical right-stick turning are unchanged. This candidate is offline-verified and unaccepted.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

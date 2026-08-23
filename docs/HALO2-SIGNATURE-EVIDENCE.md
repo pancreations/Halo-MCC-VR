@@ -3272,3 +3272,12 @@ nonzero authored root offsets. Headset acceptance remains required in both
 Anniversary and Classic through 90/180-degree body turns, followed by the exact
 candidate identity and result; this evidence entry does not advance the
 accepted pointer.
+
+The first package attempt contained the correct gameplay source `991e596` and
+installed DLL SHA-256
+`1C3945374F26ABCE95E319655FB0A857B13D842CF59B8B695E53EEE23F8B680C`,
+independently equal in Steam and Store,
+but the producer still emitted a stale `C-H2-55` id, behavior description and
+package slug. It is superseded before headset use. The producer metadata is
+corrected and a newly committed, manifest-identified C-H2-56 package is required
+before testing; the stale label is not accepted as C-H2-56 evidence.

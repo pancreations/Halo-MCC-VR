@@ -26,8 +26,11 @@
 > origin on the exact fresh compositor-presented crosshair. AI and remote units
 > remain stock; no XInput, observer or camera field is changed.
 >
-> Release build and `halomccvr_core_tests` PASS. This candidate is not accepted
-> or deployed yet. Required headset acceptance is Anniversary and Classic:
+> Release build, `halomccvr_core_tests`, Reach consistency gate and diff checks
+> PASS. The first package attempt correctly contained source `991e596` and the
+> new DLL, but inherited stale C-H2-55 package/manifest labels; it was installed
+> and immediately superseded for metadata correction before any headset run.
+> Required headset acceptance is Anniversary and Classic:
 > verify each hand stays on its own controller through 90/180-degree body turns,
 > the right gun retains a stable authored offset, every shot follows the visible
 > crosshair, and ordinary right-stick turning remains unchanged. The test must
