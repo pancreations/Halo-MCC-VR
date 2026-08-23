@@ -80,22 +80,21 @@ namespace
     // C-H2-6 owns same-frame binocular geometry and headset room-scale only;
     // unclaimed frames retain stock screen presentation, while a partially
     // claimed failed stereo transaction drops only that frame.
-    // Controller aim, HUD and cutscene behavior remain denied.
+    // HUD and cutscene behavior remain denied.
     // C-H2-22: the virtual gamepad (VR controllers merged over any physical
     // pad) and rumble are granted. Without ControllerInput the XInput hook
     // passed the physical pad through untouched inside every Halo 2 level,
     // so the VR controllers only worked in the shell.
-    // C-H2-45 withdraws the ControllerAim grant again. C-H2-41, C-H2-43 and
-    // C-H2-44 were each rejected in the headset with the SAME player report:
-    // the right stick no longer turned the character/camera the way every
-    // other Halo in this mod does, and the hand moved the view. The grant is
-    // the single switch that armed all three controller-owned Halo 2 aim
-    // paths, so withdrawing it returns Halo 2 to the accepted C-H2-40
-    // behavior. See kHalo2ControllerOwnedAimEnabled in halo2_render_logic.h.
+    // C-H2-46 grants ControllerAim for the floating hands + gun mesh and the
+    // bullet direction that follows them. It is NOT permission to steer the
+    // camera: `Game_ComputeAimStick` refuses Halo 2 before any capability is
+    // read, so the physical right stick keeps ordinary character/camera
+    // turning. The second gate is kHalo2ControllerOwnedAimEnabled in
+    // halo2_render_logic.h; both must be true for any of it to run.
     constexpr uint32_t kHalo2Capabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics;
+        TitleCapability_Haptics | TitleCapability_ControllerAim;
     constexpr uint32_t kHalo2AdmissionCapabilities =
         TitleCapability_ControllerInput;
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO

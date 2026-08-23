@@ -2608,3 +2608,60 @@ bypassed interpolation reset, which C-H2-43 armed together in one candidate.
 Do not re-arm those two together again: place the weapon on the controller with
 the accepted C-H2-40 reset still running, get a headset result, and only then
 consider the reset.
+
+### E-H2-39 (C-H2-46): the two defects behind the rejected floaty hands
+
+Halo 2's floating hands are re-armed. The mechanism is unchanged from E-H2-36 -
+first-person slot 0's node palette is moved rigidly onto the controller through
+one `Head^-1 * Controller` transform, preserving every authored weapon, hand,
+marker and animation relationship. Two defects that had nothing to do with the
+mechanism are fixed.
+
+**Defect 1: the carrier was mirrored.** C-H2-44's
+`relativeOrientation[0] = -relativeOrientation[0]` is `F R^-1 F` with
+`F = diag(1, -1, -1)`, a mirrored INVERSE rotation (E-H2-38). The preserved
+per-eye frame dump from the C-H2-44 session
+(`HaloMCCVR-halo2-eye0.bmp`, Outskirts, classic renderer) shows the battle
+rifle tilted far off the hand as a result. Removed in C-H2-45; it stays removed.
+
+The unmirrored mapping is now derived rather than assumed. `Halo2ApplyLocalQuaternion`
+maps local `+x -> camera right`, `+y -> camera up`, `+z -> -camera forward`.
+Working each axis through with Halo 2's own basis (`+Z` world up, right =
+forward x up):
+
+| local axis | Halo 2 result | OpenXR head-local result | agree |
+| --- | --- | --- | --- |
+| `+x` (pitch) | forward tilts toward world `+Z` (up) | forward `(0,0,-1) -> (0, sin, -cos)` (up) | yes |
+| `+y` (yaw) | forward tilts toward `+Y`, which is LEFT | forward tilts toward `-X`, which is LEFT | yes |
+| `+z` (roll) | right tilts up (head tilts left) | right tilts up (head tilts left) | yes |
+
+All three agree, so the plain head-relative rotation is the correct carrier and
+no title-local sign correction belongs anywhere in this path.
+
+**Defect 2: the mesh and the bullet were built from different poses.** C-H2-43
+placed the visible palette from `VR_GetAimPose` with the `gun_forward_m` trim,
+while its firing-helper detour aimed from the carrier built out of
+`VR_GetPresentedReticleAimPose` with no trim; C-H2-44 kept them apart. Two
+different origins and two different orientations means the bullet does not
+follow the gun the player is pointing, which is exactly the complaint.
+
+C-H2-46 introduces one builder, `BuildFirstPersonCarrier`, and both consumers
+call it. `VR_GetAimPose` is the shared mount-calibrated aim pose - `gun_yaw_deg`,
+`gun_pitch_deg`, `gun_roll_deg` and two-handed aim are already folded into it -
+and it is the same pose the compositor draws the VR crosshair quad from. Mesh,
+crosshair and bullet therefore agree by construction rather than by tuning. A
+core test pins it: a shot leaving the carrier's own origin travels exactly along
+the carrier's forward at 2 m, 10 m and 50 m.
+
+**What is still true and must stay true.** `Game_ComputeAimStick` refuses Halo 2
+before any capability is read, so the mod never writes the right stick for this
+title. The physical right stick keeps ordinary character/camera turning and the
+headset keeps pitch (C-H2-23). The controller reaches exactly two things: slot
+0's node matrices, and the direction the local player's own firing helper
+returns. It reaches no camera field, no observer field and no XInput byte.
+
+**Still open.** The left hand rides the gun rigidly, as authored. Putting it on
+the LEFT controller independently needs Halo 2's own first-person node identity
+(which of slot 0's 42 nodes are the left wrist/forearm/upperarm chain), which no
+Halo 2 evidence in this repository establishes yet. Do not infer it from Halo 3,
+Reach or Halo 4 node names or indices.

@@ -520,6 +520,36 @@ namespace
         g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // C-H2-46. THE one first-person carrier, for every consumer.
+    //
+    // The visible hands/gun mesh, the VR crosshair the compositor draws on
+    // the hand ray, and the bullet direction must all be built from the SAME
+    // controller sample with the SAME trim. C-H2-43 and C-H2-44 did not: the
+    // mesh came from VR_GetAimPose with the gun_forward_m trim while the shot
+    // came from the presented reticle pose with no trim, so the bullets did
+    // not follow the gun the player was pointing. One builder now serves both.
+    //
+    // VR_GetAimPose is the shared, mount-calibrated aim pose (gun_yaw_deg /
+    // gun_pitch_deg / gun_roll_deg and two-handed aim are already folded into
+    // it), and it is the same pose the compositor draws the VR crosshair
+    // from, so mesh, crosshair and bullet agree by construction.
+    bool BuildFirstPersonCarrier(
+        const Halo2CameraBasis& renderCamera,
+        Halo2CameraBasis& carrier) noexcept
+    {
+        float headOrientation[4]{}, headPosition[3]{};
+        float aimOrientation[4]{}, aimPosition[3]{};
+        if (!VR_GetHeadPose(headOrientation, headPosition) ||
+            !VR_GetAimPose(aimOrientation, aimPosition))
+        {
+            return false;
+        }
+        return Halo2BuildControllerCarrier(
+            renderCamera, headOrientation, headPosition, aimOrientation,
+            aimPosition, Game_GetWorldScale(),
+            std::clamp(g_config.gun_forward_m, -0.3f, 0.5f), carrier);
+    }
+
     // E-H2-32 (C-H2-37): the re-anchor. Normally the interpolation reset holds
     // the weapon exactly at the witnessed tick's placement; C-H2-41 keeps the
     // banks live only for floaty hands. This detour runs at the per-frame read
@@ -649,23 +679,15 @@ namespace
                     bool ok = false;
                     __try
                     {
+                        // C-H2-46: only first-person slot 0 - the authored
+                        // hands and the gun mesh they hold - is ever moved.
+                        // No body, no other slot, no world geometry.
                         const bool floaty = slot == 0 &&
                             Game_Halo2ControllerAimActive();
                         if (floaty)
                         {
-                            float headOrientation[4]{}, headPosition[3]{};
-                            float aimOrientation[4]{}, aimPosition[3]{};
                             Halo2CameraBasis carrier{};
-                            ok = VR_GetHeadPose(
-                                     headOrientation, headPosition) &&
-                                VR_GetAimPose(aimOrientation, aimPosition) &&
-                                Halo2BuildControllerCarrier(
-                                    pass.frame, headOrientation, headPosition,
-                                    aimOrientation, aimPosition,
-                                    Game_GetWorldScale(),
-                                    std::clamp(
-                                        g_config.gun_forward_m, -0.3f, 0.5f),
-                                    carrier) &&
+                            ok = BuildFirstPersonCarrier(pass.frame, carrier) &&
                                 Halo2PlaceFirstPersonSlotOnController(
                                     reinterpret_cast<float*>(*nodesOut),
                                     *countOut, pass.frame, carrier,
@@ -870,26 +892,16 @@ namespace
                     __leave;
                 }
 
+                // C-H2-46: the SAME carrier the visible mesh is drawn on
+                // (BuildFirstPersonCarrier), so the bullet leaves along the
+                // gun the player is pointing and passes through the VR
+                // crosshair drawn on that same ray.
                 Halo2ObserverPosePublication publication{};
-                float headOrientation[4]{}, headPosition[3]{};
-                float reticleOrientation[4]{}, reticlePosition[3]{};
-                uint64_t reticleSampleMs = 0;
                 Halo2CameraBasis carrier{};
-                const uint64_t nowMs = GetTickCount64();
                 if (Halo2Observer6Dof_ReadPublishedPose(publication) &&
                     publication.generation ==
                         g_generation.load(std::memory_order_acquire) &&
-                    VR_GetHeadPose(headOrientation, headPosition) &&
-                    VR_GetPresentedReticleAimPose(
-                        reticleOrientation, reticlePosition, reticleSampleMs) &&
-                    reticleSampleMs != 0 &&
-                    nowMs >= reticleSampleMs &&
-                    nowMs - reticleSampleMs <= 500 &&
-                    Halo2BuildControllerCarrier(
-                        publication.tracked, headOrientation, headPosition,
-                        reticleOrientation, reticlePosition,
-                        Game_GetWorldScale(), 0.0f,
-                        carrier))
+                    BuildFirstPersonCarrier(publication.tracked, carrier))
                 {
                     const float range = std::clamp(
                         g_config.crosshair_distance_m, 2.0f, 50.0f) *
@@ -1520,6 +1532,27 @@ namespace
                                         kHalo2FirstPersonNodeAxesOffset),
                                     static_cast<unsigned>(
                                         kHalo2FirstPersonNodePositionOffset));
+                                if (kHalo2ControllerOwnedAimEnabled)
+                                {
+                                    LOG("Halo 2 floating hands ARMED "
+                                        "(C-H2-46): first-person slot 0 only "
+                                        "- the authored hands and the gun "
+                                        "mesh they hold - rides the right "
+                                        "controller through one shared "
+                                        "carrier (gun_forward_m %.3f m, "
+                                        "gun_scale %.2f, mount trim "
+                                        "%.1f/%.1f/%.1f deg). floating_hands "
+                                        "in halomccvr.cfg is %d and is NOT "
+                                        "consulted, as in Reach. No body, no "
+                                        "other slot, no world geometry, no "
+                                        "XInput, no camera field is touched",
+                                        g_config.gun_forward_m,
+                                        g_config.gun_scale,
+                                        g_config.gun_yaw_deg,
+                                        g_config.gun_pitch_deg,
+                                        g_config.gun_roll_deg,
+                                        g_config.floating_hands ? 1 : 0);
+                                }
                             }
                         }
                     }
@@ -1547,10 +1580,11 @@ namespace
         // H2EK-matched output-user iterator and player-update identities that
         // prove the local-player guard's two global pointers and datum layout.
         //
-        // C-H2-45: the whole controller-owned aim experiment is reverted after
-        // three headset rejections, so the detour is not installed at all. Not
-        // installing it is louder and cheaper than installing a hot firing
-        // detour whose apply path can never run.
+        // C-H2-45 stopped installing it while the experiment was reverted;
+        // C-H2-46 re-arms it, because "the bullets follow the crosshair" is
+        // exactly what this detour delivers. It is still the ONLY thing the
+        // controller is allowed to steer besides the visible mesh: no XInput,
+        // no observer field, no camera field.
         uintptr_t aimMatch = 0;
         uint32_t aimMatchCount = 0;
         uintptr_t userIteratorMatch = 0;
@@ -1570,9 +1604,9 @@ namespace
             "33 FF 84 C0 0F 85 D9 00 00 00 48 8B 15 D7 D0 7D 00";
         if (!kHalo2ControllerOwnedAimEnabled)
         {
-            LOG("Halo 2 direct weapon aim NOT installed: C-H2-45 reverted the "
-                "rejected controller-owned aim (C-H2-41/43/44). The right "
-                "stick turns the character and camera, the headset owns "
+            LOG("Halo 2 direct weapon aim NOT installed: the controller-owned "
+                "first-person feature is disarmed at its build switch. The "
+                "right stick turns the character and camera, the headset owns "
                 "pitch, and hand motion reaches neither the camera nor the "
                 "weapon");
         }

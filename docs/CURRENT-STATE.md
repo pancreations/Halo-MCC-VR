@@ -1,51 +1,57 @@
 # Current state
 
-> **HALO 2 C-H2-45 DEPLOYED - REVERT; HEADSET VALIDATION REQUIRED - 2026-08-22.**
-> The player rejected C-H2-44 ("the last build had no fixes, it was a
-> hallucination") and C-H2-43 ("the one before had the same issue"), with the
-> same report that rejected C-H2-41: turning the character/camera with the
-> right stick had been taken away and given to controller motion, which is
-> "nothing like the other Halos". C-H2-45 therefore reverts the whole
-> controller-owned Halo 2 aim experiment (C-H2-41, C-H2-43 and C-H2-44) and
-> returns Halo 2 to the accepted C-H2-40 experience.
+> **HALO 2 C-H2-46 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-23.**
+> Halo 2 floating hands, on request: first-person slot 0 - the authored hands
+> and the gun mesh they hold, and nothing else - rides the right VR controller,
+> and the bullets follow it. Re-armed from C-H2-45's revert with the two defects
+> that sank C-H2-43 and C-H2-44 fixed. Evidence is E-H2-39.
 >
-> What C-H2-45 changes, all through one switch
-> (`kHalo2ControllerOwnedAimEnabled` in `src/common/halo2_render_logic.h`) plus
-> the withdrawn `TitleCapability_ControllerAim` grant:
+> - **One carrier for everything.** `BuildFirstPersonCarrier` builds the mesh
+>   placement, and the firing helper's returned direction, from the SAME
+>   controller sample with the SAME trim - and it is the same pose the
+>   compositor draws the VR crosshair from. C-H2-43/44 built the mesh from
+>   `VR_GetAimPose` + `gun_forward_m` and the shot from the presented reticle
+>   pose + no trim, so shots did not follow the gun. A core test pins that a
+>   shot from the carrier's origin travels along the carrier's forward at 2 m,
+>   10 m and 50 m.
+> - **No mirrored carrier.** C-H2-44's `relativeOrientation[0] = -x` stays
+>   deleted. The preserved C-H2-44 frame dump shows it tilted the rifle far off
+>   the hand, and E-H2-39 derives the unmirrored mapping axis by axis.
+> - **Turning is untouched.** `Game_ComputeAimStick` refuses Halo 2 before any
+>   capability is read, so the physical right stick keeps ordinary
+>   character/camera turning and the headset keeps pitch (C-H2-23). The
+>   controller reaches slot 0's node matrices and the local player's shot
+>   direction. Nothing else - no camera field, no observer field, no XInput.
+> - **Scope.** Only slot 0. No body, no other slot, no world geometry. AI and
+>   remote units keep their stock shot direction (output-user-0 unit guard,
+>   E-H2-37). `floating_hands` in `halomccvr.cfg` is not consulted, exactly as
+>   in Reach; the log names that and the live gun trims when the feature arms.
 >
-> - The physical right stick turns the character and camera exactly as it did
->   at C-H2-40; the headset still owns pitch (C-H2-23). Halo 2 can never
->   synthesize its own right stick again: `Game_ComputeAimStick` returns false
->   for Halo 2 before any capability is consulted.
-> - The first-person weapon is no longer placed on the controller. The accepted
->   C-H2-40 per-eye re-anchor and the interpolation reset both run again on
->   every pass, so the gun is the classic pinned gun the player accepted.
-> - The E-H2-37 firing-helper detour at `+0x8F0F70` is **not installed at all**,
->   and says so in `HaloMCCVR.log`. Shots return to the stock native aim.
-> - C-H2-44's `relativeOrientation[0] = -relativeOrientation[0]` is deleted. It
->   was not an inverted pitch: negating one quaternion term produces
->   `F * R^-1 * F`, a mirrored inverse rotation that also reverses how the
->   hand's yaw and roll compose. It was reasoned, never measured, and the
->   headset reported no change from it.
+> Not in this candidate: the left hand rides the gun rigidly as authored.
+> Putting it on the LEFT controller independently needs Halo 2's own
+> first-person node identity, which no Halo 2 evidence here establishes yet.
 >
-> Nothing about Halo 2 stereo, 6DOF, room scale, the virtual gamepad, rumble or
-> the renderer switch is touched. The rejected code stays compiled and inert
-> (per `AGENTS.md`), so the floaty-gun goal can be resumed one understood,
-> headset-tested step at a time.
->
-> | C-H2-45 deployed identity | Value |
+> | C-H2-46 deployed identity | Value |
 > | --- | --- |
-> | Source | `e9d5db45d09ad38e2b55fd38f926fe11b8a2afcb` |
-> | Package | `e9d5db4-halo2-c45-revert-controller-aim-20260823-050259894Z` |
-> | `HaloMCCVR.dll` | `D12D84ED403D9F76EFA3468332FB8AB1F6D5E3207280335799A88D1D0EA13A8E` |
-> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Source | `PENDING` |
+> | Package | `PENDING` |
+> | `HaloMCCVR.dll` | `PENDING` |
+> | `HaloMCCVRLauncher.exe` | `PENDING` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
 > | Verification | Release build PASS; core tests PASS |
 >
-> Headset test: in both Anniversary and Classic, confirm that the physical
-> right stick turns the character and camera normally again, that looking up
-> and down is the headset's, and that moving the controller does not move the
-> camera or the gun. Record edition, OpenXR runtime, headset, and refresh rate.
+> Headset test, in both Anniversary and Classic: the right stick still turns
+> the character and camera normally; the hands and gun follow the right
+> controller; the gun points where the controller points; and fired shots land
+> on the VR crosshair floating on the gun's line. Record edition, OpenXR
+> runtime, headset and refresh rate.
+
+> **HALO 2 C-H2-45 - the revert C-H2-46 builds on - 2026-08-23.**
+> Source `e9d5db4`, DLL `D12D84ED403D9F76EFA3468332FB8AB1F6D5E3207280335799A88D1D0EA13A8E`.
+> It disarmed the whole controller-owned aim experiment behind one switch and
+> returned Halo 2 to C-H2-40 behavior. Not headset-tested: C-H2-46 supersedes
+> it at the player's request for the floating-hands feature. Its permanent
+> keeper is that `Game_ComputeAimStick` refuses Halo 2 unconditionally.
 
 > **HALO 2 C-H2-44 REJECTED BY HEADSET - 2026-08-22.**
 > Source `0c11a3d`, DLL `415737A3F9A2A7D8E97B9FA263AD3913F91A0E6DA6FA38E7F5FE251577844ADF`.

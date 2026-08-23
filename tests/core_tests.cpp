@@ -5899,7 +5899,7 @@ int main()
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics;
+        TitleCapability_Haptics | TitleCapability_ControllerAim;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6101,15 +6101,13 @@ int main()
                   GameTitle::Halo3, false),
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
-    // C-H2-45 withdraws controller aim for the third and final time. C-H2-41
-    // (XInput aim stick), C-H2-43 (firing helper + controller-placed palette)
-    // and C-H2-44 (carrier sign flip) were each rejected in the headset with
-    // the same report: the right stick no longer turned the character/camera
-    // like the other Halos, and hand motion moved the view. Aim, HUD, arm IK
-    // and theatre stay denied until Halo 2 has a headset-accepted path.
+    // C-H2-46 grants controller aim for the floating hands/gun mesh and the
+    // bullet direction only; the right stick keeps ordinary camera turning
+    // because Game_ComputeAimStick refuses Halo 2 unconditionally. HUD, arm IK
+    // and theatre stay denied until each has Halo 2 evidence.
     constexpr uint32_t halo2DeniedCapabilities =
-        TitleCapability_ControllerAim | TitleCapability_Hud |
-        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
+        TitleCapability_Hud | TitleCapability_ArmIk |
+        TitleCapability_CutsceneTheater;
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedAdmission =
         TitleCapability_ControllerInput;
@@ -6190,12 +6188,12 @@ int main()
             halo2Runtime.Resolve(101, policy);
 #if HALOMCCVR_HALO2_STEREO6DOF
         // This helper's explicit mask strips only Stereo and RoomScale; the
-        // declared ControllerInput and Haptics bits survive it like
-        // RuntimeModes does (the worker applies the fuller
+        // declared ControllerInput, ControllerAim and Haptics bits survive it
+        // like RuntimeModes does (the worker applies the fuller
         // kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-            TitleCapability_Haptics;
+            TitleCapability_ControllerAim | TitleCapability_Haptics;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;
@@ -7540,9 +7538,38 @@ int main()
                       raisedCarrier.forward[2] > 0.4f,
                 "C-H2-45 keeps the controller carrier an unmirrored "
                 "head-relative rotation (C-H2-44's sign flip is gone)");
-            Check(!kHalo2ControllerOwnedAimEnabled,
-                "C-H2-45 keeps the rejected controller-owned Halo 2 aim "
-                "(C-H2-41/43/44) compiled but disarmed at its one switch");
+            Check(kHalo2ControllerOwnedAimEnabled,
+                "C-H2-46 arms Halo 2's controller-owned first-person mesh and "
+                "shot direction at its one build switch");
+
+            // C-H2-46's whole point: mesh, VR crosshair and bullet share ONE
+            // carrier. A shot leaving the carrier's own origin must therefore
+            // travel exactly along the carrier's forward - the direction the
+            // drawn gun points and the crosshair sits on - at any range.
+            {
+                Halo2CameraBasis oneCarrier = yawedCarrier;
+                oneCarrier.position[0] = 3.0f;
+                oneCarrier.position[1] = -2.0f;
+                oneCarrier.position[2] = 7.0f;
+                float alongGun[3]{};
+                bool agrees = true;
+                for (float range : {2.0f, 10.0f, 50.0f})
+                {
+                    if (!Halo2BuildControllerShotDirection(
+                            oneCarrier.position, oneCarrier, range, alongGun))
+                    {
+                        agrees = false;
+                        break;
+                    }
+                    for (int axis = 0; axis < 3; ++axis)
+                        if (!nearlyEqual(
+                                alongGun[axis], oneCarrier.forward[axis]))
+                            agrees = false;
+                }
+                Check(agrees,
+                    "C-H2-46 sends the bullet along the same carrier forward "
+                    "the hands, gun mesh and VR crosshair are built from");
+            }
 
             const float shotOrigin[3] = {0.0f, 1.0f, 0.0f};
             Halo2CameraBasis shotCarrier = yawedCarrier;

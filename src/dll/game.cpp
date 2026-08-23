@@ -116,14 +116,14 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-45: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
-    // stays withdrawn for Halo 2 - it is the one bit that armed the rejected
-    // C-H2-41/43/44 controller-owned aim, gun placement and shot direction.
-    // Halo 2 keeps the accepted C-H2-40 experience: the physical right stick
-    // turns the character and camera, the headset owns pitch, and no hand
-    // motion reaches the camera, the weapon assembly or XInput.
+    // C-H2-46: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
+    // owns the visible first-person hands/gun mesh and the bullet direction
+    // only. The physical right stick still turns the character and camera and
+    // the headset still owns pitch, because Game_ComputeAimStick refuses
+    // Halo 2 before this mask is ever consulted.
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
+        TitleCapability_ControllerAim |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |

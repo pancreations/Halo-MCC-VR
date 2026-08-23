@@ -1056,15 +1056,22 @@ inline bool Halo2BuildTrackedCenterCamera(
     return true;
 }
 
-// C-H2-45. The master switch for the controller-owned Halo 2 aim experiment
-// (C-H2-41 XInput aim stick, C-H2-43 firing-helper shot direction, C-H2-43
-// controller-placed first-person palette, and C-H2-44's carrier sign change).
-// All three candidates were rejected in the headset with the same report: the
-// right stick stopped turning the character/camera like every other Halo in
-// this mod, and hand motion moved the view. False returns Halo 2 to the
-// accepted C-H2-40 behavior. The code below stays compiled and inert so the
-// experiment can be resumed one understood, headset-tested step at a time.
-inline constexpr bool kHalo2ControllerOwnedAimEnabled = false;
+// The master switch for Halo 2's controller-owned first-person feature: the
+// floating hands + gun mesh on the right controller, and the bullet direction
+// that follows them.
+//
+// History. C-H2-41 also synthesized the right stick from the hand ray, which
+// took ordinary character/camera turning away from the player and was rejected.
+// C-H2-43/C-H2-44 stopped doing that (`Game_ComputeAimStick` refuses Halo 2
+// unconditionally, and that refusal is permanent) but were rejected too: the
+// C-H2-44 frame dump shows its `relativeOrientation[0] = -x` mirror had the
+// gun tilted far off the hand, and the visible mesh and the bullet were built
+// from two DIFFERENT poses, so shots did not follow the gun.
+//
+// C-H2-46 re-arms the feature with those two defects fixed: no mirror, and one
+// carrier (`BuildFirstPersonCarrier`) shared by the mesh, the VR crosshair and
+// the shot. It still may never touch XInput, the observer, or a camera field.
+inline constexpr bool kHalo2ControllerOwnedAimEnabled = true;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
