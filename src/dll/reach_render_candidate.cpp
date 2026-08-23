@@ -75,8 +75,8 @@ void ReachRenderCandidate_ColdPoll(
     }
 
     // Generation is worker-owned and cannot change until the next
-    // TitleAdapter_PollLoaded call on this thread. The HMODULE pin remains
-    // owned by this scope through this final mapping check and publication.
+    // TitleAdapter_PollLoaded call on this thread. The non-owning HMODULE
+    // identity remains in scope through this final mapping check/publication.
     if (complete && !modulePin.IsCurrent(moduleBase))
     {
         complete = false;

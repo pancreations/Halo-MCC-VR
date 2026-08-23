@@ -148,8 +148,9 @@ stale serial fails immediately. Present performs only the
 bounded identity/field snapshot plus `GetBuffer(0)`, device/descriptor capture,
 and COM retention described above; eye allocation and proof publication remain
 on the worker. Title teardown disables all six Reach hooks, verifies callback and
-MinHook relay/wrapper RIP quiescence, then removes trampolines and releases the
-retained title module; a failed proof retains state and retries without rearming.
+MinHook relay/wrapper RIP quiescence, then removes trampolines while MCC still
+owns the current title mapping. The mod never changes the game-DLL loader
+refcount; a failed proof retains hook state and retries without rearming.
 
 ## Verify local Reach evidence
 

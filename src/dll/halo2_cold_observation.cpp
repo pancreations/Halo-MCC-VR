@@ -480,24 +480,17 @@ namespace
     class Halo2ModulePin
     {
     public:
-        ~Halo2ModulePin()
-        {
-            if (m_module)
-                FreeLibrary(m_module);
-        }
+        ~Halo2ModulePin() = default;
 
         bool Acquire(uintptr_t expectedBase) noexcept
         {
             if (!expectedBase || !GetModuleHandleExW(
-                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                     reinterpret_cast<LPCWSTR>(expectedBase), &m_module) ||
                 reinterpret_cast<uintptr_t>(m_module) != expectedBase)
             {
-                if (m_module)
-                {
-                    FreeLibrary(m_module);
-                    m_module = nullptr;
-                }
+                m_module = nullptr;
                 return false;
             }
             return true;

@@ -3123,3 +3123,52 @@ complete non-hand collapse, separate-gun right-wrist motion, stock interpolation
 reset policy, Release compilation, core tests, and the Reach consistency gate.
 Dual-wield slot 1 remains outside the ownership claim because E-H2-41 proves it
 has different culling semantics.
+
+## E-H2-47 (C-H2-53 rejection / C-H2-54): MCC owns every game-DLL lifetime - 2026-08-23
+
+C-H2-53 is rejected. The preserved Steam run is
+`out/test-runs/faac277-halo2-c53-rejected-consecutive-load-20260823-1712/HaloMCCVR.log`,
+SHA-256 `DC58753D19894D152B9110CE5AC9D29D2278A0B7D1E7F306BFADFAD3A5E8A71C`.
+It identifies source `faac277c9f41d6494d32c083604c74d66a102d1e`. At the first
+level exit the game-time singleton became disposed/uninitialized and the C-H2-53
+observer/Anniversary leases parked. When Halo 2 was selected again,
+`TitleRuntimeState` still reported Halo 2 generation 1: the physical DLL never
+became absent because the mod's session-long `HMODULE` references prevented
+MCC's unload. The replacement level never established coherent game time or
+presentation. WER then recorded `0xc0000005` at `halo2.dll+0xDE63E`.
+
+The same run positively executes C-H2-52: 14,044 final-packet builder calls,
+3,679 owned packets, 47,827 right nodes, 47,827 left nodes, 18,395 collapsed
+nodes, 12,638 gun nodes, and 62/62 direct-shot substitutions. Therefore the
+aim implementation stays enabled; only C-H2-53's loader-lifetime behavior is
+reverted by commit `f182e8c`.
+
+The cross-title source audit finds the same unsafe ownership primitive in every
+newer engine core: ODST, Reach, Halo 4 and all enabled Halo 2 hook groups called
+`GetModuleHandleExW(FROM_ADDRESS)` without `UNCHANGED_REFCOUNT`, retained the
+returned handle, and called `FreeLibrary` during teardown. H2, Reach and Halo 4
+cold/preflight paths also temporarily changed the refcount. The existing Reach
+load-bounce evidence in `game.cpp` independently records the mechanism: a mod
+reference held across MCC's requested unload defers the actual unload to the
+mod's later `FreeLibrary`, racing the loader. Halo 3 did not hold that reference,
+but retained MinHook records beyond the level-liveness boundary and attempted
+to clean them only after a later mapping appeared.
+
+C-H2-54 makes the title mapping an exact-base, non-owning identity. Every
+`GetModuleHandleExW(FROM_ADDRESS)` used for a game DLL now includes
+`GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT`, and no title lifecycle calls
+`FreeLibrary`. Hook retirement instead uses the already proven common
+level-liveness boundary, which the rejected H2 log measured before module-set
+ambiguity/unload. H2 observer, Classic/Anniversary stereo, packet/firing hooks
+and renderer guard, ODST, Reach, Halo 4, and Halo 3 all retire their hook epoch
+while the current mapping remains owned by MCC. Existing callback counters and
+quiescence rules still protect trampoline removal; existing stock-state restore
+and next-level readiness gates still run. A mapping that unexpectedly vanished
+is never written through.
+
+This is one shared loader-lifecycle correction, not a feature toggle. C-H2-52
+hands/gun/crosshair-shot behavior and all other title features remain enabled
+and reinstall after the next level proves live. Offline verification at this
+stage: Release build PASS, core tests PASS, Reach consistency gate PASS, and
+diff check PASS. Runtime acceptance remains pending for consecutive same-title
+loads plus the normal shared-change Halo 3 regression.

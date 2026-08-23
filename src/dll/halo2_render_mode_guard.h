@@ -16,7 +16,7 @@
 // the evidence that was read at that instant.
 bool Halo2RenderModeGuard_Poll(
     uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
-    bool activeAndRange, bool coldPassed) noexcept;
+    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept;
 
 bool Halo2RenderModeGuard_Installed() noexcept;
 

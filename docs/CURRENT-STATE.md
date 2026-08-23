@@ -1,6 +1,33 @@
 # Current state
 
-> **HALO 2 C-H2-53 AIM + CONSECUTIVE-MISSION LOADING FIX INSTALLED - 2026-08-23.**
+> **C-H2-53 REJECTED; SHARED CONSECUTIVE-LOAD FIX C-H2-54 IMPLEMENTED,
+> UNPACKAGED - 2026-08-23.** The consecutive-level failure is not Halo 2- or
+> mission-specific. The rejected Steam C-H2-53 run unloaded one Halo 2 level,
+> kept `halo2.dll` visible as generation 1 because the mod's new session lease
+> held the Windows loader reference count, then faulted at
+> `halo2.dll+0xDE63E` when Halo 2 was selected again. The same refcount-owning
+> pattern existed in the ODST, Reach and Halo 4 hook cores and in H2/Reach/H4
+> preflights; Halo 3 separately retained MinHook records until after its level
+> boundary. This matches the player's broader report that the same game fails
+> when entered consecutively while changing games can work.
+>
+> Commit `f182e8c` reverts the failed C-H2-53 lease as required. C-H2-54 keeps
+> C-H2-52's live final-packet hand/gun ownership and exact presented-crosshair
+> projectile aim, and changes only shared title-DLL lifecycle. Exact-base checks
+> now use `GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT`; no title hook or cold
+> proof increments or later releases MCC's game-DLL reference count. Halo 3,
+> ODST, Reach, Halo 4 and every enabled Halo 2 hook epoch retire when the common
+> level-liveness gate closes, during the measured window in which the mapping is
+> still current. Their existing callback-quiescence, native-state restoration,
+> readiness proof and reinstall paths remain active. No camera, aiming, hands,
+> stereo, HUD, input or other player feature is disabled.
+>
+> Incremental Release build PASS, `halomccvr_core_tests` PASS, Reach consistency
+> gate PASS and `git diff --check` PASS. This block is not an accepted-build
+> pointer and has no deployed identity yet; packaging and automatic verified
+> installation to both editions follow the behavioral commit.
+
+> **REJECTED CLAIM - HALO 2 C-H2-53 AIM + CONSECUTIVE-MISSION LOADING FIX INSTALLED - 2026-08-23.**
 > C-H2-52 replaces the non-executing C-H2-50 generic-composer experiment with
 > the official-H2EK `first_person_weapons.cpp` final render-packet boundary,
 > verified in retail at `halo2.dll+0x8181F0`. It runs after Halo 2 has authored,
@@ -22,7 +49,7 @@
 > leave this optional hands/gun/shot transaction stock for that frame without
 > disarming camera, stereo or OpenXR.
 >
-> C-H2-53 fixes the consecutive-mission lifecycle independently. Observer plus
+> C-H2-53 attempted to fix the consecutive-mission lifecycle independently. Observer plus
 > packet/firing hooks, Anniversary stereo, Classic stereo, and the renderer
 > switch guard each retain one pinned physical `halo2.dll` lease for the MCC
 > session. When MCC temporarily withdraws title/level/cold-proof/renderer
@@ -42,9 +69,9 @@
 > `halomccvr_core_tests`; Reach consistency gate; producer/installer manifest
 > contract; and separate installed-DLL hash verification in both editions all
 > PASS. MCC was not launched and neither existing `halomccvr.cfg` was changed.
-> The accepted-build pointer remains C-H2-40 until an explicit headset result,
-> but C-H2-53 is the complete new build containing both requested fixes; no
-> requested feature was disabled.
+> The headset/runtime result rejected this lifecycle direction. Its installed
+> identity below is preserved only as failure evidence and must not be treated
+> as a fix or reinstalled.
 >
 > | C-H2-53 deployed identity | Value |
 > | --- | --- |

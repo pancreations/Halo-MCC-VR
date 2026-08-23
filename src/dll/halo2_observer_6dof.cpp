@@ -1840,11 +1840,10 @@ namespace
         g_referenceValid.store(false, std::memory_order_release);
         g_recenterRequested.store(true, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
-        if (g_moduleReference)
-        {
-            FreeLibrary(g_moduleReference);
-            g_moduleReference = nullptr;
-        }
+        // Non-owning identity only. Holding a loader reference here prevents
+        // MCC from unloading halo2.dll between levels and makes the eventual
+        // release race the next load.
+        g_moduleReference = nullptr;
         if (reason)
             LOG("Halo 2 observer 6DOF removed (%s); stock camera restored",
                 reason);
@@ -1860,7 +1859,8 @@ namespace
 
         HMODULE module = nullptr;
         if (!GetModuleHandleExW(
-                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                 reinterpret_cast<LPCWSTR>(base), &module) ||
             !module)
         {
@@ -1879,7 +1879,6 @@ namespace
                 (matchCount == 1 && match != base +
                      kHalo2ObserverFinalTransformRva)
                     ? " but moved from its pinned RVA" : "");
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -1897,7 +1896,6 @@ namespace
                 matrixSlot ? static_cast<unsigned long long>(matrixSlot - base)
                            : 0ull,
                 kFinalTransformMatrixSlotRva);
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -1908,7 +1906,6 @@ namespace
             LOG("Halo 2 observer 6DOF WITHHELD: the observer result array was "
                 "not signature-proven for this generation; the stock camera "
                 "is untouched");
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -1925,7 +1922,6 @@ namespace
                 static_cast<int>(created));
             if (created == MH_OK)
                 (void)MH_RemoveHook(target);
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }

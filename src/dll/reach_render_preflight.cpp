@@ -520,12 +520,11 @@ bool ReachLoadedImageModulePin::Acquire(
     HMODULE module = nullptr;
     if (!expectedBase ||
         !GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             reinterpret_cast<LPCWSTR>(expectedBase), &module) ||
         reinterpret_cast<uintptr_t>(module) != expectedBase)
     {
-        if (module)
-            FreeLibrary(module);
         return false;
     }
     m_module = module;
@@ -534,11 +533,7 @@ bool ReachLoadedImageModulePin::Acquire(
 
 void ReachLoadedImageModulePin::Reset() noexcept
 {
-    if (m_module)
-    {
-        FreeLibrary(reinterpret_cast<HMODULE>(m_module));
-        m_module = nullptr;
-    }
+    m_module = nullptr;
 }
 
 const char* ReachRender_LoadedImageFailureName(

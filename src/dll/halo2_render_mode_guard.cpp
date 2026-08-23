@@ -177,11 +177,8 @@ namespace
         g_original.store(0, std::memory_order_release);
         g_moduleBase.store(0, std::memory_order_release);
         g_generation.store(0, std::memory_order_release);
-        if (g_moduleReference)
-        {
-            FreeLibrary(g_moduleReference);
-            g_moduleReference = nullptr;
-        }
+        // Non-owning identity; MCC alone owns the title DLL lifetime.
+        g_moduleReference = nullptr;
         if (reason)
             LOG("Halo 2 renderer switch guard removed (%s)", reason);
         return true;
@@ -203,7 +200,8 @@ namespace
             return false;
         }
         HMODULE module = nullptr;
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                                 reinterpret_cast<LPCWSTR>(base), &module) || !module)
             return false;
         void* trampoline = nullptr;
@@ -216,7 +214,6 @@ namespace
                 static_cast<int>(created));
             if (created == MH_OK)
                 (void)MH_RemoveHook(reinterpret_cast<void*>(applier));
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -245,10 +242,11 @@ namespace
 
 bool Halo2RenderModeGuard_Poll(
     uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
-    bool activeAndRange, bool coldPassed) noexcept
+    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept
 {
     const bool desired = moduleBase && generation &&
-        moduleSize == kHalo2RetailImageSize && activeAndRange && coldPassed;
+        moduleSize == kHalo2RetailImageSize && activeAndRange &&
+        levelRunning && coldPassed;
     const bool foreignModule = g_target &&
         (g_generation.load(std::memory_order_acquire) != generation ||
          g_moduleBase.load(std::memory_order_acquire) != moduleBase);
@@ -256,7 +254,8 @@ bool Halo2RenderModeGuard_Poll(
     {
         if (g_target)
             (void)Remove(foreignModule ? "module generation changed"
-                                       : "title no longer eligible");
+                : (!levelRunning ? "level liveness closed"
+                                 : "title no longer eligible"));
         if (generation != g_rejectedGeneration)
             g_rejectedGeneration = 0;
         return false;
