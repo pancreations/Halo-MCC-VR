@@ -2537,6 +2537,8 @@ struct Halo2FirstPersonArmBinding
     int rightWrist = -1;
     uint32_t count = 0;
     uint64_t leftSubtree = 0;
+    uint64_t rightSubtree = 0;
+    uint64_t armAncestors = 0;
 };
 
 // Pure, allocation-free, and deliberately unforgiving: anything that is not the
@@ -2594,7 +2596,8 @@ inline bool Halo2BuildFirstPersonArmBinding(
         }
     }
 
-    uint64_t mask = 1ull << left;
+    uint64_t leftMask = 1ull << left;
+    uint64_t rightMask = 1ull << right;
     for (uint32_t index = 0; index < count; ++index)
     {
         int node = parents[index];
@@ -2602,20 +2605,44 @@ inline bool Halo2BuildFirstPersonArmBinding(
         {
             if (node == left)
             {
-                mask |= 1ull << index;
+                leftMask |= 1ull << index;
+                break;
+            }
+            if (node == right)
+            {
+                rightMask |= 1ull << index;
                 break;
             }
             node = parents[node];
         }
     }
-    if (mask & (1ull << right))
+    if ((leftMask & rightMask) != 0)
+        return false;
+
+    // The only geometry that spans the stock body anchor to the independently
+    // tracked wrists is the ancestry between each wrist and the root. Exclude
+    // both wrists and exclude the root itself: camera_control and unrelated
+    // control nodes are neither transformed nor collapsed at this boundary.
+    uint64_t armMask = 0;
+    for (int wrist : {left, right})
+    {
+        int node = parents[wrist];
+        while (node >= 0 && parents[node] >= 0)
+        {
+            armMask |= 1ull << node;
+            node = parents[node];
+        }
+    }
+    if ((armMask & (leftMask | rightMask)) != 0)
         return false;
 
     out.valid = true;
     out.leftWrist = left;
     out.rightWrist = right;
     out.count = count;
-    out.leftSubtree = mask;
+    out.leftSubtree = leftMask;
+    out.rightSubtree = rightMask;
+    out.armAncestors = armMask;
     return true;
 }
 
@@ -2950,8 +2977,50 @@ inline bool Halo2ComputeCarrierDelta(
     const Halo2CameraBasis& trackedCamera, const Halo2CameraBasis& carrier,
     float rotation[9], float translation[3]) noexcept
 {
-    if (!Halo2BuildWorldDeltaRotation(trackedCamera, carrier, rotation))
+    if (!Halo2ValidateCameraBasis(trackedCamera) ||
+        !Halo2ValidateCameraBasis(carrier))
         return false;
+
+    // These nodes are camera-relative, so the required rotation is H^T C:
+    // controller axes expressed in the tracked-camera frame. The old code
+    // called Halo2BuildWorldDeltaRotation, which returns C H^T. That is a
+    // WORLD-space delta and only appears correct while H is the identity.
+    // After a body/camera turn it conjugates the controller rotation through
+    // the old forward frame, producing the headset-reported tracking failure.
+    float trackedAxes[3][3]{};
+    float carrierAxes[3][3]{};
+    const Halo2CameraBasis* const cameras[2] = {&trackedCamera, &carrier};
+    float (*const axes[2])[3] = {trackedAxes, carrierAxes};
+    for (int cameraIndex = 0; cameraIndex < 2; ++cameraIndex)
+    {
+        const Halo2CameraBasis& camera = *cameras[cameraIndex];
+        axes[cameraIndex][0][0] =
+            camera.forward[1] * camera.up[2] -
+            camera.forward[2] * camera.up[1];
+        axes[cameraIndex][0][1] =
+            camera.forward[2] * camera.up[0] -
+            camera.forward[0] * camera.up[2];
+        axes[cameraIndex][0][2] =
+            camera.forward[0] * camera.up[1] -
+            camera.forward[1] * camera.up[0];
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            axes[cameraIndex][1][axis] = camera.forward[axis];
+            axes[cameraIndex][2][axis] = camera.up[axis];
+        }
+    }
+    for (int column = 0; column < 3; ++column)
+    {
+        for (int row = 0; row < 3; ++row)
+        {
+            float value = 0.0f;
+            for (int world = 0; world < 3; ++world)
+                value += trackedAxes[row][world] * carrierAxes[column][world];
+            if (!std::isfinite(value))
+                return false;
+            rotation[column * 3 + row] = value;
+        }
+    }
     const float worldDelta[3] = {
         carrier.position[0] - trackedCamera.position[0],
         carrier.position[1] - trackedCamera.position[1],
@@ -2978,14 +3047,11 @@ inline bool Halo2ComputeCarrierDelta(
 
 // C-H2-47: the same rigid placement, split across BOTH controllers.
 //
-// Every node outside `binding.leftSubtree` rides the right carrier exactly as
-// C-H2-46 placed the whole slot - so the gun, which the engine parents to the
-// right wrist in every shipped rig, is untouched by this change. The left
-// wrist and its descendants ride the left carrier instead. The node matrices
-// are absolute camera-relative frames (E-H2-32), not a parent-relative
-// hierarchy, so two independent rigid transforms compose correctly without
-// touching the arm nodes in between; the left arm simply spans from the body
-// to wherever the player's left hand is, which is what it should do.
+// The two exact wrist subtrees ride their respective controllers. Only the
+// proven wrist-to-root arm ancestors collapse, leaving the left hand and the
+// right hand + weapon visible without mutating root, camera_control, or any
+// unrelated control node. Moving every non-left node on the right controller
+// was C-H2-47's defect: it explicitly included both upper arms and forearms.
 inline bool Halo2PlaceFirstPersonSlotOnTwoControllers(
     float* nodes, uint32_t count, const Halo2CameraBasis& trackedCamera,
     const Halo2CameraBasis& rightCarrier, const Halo2CameraBasis& leftCarrier,
@@ -3047,19 +3113,30 @@ inline bool Halo2PlaceFirstPersonSlotOnTwoControllers(
         float* const position = node + kHalo2FirstPersonNodePositionOffset / 4;
         const bool onLeft = index < kHalo2FirstPersonPaletteCapacity &&
             (binding.leftSubtree & (1ull << index)) != 0;
-        const float scale = onLeft ? leftMeshScale : meshScale;
+        const bool onRight = index < kHalo2FirstPersonPaletteCapacity &&
+            (binding.rightSubtree & (1ull << index)) != 0;
         if (!std::isfinite(node[0]))
             return false;
-        node[0] *= scale;
         for (int axis = 0; axis < 3; ++axis)
         {
             if (!std::isfinite(position[axis]))
                 return false;
-            position[axis] *= scale;
         }
-        Halo2ReanchorFirstPersonNode(
-            node, onLeft ? leftRotation : rightRotation, zero,
-            onLeft ? leftTranslation : rightTranslation);
+        if (onLeft || onRight)
+        {
+            const float scale = onLeft ? leftMeshScale : meshScale;
+            node[0] *= scale;
+            for (int axis = 0; axis < 3; ++axis)
+                position[axis] *= scale;
+            Halo2ReanchorFirstPersonNode(
+                node, onLeft ? leftRotation : rightRotation, zero,
+                onLeft ? leftTranslation : rightTranslation);
+        }
+        else if (index < kHalo2FirstPersonPaletteCapacity &&
+                 (binding.armAncestors & (1ull << index)) != 0)
+        {
+            node[0] *= 0.0001f;
+        }
     }
     for (size_t index = 0; index < floats; ++index)
         if (!std::isfinite(work[index]))

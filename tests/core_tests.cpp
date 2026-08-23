@@ -7586,15 +7586,56 @@ int main()
                 for (uint32_t i = 7; i <= 11; ++i) expectedLeft |= 1ull << i;
                 for (uint32_t i = 17; i <= 21; ++i) expectedLeft |= 1ull << i;
                 for (uint32_t i = 27; i <= 31; ++i) expectedLeft |= 1ull << i;
+                uint64_t expectedRight = 1ull << 6;
+                for (uint32_t i = 12; i <= 16; ++i) expectedRight |= 1ull << i;
+                for (uint32_t i = 22; i <= 26; ++i) expectedRight |= 1ull << i;
+                for (uint32_t i = 32; i <= 40; ++i) expectedRight |= 1ull << i;
                 Check(built && binding.valid && binding.leftWrist == 5 &&
                           binding.rightWrist == 6 &&
-                          binding.leftSubtree == expectedLeft,
+                          binding.leftSubtree == expectedLeft &&
+                          binding.rightSubtree == expectedRight &&
+                          binding.armAncestors ==
+                              ((1ull << 1) | (1ull << 2) |
+                               (1ull << 3) | (1ull << 4)),
                     "C-H2-47 finds Halo 2's left wrist and its 15 finger nodes "
-                    "from the engine's own model flags, with no hardcoded index");
+                    "and the right hand + gun subtree from the engine's own "
+                    "model flags, with no hardcoded index");
                 Check(built && (binding.leftSubtree & (1ull << 37)) == 0 &&
-                          (binding.leftSubtree & (1ull << 6)) == 0,
-                    "C-H2-47 leaves the gun and the right wrist on the right "
-                    "controller");
+                          (binding.leftSubtree & (1ull << 6)) == 0 &&
+                          (binding.rightSubtree & (1ull << 37)) != 0 &&
+                          (binding.rightSubtree & (1ull << 1)) == 0 &&
+                          (binding.rightSubtree & (1ull << 2)) == 0,
+                    "Halo 2 keeps only the right hand and gun on the right "
+                    "controller, excluding both upper arms");
+
+                static Halo2FirstPersonSlotCache splitCache{};
+                splitCache = Halo2FirstPersonSlotCache{};
+                float splitNodes[kNodes * kHalo2FirstPersonNodeFloats]{};
+                for (uint32_t index = 0; index < kNodes; ++index)
+                {
+                    float* const matrix = splitNodes +
+                        index * kHalo2FirstPersonNodeFloats;
+                    matrix[0] = 1.0f;
+                    matrix[1] = matrix[5] = matrix[9] = 1.0f;
+                }
+                Halo2FirstPersonReanchorResult splitResult{};
+                Check(Halo2PlaceFirstPersonSlotOnTwoControllers(
+                          splitNodes, kNodes, head, head, head, binding,
+                          1.0f, 1.0f, splitCache, splitResult) &&
+                          splitResult.applied &&
+                          nearlyEqual(splitNodes[0], 1.0f) &&
+                          nearlyEqual(splitNodes[
+                              1 * kHalo2FirstPersonNodeFloats], 0.0001f) &&
+                          nearlyEqual(splitNodes[
+                              2 * kHalo2FirstPersonNodeFloats], 0.0001f) &&
+                          nearlyEqual(splitNodes[
+                              5 * kHalo2FirstPersonNodeFloats], 1.0f) &&
+                          nearlyEqual(splitNodes[
+                              6 * kHalo2FirstPersonNodeFloats], 1.0f) &&
+                          nearlyEqual(splitNodes[
+                              37 * kHalo2FirstPersonNodeFloats], 1.0f),
+                    "Halo 2 floating hands collapse only the four arm ancestors "
+                    "while preserving root, both hands, and the gun subtree");
 
                 // The Elite rig: 36 nodes, weapon root at 31 not 37. The
                 // binding must follow the FLAGS, never the indices.
@@ -7674,6 +7715,44 @@ int main()
             Check(kHalo2ControllerOwnedAimEnabled,
                 "C-H2-46 arms Halo 2's controller-owned first-person mesh and "
                 "shot direction at its one build switch");
+
+            // Camera-local controller placement must be invariant under a
+            // common world/body turn. C-H2-47 accidentally used C*H^T (a
+            // world-space delta) where these camera-relative nodes need H^T*C;
+            // the two agree facing forward and diverge after turning.
+            {
+                Halo2CameraBasis facing{};
+                facing.forward[0] = 1.0f;
+                facing.up[2] = 1.0f;
+                Halo2CameraBasis controllerA = facing;
+                controllerA.forward[0] = 0.0f;
+                controllerA.forward[1] = 1.0f;
+                controllerA.position[0] = 1.0f;
+                controllerA.position[1] = 2.0f;
+                controllerA.position[2] = 3.0f;
+                Halo2CameraBasis turnedFacing = facing;
+                turnedFacing.forward[0] = 0.0f;
+                turnedFacing.forward[1] = 1.0f;
+                Halo2CameraBasis controllerB = controllerA;
+                controllerB.forward[0] = -1.0f;
+                controllerB.forward[1] = 0.0f;
+                controllerB.position[0] = -2.0f;
+                controllerB.position[1] = 1.0f;
+                float rotationA[9]{}, translationA[3]{};
+                float rotationB[9]{}, translationB[3]{};
+                bool invariant = Halo2ComputeCarrierDelta(
+                    facing, controllerA, rotationA, translationA) &&
+                    Halo2ComputeCarrierDelta(
+                        turnedFacing, controllerB, rotationB, translationB);
+                for (int index = 0; index < 9 && invariant; ++index)
+                    invariant = nearlyEqual(rotationA[index], rotationB[index]);
+                for (int index = 0; index < 3 && invariant; ++index)
+                    invariant = nearlyEqual(
+                        translationA[index], translationB[index]);
+                Check(invariant,
+                    "Halo 2 controller tracking stays camera-local after a "
+                    "common body/camera turn instead of only facing forward");
+            }
 
             // C-H2-46's whole point: mesh, VR crosshair and bullet share ONE
             // carrier. A shot leaving the carrier's own origin must therefore

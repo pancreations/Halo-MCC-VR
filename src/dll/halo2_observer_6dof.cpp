@@ -645,14 +645,12 @@ namespace
     // gun_pitch_deg / gun_roll_deg and two-handed aim are already folded into
     // it), and it is the same pose the compositor draws the VR crosshair
     // from, so mesh, crosshair and bullet agree by construction.
-    bool BuildFirstPersonCarrier(
-        const Halo2CameraBasis& renderCamera,
-        Halo2CameraBasis& carrier) noexcept
+    bool BuildFirstPersonCarrierFromAimPose(
+        const Halo2CameraBasis& renderCamera, const float aimOrientation[4],
+        const float aimPosition[3], Halo2CameraBasis& carrier) noexcept
     {
         float headOrientation[4]{}, headPosition[3]{};
-        float aimOrientation[4]{}, aimPosition[3]{};
-        if (!VR_GetHeadPose(headOrientation, headPosition) ||
-            !VR_GetAimPose(aimOrientation, aimPosition))
+        if (!VR_GetHeadPose(headOrientation, headPosition))
         {
             return false;
         }
@@ -660,6 +658,16 @@ namespace
             renderCamera, headOrientation, headPosition, aimOrientation,
             aimPosition, Game_GetWorldScale(),
             std::clamp(g_config.gun_forward_m, -0.3f, 0.5f), carrier);
+    }
+
+    bool BuildFirstPersonCarrier(
+        const Halo2CameraBasis& renderCamera,
+        Halo2CameraBasis& carrier) noexcept
+    {
+        float aimOrientation[4]{}, aimPosition[3]{};
+        return VR_GetAimPose(aimOrientation, aimPosition) &&
+            BuildFirstPersonCarrierFromAimPose(
+                renderCamera, aimOrientation, aimPosition, carrier);
     }
 
     // E-H2-32 (C-H2-37): the re-anchor. Normally the interpolation reset holds
@@ -802,12 +810,11 @@ namespace
                             ok = BuildFirstPersonCarrier(pass.frame, carrier);
                             if (ok)
                             {
-                                // C-H2-47: the left hand is its OWN
-                                // transaction. If the binding, the left
-                                // controller, or the split placement fails,
-                                // the whole slot falls back to the single
-                                // right-controller placement C-H2-46 shipped -
-                                // the gun and right hand never depend on it.
+                                // The exact two-subtree binding is required for
+                                // this presentation feature. A failure leaves
+                                // the complete palette stock for this frame;
+                                // falling back to C-H2-46's whole-slot carrier
+                                // is what put both arms on the right hand.
                                 Halo2FirstPersonArmBinding binding{};
                                 Halo2CameraBasis leftCarrier{};
                                 float leftOrientation[4]{}, leftPosition[3]{};
@@ -847,12 +854,7 @@ namespace
                                 }
                                 else
                                 {
-                                    ok = Halo2PlaceFirstPersonSlotOnController(
-                                        reinterpret_cast<float*>(*nodesOut),
-                                        *countOut, pass.frame, carrier,
-                                        std::clamp(
-                                            g_config.gun_scale, 0.3f, 3.0f),
-                                        g_slotCache[slot], outcome);
+                                    ok = false;
                                     g_leftHandRigidFallback.fetch_add(
                                         1, std::memory_order_relaxed);
                                 }
@@ -1056,16 +1058,28 @@ namespace
                     __leave;
                 }
 
-                // C-H2-46: the SAME carrier the visible mesh is drawn on
-                // (BuildFirstPersonCarrier), so the bullet leaves along the
-                // gun the player is pointing and passes through the VR
-                // crosshair drawn on that same ray.
+                // The bullet must meet the crosshair the player can actually
+                // see. The compositor may stabilize that displayed pose, so
+                // using a newer raw VR_GetAimPose here creates two different
+                // rays whenever aim_stabilization is non-zero. Rebuild the
+                // carrier from the most recently PRESENTED reticle pose and
+                // converge the engine-owned muzzle origin on that exact ray.
                 Halo2ObserverPosePublication publication{};
                 Halo2CameraBasis carrier{};
+                float presentedOrientation[4]{};
+                float presentedPosition[3]{};
+                uint64_t presentedAtMs = 0;
+                const uint64_t nowMs = GetTickCount64();
                 if (Halo2Observer6Dof_ReadPublishedPose(publication) &&
                     publication.generation ==
                         g_generation.load(std::memory_order_acquire) &&
-                    BuildFirstPersonCarrier(publication.tracked, carrier))
+                    VR_GetPresentedReticleAimPose(
+                        presentedOrientation, presentedPosition,
+                        presentedAtMs) &&
+                    presentedAtMs <= nowMs && nowMs - presentedAtMs <= 250 &&
+                    BuildFirstPersonCarrierFromAimPose(
+                        publication.tracked, presentedOrientation,
+                        presentedPosition, carrier))
                 {
                     const float range = std::clamp(
                         g_config.crosshair_distance_m, 2.0f, 50.0f) *
@@ -1699,15 +1713,17 @@ namespace
                                 if (kHalo2ControllerOwnedAimEnabled)
                                 {
                                     LOG("Halo 2 floating hands ARMED "
-                                        "(C-H2-46): first-person slot 0 only "
-                                        "- the authored hands and the gun "
-                                        "mesh they hold - rides the right "
-                                        "controller through one shared "
+                                        "(C-H2-48): first-person slot 0 only "
+                                        "- exact left/right wrist subtrees "
+                                        "ride their controllers; upper-arm and "
+                                        "forearm nodes collapse, and the gun remains "
+                                        "inside the right-hand subtree "
                                         "carrier (gun_forward_m %.3f m, "
                                         "gun_scale %.2f, mount trim "
                                         "%.1f/%.1f/%.1f deg). floating_hands "
                                         "in halomccvr.cfg is %d and is NOT "
-                                        "consulted, as in Reach. No body, no "
+                                        "consulted, as in Reach. No visible "
+                                        "arms/body, no "
                                         "other slot, no world geometry, no "
                                         "XInput, no camera field is touched",
                                         g_config.gun_forward_m,
@@ -1739,12 +1755,12 @@ namespace
             }
         }
 
-        // E-H2-41 (C-H2-47): resolve the engine's own animation-graph readers so
+        // E-H2-41 (C-H2-47/48): resolve the engine's own animation-graph readers so
         // the LEFT hand can be identified from Halo 2's own data instead of a
         // hardcoded node index. These are read-only leaf calls; nothing here is
         // hooked or patched. All three must match exactly once and sit at their
-        // pinned RVAs, or the left-hand transaction stays dormant and the whole
-        // first-person slot rides the right controller as C-H2-46 shipped.
+        // pinned RVAs, or the complete optional floating-hand presentation stays
+        // stock for that frame.
         if (kHalo2ControllerOwnedAimEnabled)
         {
             // The 8 leading padding bytes disambiguate the standalone function
@@ -1795,14 +1811,15 @@ namespace
                         base + kHalo2AnimationGraphFindNodeByFlagsRva,
                         std::memory_order_release);
                 }
-                LOG("Halo 2 left hand ARMED (C-H2-47): the left wrist and its "
-                    "descendants ride the LEFT controller, identified from the "
+                LOG("Halo 2 hand subtrees ARMED (C-H2-48): the left and right "
+                    "wrist descendants ride their own controllers, identified from the "
                     "engine's own animation-graph model flags (node +0x%X, "
                     "left-hand bit 0x%02X, right-hand bit 0x%02X, stride "
                     "0x%X) - no hardcoded node index. Graph reader +0x%X, node "
-                    "reader +0x%X, engine flag lookup %s. The gun stays on the "
-                    "right hand; any failure drops this slot back to the "
-                    "single right-controller placement",
+                    "reader +0x%X, engine flag lookup %s. The gun stays inside "
+                    "the right-hand subtree; only upper-arm/forearm ancestors "
+                    "collapse. Any "
+                    "failure leaves this optional presentation stock",
                     static_cast<unsigned>(
                         kHalo2AnimationNodeModelFlagsOffset),
                     static_cast<unsigned>(kHalo2ModelFlagLeftHand),
@@ -1990,7 +2007,7 @@ namespace
             "named %llu, newest-publication fallback %llu, busy %llu; last "
             "witnessed publication #%llu; controller placement: %llu applied, "
             "%llu failed, %llu interpolation resets bypassed; left hand: "
-            "%llu on its own controller, %llu rigid fallback, %llu binding "
+            "%llu on its own controller, %llu stock fallback, %llu binding "
             "rebuilds, last binding reason %d; direct shot "
             "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
             "%llu no-owned-unit, %llu exceptions",

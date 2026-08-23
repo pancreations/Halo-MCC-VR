@@ -2886,3 +2886,49 @@ gun and the right hand never depend on any of it.
    C-H2-47 owns slot 0 only.
 3. The kit's `first_person_weapon_data` valid-bit NAMES map onto retail bits
    `0x02` / `0x04` by behaviour, not by symbol.
+
+## E-H2-42 (C-H2-48): C-H2-47 headset rejection and implementation audit - 2026-08-23
+
+The headset rejected C-H2-47 with four directly observable faults: offsets on
+both hands, both arm assemblies riding the right controller, shots missing the
+visible crosshair, and controller tracking becoming incorrect after turning
+away from the initial forward direction. Three code-level defects explain the
+report without adding a new retail binding.
+
+1. **Wrong ownership complement.** C-H2-47 transformed `leftSubtree` with the
+   left carrier and every other node with the right carrier. E-H2-40's proven
+   42-node rig shows that complement contains root 0, both upper arms 1/2, both
+   forearms 3/4 and `camera_control` 41. The implementation therefore did
+   exactly what the headset showed. C-H2-48 computes both disjoint wrist
+   descendant masks. The left mask alone takes the left carrier; the right mask
+   (which contains the weapon because its local root parents to the right wrist)
+   alone takes the right carrier. Only the two wrist-to-root ancestry chains
+   (upper arms and forearms, excluding wrists and the root) collapse to
+   `0.0001`. Root, `camera_control`, and unrelated control nodes remain byte-for-
+   byte stock. The bounded scale-collapse presentation mechanism is the same
+   one used by the accepted Halo 3 path and the forced Reach/Halo 4 paths.
+2. **World/local matrix reversal.** The first-person matrices at `+0x722850`
+   are camera-relative (E-H2-32). Their carrier rotation must therefore be
+   `H^T C`, controller axes expressed in the current camera frame. The function
+   comment stated that equation, but called `Halo2BuildWorldDeltaRotation`,
+   whose proven contract is `C H^T`. Those products coincide in the identity
+   forward frame and differ after turning, exactly matching the headset result.
+   C-H2-48 computes `H^T C` by axis dot products. A regression test applies the
+   same 90-degree world/body turn to camera and controller and requires the
+   local rotation and translation to remain identical.
+3. **Raw shot pose versus presented crosshair pose.** The compositor optionally
+   smooths `VR_GetAimPose` into `g_reticleAimPose`, publishes that pose, and
+   places the visible crosshair on its ray. C-H2-47's firing helper instead read
+   a newer raw `VR_GetAimPose`, so nonzero `aim_stabilization` deliberately made
+   the visible ray and shot target different. C-H2-48 accepts only the fresh
+   (at most 250 ms old) seqlock-published presented reticle pose and converges
+   Halo 2's engine-owned muzzle origin on that exact displayed point. With no
+   fresh visible crosshair, only this optional direction substitution stays
+   stock.
+
+No new address, struct offset, or signature is introduced. The E-H2-41 graph
+and firing bindings remain the evidence base. `Game_ComputeAimStick` still
+unconditionally refuses Halo 2, so this correction does not write XInput or a
+camera field. A missing hand binding/pose now leaves the complete optional
+palette presentation stock for that frame instead of invoking C-H2-46's
+known-bad whole-slot/right-controller fallback.
