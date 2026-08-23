@@ -2380,3 +2380,29 @@ success flag, and the gate on it was the one closed term.
 same sign and larger = a fused gun; `geometry: ... node space world N /
 camera-relative N / unknown N` - unknown means the re-anchor did nothing;
 `classic stale-camera compensated N`.
+
+## E-H2-35: the second eye's weapon was drawn at the stock 49.6 deg in every classic pair (C-H2-40)
+
+A mod defect in the classic core since C-H2-27, found by reading the code
+after the user rejected the C-H2-38 "FOV constant written 110.1 deg" line as
+proof of anything (it was not):
+
+- `WriteOuterCoverFovs` writes the first-person FOV constant ONCE per pair,
+  before render_player_window.
+- The inner render_view loop calls `RestoreOwnedSpans` in its `__finally`
+  after EVERY eye - and `RestoreOwnedSpans` begins with
+  `RestoreFirstPersonFovConstant()`, putting the stock 0x3F5D9734 back.
+- `WriteEyeSpans` (per eye) rewrote the six vector spans and the two cover
+  FOV fields - the WORLD's FOV, which is why the projection read-back AGREED
+  for both eyes - but never the first-person constant.
+
+So the first eye's weapon was drawn through the 110 deg cover and the second
+eye's through 49.6 deg: one gun 3.1x the size of the other, in the same pair.
+That is C-H2-35's "classic gun double vision", and C-H2-38's "it isn't working"
+after the pin was repaired. The C-H2-36/37 pictures did not show it only
+because the pin had failed and BOTH eyes were at 49.6 deg (E-H2-33).
+
+C-H2-40: the constant is written in `WriteEyeSpans` for every eye, and read
+back after each eye's render_view (before the restore) - `fpFovHeld(eye0/eye1)`
+/ `fpFovLost(eye0/eye1)` in the stereo core line say which FOV each eye's
+weapon pass actually found. The eye pictures remain the acceptance.

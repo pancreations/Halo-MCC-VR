@@ -252,6 +252,12 @@ namespace
     // E-H2-34: first-pass eyes rendered with no known previous pop (the
     // weapon keeps the stale camera's offset for that one pass).
     std::atomic<uint64_t> g_firstPersonUncompensated{0};
+    // E-H2-35: read back after each eye's render_view, before the restore -
+    // was the first-person FOV constant still the eye's cover when the pass
+    // drew the weapon (held), or stock (lost)? Per eye.
+    std::atomic<uint64_t> g_fpConstantHeld[kHalo2EyeCount]{};
+    std::atomic<uint64_t> g_fpConstantLost[kHalo2EyeCount]{};
+    std::atomic<uint64_t> g_fpConstantUnreadable{0};
     std::atomic<uint64_t> g_sceneLatchRearmed{0};
     std::atomic<uint64_t> g_sceneLatchUnreadable{0};
     uint64_t g_claimedFrameFailureLogMs = 0;
@@ -394,7 +400,8 @@ namespace
         {
             g_fpConstantLoggedBits = bits;
             LOG("Halo 2 classic first-person weapon: FOV constant written %.1f deg "
-                "(the eye's vertical cover) for this and every following eye pair",
+                "(the eye's vertical cover) for every eye pass - read back per eye "
+                "as fpFovHeld/fpFovLost in the stereo core line",
                 verticalCoverRadians * 57.29578f);
         }
         return true;
@@ -942,6 +949,17 @@ namespace
 
     bool WriteEyeSpans(StereoScope& scope, int eye) noexcept
     {
+        // E-H2-35 (C-H2-40): RestoreOwnedSpans runs after EVERY eye pass and
+        // puts the first-person FOV constant back to the stock 49.6 deg, but
+        // the constant was only written once per pair (WriteOuterCoverFovs).
+        // Since C-H2-27 the second eye's weapon has therefore been drawn 3.1x
+        // the size of the first eye's - one giant gun, one normal, in the
+        // same pair. The constant is written for every eye, like the cover.
+        if (!WriteFirstPersonFovConstant(scope.rasterCoverVerticalFov))
+        {
+            RestoreOwnedSpans(scope);
+            return false;
+        }
         for (unsigned index = 0; index < kOwnedCameraSpanCount; ++index)
         {
             if (!OwnedSpanAllowed(index))
@@ -1771,6 +1789,32 @@ namespace
                                 // first-person pass will draw from.
                                 g_lastPassEyeCamera = scope->eyes[eye].render;
                                 g_lastPassEyeCameraValid = true;
+                                // E-H2-35: what FOV did this eye's weapon
+                                // pass find in the constant? Read before the
+                                // restore below puts stock back.
+                                const uintptr_t constant = g_fpConstantAddress.load(
+                                    std::memory_order_acquire);
+                                uint32_t held = 0;
+                                if (!constant)
+                                {
+                                    // not pinned: nothing to hold
+                                }
+                                else if (!ReadDwordGuarded(constant, held))
+                                {
+                                    g_fpConstantUnreadable.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                                else if (held == g_fpConstantWrittenBits.load(
+                                             std::memory_order_relaxed))
+                                {
+                                    g_fpConstantHeld[eye].fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                                else
+                                {
+                                    g_fpConstantLost[eye].fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
                             }
                         }
                     }
@@ -2332,7 +2376,8 @@ namespace
                 "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
                 "restoreFail=%llu exception=%llu firstPersonCentred=%llu "
                 "firstPersonUnreadable=%llu firstPassUncompensated=%llu "
-                "sceneLatchRearmed=%llu "
+                "fpFovHeld(eye0/eye1)=%llu/%llu fpFovLost(eye0/eye1)=%llu/%llu "
+                "fpFovUnreadable=%llu sceneLatchRearmed=%llu "
                 "sceneLatchUnreadable=%llu poseOwner=%s "
                 "posePublished=%llu poseRederived=%llu poseSelf=%llu "
                 "poseUnavailable=%llu",
@@ -2358,6 +2403,16 @@ namespace
                     g_firstPersonUnreadable.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_firstPersonUncompensated.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpConstantHeld[0].load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpConstantHeld[1].load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpConstantLost[0].load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpConstantLost[1].load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpConstantUnreadable.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_sceneLatchRearmed.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
