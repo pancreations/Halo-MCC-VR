@@ -7712,9 +7712,9 @@ int main()
                     "the three readers C-H2-47 calls");
             }
 
-            Check(kHalo2ControllerOwnedAimEnabled,
-                "C-H2-46 arms Halo 2's controller-owned first-person mesh and "
-                "shot direction at its one build switch");
+            Check(!kHalo2ControllerOwnedAimEnabled,
+                "C-H2-49 disarms the headset-rejected C-H2-46/47/48 palette "
+                "and firing transaction at its one build switch");
 
             // Camera-local controller placement must be invariant under a
             // common world/body turn. C-H2-47 accidentally used C*H^T (a

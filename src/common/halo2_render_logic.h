@@ -1068,10 +1068,13 @@ inline bool Halo2BuildTrackedCenterCamera(
 // gun tilted far off the hand, and the visible mesh and the bullet were built
 // from two DIFFERENT poses, so shots did not follow the gun.
 //
-// C-H2-46 re-arms the feature with those two defects fixed: no mirror, and one
-// carrier (`BuildFirstPersonCarrier`) shared by the mesh, the VR crosshair and
-// the shot. It still may never touch XInput, the observer, or a camera field.
-inline constexpr bool kHalo2ControllerOwnedAimEnabled = true;
+// C-H2-49 reverts the complete C-H2-46/47/48 transaction after the headset
+// proved all three generations wrong. The +0x722850 buffer accepted thousands
+// of writes but did not provide the assumed visual/coordinate ownership, and
+// the firing substitution likewise did not make shots follow the visible
+// crosshair. Keep the implementation dormant for evidence work; do not build a
+// replacement on this boundary.
+inline constexpr bool kHalo2ControllerOwnedAimEnabled = false;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in

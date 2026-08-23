@@ -1,12 +1,15 @@
 # Current state
 
-> **HALO 2 C-H2-48 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-23.**
+> **HALO 2 C-H2-48 REJECTED BY HEADSET; C-H2-49 REVERT IN SOURCE - 2026-08-23.**
 > The player's C-H2-47 headset result rejected that candidate: both hands were
 > offset, both arm assemblies still rode the right controller, shots did not
 > follow the visible crosshair, and controller tracking only behaved while
 > facing forward. C-H2-48 corrects the three concrete implementation faults
 > recorded in E-H2-42 without touching XInput, the observer camera, stereo, or
-> either renderer's ownership.
+> either renderer's ownership. The subsequent headset test reported the same
+> issues persisted and were worse: C-H2-48 is rejected too. C-H2-49 disables
+> the complete C-H2-46/47/48 controller-owned palette and firing transaction at
+> its master switch before any replacement work.
 >
 > - **Hands/arms:** the engine-proven left and right wrist descendant masks are
 >   now both explicit. Only the left hand rides the left controller; only the
@@ -37,6 +40,17 @@
 > | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
 > | Verification | Release build PASS; core tests PASS; Reach consistency check PASS; common world/body-turn invariance and exact hand/arm visibility tests PASS; C-H2-48 producer/installer manifest contract PASS |
+>
+> The rejected Steam run is preserved under
+> `out/test-runs/a64da3e-halo2-c48-rejected-20260823-0941` (SteamVR/OpenXR
+> 2.17.7, `SteamVR/OpenXR : oculus`, 120 Hz; log SHA-256
+> `73E3789AF0447486689BA01E819A587515FFE1519EF0984F05D8D7029E4C1D7A`).
+> It proves this was not an install or fallback failure: 5,152 controller
+> palette placements applied with zero failures, the hand binding rebuilt once
+> and remained valid, and 18/18 local-player shot substitutions applied. The
+> headset result therefore falsifies the claimed semantics of those successful
+> counters. Do not iterate more transform math on `+0x722850`; locate Halo 2's
+> actual final visible-palette/weapon boundary using the accepted-title shapes.
 >
 > Required headset test in both Anniversary and Classic: turn at least 90 and
 > 180 degrees away from initial facing; confirm each hand remains on its own
