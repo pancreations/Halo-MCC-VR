@@ -3043,3 +3043,83 @@ logged, and the C-H2-50 optional controller callbacks had admitted zero calls.
 This proves the fatal error and preserves its exact native fault location; it
 does not prove that an unexecuted controller hook caused it. C-H2-51 still
 disables the full rejected optional transaction as the required safety revert.
+
+## E-H2-45 (C-H2-52): the live final first-person packet - 2026-08-23
+
+C-H2-50 failed because it hooked a generic composer behind a witness chain that
+never executed in the reported Anniversary mission. The replacement discovery
+starts again from official H2EK, not from retail guesswork.
+
+In H2EK `halo2_tag_test.exe`, `first_person_weapons.cpp` kit RVA `0x306E04`
+builds the complete first-person packet array. Its packet-fill helper at kit RVA
+`0x306D16` takes the first-person root, source palette, authored remap and
+destination packet, writes the 12-byte packet header, then emits root-composed
+`0x34`-byte matrices. BSim selects retail `halo2.dll+0x818080` as the fill
+homolog; retail verification shows the same arguments and matrix loop. The
+verified outer retail homolog is `+0x8181F0`, whose 29-byte entry is:
+
+`48 89 5C 24 18 4C 89 4C 24 20 89 54 24 10 89 4C 24 08 55 56 57 41 54 41 55 41 56 41 57`
+
+It returns the number of packets written to argument 7. Each packet has stride
+`0xD0C`: a 12-byte header and capacity for 64 final matrices. The packet with
+header object `unit_object` is the authored hands model. The separate packet
+with header object `weapon_data+0x04` is the held gun. This outer boundary feeds
+both Classic and Anniversary/Saber and executes whether the source came from an
+interpolator bank or the authored `weapon_data+0x320` palette.
+
+The same H2EK structure and the verified retail homolog establish user-array
+pointer RVA `0x187C300`, user stride `0x20FC`, first weapon-data offset `0x0C`,
+slot stride `0x1028`, graph id `+0x7C`, gun-node count `+0x10C`, hands-node
+count `+0x110`, authored hands remap `+0x214`, and animation-graph node count
+`+0x31C`. The counts are intentionally not required to be equal: the remap is
+destination-hands-node to source-animation-node. Every remap entry must be -1
+or inside the graph binding before any packet byte may change.
+
+C-H2-52 calls the packet builder stock first, resolves the source wrist masks
+from E-H2-41's engine-native graph flags, maps them through the authored hands
+remap, and computes each final-world wrist delta as
+`desired_controller * inverse(stock_wrist)`. Only the exact remapped left and
+right wrist descendant nodes receive their respective deltas. Every other node
+in the hands packet is scale-collapsed, so no root, upper arm, forearm or body
+geometry remains. Every matrix in the separate primary gun packet receives the
+right-wrist delta. The rejected interpolator controller transaction remains
+disabled, and the game's normal first-person interpolation reset is preserved.
+
+Packet ownership publishes a timestamp only after the complete transaction
+succeeds. Controller reticle/shot ownership requires that positive witness to
+be at most 250 ms old. The existing H2EK firing-helper hook remains limited to
+output user 0's unit, preserves the engine muzzle origin, and directs the shot
+to the exact fresh compositor-presented crosshair point. A missing packet,
+invalid remap, invalid graph, missing controller or non-finite matrix leaves the
+whole optional hands/gun/shot feature stock for that frame without disarming
+camera, stereo or OpenXR.
+
+## E-H2-46 (C-H2-53): consecutive-mission same-module hook lease - 2026-08-23
+
+The rejected log proves the old lifecycle removed the observer and Anniversary
+detours when MCC briefly withdrew title/liveness proof, then installed hooks
+again after the same H2 DLL reappeared. WER proves the later native access
+violation at `halo2.dll+0xDE63E`; disassembly verifies it is a dereference after
+an array search can return no element. That evidence does not identify hook
+churn as the native function's internal cause, but it does identify remove /
+free-reference / recreate against a retained game DLL as an avoidable loading
+transition that must not occur.
+
+C-H2-53 therefore gives each enabled H2 hook group one session-long physical
+module lease: observer and its optional packet/firing hooks, Anniversary
+stereo, Classic stereo, and the renderer switch guard. A missing/ambiguous
+title, level, cold-proof or renderer signal parks the lease and publishes its
+hot gates false; every detour calls stock while parked. A later generation at
+the same non-zero module base adopts the new generation, clears all level-local
+pose/serial/palette witnesses, requests recenter, and re-arms without calling
+MinHook remove/create or releasing the `HMODULE` reference. Physical teardown
+is reserved for an explicitly failed OpenXR path or a proven non-zero different
+module base. This prevents consecutive H2 mission loads from churning hooks or
+allowing `halo2.dll` to unload underneath retained trampolines.
+
+The cumulative C-H2-53 offline verification covers the exact packet constants, invalid-remap
+fail-before-write behavior, independent left/right final wrist placement,
+complete non-hand collapse, separate-gun right-wrist motion, stock interpolation
+reset policy, Release compilation, core tests, and the Reach consistency gate.
+Dual-wield slot 1 remains outside the ownership claim because E-H2-41 proves it
+has different culling semantics.

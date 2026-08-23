@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-51' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-53' -or
         [string]$manifest.halo2_candidate.status -cne
-            'SAFETY_REVERT_HEADSET_VALIDATION_REQUIRED' -or
+            'READY_FOR_BUILD_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'c-h2-40-stereo-6dof-baseline-with-rejected-controller-hands-and-projectile-aim-disabled' -or
+            'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-and-session-long-same-dll-hook-lease' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -430,9 +430,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.headset_translation $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.controller_aim $false) -or
+            $manifest.halo2_candidate.controller_aim $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.floating_hands $false) -or
+            $manifest.halo2_candidate.floating_hands $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.physical_right_stick_preserved $true) -or
         -not (Test-ExactBoolean `
@@ -440,25 +440,31 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.controller_xinput_synthesis $false) -or
         -not (Test-ExactInt32 `
-            $manifest.halo2_candidate.controller_owned_first_person_slot -1) -or
+            $manifest.halo2_candidate.controller_owned_first_person_slot 0) -or
         [string]$manifest.halo2_candidate.first_person_palette_source -cne
-            'dormant-rejected-interpolator-and-final-composer-transactions' -or
+            'h2ek-first-person-final-render-packet-builder-retail-rva-0x008181f0' -or
         [string]$manifest.halo2_candidate.hand_binding_source -cne
-            'dormant-no-controller-owned-hand-binding' -or
+            'animation-graph-hand-flags-mapped-through-weapon-data-authored-hands-remap' -or
         [string]$manifest.halo2_candidate.left_controller_nodes -cne
-            'none-controller-ownership-disabled' -or
+            'exact-remapped-left-wrist-descendant-subtree' -or
         [string]$manifest.halo2_candidate.right_controller_nodes -cne
-            'none-controller-ownership-disabled' -or
+            'exact-remapped-right-wrist-descendant-subtree-plus-separate-primary-held-gun-packet' -or
         [string]$manifest.halo2_candidate.collapsed_nodes -cne
-            'none-controller-ownership-disabled' -or
+            'every-final-hands-packet-node-outside-left-and-right-hand-subtrees' -or
         [string]$manifest.halo2_candidate.controller_rotation_space -cne
-            'none-controller-ownership-disabled' -or
+            'final-world-rigid-delta-desired-controller-times-inverse-stock-wrist-turn-invariant' -or
         [string]$manifest.halo2_candidate.projectile_aim_source -cne
-            'stock-halo2-projectile-aim-controller-substitution-disabled' -or
+            'local-player-stock-muzzle-to-exact-fresh-compositor-presented-crosshair-point' -or
         -not (Test-ExactInt32 `
-            $manifest.halo2_candidate.projectile_presented_reticle_freshness_ms 0) -or
+            $manifest.halo2_candidate.projectile_presented_reticle_freshness_ms 250) -or
         [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
-            'stock-controller-ownership-bypass-disabled' -or
+            'stock-reset-preserved-rejected-interpolator-controller-path-remains-disabled' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.same_module_hook_lease $true) -or
+        [string]$manifest.halo2_candidate.same_module_hook_lease_scope -cne
+            'observer-anniversary-classic-renderer-guard-retained-and-stock-pass-through-across-title-level-proof-gaps' -or
+        [string]$manifest.halo2_candidate.physical_hook_teardown_policy -cne
+            'only-proven-nonzero-different-module-base-or-explicit-openxr-failure' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.hud $false) -or
         -not (Test-ExactBoolean `
