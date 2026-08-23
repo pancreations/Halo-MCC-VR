@@ -1076,13 +1076,11 @@ inline bool Halo2BuildTrackedCenterCamera(
 // replacement on this boundary.
 inline constexpr bool kHalo2RejectedInterpolatorControllerOwnershipEnabled = false;
 
-// C-H2-50 tried the later H2EK final-palette boundary, but the rejected Steam
-// Anniversary run executed none of its admitted calls: final-palette changed,
-// right, left, collapsed and refused all remained zero. It therefore did not
-// and could not transfer visible hand/weapon ownership. C-H2-51 disables that
-// entire optional transaction while leaving the implementation available for
-// evidence work. Do not re-arm it from install/preflight success alone.
-inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
+// C-H2-52 replaces C-H2-50's witness-dependent generic-composer experiment
+// with the complete H2EK first-person packet boundary used by both renderers.
+// This switch arms the replacement transaction; neither rejected upstream
+// implementation is re-enabled.
+inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = true;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
@@ -2490,6 +2488,8 @@ inline constexpr uint8_t kHalo2FrameInterpolatorReadEntryBytes[] = {
     0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18,
     0x48, 0x89, 0x7C, 0x24, 0x20, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x20};
 inline constexpr uint32_t kHalo2FirstPersonNodeStride = 0x34;
+inline constexpr uint32_t kHalo2FirstPersonNodeFloats =
+    kHalo2FirstPersonNodeStride / 4;
 inline constexpr uint32_t kHalo2FirstPersonNodeAxesOffset = 0x04;
 inline constexpr uint32_t kHalo2FirstPersonNodePositionOffset = 0x28;
 inline constexpr int kHalo2FirstPersonNodeLimit = 256;
@@ -2506,6 +2506,30 @@ inline constexpr uint8_t kHalo2MatrixComposeEntryBytes[] = {
     0x48, 0x83, 0xEC, 0x48, 0x49, 0x3B, 0xC8, 0x75, 0x24, 0x0F, 0x10,
     0x01, 0x8B, 0x41, 0x30, 0x0F, 0x10, 0x49, 0x10, 0x89, 0x44, 0x24,
     0x30, 0x0F, 0x11, 0x04, 0x24, 0x0F, 0x10, 0x41, 0x20, 0x48};
+
+// E-H2-45: H2EK first_person_weapons.cpp's packet builder is the boundary
+// handed to both the Classic renderer and the Anniversary/Saber bridge. Retail
+// +0x8181F0 is its verified homolog and returns the number of 0xD0C-byte
+// packets written to argument 7. Each packet is a 12-byte header followed by
+// at most 64 final, root-composed 0x34-byte matrices. Owning this completed
+// packet removes C-H2-50's hidden dependency on the optional interpolator read.
+inline constexpr uint32_t kHalo2FirstPersonPacketBuilderRva = 0x008181F0;
+inline constexpr uint8_t kHalo2FirstPersonPacketBuilderEntryBytes[] = {
+    0x48, 0x89, 0x5C, 0x24, 0x18, 0x4C, 0x89, 0x4C, 0x24, 0x20,
+    0x89, 0x54, 0x24, 0x10, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x56,
+    0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57};
+inline constexpr uint32_t kHalo2FirstPersonUserDataPointerRva = 0x0187C300;
+inline constexpr uint32_t kHalo2FirstPersonUserStride = 0x20FC;
+inline constexpr uint32_t kHalo2FirstPersonWeaponDataOffset = 0x0C;
+inline constexpr uint32_t kHalo2FirstPersonWeaponSlotStride = 0x1028;
+inline constexpr uint32_t kHalo2FirstPersonWeaponObjectOffset = 0x04;
+inline constexpr uint32_t kHalo2FirstPersonWeaponGraphOffset = 0x7C;
+inline constexpr uint32_t kHalo2FirstPersonWeaponNodeCountOffset = 0x10C;
+inline constexpr uint32_t kHalo2FirstPersonHandsNodeCountOffset = 0x110;
+inline constexpr uint32_t kHalo2FirstPersonHandsRemapOffset = 0x214;
+inline constexpr uint32_t kHalo2FirstPersonAnimationNodeCountOffset = 0x31C;
+inline constexpr uint32_t kHalo2FirstPersonRenderPacketHeaderBytes = 0x0C;
+inline constexpr uint32_t kHalo2FirstPersonRenderPacketStride = 0x0D0C;
 
 // ---------------------------------------------------------------------------
 // E-H2-40 / E-H2-41 (C-H2-47): Halo 2 tags its own hands.
@@ -2834,6 +2858,107 @@ inline void Halo2ReanchorFirstPersonNode(
     }
 }
 
+struct Halo2FinalPacketOwnershipResult
+{
+    bool applied = false;
+    uint32_t rightNodes = 0;
+    uint32_t leftNodes = 0;
+    uint32_t collapsedNodes = 0;
+    uint32_t gunNodes = 0;
+};
+
+// E-H2-45: transform the already root-composed render packets, using the
+// engine-authored hands remap to carry the animation graph's invariant hand
+// flags into destination-model node indices. This is deliberately independent
+// of the frame interpolator: H2EK proves the packet builder uses weapon_data's
+// authored palette whenever an interpolated bank is unavailable.
+inline bool Halo2OwnFinalFirstPersonPackets(
+    float* handsMatrices, uint32_t handsCount, const int32_t* handsRemap,
+    const Halo2FirstPersonArmBinding& binding, float* gunMatrices,
+    uint32_t gunCount, const Halo2CameraBasis& rightCarrier,
+    const Halo2CameraBasis& leftCarrier, float rightScale, float leftScale,
+    Halo2FinalPacketOwnershipResult& out) noexcept
+{
+    out = Halo2FinalPacketOwnershipResult{};
+    if (!handsMatrices || !handsRemap || !binding.valid ||
+        binding.count == 0 || binding.count > kHalo2FirstPersonPaletteCapacity ||
+        handsCount == 0 || handsCount > kHalo2FirstPersonPaletteCapacity ||
+        gunCount > kHalo2FirstPersonPaletteCapacity ||
+        (gunCount && !gunMatrices) || !Halo2ValidateCameraBasis(rightCarrier) ||
+        !Halo2ValidateCameraBasis(leftCarrier) || !std::isfinite(rightScale) ||
+        !std::isfinite(leftScale) || rightScale <= 0.0f || leftScale <= 0.0f)
+    {
+        return false;
+    }
+
+    int rightWristDestination = -1;
+    int leftWristDestination = -1;
+    for (uint32_t destination = 0; destination < handsCount; ++destination)
+    {
+        const int32_t source = handsRemap[destination];
+        if (source < -1 || source >= static_cast<int32_t>(binding.count))
+            return false;
+        if (source == binding.rightWrist)
+            rightWristDestination = static_cast<int>(destination);
+        if (source == binding.leftWrist)
+            leftWristDestination = static_cast<int>(destination);
+    }
+    if (rightWristDestination < 0 || leftWristDestination < 0)
+        return false;
+
+    float rightRotation[9]{}, leftRotation[9]{};
+    float rightStock[3]{}, leftStock[3]{}, rightDesired[3]{}, leftDesired[3]{};
+    const float* const rightWrist = handsMatrices +
+        static_cast<uint32_t>(rightWristDestination) * kHalo2FirstPersonNodeFloats;
+    const float* const leftWrist = handsMatrices +
+        static_cast<uint32_t>(leftWristDestination) * kHalo2FirstPersonNodeFloats;
+    if (!Halo2BuildFinalPaletteWristDelta(
+            rightWrist, rightCarrier, rightRotation, rightStock, rightDesired) ||
+        !Halo2BuildFinalPaletteWristDelta(
+            leftWrist, leftCarrier, leftRotation, leftStock, leftDesired))
+    {
+        return false;
+    }
+
+    for (uint32_t destination = 0; destination < handsCount; ++destination)
+    {
+        float* const node = handsMatrices +
+            destination * kHalo2FirstPersonNodeFloats;
+        const int32_t source = handsRemap[destination];
+        const uint64_t bit = source >= 0 ? uint64_t{1} << source : 0;
+        if (bit && (binding.rightSubtree & bit))
+        {
+            Halo2ReanchorFirstPersonNode(
+                node, rightRotation, rightStock, rightDesired);
+            node[0] *= rightScale;
+            ++out.rightNodes;
+        }
+        else if (bit && (binding.leftSubtree & bit))
+        {
+            Halo2ReanchorFirstPersonNode(
+                node, leftRotation, leftStock, leftDesired);
+            node[0] *= leftScale;
+            ++out.leftNodes;
+        }
+        else
+        {
+            node[0] *= 0.0001f;
+            ++out.collapsedNodes;
+        }
+    }
+    for (uint32_t nodeIndex = 0; nodeIndex < gunCount; ++nodeIndex)
+    {
+        float* const node = gunMatrices +
+            nodeIndex * kHalo2FirstPersonNodeFloats;
+        Halo2ReanchorFirstPersonNode(
+            node, rightRotation, rightStock, rightDesired);
+        node[0] *= rightScale;
+        ++out.gunNodes;
+    }
+    out.applied = out.rightNodes && out.leftNodes && out.gunNodes;
+    return out.applied;
+}
+
 // True when the two bases are so close the re-anchor would be a no-op.
 inline bool Halo2CameraBasesNearlyEqual(
     const Halo2CameraBasis& a, const Halo2CameraBasis& b) noexcept
@@ -3006,9 +3131,6 @@ inline Halo2FirstPersonNodeSpace Halo2ClassifyFirstPersonNodeSpace(
         return Halo2FirstPersonNodeSpace::CameraRelative;
     return Halo2FirstPersonNodeSpace::Unknown;
 }
-
-inline constexpr uint32_t kHalo2FirstPersonNodeFloats =
-    kHalo2FirstPersonNodeStride / 4;
 
 // Per-slot cache that makes the re-anchor idempotent. The interpolator may
 // hand the renderer the same node array it returned last time (not
