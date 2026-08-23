@@ -5899,7 +5899,7 @@ int main()
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics;
+        TitleCapability_Haptics | TitleCapability_ControllerAim;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6101,11 +6101,12 @@ int main()
                   GameTitle::Halo3, false),
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
-    // C-H2-22 grants ControllerInput and Haptics; aim, HUD, arm IK and
-    // theatre stay denied until each has Halo 2 evidence.
+    // C-H2-41 grants controller aim after H2EK proved both the native
+    // first-person palette and the unit-aim-to-projectile path. HUD, arm IK,
+    // and theatre remain denied until each has Halo 2 evidence.
     constexpr uint32_t halo2DeniedCapabilities =
-        TitleCapability_ControllerAim | TitleCapability_Hud |
-        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
+        TitleCapability_Hud | TitleCapability_ArmIk |
+        TitleCapability_CutsceneTheater;
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedAdmission =
         TitleCapability_ControllerInput;
@@ -6185,12 +6186,13 @@ int main()
         const TitleRuntimeSnapshot unarmedOwner =
             halo2Runtime.Resolve(101, policy);
 #if HALOMCCVR_HALO2_STEREO6DOF
-        // C-H2-22: this mask strips only Stereo and RoomScale; the declared
-        // ControllerInput and Haptics bits survive it like RuntimeModes does
-        // (the worker applies the fuller kRuntimeCapabilitiesRequiringArm).
+        // This helper's explicit mask strips only Stereo and RoomScale; the
+        // declared ControllerInput, ControllerAim, and Haptics bits survive it
+        // like RuntimeModes does (the worker applies the fuller
+        // kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-            TitleCapability_Haptics;
+            TitleCapability_ControllerAim | TitleCapability_Haptics;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;
@@ -6204,8 +6206,8 @@ int main()
                       unarmedOwner, TitleCapability_Stereo |
                                         TitleCapability_RoomScale) ==
                       halo2ExpectedUnarmedCapabilities,
-            "An unarmed H2 owner suppresses Stereo and RoomScale while "
-            "retaining only its declared non-render RuntimeModes bit");
+            "The explicit H2 mask suppresses Stereo and RoomScale while "
+            "retaining its other declared capability bits");
         const TitleRuntimeSnapshot staleOwner = halo2Runtime.Resolve(602, policy);
         Check(staleOwner.owner == GameTitle::None &&
                   staleOwner.qualifyingOwnerCount == 0 &&
@@ -7481,6 +7483,85 @@ int main()
                       outcome.space == Halo2FirstPersonNodeSpace::CameraRelative &&
                       std::fabs(rel[10] + 0.5f) < 1.0e-4f && std::fabs(rel[11]) < 1.0e-4f,
                 "E-H2-34 camera-relative nodes turn with the head about the origin");
+        }
+
+        // C-H2-41: controller carrier and rigid native-palette placement.
+        {
+            Halo2CameraBasis head{};
+            head.position[0] = 10.0f;
+            head.position[1] = 20.0f;
+            head.position[2] = 30.0f;
+            head.forward[0] = 1.0f;
+            head.up[2] = 1.0f;
+            const float identity[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            const float headPosition[3]{};
+            const float controllerPosition[3] = {1.0f, 2.0f, -3.0f};
+            Halo2CameraBasis carrier{};
+            Check(Halo2BuildControllerCarrier(
+                      head, identity, headPosition, identity,
+                      controllerPosition, 0.5f, 0.2f, carrier) &&
+                      nearlyEqual(carrier.position[0], 11.6f) &&
+                      nearlyEqual(carrier.position[1], 19.5f) &&
+                      nearlyEqual(carrier.position[2], 31.0f) &&
+                      nearlyEqual(carrier.forward[0], 1.0f),
+                "C-H2-41 maps the controller's head-relative OpenXR position "
+                "and gun-forward trim through Halo 2's tracked camera basis");
+
+            const float halfYaw = pi * 0.25f;
+            const float yawedController[4] = {
+                0.0f, std::sin(halfYaw), 0.0f, std::cos(halfYaw)};
+            Halo2CameraBasis yawedCarrier{};
+            Check(Halo2BuildControllerCarrier(
+                      head, identity, headPosition, yawedController,
+                      headPosition, 0.5f, 0.0f, yawedCarrier) &&
+                      std::fabs(yawedCarrier.forward[0]) < 1.0e-4f &&
+                      nearlyEqual(yawedCarrier.forward[1], 1.0f) &&
+                      nearlyEqual(yawedCarrier.up[2], 1.0f),
+                "C-H2-41 maps a controller yaw into Halo 2 world axes without "
+                "copying another engine's basis convention");
+
+            static Halo2FirstPersonSlotCache controllerCache{};
+            controllerCache = Halo2FirstPersonSlotCache{};
+            float node[13]{};
+            node[0] = 1.0f;
+            node[1] = node[5] = node[9] = 1.0f;
+            node[10] = 0.4f;
+            node[11] = 0.1f;
+            node[12] = -0.2f;
+            Halo2FirstPersonReanchorResult placed{};
+            Check(Halo2PlaceFirstPersonSlotOnController(
+                      node, 1, head, carrier, 0.5f, controllerCache, placed) &&
+                      placed.applied && !placed.fromCache &&
+                      placed.space == Halo2FirstPersonNodeSpace::CameraRelative &&
+                      nearlyEqual(node[0], 0.5f) &&
+                      nearlyEqual(node[10], 0.7f) &&
+                      nearlyEqual(node[11], 1.65f) &&
+                      nearlyEqual(node[12], 0.9f),
+                "C-H2-41 moves and scales the complete native camera-relative "
+                "first-person assembly as one rigid controller-owned carrier");
+            Check(Halo2PlaceFirstPersonSlotOnController(
+                      node, 1, head, carrier, 0.5f, controllerCache, placed) &&
+                      placed.fromCache && nearlyEqual(node[10], 0.7f) &&
+                      nearlyEqual(node[11], 1.65f),
+                "C-H2-41 repeated renderer reads are idempotent rather than "
+                "accumulating the controller transform");
+            Halo2FirstPersonSlotCache yawedCache{};
+            float yawedNode[13]{};
+            yawedNode[0] = 1.0f;
+            yawedNode[1] = yawedNode[5] = yawedNode[9] = 1.0f;
+            Check(Halo2PlaceFirstPersonSlotOnController(
+                      yawedNode, 1, head, yawedCarrier, 1.0f, yawedCache,
+                      placed) &&
+                      std::fabs(yawedNode[1]) < 1.0e-4f &&
+                      nearlyEqual(yawedNode[2], 1.0f),
+                "C-H2-41 applies the full controller carrier rotation to the "
+                "native node axes");
+            float invalidNode[13]{};
+            invalidNode[0] = std::numeric_limits<float>::quiet_NaN();
+            Check(!Halo2PlaceFirstPersonSlotOnController(
+                      invalidNode, 1, head, carrier, 1.0f, controllerCache,
+                      placed),
+                "C-H2-41 rejects a non-finite native palette locally");
         }
 
         // E-H2-21: main-view flags and Saber matrix matching.

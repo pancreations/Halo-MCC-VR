@@ -8,7 +8,7 @@ param(
 )
 
 # Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4,
-# with Halo 2 C-H2-6's cadence-gated same-frame stereo + 6DOF and
+# with Halo 2's cadence-gated same-frame stereo + 6DOF and
 # generation-scoped post-claim failure quarantine.
 # Reach's camera core is permanent while Halo 4 is still an explicitly
 # unaccepted bring-up line. Optional player-visible features fail open
@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c40-classic-fp-fov-per-eye',
+        'halo2-c41-floaty-hand-native-aim',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-37'
-            status = 'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED'
+            id = 'C-H2-41'
+            status = 'HEADSET_FLOATY_HAND_AND_CONTROLLER_AIM_VALIDATION_REQUIRED'
             module = 'halo2.dll'
-            scope = 'campaign-classic-only-groundhog-excluded'
+            scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'eyes-from-the-publication-the-weapon-tick-was-placed-against-interpolation-reset-per-tick-classic-pre-pair-witness'
+                'primary-first-person-assembly-on-controller-native-unit-aim-feeds-projectile-direction'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -285,9 +285,9 @@ try {
             applied_render_mode_rva = '0x00E21280'
             observer_result_rva = '0x015F297C'
             observer_stride = '0x368'
-            stereo_arms_only_when_classic_render_tree_runs = $true
-            remastered_mode_stereo_presentation = 'stock-screen'
-            remastered_mode_engine_writes = $false
+            stereo_arms_only_when_classic_render_tree_runs = $false
+            remastered_mode_stereo_presentation = 'simultaneous-stereo'
+            remastered_mode_engine_writes = $true
             identity_anchor_count = 6
             liveness_anchor_count = 2
             hook_count = 2
@@ -371,14 +371,22 @@ try {
             expected_stereo_line = 'Halo 2 C-H2-6 simultaneous stereo + 6DOF active'
             active_line_requires_complete_exact_current_pair_survived_xr_end_frame =
                 $true
-            controller_input = $false
+            controller_input = $true
             stereo = $true
             six_dof = $true
             headset_rotation = $true
             headset_translation = $true
-            controller_aim = $false
+            controller_aim = $true
+            floating_hands = $true
+            controller_owned_first_person_slot = 0
+            first_person_palette_source =
+                'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices'
+            projectile_aim_source =
+                'native-unit-aiming-vector-copied-by-stock-weapon-firing-path'
+            interpolation_reset_policy =
+                'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked'
             hud = $false
-            haptics = $false
+            haptics = $true
             scene_target_redirect = $false
             native_symmetric_fov_cover = $true
             native_asymmetric_fov_writes = $false
@@ -396,7 +404,7 @@ try {
             generic_draw_distance_write = $false
             halo3_regression_required = $true
             failure_policy =
-                'dual-cadence-and-consecutive-serial-preclaim-screen-post-claim-drop-generation-quarantine-local-d3d-failure-keeps-openxr-xr-transaction-failure-enters-session-recovery'
+                'floaty-or-aim-failure-leaves-that-feature-stock-camera-stereo-and-openxr-remain-armed'
             evidence = 'docs/HALO2-SIGNATURE-EVIDENCE.md'
         }
         # Reach support is permanent, while player-visible optional features
@@ -461,7 +469,7 @@ try {
         reach_engine_memory_writes_enabled = $true
         reach_runtime_hooks_enabled = $true
         base_release = 'MCC_VR_ALPHA_0.3.3'
-        development_baseline = 'f4c641f7b1b707991f2bda71ba485090a16f1e9a'
+        development_baseline = 'fa1f6422de2de2e94e4d36ee4c731606c30371aa'
         files = [ordered]@{
             'HaloMCCVR.dll' = [ordered]@{
                 bytes = $dll.Length
@@ -472,7 +480,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-6 retains C-H2-5''s true same-frame contract: two fresh Halo 2 eye renders in one game frame, exact current render/capture serials, no temporal or previous-eye reuse, intentional cadence divisor 1, full headset rotation/translation, symmetric binocular FOV cover, dual current-frame cadence witnesses in the exact 6944444..13888889 ns bounds (nominal inclusive 72-144 Hz), and consecutive prepared serials after the first Complete. The only behavioral delta corrects C-H2-5''s false pre-stereo RTV fatal: source and destination textures are always required; the equal-size/equal-format-family/single-sample CopyResource path does not require an RTV; the shader blit path does require an RTV; and a local pre-stereo D3D validation failure drops only that frame without terminating OpenXR, then permits the next frame to retry. Exact XR_SUCCESS acquire/wait/release/xrEndFrame and successful Blit remain required; an actual XR transaction failure retains named session recovery through EnterFrameWaitFatalDrain and does not retry that unresolved XR transaction in the same session. The pre-stereo screen path does not count as an eye, publish stereo, or satisfy gameplay heartbeat. The first post-claim structural failure still drops that touched frame and quarantines only H2 stereo for the module generation. Engine writes remain six restored 12-byte render/raster position/forward/up spans plus two restored 4-byte vertical-FOV spans. Controller admission/aim, HUD, haptics, scene-target redirect, native asymmetric writes, and generic draw-distance writes remain disabled. Halo 2 headset validation must prove true same-frame stereo, full headset rotation/translation, and actual 72-144 Hz; the same DLL then requires a Halo 3 regression.'
+        note = 'C-H2-41 is one player-visible Halo 2 delta on accepted C-H2-40 source fa1f642: the primary native first-person palette is rigidly placed on the shared calibrated aim pose, and the ordinary XInput look loop steers Halo 2 native unit aim so the stock firing path launches shots along the gun ray. Official H2EK code proves both engine-local paths; retail bindings remain the already verified C-H2-37 interpolator read and observer publication. The interpolation reset is bypassed only while floaty hands are requested and both head and aim tracking are live. Any palette, tracking, hook, or servo failure leaves that feature stock and never disarms the camera, stereo core, or OpenXR. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

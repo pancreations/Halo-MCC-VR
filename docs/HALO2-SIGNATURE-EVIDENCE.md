@@ -2406,3 +2406,65 @@ C-H2-40: the constant is written in `WriteEyeSpans` for every eye, and read
 back after each eye's render_view (before the restore) - `fpFovHeld(eye0/eye1)`
 / `fpFovLost(eye0/eye1)` in the stereo core line say which FOV each eye's
 weapon pass actually found. The eye pictures remain the acceptance.
+
+## E-H2-36: H2EK proves the native floaty-hand palette and shot-direction loop (C-H2-41)
+
+This discovery used only the official H2EK `halo2_tag_test.exe` at
+`N:\SteamLibrary\steamapps\common\H2EK`, SHA-256
+`D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`.
+It was imported into the ignored local H2EK analysis project and queried with
+`tools/ghidra/DumpKitEvidence.java`. Retail `halo2.dll` was not used to invent
+a binding; C-H2-41 consumes only the already signature-verified observer,
+weapon-tick, and interpolator-read bindings from E-H2-23/E-H2-32.
+
+The kit gives the first-person geometry path directly:
+
+- `halo_frame_interpolator_get_interpolated_first_person_node_matrices` at kit
+  RVA `0xD7CD0` has the exact `(user, animation graph, slot, node**, count*)`
+  shape of retail `0x722850`. Its matrix stride is `0x34`; it interpolates the
+  two frame banks through kit RVA `0xD83E0` and otherwise returns no palette.
+- Its only first-person consumers are the two calls in
+  `first_person_weapons.cpp` at kit RVA `0x306E04`, homologous to the existing
+  retail render-path calls. The fallback is the current weapon palette at
+  weapon-data `+0x800`.
+- The placement tail in the same source at kit RVA `0x307536` constructs a
+  transform with an identity 3x3 and a translation, then assembles the node
+  matrices. The helper at kit RVA `0xBB2F0` confirms that transform shape.
+  These are absolute camera-relative node matrices, not a guessed world-space
+  wrist bone. One rigid `Head^-1 * Controller` transform can therefore move
+  the complete authored primary assembly while preserving all weapon, hand,
+  marker, and animation relationships.
+
+This corrects the C-H2-40 `CURRENT-STATE` inference that retail `0x722850`
+was not the first-person geometry path. It is the exact homolog. The accepted
+C-H2-40 tick hook resets all four first-person interpolation slots immediately
+after placement; the kit read then correctly reports no two-bank palette on
+almost every render call. C-H2-41 bypasses that reset only while controller
+aim is requested, the palette hook is installed, and both head and aim poses
+are live. Every other state executes the accepted reset unchanged.
+
+The kit also proves that ordinary Halo 2 aim is the projectile direction:
+
+- `units.cpp` kit RVA `0x48E350` updates the unit desired aiming vector at
+  `+0x168` and native aiming vector at `+0x174`.
+- `items/weapons.cpp` kit RVA `0x49C960` builds the projectile origin and
+  direction before calling `weapon_barrel_simulation_action`.
+- Its firing-only helper at kit RVA `0x47DC20` is called with its final flag
+  set and copies the owning unit's three floats at `+0x174` verbatim into the
+  shot-direction output. That output continues into the stock barrel/projectile
+  creation path.
+
+C-H2-41 therefore does not hook or rewrite projectiles. The shared calibrated
+aim pose defines a controller ray; a bounded XInput servo steers Halo 2's
+ordinary look loop until the published stock observer forward reaches that
+ray. The engine then updates its own unit aim and launches the shot through its
+own proven firing path. The reticle consumes the same current aim pose. A stale
+observer publication, tracking loss, invalid matrix, missing optional palette
+hook, or non-finite servo input fails only that feature to stock; it never
+disarms the observer, either stereo renderer, or OpenXR.
+
+The visible placement owns only first-person slot 0, matching the established
+right-controller primary-weapon behavior in the other titles. A second/left
+weapon slot remains stock until H2-specific dual-wield ownership is separately
+proven. Headset acceptance must test the primary weapon and shot convergence
+in both Anniversary and Classic, then regress Halo 3 on the same DLL.

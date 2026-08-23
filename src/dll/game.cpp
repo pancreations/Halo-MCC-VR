@@ -116,10 +116,12 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-22: matches kHalo2Capabilities in title_registry.cpp - the
-    // virtual gamepad and rumble are granted; aim/HUD/theatre are not.
+    // C-H2-41: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
+    // is title-local: the H2 observer publication closes the normal look loop,
+    // and H2EK proves that native unit aim feeds projectile simulation.
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
+        TitleCapability_ControllerAim |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |
@@ -38008,6 +38010,144 @@ static bool ReachControllerAimActive()
 static bool ReachControllerAimActive() { return false; }
 #endif
 
+bool Game_Halo2ControllerAimActive()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    return TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        Game_HasTitleCapability(TitleCapability_ControllerAim) &&
+        Halo2Observer6Dof_Armed() &&
+        g_enabled.load(std::memory_order_acquire) &&
+        g_vrAim.load(std::memory_order_acquire) && VR_IsStereoEnabled();
+#else
+    return false;
+#endif
+}
+
+// C-H2-41. H2EK units.cpp proves stick look updates unit->aiming_vector at
+// +0x174. weapons.cpp's native firing helper copies that exact vector into the
+// direction later passed to weapon_barrel_simulation_action and projectile
+// creation. Close the ordinary stick loop on the stock observer camera, the
+// same native aim feedback already proven by C-H2-23's headset pitch result.
+static bool ComputeHalo2ControllerAimStick(
+    const float controllerOrientation[4], const float controllerPosition[3],
+    const float headOrientation[4], const float headPosition[3],
+    float& outRx, float& outRy)
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    static Halo4PitchServo yawServo;
+    static Halo4PitchServo pitchServo;
+    static uint64_t lastSerial = 0;
+    static uint64_t lastSerialChangeMs = 0;
+    static float heldRx = 0.0f;
+    static float heldRy = 0.0f;
+    static std::atomic<int> lastBlock{-1};
+    auto blocked = [&](int reason, const char* what) {
+        if (lastBlock.exchange(reason) != reason)
+            LOG("Halo 2 controller aim: loop idle: %s", what);
+        Halo4ResetPitchServo(yawServo);
+        Halo4ResetPitchServo(pitchServo);
+        lastSerial = 0;
+        lastSerialChangeMs = 0;
+        heldRx = heldRy = 0.0f;
+        return false;
+    };
+    Halo2ObserverPosePublication publication{};
+    if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
+        !publication.generation || !publication.serial)
+    {
+        return blocked(1, "the observer has not published a camera yet");
+    }
+    const uint64_t now = GetTickCount64();
+    if (publication.serial == lastSerial)
+    {
+        if (!lastSerialChangeMs || now - lastSerialChangeMs > 250)
+            return blocked(2, "no observer-owned Halo 2 frame in the last 250 ms");
+        outRx = heldRx;
+        outRy = heldRy;
+        return true;
+    }
+    lastSerial = publication.serial;
+    lastSerialChangeMs = now;
+
+    Halo2CameraBasis controller{};
+    const float worldScale = Game_GetWorldScale();
+    if (!Halo2BuildControllerCarrier(
+            publication.tracked, headOrientation, headPosition,
+            controllerOrientation, controllerPosition, worldScale, 0.0f,
+            controller))
+    {
+        return blocked(3, "the controller carrier could not be built");
+    }
+
+    // Projectiles originate at the engine's view, while the reticle lies on
+    // the hand ray. Aim the native view-origin ray through that reticle point.
+    const float rangeMeters = Clamp(g_config.crosshair_distance_m, 2.0f, 50.0f);
+    const float rangeWorld = rangeMeters * worldScale;
+    float direction[3]{};
+    float lengthSquared = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float target = controller.position[axis] +
+            controller.forward[axis] * rangeWorld;
+        direction[axis] = target - publication.tracked.position[axis];
+        lengthSquared += direction[axis] * direction[axis];
+    }
+    const float length = std::sqrt(lengthSquared);
+    if (!std::isfinite(length) || length < 1.0e-4f)
+        return blocked(4, "the controller sight line was not finite");
+    for (float& component : direction)
+        component /= length;
+
+    const float desiredYaw = std::atan2(direction[1], direction[0]);
+    const float desiredPitch = std::asin(Clamp(direction[2], -1.0f, 1.0f));
+    const float engineYaw = std::atan2(
+        publication.stock.forward[1], publication.stock.forward[0]);
+    float enginePitch = 0.0f;
+    if (!std::isfinite(desiredYaw) || !std::isfinite(desiredPitch) ||
+        !std::isfinite(engineYaw) ||
+        !Halo2EnginePitchRadians(publication.stock, enginePitch))
+    {
+        return blocked(5, "the native aim feedback was not finite");
+    }
+    // atan2 wraps at +/-pi. Keep the servo's feedback continuous across that
+    // seam or one legitimate turn would look like a 360-degree reversal and
+    // poison its learned X-axis direction.
+    const float continuousEngineYaw = yawServo.haveLastEnginePitch
+        ? yawServo.lastEnginePitch +
+            WrapPi(engineYaw - yawServo.lastEnginePitch)
+        : engineYaw;
+    const float nearestDesiredYaw = continuousEngineYaw +
+        WrapPi(desiredYaw - engineYaw);
+    outRx = Halo4PitchServoStep(
+        yawServo, continuousEngineYaw, nearestDesiredYaw,
+        kHalo4PitchServoGain);
+    outRy = Halo4PitchServoStep(
+        pitchServo, enginePitch, desiredPitch, kHalo4PitchServoGain);
+    heldRx = outRx;
+    heldRy = outRy;
+    lastBlock.store(0, std::memory_order_relaxed);
+    static uint64_t lastReportMs = 0;
+    if (now - lastReportMs >= 5000)
+    {
+        lastReportMs = now;
+        LOG("Halo 2 controller aim: target yaw/pitch %.1f/%.1f deg, native "
+            "%.1f/%.1f, command %.2f/%.2f, learned direction %+.0f/%+.0f",
+            desiredYaw * 57.29578f, desiredPitch * 57.29578f,
+            engineYaw * 57.29578f, enginePitch * 57.29578f,
+            outRx, outRy, yawServo.direction, pitchServo.direction);
+    }
+    return true;
+#else
+    (void)controllerOrientation;
+    (void)controllerPosition;
+    (void)headOrientation;
+    (void)headPosition;
+    (void)outRx;
+    (void)outRy;
+    return false;
+#endif
+}
+
 // C9: the virtual steering wheel. Two hands make a wheel out of the line
 // between them — no fixed pivot, so it is wherever the player's hands are and
 // taking it never snaps the steering. Double-click both grips to take it,
@@ -38298,7 +38438,8 @@ bool Game_ComputeAimStick(float& outRx, float& outRy)
         return blocked(1, "VR aim toggled OFF (press Insert)");
     if (!g_enabled.load())
         return blocked(2, "head tracking OFF (press F2)");
-    if (!g_aimSeen.load())
+    const bool halo2Aim = Game_Halo2ControllerAimActive();
+    if (!g_aimSeen.load() && !halo2Aim)
         return blocked(3, "camera hook not running (not in a level?)");
     float q[4], p[3];
     if (!VR_GetAimPose(q, p)) // two-hand-adjusted weapon aim (falls back to right hand)
@@ -38306,6 +38447,8 @@ bool Game_ComputeAimStick(float& outRx, float& outRy)
     float hq[4], hp[3];
     if (!VR_GetHeadPose(hq, hp))
         return blocked(5, "headset not tracked");
+    if (halo2Aim)
+        return ComputeHalo2ControllerAimStick(q, p, hq, hp, outRx, outRy);
     lastAimBlock = 0;
 
     // Controller forward from the shared, mount-calibrated aim pose. The

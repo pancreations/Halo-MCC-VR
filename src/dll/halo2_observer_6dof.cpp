@@ -4,11 +4,13 @@
 
 #include <MinHook.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 
 #include "../common/halo2_render_logic.h"
+#include "../common/config.h"
 #include "../common/log.h"
 #include "game.h"
 #include "vr.h"
@@ -142,6 +144,9 @@ namespace
     std::atomic<uint64_t> g_reanchorBadSlot{0};
     std::atomic<uint64_t> g_publicationIndex{0};
     std::atomic<uint64_t> g_weaponsSlotResets{0};
+    std::atomic<uint64_t> g_weaponsResetsBypassedForFloaty{0};
+    std::atomic<uint64_t> g_floatyApplied{0};
+    std::atomic<uint64_t> g_floatyFailed{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     uint64_t g_lastWitnessedReported = 0;
 
@@ -502,9 +507,10 @@ namespace
         g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // E-H2-32 (C-H2-37): the re-anchor. The interpolation reset holds the
-    // weapon exactly at the witnessed tick's placement; this detour runs at
-    // the per-frame read the renderer makes and moves the node geometry from
+    // E-H2-32 (C-H2-37): the re-anchor. Normally the interpolation reset holds
+    // the weapon exactly at the witnessed tick's placement; C-H2-41 keeps the
+    // banks live only for floaty hands. This detour runs at the per-frame read
+    // the renderer makes and moves the node geometry from
     // the tick camera to the CURRENT frame camera - so the weapon follows a
     // head turn at the frame rate and jumps with the world at every tick,
     // in both renderers, without touching any view matrix.
@@ -630,9 +636,37 @@ namespace
                     bool ok = false;
                     __try
                     {
-                        ok = Halo2ReanchorFirstPersonSlot(
-                            reinterpret_cast<float*>(*nodesOut), *countOut,
-                            tick, pass, g_slotCache[slot], outcome);
+                        const bool floaty = slot == 0 &&
+                            Game_Halo2ControllerAimActive();
+                        if (floaty)
+                        {
+                            float headOrientation[4]{}, headPosition[3]{};
+                            float aimOrientation[4]{}, aimPosition[3]{};
+                            Halo2CameraBasis carrier{};
+                            ok = VR_GetHeadPose(
+                                     headOrientation, headPosition) &&
+                                VR_GetAimPose(aimOrientation, aimPosition) &&
+                                Halo2BuildControllerCarrier(
+                                    pass.frame, headOrientation, headPosition,
+                                    aimOrientation, aimPosition,
+                                    Game_GetWorldScale(),
+                                    std::clamp(
+                                        g_config.gun_forward_m, -0.3f, 0.5f),
+                                    carrier) &&
+                                Halo2PlaceFirstPersonSlotOnController(
+                                    reinterpret_cast<float*>(*nodesOut),
+                                    *countOut, pass.frame, carrier,
+                                    std::clamp(g_config.gun_scale, 0.3f, 3.0f),
+                                    g_slotCache[slot], outcome);
+                            (ok ? g_floatyApplied : g_floatyFailed)
+                                .fetch_add(1, std::memory_order_relaxed);
+                        }
+                        else
+                        {
+                            ok = Halo2ReanchorFirstPersonSlot(
+                                reinterpret_cast<float*>(*nodesOut), *countOut,
+                                tick, pass, g_slotCache[slot], outcome);
+                        }
                     }
                     __except (EXCEPTION_EXECUTE_HANDLER)
                     {
@@ -711,7 +745,29 @@ namespace
         }
         if (owned)
         {
-            __try { ResetFirstPersonInterpolation(); }
+            bool floatyReady = false;
+            if (Game_Halo2ControllerAimActive() &&
+                g_reanchorOriginal.load(std::memory_order_acquire))
+            {
+                float hq[4]{}, hp[3]{}, aq[4]{}, ap[3]{};
+                floatyReady = VR_GetHeadPose(hq, hp) && VR_GetAimPose(aq, ap);
+            }
+            __try
+            {
+                if (floatyReady)
+                {
+                    // H2EK's read returns nodes only while the two frame banks
+                    // remain valid. The old reset deliberately invalidates
+                    // them; bypass it only while the independently installed
+                    // floaty transaction has a live controller sample.
+                    g_weaponsResetsBypassedForFloaty.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                else
+                {
+                    ResetFirstPersonInterpolation();
+                }
+            }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
                 g_exceptions.fetch_add(1, std::memory_order_relaxed);
@@ -1152,12 +1208,10 @@ namespace
 
         // E-H2-23: the weapon tick witness. first_person_weapons is
         // identified by being the SINGLE caller of the interpolator's
-        // first-person slot reset, so the reset's entry bytes are still
-        // checked as the identity proof - C-H2-34 never calls it. Killing the
-        // interpolation was what pinned the weapon to the 60 Hz game tick;
-        // the weapon's own view (E-H2-26) cancels the head motion exactly, so
-        // the engine's blending stays on and the weapon stays smooth at
-        // whatever frame rate the player runs.
+        // first-person slot reset, so the reset's entry bytes remain part of
+        // the identity proof. C-H2-41 bypasses the call only while its optional
+        // floaty-hand transaction is live; every stock/failed-feature path
+        // retains the accepted C-H2-40 reset behavior.
         const uintptr_t resetAddress =
             base + kHalo2FrameInterpolatorResetFirstPersonSlotRva;
         uint8_t resetBytes[sizeof(kHalo2FrameInterpolatorResetFirstPersonSlotEntryBytes)]{};
@@ -1392,7 +1446,8 @@ namespace
             "cache %llu, classic stale-camera compensated %llu, node space "
             "world %llu / camera-relative %llu / unknown %llu, pass cameras "
             "named %llu, newest-publication fallback %llu, busy %llu; last "
-            "witnessed publication #%llu",
+            "witnessed publication #%llu; controller placement: %llu applied, "
+            "%llu failed, %llu interpolation resets bypassed",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1456,7 +1511,14 @@ namespace
             static_cast<unsigned long long>(
                 g_reanchorBusy.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponTickIndex.load(std::memory_order_relaxed)));
+                g_weaponTickIndex.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_floatyApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_floatyFailed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponsResetsBypassedForFloaty.load(
+                    std::memory_order_relaxed)));
     }
 }
 

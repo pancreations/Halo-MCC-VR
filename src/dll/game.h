@@ -122,6 +122,9 @@ void Game_ToggleVrAim();        // Insert: right controller steers the weapon ai
 // the right-stick deflection (-1..1) that turns the game's aim toward the
 // right controller ray; false = leave the player's real stick alone.
 bool Game_ComputeAimStick(float& outRx, float& outRy);
+// C-H2-41. True only while Halo 2's controller-owned aim/weapon feature is
+// requested; tracking loss still makes each call fail open independently.
+bool Game_Halo2ControllerAimActive();
 // Rotates a move-stick vector so pushing forward walks toward the gaze
 // instead of the hand-steered aim heading. No-op when VR aim is inactive.
 void Game_MapMoveStick(float& mx, float& my);

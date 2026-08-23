@@ -142,12 +142,12 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
         [string]$manifest.package_preset -cne 'release' -or
         [string]$manifest.development_baseline -cne
-            'f4c641f7b1b707991f2bda71ba485090a16f1e9a' -or
+            'fa1f6422de2de2e94e4d36ee4c731606c30371aa' -or
         [string]$manifest.package_id -cne $packageId -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c40-classic-fp-fov-per-eye-',
+            $head.Substring(0, 7) + '-halo2-c41-floaty-hand-native-aim-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-37' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-41' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED' -or
+            'HEADSET_FLOATY_HAND_AND_CONTROLLER_AIM_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
-            'campaign-classic-only-groundhog-excluded' -or
+            'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'eyes-from-the-publication-the-weapon-tick-was-placed-against-interpolation-reset-per-tick-classic-pre-pair-witness' -or
+            'primary-first-person-assembly-on-controller-native-unit-aim-feeds-projectile-direction' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -240,10 +240,10 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
             '0x015F297C' -or
         [string]$manifest.halo2_candidate.observer_stride -cne '0x368' -or
         $manifest.halo2_candidate.stereo_arms_only_when_classic_render_tree_runs -ne
-            $true -or
+            $false -or
         [string]$manifest.halo2_candidate.remastered_mode_stereo_presentation -cne
-            'stock-screen' -or
-        $manifest.halo2_candidate.remastered_mode_engine_writes -ne $false -or
+            'simultaneous-stereo' -or
+        $manifest.halo2_candidate.remastered_mode_engine_writes -ne $true -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.identity_anchor_count 6) -or
         -not (Test-ExactInt32 `
@@ -420,7 +420,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
             $manifest.halo2_candidate.active_line_requires_complete_exact_current_pair_survived_xr_end_frame `
             $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.controller_input $false) -or
+            $manifest.halo2_candidate.controller_input $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.stereo $true) -or
         -not (Test-ExactBoolean `
@@ -430,11 +430,21 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.headset_translation $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.controller_aim $false) -or
+            $manifest.halo2_candidate.controller_aim $true) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.floating_hands $true) -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.controller_owned_first_person_slot 0) -or
+        [string]$manifest.halo2_candidate.first_person_palette_source -cne
+            'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices' -or
+        [string]$manifest.halo2_candidate.projectile_aim_source -cne
+            'native-unit-aiming-vector-copied-by-stock-weapon-firing-path' -or
+        [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
+            'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.hud $false) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.haptics $false) -or
+            $manifest.halo2_candidate.haptics $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.scene_target_redirect $false) -or
         -not (Test-ExactBoolean `
@@ -466,7 +476,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.halo3_regression_required $true) -or
         [string]$manifest.halo2_candidate.failure_policy -cne
-            'dual-cadence-and-consecutive-serial-preclaim-screen-post-claim-drop-generation-quarantine-local-d3d-failure-keeps-openxr-xr-transaction-failure-enters-session-recovery' -or
+            'floaty-or-aim-failure-leaves-that-feature-stock-camera-stereo-and-openxr-remain-armed' -or
         [string]$manifest.halo2_candidate.evidence -cne
             'docs/HALO2-SIGNATURE-EVIDENCE.md' -or
         $manifest.deployment_policy.automatic_after_package -ne $true -or

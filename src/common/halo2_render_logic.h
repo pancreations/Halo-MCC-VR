@@ -1056,6 +1056,79 @@ inline bool Halo2BuildTrackedCenterCamera(
     return true;
 }
 
+// C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
+// first_person_weapons.cpp builds absolute first-person node matrices in
+// camera-relative space; its render path supplies the camera as the assembly
+// root. Therefore the native equivalent of the other titles' floating-hand
+// carrier is the controller pose relative to the tracked centre camera.
+//
+// Both OpenXR poses are sampled together. Their relative orientation and
+// translation are mapped through the exact Halo 2 camera basis already used by
+// the observer, so no retail object/bone layout is inherited from another game.
+inline bool Halo2BuildControllerCarrier(
+    const Halo2CameraBasis& trackedCamera, const float headOrientation[4],
+    const float headPosition[3], const float controllerOrientation[4],
+    const float controllerPosition[3], float worldScale, float forwardTrimMeters,
+    Halo2CameraBasis& output) noexcept
+{
+    if (!Halo2ValidateCameraBasis(trackedCamera) ||
+        !std::isfinite(worldScale) || worldScale <= 0.0f ||
+        !std::isfinite(forwardTrimMeters))
+    {
+        return false;
+    }
+    float head[4]{}, controller[4]{};
+    if (!Halo2NormalizeQuaternion(headOrientation, head) ||
+        !Halo2NormalizeQuaternion(controllerOrientation, controller))
+    {
+        return false;
+    }
+    const float inverseHead[4] = {-head[0], -head[1], -head[2], head[3]};
+    float relativeOrientation[4]{};
+    Halo2MultiplyQuaternion(inverseHead, controller, relativeOrientation);
+
+    Halo2CameraBasis candidate = trackedCamera;
+    if (!Halo2ApplyLocalQuaternion(candidate, relativeOrientation))
+        return false;
+
+    float roomDelta[3]{};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(headPosition[axis]) ||
+            !std::isfinite(controllerPosition[axis]))
+        {
+            return false;
+        }
+        roomDelta[axis] = controllerPosition[axis] - headPosition[axis];
+        if (!std::isfinite(roomDelta[axis]) ||
+            std::fabs(roomDelta[axis]) > kHalo2MaxHeadTranslationMeters)
+        {
+            return false;
+        }
+    }
+    float headLocal[3]{};
+    Halo2RotateVectorByQuaternion(inverseHead, roomDelta, headLocal);
+    const float right[3] = {
+        trackedCamera.forward[1] * trackedCamera.up[2] -
+            trackedCamera.forward[2] * trackedCamera.up[1],
+        trackedCamera.forward[2] * trackedCamera.up[0] -
+            trackedCamera.forward[0] * trackedCamera.up[2],
+        trackedCamera.forward[0] * trackedCamera.up[1] -
+            trackedCamera.forward[1] * trackedCamera.up[0]};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        candidate.position[axis] = trackedCamera.position[axis] +
+            (right[axis] * headLocal[0] +
+             trackedCamera.up[axis] * headLocal[1] -
+             trackedCamera.forward[axis] * headLocal[2] +
+             candidate.forward[axis] * forwardTrimMeters) * worldScale;
+    }
+    if (!Halo2ValidateCameraBasis(candidate))
+        return false;
+    output = candidate;
+    return true;
+}
+
 // E-H2-6 pose ownership. The observer core publishes, once per game frame,
 // the engine's camera as it found it (`stock`) and the camera it wrote
 // (`tracked`), with the recenter reference it used. A per-eye core then
@@ -2639,6 +2712,93 @@ struct Halo2FirstPersonReanchorResult
     bool compensated = false;
     Halo2FirstPersonNodeSpace space = Halo2FirstPersonNodeSpace::Unknown;
 };
+
+// Places one complete camera-relative first-person assembly on a controller
+// carrier. H2EK proves these are absolute per-node matrices (0x34 bytes each),
+// so one rigid transform applied to every node preserves the authored weapon,
+// hand and animation relationship without requiring a guessed wrist index.
+// Only the caller decides which first-person slot is controller-owned.
+inline bool Halo2PlaceFirstPersonSlotOnController(
+    float* nodes, uint32_t count, const Halo2CameraBasis& trackedCamera,
+    const Halo2CameraBasis& carrier, float meshScale,
+    Halo2FirstPersonSlotCache& cache,
+    Halo2FirstPersonReanchorResult& result) noexcept
+{
+    result = Halo2FirstPersonReanchorResult{};
+    result.space = Halo2FirstPersonNodeSpace::CameraRelative;
+    if (!nodes || count == 0 ||
+        count > static_cast<uint32_t>(kHalo2FirstPersonNodeLimit) ||
+        !Halo2ValidateCameraBasis(trackedCamera) ||
+        !Halo2ValidateCameraBasis(carrier) || !std::isfinite(meshScale) ||
+        meshScale < 0.3f || meshScale > 3.0f)
+    {
+        return false;
+    }
+    const size_t floats = static_cast<size_t>(count) * kHalo2FirstPersonNodeFloats;
+    const size_t bytes = floats * sizeof(float);
+    if (cache.valid && cache.count == count &&
+        std::memcmp(nodes, cache.written, bytes) == 0)
+    {
+        result.fromCache = true;
+    }
+    else
+    {
+        std::memcpy(cache.original, nodes, bytes);
+        cache.count = count;
+        cache.valid = true;
+    }
+    std::memcpy(cache.written, cache.original, bytes);
+    float* const work = cache.written;
+
+    // R = H^T C and t = H^T(Cp-Hp), with camera columns ordered
+    // [right, forward, up]. This is the carrier expressed in the render
+    // camera's local first-person space.
+    float rotation[9]{};
+    if (!Halo2BuildWorldDeltaRotation(trackedCamera, carrier, rotation))
+        return false;
+    float translation[3]{};
+    const float worldDelta[3] = {
+        carrier.position[0] - trackedCamera.position[0],
+        carrier.position[1] - trackedCamera.position[1],
+        carrier.position[2] - trackedCamera.position[2]};
+    const float headRight[3] = {
+        trackedCamera.forward[1] * trackedCamera.up[2] -
+            trackedCamera.forward[2] * trackedCamera.up[1],
+        trackedCamera.forward[2] * trackedCamera.up[0] -
+            trackedCamera.forward[0] * trackedCamera.up[2],
+        trackedCamera.forward[0] * trackedCamera.up[1] -
+            trackedCamera.forward[1] * trackedCamera.up[0]};
+    const float* const headAxes[3] = {
+        headRight, trackedCamera.forward, trackedCamera.up};
+    for (int axis = 0; axis < 3; ++axis)
+        translation[axis] = headAxes[axis][0] * worldDelta[0] +
+            headAxes[axis][1] * worldDelta[1] +
+            headAxes[axis][2] * worldDelta[2];
+
+    const float zero[3]{};
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        float* const node = work + index * kHalo2FirstPersonNodeFloats;
+        float* const position = node + kHalo2FirstPersonNodePositionOffset / 4;
+        if (!std::isfinite(node[0]))
+            return false;
+        node[0] *= meshScale;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (!std::isfinite(position[axis]))
+                return false;
+            position[axis] *= meshScale;
+        }
+        Halo2ReanchorFirstPersonNode(
+            node, rotation, zero, translation);
+    }
+    for (size_t index = 0; index < floats; ++index)
+        if (!std::isfinite(work[index]))
+            return false;
+    std::memcpy(nodes, work, bytes);
+    result.applied = true;
+    return true;
+}
 
 // Re-anchors one interpolator slot in place: every node is moved rigidly
 // from the tick camera to the pass's frame camera (rotation only for
