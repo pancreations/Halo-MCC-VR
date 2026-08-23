@@ -2218,3 +2218,41 @@ resource view from the engine own scene texture, so a substituted view is
 invisible to it. Classic therefore uses the Anniversary mechanism - copy the
 finished frame after each eye - and with the latch restored both eyes finish
 in the same place.
+
+## E-H2-30: the weapon is BETWEEN ticks, not at one (C-H2-36)
+
+C-H2-34 removed the interpolator reset (that was the 60 Hz) but kept drawing
+the weapon with the view of the CURRENT tick. With the interpolator on, the
+weapon is not at the current tick at all:
+
+- `0x723580`, called once per frame from the main frame function at
+  `0x67A220+0x618`, does `movss [rip+0xF27D6F], xmm0` at `0x723589` - RVA
+  **`0x164B300`**, a float.
+- the interpolator read side `0x722850` passes exactly that float as the third
+  argument of `0x723040(previous, current, factor, out)`, which takes it in
+  `xmm2`.
+
+So the drawn weapon is `lerp(previous tick, current tick, factor)`. Drawing it
+with the view of the current tick leaves it trailing by up to a whole tick,
+and a fast turn is exactly where that shows. C-H2-36 keeps the previous
+witnessed tick as well as the current one, reads the engine own factor and
+builds the weapon view from `Halo2LerpCameraBasis(previous, current, factor)`.
+The report counts how often the view followed the blend and how often it fell
+back to the tick pose alone.
+
+## E-H2-31: the classic weapon needs ZERO eye separation (C-H2-36)
+
+With C-H2-35 the classic world finally has true per-eye rendering - and the
+weapon then showed double vision, because `draw_first_person 0x7E0C60` copies
+the pushed raster camera `0x1996A28`, which now carries a true per-eye
+position. A weapon a few centimetres from the eye at that separation lands far
+outside what the eyes can fuse.
+
+The Saber renderer never has this problem: its first-person pass uses a view
+WITHOUT translation (`record+0x5EC`), so the weapon has no eye separation at
+all. C-H2-36 gives the classic pass the same by owning `draw_first_person`:
+on entry the pair centre position (the tracked camera before the per-eye
+offset) replaces the position at `0x1996A28`, the eye rotation is left alone,
+and the mod restores what it overwrote when the call returns. Both eyes then
+place the weapon identically, exactly like Anniversary. Counted as
+`firstPersonCentred` / `firstPersonUnreadable`.

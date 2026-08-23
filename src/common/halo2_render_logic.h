@@ -2318,6 +2318,69 @@ inline constexpr uint32_t kHalo2ClassicRenderToTextureFlagRva = 0x01996A17;
 // the exact shape of the Saber once-per-frame latch the Anniversary core
 // re-arms between its two passes (kHalo2SaberSceneOnceLatchRva).
 inline constexpr uint32_t kHalo2ClassicSceneTargetLatchRva = 0x01994935;
+
+// E-H2-30 (C-H2-36): MCC's frame interpolator blend factor. 0x723580 (called
+// once per frame from the main frame function 0x67A220+0x618) does
+// `movss [rip+0xF27D6F], xmm0` at 0x723589 -> RVA 0x164B300, and the
+// interpolator's read side 0x722850 passes exactly that float as the third
+// argument of 0x723040(previous, current, factor, out) - which takes it in
+// xmm2. So the weapon the Saber renderer draws is not at the tick pose: it is
+// at lerp(previous tick, current tick, factor). Drawing it with the view of
+// the CURRENT tick therefore trails by up to a whole tick, which is what a
+// fast turn exposes. The weapon's view is built from the same blend.
+inline constexpr uint32_t kHalo2FrameInterpolatorFactorRva = 0x0164B300;
+
+// E-H2-31 (C-H2-36): the camera globals draw_first_person copies (E-H2-20).
+inline constexpr uint32_t kHalo2ClassicFirstPersonCameraGlobalRva = 0x01996A28;
+
+// Blends two camera bases the way the interpolator blends the weapon, and
+// re-orthonormalises, so the result is always a valid basis.
+inline bool Halo2LerpCameraBasis(
+    const Halo2CameraBasis& previous, const Halo2CameraBasis& current,
+    float factor, Halo2CameraBasis& out) noexcept
+{
+    if (!Halo2ValidateCameraBasis(previous) ||
+        !Halo2ValidateCameraBasis(current) || !std::isfinite(factor))
+    {
+        return false;
+    }
+    const float t = factor < 0.0f ? 0.0f : (factor > 1.0f ? 1.0f : factor);
+    Halo2CameraBasis candidate{};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        candidate.position[axis] = previous.position[axis] +
+            (current.position[axis] - previous.position[axis]) * t;
+        candidate.forward[axis] = previous.forward[axis] +
+            (current.forward[axis] - previous.forward[axis]) * t;
+        candidate.up[axis] = previous.up[axis] +
+            (current.up[axis] - previous.up[axis]) * t;
+    }
+    float forwardLength = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+        forwardLength += candidate.forward[axis] * candidate.forward[axis];
+    forwardLength = std::sqrt(forwardLength);
+    if (!std::isfinite(forwardLength) || forwardLength < 1.0e-4f)
+        return false;
+    for (int axis = 0; axis < 3; ++axis)
+        candidate.forward[axis] /= forwardLength;
+    float dot = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+        dot += candidate.up[axis] * candidate.forward[axis];
+    for (int axis = 0; axis < 3; ++axis)
+        candidate.up[axis] -= candidate.forward[axis] * dot;
+    float upLength = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+        upLength += candidate.up[axis] * candidate.up[axis];
+    upLength = std::sqrt(upLength);
+    if (!std::isfinite(upLength) || upLength < 1.0e-4f)
+        return false;
+    for (int axis = 0; axis < 3; ++axis)
+        candidate.up[axis] /= upLength;
+    if (!Halo2ValidateCameraBasis(candidate))
+        return false;
+    out = candidate;
+    return true;
+}
 inline constexpr int kHalo2EyeBoundRtvSlots = 6;
 inline constexpr int kHalo2CaptureCandidateSlots = 2 + kHalo2EyeBoundRtvSlots;
 

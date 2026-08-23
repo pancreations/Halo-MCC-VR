@@ -99,6 +99,8 @@ namespace
     float g_weaponViewNoTranslation[kHalo2SaberMatrixFloats]{};
     std::atomic<bool> g_weaponViewValid{false};
     std::atomic<uint64_t> g_weaponViewApplied{0};
+    std::atomic<uint64_t> g_weaponViewBlended{0};
+    std::atomic<uint64_t> g_weaponViewUnblended{0};
     std::atomic<uint64_t> g_weaponViewRejected{0};
     std::atomic<uint32_t> g_weaponViewCheckGeneration{0};
     std::atomic<bool> g_weaponViewCheckPassed{false};
@@ -548,23 +550,54 @@ namespace
                 // for the WEAPON's own view instead (weaponBasis below).
                 weaponBasisValid = false;
                 uint64_t witnessIndex = 0;
+                uint64_t witnessPreviousIndex = 0;
                 bool witnessed = false;
                 __try
                 {
                     witnessed = Halo2Observer6Dof_WeaponTickPublication(
-                        generation, witnessIndex);
+                        generation, witnessIndex, witnessPreviousIndex);
                 }
                 __except (EXCEPTION_EXECUTE_HANDLER) { witnessed = false; }
                 if (witnessed)
                 {
                     int found = -1;
-                    for (int i = 0; i < ringCount && found < 0; ++i)
-                        if (ring[i].index == witnessIndex)
+                    int foundPrevious = -1;
+                    for (int i = 0; i < ringCount; ++i)
+                    {
+                        if (found < 0 && ring[i].index == witnessIndex)
                             found = i;
+                        if (foundPrevious < 0 && witnessPreviousIndex &&
+                            ring[i].index == witnessPreviousIndex)
+                            foundPrevious = i;
+                    }
                     if (found >= 0)
                     {
                         weaponBasis = ring[found].tracked;
                         weaponBasisValid = true;
+                        // E-H2-30: the weapon is not AT the tick pose - the
+                        // frame interpolator has it at lerp(previous, current,
+                        // factor). Follow the engine's own factor, or the
+                        // weapon trails the view by up to a whole tick.
+                        float factor = 0.0f;
+                        if (foundPrevious >= 0 &&
+                            ReadGuarded(base + kHalo2FrameInterpolatorFactorRva, factor) &&
+                            std::isfinite(factor) && factor >= 0.0f && factor <= 1.0f)
+                        {
+                            Halo2CameraBasis blended{};
+                            if (Halo2LerpCameraBasis(
+                                    ring[foundPrevious].tracked, ring[found].tracked,
+                                    factor, blended))
+                            {
+                                weaponBasis = blended;
+                                g_weaponViewBlended.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                        }
+                        else
+                        {
+                            g_weaponViewUnblended.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                         g_sampleWitnessed.fetch_add(1, std::memory_order_relaxed);
                     }
                     else
@@ -1445,7 +1478,9 @@ namespace
             "rendered from the frame's own sample; the weapon's view came "
             "from the witnessed game tick %llu times, the witness was out of "
             "the ring %llu times (weapon view applied %llu, engine's own view "
-            "kept %llu); views seen mask=0x%X last=%u; bail reasons: %s",
+            "kept %llu; the view followed the interpolator's blend %llu times, "
+            "took the tick pose alone %llu times); views seen mask=0x%X "
+            "last=%u; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
@@ -1461,6 +1496,8 @@ namespace
             static_cast<unsigned long long>(g_sampleWitnessMissing.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_weaponViewApplied.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(g_weaponViewRejected.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_weaponViewBlended.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_weaponViewUnblended.load(std::memory_order_relaxed)),
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
             used ? reasons : "none");

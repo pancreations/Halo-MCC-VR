@@ -96,6 +96,9 @@ namespace
     // serial written last (release) and read first (acquire).
     std::atomic<uint32_t> g_weaponTickGeneration{0};
     std::atomic<uint64_t> g_weaponTickIndex{0};
+    // E-H2-30: the tick BEFORE it, so the weapon's view can follow the
+    // interpolator's blend between the two instead of snapping to the newest.
+    std::atomic<uint64_t> g_weaponTickPreviousIndex{0};
     std::atomic<uint64_t> g_publicationIndex{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     uint64_t g_lastWitnessedReported = 0;
@@ -426,7 +429,10 @@ namespace
             return;
         }
         g_weaponTickGeneration.store(generation, std::memory_order_relaxed);
-        g_weaponTickIndex.store(published.index, std::memory_order_release);
+        const uint64_t previous =
+            g_weaponTickIndex.exchange(published.index, std::memory_order_acq_rel);
+        if (previous && previous != published.index)
+            g_weaponTickPreviousIndex.store(previous, std::memory_order_release);
         g_weaponsWitnessed.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -737,6 +743,7 @@ namespace
         g_weaponsOriginal.store(0, std::memory_order_release);
         g_interpolatorResetAddress.store(0, std::memory_order_release);
         g_weaponTickIndex.store(0, std::memory_order_release);
+        g_weaponTickPreviousIndex.store(0, std::memory_order_release);
         g_weaponTickGeneration.store(0, std::memory_order_release);
         g_originalAddress.store(0, std::memory_order_release);
         g_observerResult.store(0, std::memory_order_release);
@@ -1176,9 +1183,10 @@ int Halo2Observer6Dof_ReadPublishedPoses(
 }
 
 bool Halo2Observer6Dof_WeaponTickPublication(
-    uint32_t generation, uint64_t& index) noexcept
+    uint32_t generation, uint64_t& index, uint64_t& previousIndex) noexcept
 {
     index = g_weaponTickIndex.load(std::memory_order_acquire);
+    previousIndex = g_weaponTickPreviousIndex.load(std::memory_order_acquire);
     return index != 0 && generation != 0 &&
         g_weaponTickGeneration.load(std::memory_order_relaxed) == generation;
 }
@@ -1211,9 +1219,11 @@ bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication&) noexcept { return false; }
 int Halo2Observer6Dof_ReadPublishedPoses(
     Halo2ObserverPosePublication*, int) noexcept { return 0; }
-bool Halo2Observer6Dof_WeaponTickPublication(uint32_t, uint64_t& index) noexcept
+bool Halo2Observer6Dof_WeaponTickPublication(
+    uint32_t, uint64_t& index, uint64_t& previousIndex) noexcept
 {
     index = 0;
+    previousIndex = 0;
     return false;
 }
 void Halo2Observer6Dof_RequestRecenter() noexcept {}

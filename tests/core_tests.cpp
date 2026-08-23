@@ -7322,6 +7322,41 @@ int main()
                 "E-H2-27 a concrete format is left alone");
         }
 
+        // E-H2-30: the weapon view follows the interpolator between ticks.
+        {
+            Halo2CameraBasis previous{};
+            previous.forward[0] = 1.0f; previous.up[2] = 1.0f;
+            previous.position[0] = 0.0f;
+            Halo2CameraBasis current{};
+            current.forward[1] = 1.0f; current.up[2] = 1.0f;
+            current.position[0] = 10.0f;
+            Halo2CameraBasis out{};
+            Check(Halo2LerpCameraBasis(previous, current, 0.0f, out) &&
+                      std::fabs(out.position[0]) < 1.0e-4f &&
+                      std::fabs(out.forward[0] - 1.0f) < 1.0e-4f,
+                "E-H2-30 factor 0 is the previous tick");
+            Check(Halo2LerpCameraBasis(previous, current, 1.0f, out) &&
+                      std::fabs(out.position[0] - 10.0f) < 1.0e-4f &&
+                      std::fabs(out.forward[1] - 1.0f) < 1.0e-4f,
+                "E-H2-30 factor 1 is the current tick");
+            Check(Halo2LerpCameraBasis(previous, current, 0.5f, out) &&
+                      std::fabs(out.position[0] - 5.0f) < 1.0e-4f,
+                "E-H2-30 the position blends linearly");
+            float length = 0.0f;
+            for (int axis = 0; axis < 3; ++axis)
+                length += out.forward[axis] * out.forward[axis];
+            Check(std::fabs(length - 1.0f) < 1.0e-4f,
+                "E-H2-30 the blended forward is renormalised");
+            float dot = 0.0f;
+            for (int axis = 0; axis < 3; ++axis)
+                dot += out.forward[axis] * out.up[axis];
+            Check(std::fabs(dot) < 1.0e-4f,
+                "E-H2-30 the blended basis stays orthogonal");
+            Check(Halo2LerpCameraBasis(previous, current, 2.0f, out) &&
+                      std::fabs(out.position[0] - 10.0f) < 1.0e-4f,
+                "E-H2-30 a factor outside 0..1 is clamped");
+        }
+
         // E-H2-21: main-view flags and Saber matrix matching.
         {
             Check(Halo2SaberViewRecordIsMainView(0) &&

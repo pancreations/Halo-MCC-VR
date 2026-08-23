@@ -177,6 +177,12 @@ namespace
         // when this pair began, and whether it was readable.
         uint8_t sceneTargetLatch = 0;
         bool sceneTargetLatchValid = false;
+        // E-H2-31: the tracked camera WITHOUT the per-eye offset. The
+        // first-person weapon is drawn from this, so both eyes place it
+        // identically - the classic equivalent of the Saber renderer's
+        // view-WITHOUT-translation first-person pass.
+        Halo2CameraBasis rasterCenter{};
+        bool rasterCenterValid = false;
     };
 
     HookTelemetry g_telemetry;
@@ -237,6 +243,11 @@ namespace
     std::atomic<uint32_t> g_claimedFrameFailures{0};
     // E-H2-29: how often the second eye's scene-target latch had to be
     // re-armed, and how often it could not be.
+    // E-H2-31: the first-person weapon pass.
+    void* g_firstPersonTarget = nullptr;
+    std::atomic<uintptr_t> g_firstPersonOriginal{0};
+    std::atomic<uint64_t> g_firstPersonCentred{0};
+    std::atomic<uint64_t> g_firstPersonUnreadable{0};
     std::atomic<uint64_t> g_sceneLatchRearmed{0};
     std::atomic<uint64_t> g_sceneLatchUnreadable{0};
     uint64_t g_claimedFrameFailureLogMs = 0;
@@ -1099,6 +1110,62 @@ namespace
         }
     }
 
+    // E-H2-31: draw_first_person copies the pushed raster camera (0x1996A28)
+    // into its own copy, rebuilds the projection from it and draws the weapon.
+    // With a true per-eye position there, a weapon a few centimetres from the
+    // eye gets a disparity far past what the eyes can fuse - the classic
+    // "double vision on the gun". The Saber renderer never has it because its
+    // first-person pass uses a view WITHOUT translation, so the weapon has no
+    // eye separation at all. This gives the classic pass the same: the eye's
+    // rotation, the pair's centre position. The engine restores its own copy;
+    // the mod restores what it overwrote either way.
+    __declspec(noinline) void __fastcall Halo2DrawFirstPersonDetour()
+    {
+        g_activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        const auto original = reinterpret_cast<void(__fastcall*)()>(
+            g_firstPersonOriginal.load(std::memory_order_acquire));
+        if (!original)
+        {
+            g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+            return;
+        }
+        StereoScope* const scope = g_stereoScope;
+        const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
+        uintptr_t camera = 0;
+        float saved[3]{};
+        bool centred = false;
+        if (scope && scope->rasterCenterValid && base && g_innerDepth)
+        {
+            camera = base + kHalo2ClassicFirstPersonCameraGlobalRva +
+                kHalo2CameraPositionOffset;
+            if (GuardedCopyExact(saved, reinterpret_cast<const float*>(camera),
+                                 kHalo2CameraVectorBytes) &&
+                GuardedCopyExact(reinterpret_cast<void*>(camera),
+                                 scope->rasterCenter.position,
+                                 kHalo2CameraVectorBytes))
+            {
+                centred = true;
+                g_firstPersonCentred.fetch_add(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                g_firstPersonUnreadable.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        __try { original(); }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_telemetry.transactionExceptions.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        if (centred)
+        {
+            (void)GuardedCopyExact(reinterpret_cast<void*>(camera), saved,
+                                   kHalo2CameraVectorBytes);
+        }
+        g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
     bool HotStateMatches(uint32_t generation) noexcept
     {
         const uint64_t quarantine =
@@ -1808,6 +1875,8 @@ namespace
             kHalo2RenderCameraOffset;
         candidate.rasterCamera = static_cast<uint8_t*>(window) +
             kHalo2RasterCameraOffset;
+        candidate.rasterCenter = rasterCenter;
+        candidate.rasterCenterValid = true;
         candidate.savedRender = render.basis;
         candidate.savedRaster = raster.basis;
         candidate.savedRenderVerticalFov = render.verticalFov;
@@ -2163,7 +2232,8 @@ namespace
                 "stockInner=%llu snapshotMiss=%llu foreignOuter=%llu "
                 "foreignInner=%llu invalid=%llu duplicate=%llu claimed=%llu "
                 "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
-                "restoreFail=%llu exception=%llu sceneLatchRearmed=%llu "
+                "restoreFail=%llu exception=%llu firstPersonCentred=%llu "
+                "firstPersonUnreadable=%llu sceneLatchRearmed=%llu "
                 "sceneLatchUnreadable=%llu poseOwner=%s "
                 "posePublished=%llu poseRederived=%llu poseSelf=%llu "
                 "poseUnavailable=%llu",
@@ -2183,6 +2253,10 @@ namespace
                 static_cast<unsigned long long>(current.droppedPairs),
                 static_cast<unsigned long long>(current.restoreFailures),
                 static_cast<unsigned long long>(current.transactionExceptions),
+                static_cast<unsigned long long>(
+                    g_firstPersonCentred.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_firstPersonUnreadable.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_sceneLatchRearmed.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
@@ -2620,6 +2694,8 @@ namespace
         ResetHeadReferenceAtomic();
         VR_ResetHalo2SynchronousStereo();
 
+        if (g_firstPersonTarget)
+            (void)MH_DisableHook(g_firstPersonTarget);
         const MH_STATUS outerDisabled = g_outerTarget
             ? MH_DisableHook(g_outerTarget)
             : MH_ERROR_NOT_CREATED;
@@ -2650,6 +2726,22 @@ namespace
         }
 
         bool removed = true;
+        if (g_firstPersonTarget)
+        {
+            const MH_STATUS status = MH_RemoveHook(g_firstPersonTarget);
+            if (RemoveStatusIsSafe(status))
+            {
+                g_firstPersonTarget = nullptr;
+                g_firstPersonOriginal.store(0, std::memory_order_release);
+            }
+            else
+            {
+                removed = false;
+                LOG("Halo 2 stereo cleanup REQUIRED (%s): first-person "
+                    "remove=%d", reason ? reason : "unspecified",
+                    static_cast<int>(status));
+            }
+        }
         if (g_innerTarget)
         {
             const MH_STATUS status = MH_RemoveHook(g_innerTarget);
@@ -2682,7 +2774,7 @@ namespace
                     static_cast<int>(status));
             }
         }
-        if (!removed || g_innerTarget || g_outerTarget)
+        if (!removed || g_innerTarget || g_outerTarget || g_firstPersonTarget)
         {
             g_coreState = CoreState::CleanupRequired;
             return false;
@@ -2780,7 +2872,8 @@ namespace
             g_rejectedGeneration = generation;
             return false;
         }
-        if (g_outerTarget || g_innerTarget || g_moduleReference ||
+        if (g_outerTarget || g_innerTarget || g_firstPersonTarget ||
+            g_moduleReference ||
             g_outerOriginalAddress.load(std::memory_order_acquire) ||
             g_innerOriginalAddress.load(std::memory_order_acquire))
         {
@@ -2857,6 +2950,74 @@ namespace
             FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
+        }
+
+        // E-H2-31: the first-person weapon pass, pinned by the same entry
+        // bytes the FOV constant pin already verifies. Its absence is loud and
+        // leaves the weapon exactly as the previous candidate drew it.
+        {
+            const uintptr_t firstPerson = base + kHalo2ClassicDrawFirstPersonRva;
+            uint8_t entry[sizeof(kHalo2ClassicDrawFirstPersonEntryBytes)]{};
+            bool readable = false;
+            __try
+            {
+                std::memcpy(entry, reinterpret_cast<const void*>(firstPerson),
+                            sizeof(entry));
+                readable = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) { readable = false; }
+            if (!readable ||
+                std::memcmp(entry, kHalo2ClassicDrawFirstPersonEntryBytes,
+                            sizeof(entry)) != 0)
+            {
+                LOG("Halo 2 classic first-person weapon pass NOT owned: the "
+                    "entry bytes at +0x%X are not draw_first_person in this "
+                    "module; the weapon keeps a full per-eye separation",
+                    static_cast<unsigned>(kHalo2ClassicDrawFirstPersonRva));
+            }
+            else
+            {
+                void* const target = reinterpret_cast<void*>(firstPerson);
+                void* trampoline = nullptr;
+                const MH_STATUS created = MH_CreateHook(
+                    target,
+                    reinterpret_cast<void*>(&Halo2DrawFirstPersonDetour),
+                    &trampoline);
+                if (created != MH_OK || !trampoline)
+                {
+                    LOG("Halo 2 classic first-person weapon pass NOT owned: "
+                        "hook create=%d", static_cast<int>(created));
+                    if (created == MH_OK)
+                        (void)MH_RemoveHook(target);
+                }
+                else
+                {
+                    g_firstPersonTarget = target;
+                    g_firstPersonOriginal.store(
+                        reinterpret_cast<uintptr_t>(trampoline),
+                        std::memory_order_release);
+                    if (MH_EnableHook(target) != MH_OK)
+                    {
+                        LOG("Halo 2 classic first-person weapon pass NOT "
+                            "owned: hook enable failed");
+                        (void)MH_RemoveHook(target);
+                        g_firstPersonTarget = nullptr;
+                        g_firstPersonOriginal.store(0, std::memory_order_release);
+                    }
+                    else
+                    {
+                        LOG("Halo 2 classic first-person weapon pass owned at "
+                            "draw_first_person +0x%X: the weapon is drawn from "
+                            "the pair's CENTRE position with the eye's own "
+                            "rotation, so both eyes place it identically - the "
+                            "same zero separation the Saber renderer's "
+                            "view-without-translation first-person pass gives "
+                            "it, and the reason a weapon centimetres from the "
+                            "eye can be fused at all",
+                            static_cast<unsigned>(kHalo2ClassicDrawFirstPersonRva));
+                    }
+                }
+            }
         }
 
         (void)PinFirstPersonFovConstant(base, generation);

@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c35-classic-scene-target-latch-per-eye',
+        'halo2-c36-weapon-interpolator-blend-classic-fp-centre',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -253,7 +253,7 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-35'
+            id = 'C-H2-36'
             status = 'HEADSET_BOTH_MODES_STEREO_6DOF_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-classic-only-groundhog-excluded'

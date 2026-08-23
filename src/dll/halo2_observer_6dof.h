@@ -44,8 +44,10 @@ int Halo2Observer6Dof_ReadPublishedPoses(
 // game-tick weapon placement was witnessed against, for this generation.
 // False until a tick is witnessed, and false again after a tick that could
 // not be witnessed (the previous witness never stands for a later tick).
+// `previousIndex` is the tick before it (0 when there is none), so a renderer
+// can follow the frame interpolator's blend between the two.
 bool Halo2Observer6Dof_WeaponTickPublication(
-    uint32_t generation, uint64_t& index) noexcept;
+    uint32_t generation, uint64_t& index, uint64_t& previousIndex) noexcept;
 
 // Atomic-only. The next valid sample becomes the new orientation/translation
 // reference; safe to call from the universal recenter path.
