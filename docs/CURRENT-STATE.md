@@ -1,6 +1,6 @@
 # Current state
 
-> **HALO 2 C-H2-48 IMPLEMENTED; PACKAGE/HEADSET VALIDATION REQUIRED - 2026-08-23.**
+> **HALO 2 C-H2-48 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-23.**
 > The player's C-H2-47 headset result rejected that candidate: both hands were
 > offset, both arm assemblies still rode the right controller, shots did not
 > follow the visible crosshair, and controller tracking only behaved while
@@ -29,9 +29,14 @@
 > Not in this candidate: dual-wield slot 1. Retail demonstrably treats the
 > second weapon slot differently, so it is left stock rather than assumed.
 >
-> Verification so far: Release build PASS; core tests PASS, including a common
-> world/body-turn invariance test and exact visible-subtree/collapsed-arm test.
-> Exact source/package/DLL identities are recorded after packaging.
+> | C-H2-48 deployed identity | Value |
+> | --- | --- |
+> | Source | `a873613b925d62e427406016361e433473b553b4` |
+> | Package | `a873613-halo2-c48-hands-aim-turn-fix-20260823-143613603Z` |
+> | `HaloMCCVR.dll` | `A47D89BD23DC82D4E889705116E90DF701EC0D854EA7C64C0109183A9E536540` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
+> | Verification | Release build PASS; core tests PASS; Reach consistency check PASS; common world/body-turn invariance and exact hand/arm visibility tests PASS |
 >
 > Required headset test in both Anniversary and Classic: turn at least 90 and
 > 180 degrees away from initial facing; confirm each hand remains on its own
