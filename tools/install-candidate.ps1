@@ -136,7 +136,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 24) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 24) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c54-shared-unload-safe-hook-epochs-',
+            $head.Substring(0, 7) + '-halo2-c53-final-packet-same-dll-lease-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 24) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-54' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-53' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_BUILD_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-and-shared-unload-safe-hook-epochs' -or
+            'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-and-session-long-same-dll-hook-lease' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -460,13 +460,11 @@ if (-not (Test-ExactInt32 $manifest.schema_version 24) -or
         [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
             'stock-reset-preserved-rejected-interpolator-controller-path-remains-disabled' -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.same_module_hook_lease $false) -or
+            $manifest.halo2_candidate.same_module_hook_lease $true) -or
         [string]$manifest.halo2_candidate.same_module_hook_lease_scope -cne
-            'rejected-c-h2-53-session-long-loader-reference-lease-reverted' -or
-        [string]$manifest.halo2_candidate.loader_refcount_policy -cne
-            'non-owning-exact-base-validation-no-game-dll-refcount-increments' -or
+            'observer-anniversary-classic-renderer-guard-retained-and-stock-pass-through-across-title-level-proof-gaps' -or
         [string]$manifest.halo2_candidate.physical_hook_teardown_policy -cne
-            'retire-at-level-liveness-boundary-while-title-mapping-is-current' -or
+            'only-proven-nonzero-different-module-base-or-explicit-openxr-failure' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.hud $false) -or
         -not (Test-ExactBoolean `

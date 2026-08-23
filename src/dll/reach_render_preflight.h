@@ -52,9 +52,9 @@ private:
         ReachLoadedImageModulePin& pin);
 };
 
-// Worker-thread-only loaded-image proof. The historical Pin type now retains
-// only a non-owning exact-base identity through the final mapping check and
-// publication; MCC alone owns the module refcount. No write or hook occurs.
+// Worker-thread-only loaded-image proof. The caller owns the returned pin and
+// must retain it through the final mapping check and publication. The pin is
+// released by its destructor after publication. No write or hook is performed.
 bool ReachRender_RunLoadedImagePreflight(
     uintptr_t moduleBase, size_t moduleSize,
     ReachLoadedImagePreflight& result,

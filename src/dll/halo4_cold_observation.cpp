@@ -46,11 +46,12 @@ namespace
             HMODULE module = nullptr;
             if (!expectedBase ||
                 !GetModuleHandleExW(
-                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                     reinterpret_cast<LPCWSTR>(expectedBase), &module) ||
                 reinterpret_cast<uintptr_t>(module) != expectedBase)
             {
+                if (module)
+                    FreeLibrary(module);
                 return false;
             }
             m_module = module;
@@ -67,7 +68,11 @@ namespace
     private:
         void Reset() noexcept
         {
-            m_module = nullptr;
+            if (m_module)
+            {
+                FreeLibrary(m_module);
+                m_module = nullptr;
+            }
         }
 
         HMODULE m_module = nullptr;

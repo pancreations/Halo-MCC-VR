@@ -2945,8 +2945,11 @@ namespace
         g_serialGapExpected.store(0, std::memory_order_release);
         g_serialGapObserved.store(0, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
-        // Non-owning identity; MCC alone owns the title DLL lifetime.
-        g_moduleReference = nullptr;
+        if (g_moduleReference)
+        {
+            FreeLibrary(g_moduleReference);
+            g_moduleReference = nullptr;
+        }
         LOG("Halo 2 stereo core removed (%s); stock rendering restored",
             reason ? reason : "unspecified");
         return true;
@@ -2975,8 +2978,7 @@ namespace
     {
         HMODULE module = nullptr;
         if (!GetModuleHandleExW(
-                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                 reinterpret_cast<LPCWSTR>(base), &module) ||
             reinterpret_cast<uintptr_t>(module) != base)
         {
@@ -2986,6 +2988,8 @@ namespace
                     "generation %u", generation);
                 g_pinFailureLoggedGeneration = generation;
             }
+            if (module)
+                FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -3020,6 +3024,7 @@ namespace
                 renderViewEdge ? 1 : 0, playerExecutable ? 1 : 0,
                 renderViewExecutable ? 1 : 0,
                 backbufferProof ? 1 : 0);
+            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -3030,6 +3035,7 @@ namespace
         {
             LOG("Halo 2 stereo install WITHHELD: prior hook ownership remains; "
                 "worker cleanup must finish first");
+            FreeLibrary(module);
             g_coreState = CoreState::CleanupRequired;
             return false;
         }
@@ -3057,6 +3063,7 @@ namespace
             }
             LOG("Halo 2 stereo install WITHHELD: inner create=%d rollback=%d",
                 static_cast<int>(createdInner), static_cast<int>(rollback));
+            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -3096,6 +3103,7 @@ namespace
             LOG("Halo 2 stereo install WITHHELD: outer create=%d rollback=%d",
                 static_cast<int>(createdOuter),
                 static_cast<int>(outerRollback));
+            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }

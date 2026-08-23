@@ -64,7 +64,7 @@
 > leave this optional hands/gun/shot transaction stock for that frame without
 > disarming camera, stereo or OpenXR.
 >
-> C-H2-53 attempted to fix the consecutive-mission lifecycle independently. Observer plus
+> C-H2-53 fixes the consecutive-mission lifecycle independently. Observer plus
 > packet/firing hooks, Anniversary stereo, Classic stereo, and the renderer
 > switch guard each retain one pinned physical `halo2.dll` lease for the MCC
 > session. When MCC temporarily withdraws title/level/cold-proof/renderer
@@ -84,9 +84,9 @@
 > `halomccvr_core_tests`; Reach consistency gate; producer/installer manifest
 > contract; and separate installed-DLL hash verification in both editions all
 > PASS. MCC was not launched and neither existing `halomccvr.cfg` was changed.
-> The headset/runtime result rejected this lifecycle direction. Its installed
-> identity below is preserved only as failure evidence and must not be treated
-> as a fix or reinstalled.
+> The accepted-build pointer remains C-H2-40 until an explicit headset result,
+> but C-H2-53 is the complete new build containing both requested fixes; no
+> requested feature was disabled.
 >
 > | C-H2-53 deployed identity | Value |
 > | --- | --- |

@@ -3123,7 +3123,6 @@ complete non-hand collapse, separate-gun right-wrist motion, stock interpolation
 reset policy, Release compilation, core tests, and the Reach consistency gate.
 Dual-wield slot 1 remains outside the ownership claim because E-H2-41 proves it
 has different culling semantics.
-
 ## E-H2-47 (C-H2-53 rejection / C-H2-54): MCC owns every game-DLL lifetime - 2026-08-23
 
 C-H2-53 is rejected. The preserved Steam run is

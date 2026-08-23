@@ -15856,9 +15856,10 @@ namespace
 
     void ReleaseOdstModuleReferenceAndClearPointers()
     {
-        // moduleReference is an exact-base identity only. MCC owns the loader
-        // reference; releasing one here used to race its consecutive load.
+        HMODULE moduleReference = g_odstCamera.moduleReference;
         ClearOdstCameraPointers();
+        if (moduleReference)
+            FreeLibrary(moduleReference);
     }
 
     bool DiscardCreatedOdstHooks()
@@ -15907,13 +15908,14 @@ namespace
         if (!runtimeGeneration)
             return OdstInstallResult::Failed;
         HMODULE moduleReference = nullptr;
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                                 reinterpret_cast<LPCWSTR>(base),
                                 &moduleReference) ||
             reinterpret_cast<uintptr_t>(moduleReference) != base)
         {
-            LOG("ODST camera preflight: exact title mapping is no longer current");
+            if (moduleReference)
+                FreeLibrary(moduleReference);
+            LOG("ODST camera preflight: could not retain the exact title module");
             return OdstInstallResult::Failed;
         }
 
@@ -15922,10 +15924,12 @@ namespace
             PreflightOdstCameraRuntime(base, size, resolved);
         if (preflight != OdstInstallResult::Installed)
         {
+            FreeLibrary(moduleReference);
             return preflight;
         }
         if (g_odstCamera.moduleReference || g_odstCamera.hookTargetCount != 0)
         {
+            FreeLibrary(moduleReference);
             LOG("ODST camera install: prior hook ownership was not cleared");
             return OdstInstallResult::Failed;
         }
@@ -16249,12 +16253,13 @@ namespace
         if (!sig::ModuleRange(moduleName, base, size))
             return false;
         HMODULE moduleReference = nullptr;
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                                 reinterpret_cast<LPCWSTR>(base),
                                 &moduleReference) ||
             reinterpret_cast<uintptr_t>(moduleReference) != base)
         {
+            if (moduleReference)
+                FreeLibrary(moduleReference);
             return false;
         }
 
@@ -16271,6 +16276,7 @@ namespace
             arraySize <= size - cameraArrayRva;
         const bool ready = identityMatches && arrayFits &&
             OdstCameraArraySupportsBringup(base + cameraArrayRva);
+        FreeLibrary(moduleReference);
         return ready;
     }
 #endif
@@ -25306,6 +25312,7 @@ namespace
         g_camValid.store(false, std::memory_order_release);
         g_baseCamValid.store(false, std::memory_order_release);
 
+        HMODULE moduleReference = g_reachCamera.moduleReference;
         g_reachCamera.innerTarget = nullptr;
         g_reachCamera.outerTarget = nullptr;
         g_reachCamera.fpInterpolateTarget = nullptr;
@@ -25416,6 +25423,8 @@ namespace
         g_reachOuterCameraCommitLoggedGeneration.store(
             0, std::memory_order_release);
         g_reachHelpers = {};
+        if (moduleReference)
+            FreeLibrary(moduleReference);
         g_reachCamera.teardownRequested.store(
             false, std::memory_order_release);
         g_reachCamera.installed.store(false, std::memory_order_release);
@@ -26749,13 +26758,14 @@ namespace
         }
 
         HMODULE moduleReference = nullptr;
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                                 reinterpret_cast<LPCWSTR>(base),
                                 &moduleReference) ||
             reinterpret_cast<uintptr_t>(moduleReference) != base)
         {
-            LOG("Reach camera install: exact title mapping is no longer current");
+            if (moduleReference)
+                FreeLibrary(moduleReference);
+            LOG("Reach camera install: could not retain the exact title module");
             return false;
         }
         // Optional, not part of core VR ownership: see kReachHudDrawWidgetRva
@@ -26997,7 +27007,11 @@ namespace
                 g_reachEffectFpMarkerQuery=nullptr;
             }
             if (!rainRenderRetained) g_reachOrigRainRender=nullptr;
-            if (!cleanupOk)
+            if (cleanupOk)
+            {
+                FreeLibrary(moduleReference);
+            }
+            else
             {
                 g_reachCamera.base=base;
                 g_reachCamera.size=size;
@@ -29122,8 +29136,7 @@ namespace
             RemoveReachCameraCore();
             return;
         }
-        if (!soleReachTitle || !levelRunning || !base ||
-            size != kReachRetailImageSize)
+        if (!soleReachTitle || !base || size != kReachRetailImageSize)
         {
             if (installed)
                 RemoveReachCameraCore();
@@ -34546,6 +34559,8 @@ namespace
         g_halo4Camera.fpSquishApplied=false;
         g_halo4Camera.fpSquishSlot=nullptr;
         g_halo4Camera.fpSquishStock=0;
+        if (g_halo4Camera.moduleReference)
+            FreeLibrary(g_halo4Camera.moduleReference);
         const uint32_t generation =
             g_halo4Camera.generation.load(std::memory_order_acquire);
         g_halo4Camera.moduleReference = nullptr;
@@ -34700,12 +34715,13 @@ namespace
 
         HMODULE moduleReference = nullptr;
         if (!GetModuleHandleExW(
-                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                 reinterpret_cast<LPCWSTR>(base), &moduleReference) ||
             reinterpret_cast<uintptr_t>(moduleReference) != base)
         {
-            LOG("Halo 4 camera install: halo4.dll is no longer mapped at its "
+            if (moduleReference)
+                FreeLibrary(moduleReference);
+            LOG("Halo 4 camera install: halo4.dll could not be pinned at its "
                 "observed base; the install retries on a later tick");
             return false;
         }
@@ -34724,6 +34740,7 @@ namespace
         {
             if (setupCreated)
                 MH_RemoveHook(setupTarget);
+            FreeLibrary(moduleReference);
             LOG("Halo 4 camera install: MinHook refused the %s hook; Halo 4 "
                 "stays stock and flat",
                 setupCreated ? "wrapper" : "setup");
@@ -34759,6 +34776,7 @@ namespace
             MH_DisableHook(wrapperTarget);
             MH_RemoveHook(setupTarget);
             MH_RemoveHook(wrapperTarget);
+            FreeLibrary(moduleReference);
             g_halo4Camera.moduleReference = nullptr;
             g_halo4Camera.setupTarget = nullptr;
             g_halo4Camera.wrapperTarget = nullptr;
@@ -34839,8 +34857,7 @@ namespace
             RemoveHalo4CameraCore();
             return;
         }
-        if (!soleHalo4Title || !levelRunning || !base ||
-            size != kHalo4RetailImageSize)
+        if (!soleHalo4Title || !base || size != kHalo4RetailImageSize)
         {
             if (installed)
                 RemoveHalo4CameraCore();
@@ -35582,7 +35599,7 @@ namespace
                     TitleAdapter_GetGeneration(GameTitle::Halo2);
                 (void)Halo2RenderModeGuard_Poll(
                     halo2GateBase, halo2GateSize, halo2GuardGeneration,
-                    halo2Active && halo2GateSampled, activeLevelRunning,
+                    halo2Active && halo2GateSampled,
                     Halo2ColdObservation_Passed(halo2GuardGeneration));
             }
             {
@@ -35671,9 +35688,12 @@ namespace
                 const bool haveReachRange = soleReachTitle &&
                     sig::ModuleRange(
                         activeTitle->moduleName, reachBase, reachSize);
-                // The preflight scans the whole 74 MB image. It now keeps only
-                // a non-owning exact-base identity; still withhold all module
-                // touches until the gate proves the level is running.
+                // The preflight takes a REFCOUNT PIN on haloreach.dll and
+                // scans the whole 74 MB image. Holding a pin across MCC's own
+                // unload defers that unload to our FreeLibrary - a real race
+                // with the loader during a level load, and the leading
+                // explanation for the bounced first load. Withhold it (and so
+                // the pin) until the gate proves the level is running.
                 const bool reachLevelRunning =
                     haveReachRange && activeLevelRunning;
                 ReachRenderCandidate_ColdPoll(
@@ -35704,10 +35724,10 @@ namespace
                 // C-H4-2: Halo 4 cold observation. Verifies the pinned
                 // identity and the E-H4-4 anchors against the loaded image,
                 // once per module instance, only on a tick the gate sampled
-                // AND proved the level running (the preflight keeps a
-                // non-owning exact-base identity and scans the whole image -
-                // touches that must never hit a loading module, and that a
-                // fail-open gate cannot vouch for). Read-only either way.
+                // AND proved the level running (the preflight takes a short
+                // refcount pin and scans the whole image - touches that must
+                // never hit a loading module, and that a fail-open gate
+                // cannot vouch for). Read-only either way.
                 else if (halo4GateSampled && activeLevelRunning)
                 {
                     const uint32_t halo4Generation =
@@ -35764,15 +35784,12 @@ namespace
                 runtime.runtime.generation == haloGeneration &&
                 (runtime.runtime.qualifyingOwnerCount == 1 ||
                  runtime.ownershipPending);
-            const bool haloTitleActive = !haloGenerationMismatch &&
+            const bool haloActive = !haloGenerationMismatch &&
                 (haloAvailableForInstall || haloRuntimeRetained);
-            const bool haloLevelRunning = activeTitle &&
-                activeTitle->title == GameTitle::Halo3 && activeLevelRunning;
-            const bool haloActive = haloTitleActive && haloLevelRunning;
             // Same title-exit re-arm as ODST above: stillness observed while
             // Halo 3 is not the active title must never satisfy the frozen
             // half of the NEXT level's proof.
-            if (!haloTitleActive && !gameHooked)
+            if (!haloActive && !gameHooked)
                 g_halo3LevelLoadGate.Rearm();
             if (gameHooked && !haloActive)
             {
@@ -35789,30 +35806,11 @@ namespace
                 g_autoVrUserVeto.store(false, std::memory_order_release);
                 g_halo3RuntimeGeneration.store(0, std::memory_order_release);
                 haloAttemptedGeneration = 0;
-                // The level-liveness gate closes while MCC still owns the
-                // mapping. Retire MinHook's records now, before the loader can
-                // unmap halo3.dll and reuse the same address for the next
-                // level. This is non-owning: no loader refcount is released.
-                const bool mappingCurrent = hookedBase &&
-                    GetModuleHandleW(L"halo3.dll") ==
-                        reinterpret_cast<HMODULE>(hookedBase);
-                if (mappingCurrent)
-                {
-                    RemoveInstalledGameHooks();
-                    hookRefreshPending = false;
-                    LOG("Halo 3 hook epoch retired at the level-liveness boundary");
-                }
-                else
-                {
-                    // The normal path has a measured pre-unload window. If the
-                    // loader won that race, never write through stale targets;
-                    // retain only MinHook bookkeeping for the existing guarded
-                    // refresh path.
-                    hookRefreshPending = true;
-                    LOG("Halo 3 hook epoch lost its mapping before retirement; "
-                        "stale targets were not touched");
-                }
+                // MCC can unload and later map halo3.dll at the same address.
+                // MinHook's bookkeeping survives while the new module bytes no
+                // longer contain detours, so remember this title boundary.
                 gameHooked = false;
+                hookRefreshPending = true;
                 g_hooked = false;
                 // The next install must prove the level is running again.
                 g_halo3LevelLoadGate.Rearm();
@@ -35863,14 +35861,6 @@ namespace
                 LOG("ODST pause boundary: native pause entered; removing "
                     "private camera hooks before any Save & Quit teardown");
                 OdstRequestFallback(OdstFallbackReason::NativePause);
-            }
-            if (odstHooked && odstActive && !activeLevelRunning &&
-                !g_odstCamera.teardownRequested.load(
-                    std::memory_order_acquire))
-            {
-                LOG("ODST level-liveness boundary: retiring hooks before MCC "
-                    "can unload the title DLL");
-                OdstRequestFallback(OdstFallbackReason::LevelUnloaded);
             }
             if (odstHooked && odstActive &&
                 !g_odstCamera.teardownRequested.load(std::memory_order_acquire))

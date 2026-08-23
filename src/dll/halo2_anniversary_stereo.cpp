@@ -1296,8 +1296,11 @@ namespace
         g_recenterRequested.store(true, std::memory_order_release);
         g_lastCompletedSerial.store(0, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
-        // Non-owning identity; MCC alone owns the title DLL lifetime.
-        g_moduleReference = nullptr;
+        if (g_moduleReference)
+        {
+            FreeLibrary(g_moduleReference);
+            g_moduleReference = nullptr;
+        }
         if (reason)
             LOG("Halo 2 Anniversary stereo removed (%s); stock rendering restored",
                 reason);
@@ -1348,8 +1351,7 @@ namespace
 
         HMODULE module = nullptr;
         if (!GetModuleHandleExW(
-                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                 reinterpret_cast<LPCWSTR>(base), &module) || !module)
         {
             return false;
@@ -1365,6 +1367,7 @@ namespace
                 static_cast<int>(created));
             if (created == MH_OK)
                 (void)MH_RemoveHook(reinterpret_cast<void*>(scene));
+            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -1392,6 +1395,7 @@ namespace
                 (void)MH_RemoveHook(reinterpret_cast<void*>(rebuild));
             if (createdHostUi == MH_OK)
                 (void)MH_RemoveHook(reinterpret_cast<void*>(hostUi));
+            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
