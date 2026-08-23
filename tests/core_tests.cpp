@@ -7762,23 +7762,27 @@ int main()
                 right.up[2] = 1.0f;
                 Halo2CameraBasis left = right;
                 left.position[0] = -10.0f;
+                Halo2CameraBasis authoredRoot{};
+                authoredRoot.forward[1] = 1.0f;
+                authoredRoot.up[2] = 1.0f;
                 Halo2FinalPacketOwnershipResult result{};
                 const bool ownedPackets = Halo2OwnFinalFirstPersonPackets(
-                    hands, kPacketNodes, remap, packetBinding, gun, 1, right,
-                    left, 2.0f, 0.5f, result);
+                    hands, kPacketNodes, remap, packetBinding, gun, 1,
+                    authoredRoot, right, left, 2.0f, 0.5f, result);
                 Check(ownedPackets && result.applied && result.rightNodes == 1 &&
                           result.leftNodes == 2 && result.collapsedNodes == 1 &&
                           result.gunNodes == 1 &&
                           nearlyEqual(hands[0], 0.0001f) &&
                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
-                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -12.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
-                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -11.0f) &&
-                          nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 12.0f),
+                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 12.0f) &&
+                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -13.0f) &&
+                          nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f),
                     "C-H2-52 final packets leave only independent controller "
-                    "hands, carry the separate gun with the right wrist, and "
-                    "collapse every arm/body node");
+                    "hands, preserve their authored root offsets, carry the "
+                    "separate gun with the right wrist, and collapse every "
+                    "arm/body node");
 
                 float unchanged[kPacketNodes * kHalo2FirstPersonNodeFloats]{};
                 std::memcpy(unchanged, hands, sizeof(unchanged));
@@ -7786,7 +7790,8 @@ int main()
                 Halo2FinalPacketOwnershipResult refusedPacket{};
                 Check(!Halo2OwnFinalFirstPersonPackets(
                           hands, kPacketNodes, badRemap, packetBinding, gun, 1,
-                          right, left, 1.0f, 1.0f, refusedPacket) &&
+                          authoredRoot, right, left, 1.0f, 1.0f,
+                          refusedPacket) &&
                           std::memcmp(unchanged, hands, sizeof(unchanged)) == 0,
                     "C-H2-52 refuses an invalid authored remap before mutating "
                     "any final hand packet node");
@@ -7924,6 +7929,16 @@ int main()
             Check(!Halo2BuildControllerShotDirection(
                       invalidShotOrigin, shotCarrier, 10.0f, shotDirection),
                 "C-H2-43 rejects a non-finite shot origin locally");
+            Check(Halo2ShouldAttemptDirectShotOwnership(
+                      true, true, true, true, 0) &&
+                      Halo2ShouldAttemptDirectShotOwnership(
+                          true, true, true, true, 1) &&
+                      !Halo2ShouldAttemptDirectShotOwnership(
+                          false, true, true, true, 0) &&
+                      !Halo2ShouldAttemptDirectShotOwnership(
+                          true, false, true, true, 1),
+                "C-H2-56 gives both stock useUnitAim modes the same guarded "
+                "local-player crosshair-shot ownership policy");
 
             static Halo2FirstPersonSlotCache controllerCache{};
             controllerCache = Halo2FirstPersonSlotCache{};

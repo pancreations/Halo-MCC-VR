@@ -3221,3 +3221,54 @@ The rejected C-H2-54 bytes were preserved separately for each edition. MCC was
 not launched and neither existing configuration was changed. The player's
 2026-08-23 headset result confirms the fix and explicitly promotes C-H2-55 to
 the new accepted cumulative development baseline.
+
+## E-H2-49 (C-H2-56): preserve authored mounts and own every local shot result - 2026-08-23
+
+The next headset report rejects only C-H2-55's inherited C-H2-52 optional
+hands/gun/shot behavior: both hands and the separate held gun float at wrong
+offsets, and aim remains tied to the head on one axis instead of consistently
+following the visible crosshair. C-H2-55's consecutive-level lifecycle result
+remains accepted independently.
+
+The preserved live evidence is the Steam log written by exact source
+`d87314402bcf75fee7e515b9e477d2adb2b39eb9` on SteamVR/OpenXR 2.17.7 with an
+Oculus headset at 120 Hz. The final packet boundary executed continuously and
+reported 4,331 owned packets, 69,296 right nodes, 69,296 left nodes, 21,655
+collapsed nodes, 17,324 separate-gun nodes and zero refusals. The visual defect
+therefore comes from the successful transform rather than hook admission,
+binding, or remap failure.
+
+The code audit identifies the discarded authored frame. C-H2-52 computed
+`desired_controller * inverse(stock_wrist)` and thus made the raw wrist bone
+equal the controller root. That throws away Halo 2's live authored
+camera-root-to-wrist offset and orientation. It then carries that incorrect
+wrist delta over the independent gun packet, throwing the gun through space by
+the same error. No new binding is needed: E-H2-45 already proves the packet
+builder's `position/forward/up` arguments are the root through which every
+destination matrix has just been composed. C-H2-56 therefore applies
+`controller * inverse(authored_root) * stock_matrix` to each admitted subtree.
+This preserves the complete live root-to-wrist and wrist-to-gun relations while
+replacing only the root that owns them. The existing engine-authored remap and
+left/right descendant masks still select ownership, and every existing invalid
+root, graph, remap, count, pose and finite-value guard leaves the optional
+feature stock for that frame.
+
+The same log exposes an independent boolean gate in the claimed shot boundary:
+54 firing-helper calls produced 30 substitutions, five classified non-owned
+units, and 19 unclassified stock results. The detour required the helper's
+`useUnitAim` flag before it evaluated the already-proven local-player guard, so
+flag-false calls could not be classified at all. E-H2-37 proves
+the helper's completed origin/direction output is the firing function's
+boundary; it does not make controller ownership conditional on that flag.
+C-H2-56 therefore preserves the stock helper call and local-unit equality but
+replaces the completed local direction for both flag values, converging the
+stock-authored muzzle origin on the fresh compositor-presented crosshair point.
+AI, remote units, missing/stale reticle poses and invalid values remain stock.
+
+Offline verification before packaging: cumulative Release build PASS and
+`halomccvr_core_tests` PASS. The packet fixture proves independent hands,
+complete non-hand collapse, the separate right-hand gun, and preservation of
+nonzero authored root offsets. Headset acceptance remains required in both
+Anniversary and Classic through 90/180-degree body turns, followed by the exact
+candidate identity and result; this evidence entry does not advance the
+accepted pointer.

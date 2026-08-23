@@ -1199,6 +1199,18 @@ inline bool Halo2BuildControllerShotDirection(
     return true;
 }
 
+// E-H2-49: `useUnitAim` selects how Halo 2 authors the stock direction before
+// the firing helper returns; it does not select whether the guarded local
+// player's completed direction may follow the presented VR crosshair. Keeping
+// the flag in this pure policy makes that deliberate independence testable.
+inline bool Halo2ShouldAttemptDirectShotOwnership(
+    bool originalCompleted, bool outputValid, bool featureActive,
+    bool directAimArmed, uint8_t useUnitAim) noexcept
+{
+    (void)useUnitAim;
+    return originalCompleted && outputValid && featureActive && directAimArmed;
+}
+
 // E-H2-6 pose ownership. The observer core publishes, once per game frame,
 // the engine's camera as it found it (`stock`) and the camera it wrote
 // (`tracked`), with the recenter reference it used. A per-eye core then
@@ -2888,7 +2900,8 @@ struct Halo2FinalPacketOwnershipResult
 inline bool Halo2OwnFinalFirstPersonPackets(
     float* handsMatrices, uint32_t handsCount, const int32_t* handsRemap,
     const Halo2FirstPersonArmBinding& binding, float* gunMatrices,
-    uint32_t gunCount, const Halo2CameraBasis& rightCarrier,
+    uint32_t gunCount, const Halo2CameraBasis& authoredRoot,
+    const Halo2CameraBasis& rightCarrier,
     const Halo2CameraBasis& leftCarrier, float rightScale, float leftScale,
     Halo2FinalPacketOwnershipResult& out) noexcept
 {
@@ -2897,7 +2910,9 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         binding.count == 0 || binding.count > kHalo2FirstPersonPaletteCapacity ||
         handsCount == 0 || handsCount > kHalo2FirstPersonPaletteCapacity ||
         gunCount > kHalo2FirstPersonPaletteCapacity ||
-        (gunCount && !gunMatrices) || !Halo2ValidateCameraBasis(rightCarrier) ||
+        (gunCount && !gunMatrices) ||
+        !Halo2ValidateCameraBasis(authoredRoot) ||
+        !Halo2ValidateCameraBasis(rightCarrier) ||
         !Halo2ValidateCameraBasis(leftCarrier) || !std::isfinite(rightScale) ||
         !std::isfinite(leftScale) || rightScale <= 0.0f || leftScale <= 0.0f)
     {
@@ -2919,19 +2934,28 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     if (rightWristDestination < 0 || leftWristDestination < 0)
         return false;
 
+    // The packet builder has already composed every destination matrix through
+    // `authoredRoot`. Replacing that root with the controller is the exact
+    // rigid operation that preserves the live authored root-to-wrist and
+    // wrist-to-weapon attachment frames:
+    //
+    //     final = controller * inverse(authoredRoot) * stock
+    //
+    // Aligning the raw wrist bone itself to the controller discarded those
+    // attachment frames. The resulting offsets then orbited with body turns,
+    // which is the C-H2-55 headset failure this transaction corrects.
     float rightRotation[9]{}, leftRotation[9]{};
-    float rightStock[3]{}, leftStock[3]{}, rightDesired[3]{}, leftDesired[3]{};
-    const float* const rightWrist = handsMatrices +
-        static_cast<uint32_t>(rightWristDestination) * kHalo2FirstPersonNodeFloats;
-    const float* const leftWrist = handsMatrices +
-        static_cast<uint32_t>(leftWristDestination) * kHalo2FirstPersonNodeFloats;
-    if (!Halo2BuildFinalPaletteWristDelta(
-            rightWrist, rightCarrier, rightRotation, rightStock, rightDesired) ||
-        !Halo2BuildFinalPaletteWristDelta(
-            leftWrist, leftCarrier, leftRotation, leftStock, leftDesired))
+    if (!Halo2BuildWorldDeltaRotation(
+            authoredRoot, rightCarrier, rightRotation) ||
+        !Halo2BuildWorldDeltaRotation(
+            authoredRoot, leftCarrier, leftRotation))
     {
         return false;
     }
+    const float* const rightStock = authoredRoot.position;
+    const float* const leftStock = authoredRoot.position;
+    const float* const rightDesired = rightCarrier.position;
+    const float* const leftDesired = leftCarrier.position;
 
     for (uint32_t destination = 0; destination < handsCount; ++destination)
     {

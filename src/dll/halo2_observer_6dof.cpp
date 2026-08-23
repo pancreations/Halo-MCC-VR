@@ -972,7 +972,8 @@ namespace
                         leftCarrier) &&
                     Halo2OwnFinalFirstPersonPackets(
                         handsMatrices, handsCount, handsRemap, binding,
-                        gunMatrices, gunCount, rightCarrier, leftCarrier,
+                        gunMatrices, gunCount, renderCamera, rightCarrier,
+                        leftCarrier,
                         std::clamp(g_config.gun_scale, 0.3f, 3.0f),
                         std::clamp(g_config.left_hand_scale, 0.3f, 3.0f),
                         result))
@@ -1344,9 +1345,10 @@ namespace
         }
 
         bool applied = false;
-        if (originalCompleted && useUnitAim && origin && direction &&
-            Game_Halo2ControllerAimActive() &&
-            Halo2Observer6Dof_DirectWeaponAimArmed())
+        if (Halo2ShouldAttemptDirectShotOwnership(
+                originalCompleted, origin && direction,
+                Game_Halo2ControllerAimActive(),
+                Halo2Observer6Dof_DirectWeaponAimArmed(), useUnitAim))
         {
             __try
             {
@@ -1406,6 +1408,11 @@ namespace
                 // rays whenever aim_stabilization is non-zero. Rebuild the
                 // carrier from the most recently PRESENTED reticle pose and
                 // converge the engine-owned muzzle origin on that exact ray.
+                // This helper's completed direction is the final firing
+                // boundary for both values of `useUnitAim`. Restricting
+                // ownership to the true case left 19 C-H2-55 helper calls as
+                // unclassified stock before the local-unit guard could even
+                // run. The guard below now decides ownership for both values.
                 Halo2ObserverPosePublication publication{};
                 Halo2CameraBasis carrier{};
                 float presentedOrientation[4]{};

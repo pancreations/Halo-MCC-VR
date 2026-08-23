@@ -1,5 +1,39 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-56 HAND/GUN MOUNT + COMPLETE CROSSHAIR SHOT
+> CANDIDATE - 2026-08-23.** The C-H2-55 consecutive-level lifecycle remains
+> the accepted development baseline, but its C-H2-52-derived optional
+> hands/gun/shot transaction is rejected by the player's next headset report:
+> both hands and the held gun float at incorrect offsets, and aiming remains
+> head-owned on one axis instead of consistently following the visible
+> crosshair. The exact C-H2-55 Steam log identifies source `d873144`,
+> SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz, continuously executing
+> final packets with zero refusals. This proves the visible failure is in the
+> applied transform, not a missing hook.
+>
+> C-H2-56 replaces the packet's authored camera root with each controller root:
+> `controller * inverse(authored_root) * stock_matrix`. That preserves Halo 2's
+> live root-to-wrist and wrist-to-weapon attachment offsets instead of forcing
+> the raw wrist bone itself onto the controller origin. The right wrist subtree
+> and separate gun packet use the right root; the left wrist subtree uses the
+> left root; all existing remap, graph, finite-value, bounds and stock-fallback
+> guards remain. The same log counted 54 firing-helper calls, 30 controller
+> substitutions, five classified non-owned units, and 19 calls left
+> unclassified stock before the local-player guard because the old detour
+> unnecessarily required the engine's `useUnitAim` flag. C-H2-56 owns the
+> completed direction for the
+> guarded local player for either flag value and converges the preserved muzzle
+> origin on the exact fresh compositor-presented crosshair. AI and remote units
+> remain stock; no XInput, observer or camera field is changed.
+>
+> Release build and `halomccvr_core_tests` PASS. This candidate is not accepted
+> or deployed yet. Required headset acceptance is Anniversary and Classic:
+> verify each hand stays on its own controller through 90/180-degree body turns,
+> the right gun retains a stable authored offset, every shot follows the visible
+> crosshair, and ordinary right-stick turning remains unchanged. The test must
+> record edition, runtime, headset and refresh. The accepted pointer below does
+> not advance before that result.
+
 > **CURRENT ACCEPTED DEVELOPMENT BASELINE: C-H2-55 CONSECUTIVE-LEVEL REHOOK -
 > 2026-08-23.** The player's headset result confirms the consecutive-level fix
 > and explicitly declares C-H2-55 the new baseline. C-H2-54 fixed the fatal
