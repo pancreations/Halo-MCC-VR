@@ -324,6 +324,7 @@ namespace
     CoreState g_coreState = CoreState::StockFallback;
     uint32_t g_rejectedGeneration = 0;
     uint32_t g_armedLoggedGeneration = 0;
+    bool g_leaseParked = false;
 
     bool ReadFloats(uintptr_t address, float* out, size_t count) noexcept
     {
@@ -1840,6 +1841,7 @@ namespace
         g_referenceValid.store(false, std::memory_order_release);
         g_recenterRequested.store(true, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
+        g_leaseParked = false;
         if (g_moduleReference)
         {
             FreeLibrary(g_moduleReference);
@@ -1944,6 +1946,7 @@ namespace
         g_recenterRequested.store(true, std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         g_coreState = CoreState::CleanupRequired;
+        g_leaseParked = false;
 
         const MH_STATUS enabled = MH_EnableHook(target);
         if (enabled != MH_OK)
@@ -2602,31 +2605,74 @@ bool Halo2Observer6Dof_Poll(
 
     const bool identityValid = moduleBase && generation &&
         moduleSize == kHalo2RetailImageSize;
-    const bool vrAvailable =
-        !vrFailureGeneration || generation != vrFailureGeneration;
+    const bool vrAvailable = !vrFailureGeneration ||
+        (generation && generation != vrFailureGeneration);
     const bool desired = identityValid && activeAndRange && levelRunning &&
         coldPassed && vrAvailable && observerResultArray != 0;
 
     g_levelLive.store(levelRunning, std::memory_order_release);
 
     const uint32_t owned = g_generation.load(std::memory_order_acquire);
-    const bool ownsDifferentModule = g_target &&
-        (owned != generation ||
-         g_moduleBase.load(std::memory_order_acquire) != moduleBase);
+    const uintptr_t ownedBase = g_moduleBase.load(std::memory_order_acquire);
+    // C-H2-53: MCC retains halo2.dll while it briefly withdraws title and
+    // liveness proof between missions.  Generation is a logical level epoch,
+    // not a module identity.  Keep one hook lease on the pinned physical DLL;
+    // callbacks pass through stock while parked.  Only a proven non-zero,
+    // different base may tear the lease down.
+    const bool ownsDifferentModule = g_target && moduleBase && ownedBase &&
+        ownedBase != moduleBase;
 
-    if (!desired || ownsDifferentModule)
+    if (ownsDifferentModule || (!vrAvailable && g_target))
     {
         if (g_installed.load(std::memory_order_acquire) ||
             g_coreState != CoreState::StockFallback)
         {
             (void)RemoveCore(
-                ownsDifferentModule ? "module generation changed"
-                                    : "level or title no longer eligible");
+                ownsDifferentModule ? "physical module changed"
+                                    : "OpenXR runtime failed");
         }
         if (generation != g_rejectedGeneration)
             g_rejectedGeneration = 0;
         return false;
     }
+
+    if (!desired)
+    {
+        if (g_target && !g_leaseParked)
+        {
+            LOG("Halo 2 observer 6DOF lease PARKED: title/level proof is "
+                "temporarily absent; every hook passes through stock and the "
+                "same halo2.dll lease remains installed");
+            g_leaseParked = true;
+        }
+        g_armed.store(false, std::memory_order_release);
+        g_levelLive.store(false, std::memory_order_release);
+        g_packetBuilderLastAppliedMs.store(0, std::memory_order_release);
+        g_referenceValid.store(false, std::memory_order_release);
+        g_recenterRequested.store(true, std::memory_order_release);
+        g_passCamerasSet.store(false, std::memory_order_release);
+        ClearPublication();
+        return false;
+    }
+
+    if (g_target && ownedBase == moduleBase && owned != generation)
+    {
+        g_generation.store(generation, std::memory_order_release);
+        g_observerResult.store(observerResultArray, std::memory_order_release);
+        g_weaponTickGeneration.store(0, std::memory_order_release);
+        g_weaponTickIndex.store(0, std::memory_order_release);
+        g_weaponTickPreviousIndex.store(0, std::memory_order_release);
+        g_packetBuilderLastAppliedMs.store(0, std::memory_order_release);
+        g_referenceValid.store(false, std::memory_order_release);
+        g_recenterRequested.store(true, std::memory_order_release);
+        g_passCamerasSet.store(false, std::memory_order_release);
+        ClearPublication();
+        g_teardownRequested.store(false, std::memory_order_release);
+        LOG("Halo 2 observer 6DOF lease resumed on the same halo2.dll base for "
+            "generation %u; hooks were parked through the mission transition "
+            "and were not removed or recreated", generation);
+    }
+    g_leaseParked = false;
 
     if (g_coreState != CoreState::Installed)
     {

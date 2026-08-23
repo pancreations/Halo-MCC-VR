@@ -199,6 +199,7 @@ namespace
     CoreState g_coreState = CoreState::StockFallback;
     uint32_t g_rejectedGeneration = 0;
     uint32_t g_armedLoggedGeneration = 0;
+    bool g_leaseParked = false;
 
     // Re-entry guard. The engine itself calls the scene render once per player
     // window; our own second pass must never be mistaken for one of those.
@@ -1296,6 +1297,7 @@ namespace
         g_recenterRequested.store(true, std::memory_order_release);
         g_lastCompletedSerial.store(0, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
+        g_leaseParked = false;
         if (g_moduleReference)
         {
             FreeLibrary(g_moduleReference);
@@ -1423,6 +1425,7 @@ namespace
         g_lastCompletedSerial.store(0, std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         g_coreState = CoreState::CleanupRequired;
+        g_leaseParked = false;
 
         if (MH_EnableHook(reinterpret_cast<void*>(scene)) != MH_OK ||
             MH_EnableHook(reinterpret_cast<void*>(rebuild)) != MH_OK ||
@@ -1649,7 +1652,8 @@ bool Halo2AnniversaryStereo_Poll(
         vrFailure = g_vrFailureGeneration.load(std::memory_order_acquire);
     }
 
-    const bool vrAvailable = !vrFailure || generation != vrFailure;
+    const bool vrAvailable = !vrFailure ||
+        (generation && generation != vrFailure);
     const bool desired = moduleBase && generation &&
         moduleSize == kHalo2RetailImageSize && activeAndRange && levelRunning &&
         coldPassed && vrAvailable && observerResultArray != 0 &&
@@ -1659,21 +1663,60 @@ bool Halo2AnniversaryStereo_Poll(
     g_remasteredLive.store(remasteredRendererLive, std::memory_order_release);
 
     const uint32_t owned = g_generation.load(std::memory_order_acquire);
-    const bool foreignModule = g_sceneTarget &&
-        (owned != generation ||
-         g_moduleBase.load(std::memory_order_acquire) != moduleBase);
+    const uintptr_t ownedBase = g_moduleBase.load(std::memory_order_acquire);
+    // C-H2-53: a generation change is a mission epoch, not a DLL unload.
+    // Retain the hook lease while MCC parks the same halo2.dll; the detours'
+    // armed/live gates make every callback stock during that interval.
+    const bool foreignModule = g_sceneTarget && moduleBase && ownedBase &&
+        ownedBase != moduleBase;
 
-    if (!desired || foreignModule)
+    if (foreignModule || (!vrAvailable && g_sceneTarget))
     {
         if (g_installed.load(std::memory_order_acquire))
         {
-            (void)RemoveCore(foreignModule ? "module generation changed"
-                                           : "level or title no longer eligible");
+            (void)RemoveCore(foreignModule ? "physical module changed"
+                                           : "OpenXR runtime failed");
         }
         if (generation != g_rejectedGeneration)
             g_rejectedGeneration = 0;
         return false;
     }
+
+    if (!desired)
+    {
+        if (g_sceneTarget && !g_leaseParked)
+        {
+            LOG("Halo 2 Anniversary stereo lease PARKED: renderer/title/level "
+                "proof is temporarily absent; callbacks pass through stock "
+                "without removing hooks from halo2.dll");
+            g_leaseParked = true;
+        }
+        g_armed.store(false, std::memory_order_release);
+        g_levelLive.store(false, std::memory_order_release);
+        g_remasteredLive.store(false, std::memory_order_release);
+        g_referenceValid.store(false, std::memory_order_release);
+        g_recenterRequested.store(true, std::memory_order_release);
+        g_lastCompletedSerial.store(0, std::memory_order_release);
+        g_weaponViewValid.store(false, std::memory_order_release);
+        g_fpPatchRecord.store(0, std::memory_order_release);
+        return false;
+    }
+
+    if (g_sceneTarget && ownedBase == moduleBase && owned != generation)
+    {
+        g_generation.store(generation, std::memory_order_release);
+        g_observerResult.store(observerResultArray, std::memory_order_release);
+        g_teardown.store(false, std::memory_order_release);
+        g_referenceValid.store(false, std::memory_order_release);
+        g_recenterRequested.store(true, std::memory_order_release);
+        g_lastCompletedSerial.store(0, std::memory_order_release);
+        g_weaponViewValid.store(false, std::memory_order_release);
+        g_fpPatchRecord.store(0, std::memory_order_release);
+        LOG("Halo 2 Anniversary stereo lease resumed on the same halo2.dll "
+            "base for generation %u; no hook removal or recreation occurred",
+            generation);
+    }
+    g_leaseParked = false;
 
     if (g_coreState != CoreState::Installed)
     {

@@ -421,6 +421,7 @@ namespace
         return true;
     }
     uint32_t g_remasteredNoticeGeneration = 0;
+    bool g_leaseParked = false;
 
     thread_local StereoScope* g_stereoScope = nullptr;
     thread_local uint32_t g_suppressedOuterDepth = 0;
@@ -3281,7 +3282,7 @@ bool Halo2Stereo_Poll(
     const bool identityValid = moduleBase && generation &&
         moduleSize == kHalo2RetailImageSize;
     const bool vrAvailable = !vrFailureGeneration ||
-        generation != vrFailureGeneration;
+        (generation && generation != vrFailureGeneration);
     // E-H2-3: this core owns render_player_window / render_view, which the
     // engine skips entirely while the remastered renderer is live. Without
     // this gate the hooks install, arm, take over presentation, and then
@@ -3301,10 +3302,14 @@ bool Halo2Stereo_Poll(
     }
     const bool runtimeQuarantined = generation &&
         RuntimeQuarantineGeneration(runtimeQuarantine) == generation;
+    const uintptr_t ownedBase = g_moduleBase.load(std::memory_order_acquire);
+    // C-H2-53: retain one physical-module lease across MCC's transient
+    // between-mission generation/liveness gap.  The hot gates below keep all
+    // callbacks stock while the lease is parked.
     const bool ownsDifferentModule = (g_outerTarget || g_innerTarget) &&
-        (ownedGeneration != generation ||
-         g_moduleBase.load(std::memory_order_acquire) != moduleBase);
-    const bool hotEligible = desired && !runtimeQuarantined &&
+        moduleBase && ownedBase && ownedBase != moduleBase;
+    const bool hotEligible = desired && ownedGeneration == generation &&
+        !runtimeQuarantined &&
         !ownsDifferentModule && g_coreState == CoreState::Installed &&
         g_presentationReady.load(std::memory_order_acquire);
 
@@ -3362,11 +3367,11 @@ bool Halo2Stereo_Poll(
     }
 
     if ((g_outerTarget || g_innerTarget) &&
-        (!desired || ownsDifferentModule ||
+        (ownsDifferentModule || !vrAvailable ||
          g_coreState == CoreState::CleanupRequired))
     {
         const char* reason = ownsDifferentModule
-            ? "module generation changed"
+            ? "physical module changed"
             : (!vrAvailable
                    ? "OpenXR runtime failed"
                    : (!activeAndRange
@@ -3380,13 +3385,46 @@ bool Halo2Stereo_Poll(
             return false;
     }
 
-    if (!desired || g_rejectedGeneration == generation)
+    if (!desired)
+    {
+        if ((g_outerTarget || g_innerTarget) && !g_leaseParked)
+        {
+            LOG("Halo 2 classic stereo lease PARKED: renderer/title/level "
+                "proof is temporarily absent; callbacks pass through stock "
+                "without removing hooks from halo2.dll");
+            g_leaseParked = true;
+        }
+        g_stereoRequested.store(false, std::memory_order_release);
+        g_armed.store(false, std::memory_order_release);
+        g_levelLive.store(false, std::memory_order_release);
+        g_coldObservationPassed.store(false, std::memory_order_release);
         return false;
+    }
+    if (g_rejectedGeneration == generation)
+        return false;
+    if ((g_outerTarget || g_innerTarget) && ownedBase == moduleBase &&
+        ownedGeneration != generation)
+    {
+        g_generation.store(generation, std::memory_order_release);
+        g_seenSerial.store(0, std::memory_order_release);
+        g_lastCompletedPairSerial.store(0, std::memory_order_release);
+        g_serialGapExpected.store(0, std::memory_order_release);
+        g_serialGapObserved.store(0, std::memory_order_release);
+        g_runtimeQuarantine.store(0, std::memory_order_release);
+        g_teardownRequested.store(false, std::memory_order_release);
+        ResetHeadReferenceAtomic();
+        ResetTelemetryForInstall();
+        LOG("Halo 2 classic stereo lease resumed on the same halo2.dll base "
+            "for generation %u; no hook removal or recreation occurred",
+            generation);
+    }
+    g_leaseParked = false;
     if (!g_outerTarget && !g_innerTarget &&
         !InstallCore(moduleBase, moduleSize, generation))
     {
         return false;
     }
+    g_armed.store(true, std::memory_order_release);
     const bool armed = g_coreState == CoreState::Installed &&
         g_installed.load(std::memory_order_acquire) &&
         g_armed.load(std::memory_order_acquire) &&
