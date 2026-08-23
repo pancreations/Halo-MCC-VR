@@ -1,5 +1,30 @@
 # Current state
 
+> **HALO 2 C-H2-41 DEPLOYED, HEADSET ACCEPTANCE PENDING - 2026-08-22.**
+> Built on the user-declared C-H2-40 source `fa1f642`; candidate source
+> `26cf827`. The primary first-person assembly is placed from the shared
+> calibrated controller aim pose, and Halo 2's ordinary look loop is closed on
+> that ray so the native unit aim and stock projectile path follow the gun.
+> Official H2EK evidence for both engine-local paths is E-H2-36. Only slot 0
+> is controller-owned; a dual-wield/left slot remains stock. Feature failure
+> leaves that feature stock and never disarms the camera, stereo, or OpenXR.
+>
+> | C-H2-41 deployed identity | Value |
+> | --- | --- |
+> | Source | `26cf827b656bfe4c5a8e530eb1b2270f891be998` |
+> | Package | `26cf827-halo2-c41-floaty-hand-native-aim-20260823-034100957Z` |
+> | `HaloMCCVR.dll` | `642BA58661BD2F24A9893B065DDD05567805FBBE7842E2C27E989D18CF9187D9` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
+>
+> Headset acceptance must identify edition/runtime/headset and exercise both
+> Anniversary and Classic: weapon follows the right controller in position and
+> orientation, the reticle agrees, shots converge along that aim, tracking loss
+> restores stock for the feature without losing stereo, and the existing
+> C-H2-40 eye/FOV behavior remains intact. Then run the required Halo 3
+> regression. Until that explicit result, the accepted Halo 2 development
+> baseline immediately below remains C-H2-40 `fa1f642`.
+
 > **CURRENT HALO 2 BASELINE - 2026-08-22: C-H2-40, source `fa1f642`
 > (user-declared: "ok so this is our current baseline").** Halo 2 has true
 > per-eye stereo in BOTH renderers (Anniversary/Saber and Classic/Blam), headset
