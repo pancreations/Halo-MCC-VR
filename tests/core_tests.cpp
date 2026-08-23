@@ -5899,7 +5899,7 @@ int main()
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics | TitleCapability_ControllerAim;
+        TitleCapability_Haptics;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6101,12 +6101,15 @@ int main()
                   GameTitle::Halo3, false),
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
-    // C-H2-43 grants controller aim through the independently installed
-    // firing-only helper; it never actuates XInput or a camera. HUD, arm IK,
-    // and theatre remain denied until each has Halo 2 evidence.
+    // C-H2-45 withdraws controller aim for the third and final time. C-H2-41
+    // (XInput aim stick), C-H2-43 (firing helper + controller-placed palette)
+    // and C-H2-44 (carrier sign flip) were each rejected in the headset with
+    // the same report: the right stick no longer turned the character/camera
+    // like the other Halos, and hand motion moved the view. Aim, HUD, arm IK
+    // and theatre stay denied until Halo 2 has a headset-accepted path.
     constexpr uint32_t halo2DeniedCapabilities =
-        TitleCapability_Hud | TitleCapability_ArmIk |
-        TitleCapability_CutsceneTheater;
+        TitleCapability_ControllerAim | TitleCapability_Hud |
+        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedAdmission =
         TitleCapability_ControllerInput;
@@ -6187,12 +6190,12 @@ int main()
             halo2Runtime.Resolve(101, policy);
 #if HALOMCCVR_HALO2_STEREO6DOF
         // This helper's explicit mask strips only Stereo and RoomScale; the
-        // declared ControllerInput, ControllerAim, and Haptics bits survive it like
+        // declared ControllerInput and Haptics bits survive it like
         // RuntimeModes does (the worker applies the fuller
         // kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-            TitleCapability_ControllerAim | TitleCapability_Haptics;
+            TitleCapability_Haptics;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;
@@ -7520,20 +7523,26 @@ int main()
                 "C-H2-41 maps a controller yaw into Halo 2 world axes without "
                 "copying another engine's basis convention");
 
-            // The calibrated OpenXR aim pose reports physical controller-up
-            // as a negative local-X rotation. C-H2-43 passed that sign through
-            // and aimed the H2 carrier down. C-H2-44 corrects it locally.
+            // C-H2-45 removed C-H2-44's `relativeOrientation[0] = -x` mirror.
+            // Negating one quaternion term is not an inverted pitch: it is
+            // F * R^-1 * F, which reverses how the hand's yaw and roll compose
+            // too. Pin the plain, unmirrored mapping instead - an OpenXR
+            // controller pitched UP (+x) carries the Halo 2 carrier's forward
+            // UP (+world Z), which is what both engines' own conventions say.
             const float halfPitch = pi / 12.0f;
             const float raisedController[4] = {
-                -std::sin(halfPitch), 0.0f, 0.0f, std::cos(halfPitch)};
+                std::sin(halfPitch), 0.0f, 0.0f, std::cos(halfPitch)};
             Halo2CameraBasis raisedCarrier{};
             Check(Halo2BuildControllerCarrier(
                       head, identity, headPosition, raisedController,
                       headPosition, 0.5f, 0.0f, raisedCarrier) &&
                       raisedCarrier.forward[0] > 0.8f &&
                       raisedCarrier.forward[2] > 0.4f,
-                "C-H2-44 maps physical controller-up to Halo 2 aim-up without "
-                "changing camera or game look input");
+                "C-H2-45 keeps the controller carrier an unmirrored "
+                "head-relative rotation (C-H2-44's sign flip is gone)");
+            Check(!kHalo2ControllerOwnedAimEnabled,
+                "C-H2-45 keeps the rejected controller-owned Halo 2 aim "
+                "(C-H2-41/43/44) compiled but disarmed at its one switch");
 
             const float shotOrigin[3] = {0.0f, 1.0f, 0.0f};
             Halo2CameraBasis shotCarrier = yawedCarrier;

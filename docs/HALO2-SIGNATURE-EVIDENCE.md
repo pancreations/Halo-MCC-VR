@@ -2559,3 +2559,52 @@ authored barrel origin at the exact configured-distance reticle point. A
 deterministic pitch regression covers the headset-observed negative-X input;
 a separate parallax regression requires an offset barrel origin to converge on
 the presented reticle point rather than merely copying a parallel ray.
+
+### E-H2-38 (C-H2-45): the controller-owned Halo 2 aim experiment is reverted
+
+Three consecutive headset sittings rejected the same behavior. The player's
+report on C-H2-43 and C-H2-44 is the same one that rejected C-H2-41: turning
+the character and camera with the right stick had been taken away and given to
+controller motion, which is "nothing like the other Halos". C-H2-44 was
+additionally reported to have changed nothing at all.
+
+C-H2-45 reverts the experiment. `TitleCapability_ControllerAim` is withdrawn
+from Halo 2 in both `title_registry.cpp` and `game.cpp`, and a single build
+switch, `kHalo2ControllerOwnedAimEnabled` in `src/common/halo2_render_logic.h`,
+is checked before that capability inside `Game_Halo2ControllerAimActive()` so
+re-granting the bit alone cannot silently re-arm a rejected behavior. The
+switch disarms all three paths at once:
+
+- C-H2-41's XInput aim stick (already unreachable: `Game_ComputeAimStick`
+  returns false for Halo 2 before consulting any capability, and C-H2-45 keeps
+  that early return permanently).
+- C-H2-43's controller-placed first-person palette and the interpolation-reset
+  bypass that came with it. The accepted C-H2-40 per-eye re-anchor and the
+  reset both run on every pass again.
+- C-H2-43's firing-helper detour at `+0x8F0F70`. It is now not installed at
+  all, and `HaloMCCVR.log` names the revert as the reason.
+
+The E-H2-37 identities above (`+0x8F0F70`, `+0x6A1D50`, `+0x6A3910`, the
+players-globals and datum layout) remain verified and are still pinned by a
+core test. Only their use is withdrawn.
+
+**Negative result worth keeping.** C-H2-44's correction was
+`relativeOrientation[0] = -relativeOrientation[0]`. That is not "invert pitch".
+For a quaternion `q = (x, y, z, w)`, negating only `x` yields `F R^-1 F` with
+`F = diag(1, -1, -1)`: a mirrored INVERSE rotation. It happens to invert a pure
+pitch and to leave a pure yaw or roll alone, which is why it survived a reasoned
+argument and a single-axis regression, but for any combined hand pose it also
+reverses how yaw and roll compose onto the camera. It was never measured against
+a live controller. The headset reported no change from it. The plain, unmirrored
+head-relative rotation is restored, and a core test now pins that an OpenXR
+controller pitched up (+x) carries the Halo 2 carrier's forward up (+world Z),
+which is what both engines' own conventions already say.
+
+**For whoever resumes the floaty-gun goal.** Excluding Halo 2 from
+`Game_ComputeAimStick` provably stops the mod from writing the right stick at
+all, so the player's C-H2-43 experience did not come from an XInput write. The
+two remaining suspects are the controller-placed first-person assembly and the
+bypassed interpolation reset, which C-H2-43 armed together in one candidate.
+Do not re-arm those two together again: place the weapon on the controller with
+the accepted C-H2-40 reset still running, get a headset result, and only then
+consider the reset.

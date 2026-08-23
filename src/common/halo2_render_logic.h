@@ -1056,6 +1056,16 @@ inline bool Halo2BuildTrackedCenterCamera(
     return true;
 }
 
+// C-H2-45. The master switch for the controller-owned Halo 2 aim experiment
+// (C-H2-41 XInput aim stick, C-H2-43 firing-helper shot direction, C-H2-43
+// controller-placed first-person palette, and C-H2-44's carrier sign change).
+// All three candidates were rejected in the headset with the same report: the
+// right stick stopped turning the character/camera like every other Halo in
+// this mod, and hand motion moved the view. False returns Halo 2 to the
+// accepted C-H2-40 behavior. The code below stays compiled and inert so the
+// experiment can be resumed one understood, headset-tested step at a time.
+inline constexpr bool kHalo2ControllerOwnedAimEnabled = false;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -1087,12 +1097,13 @@ inline bool Halo2BuildControllerCarrier(
     float relativeOrientation[4]{};
     Halo2MultiplyQuaternion(inverseHead, controller, relativeOrientation);
 
-    // C-H2-44: headset testing of C-H2-43 proved that the aim pose's local
-    // X rotation arrives with the opposite vertical sign to Halo 2's camera
-    // frame. Correct that title-local convention at the controller carrier;
-    // do not invert the game's look input or touch the tracked camera. The
-    // same corrected carrier drives both the visible palette and shot ray.
-    relativeOrientation[0] = -relativeOrientation[0];
+    // C-H2-45 removes C-H2-44's `relativeOrientation[0] = -relativeOrientation[0]`.
+    // Negating only a quaternion's x term is not "invert pitch": it produces
+    // F * R^-1 * F (a mirrored INVERSE rotation), so it also reversed how the
+    // hand's yaw and roll composed onto the camera. It was written from a
+    // reasoned sign argument, not from a measurement, and the headset reported
+    // no improvement at all from it. The carrier is left as the plain
+    // head-relative controller rotation again.
 
     Halo2CameraBasis candidate = trackedCamera;
     if (!Halo2ApplyLocalQuaternion(candidate, relativeOrientation))

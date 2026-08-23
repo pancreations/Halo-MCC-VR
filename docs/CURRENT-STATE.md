@@ -1,35 +1,66 @@
 # Current state
 
-> **HALO 2 C-H2-44 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-22.**
-> C-H2-43 correctly restored ordinary right-stick camera turning and separated
-> controller motion from the camera, but headset testing found its vertical
-> controller sign inverted. C-H2-44 corrects only Halo 2's controller-carrier
-> local-X pitch convention. It does not change game look input, XInput, or any
-> camera field. The H2EK-proven local-player firing-helper detour now aims the
-> authored barrel origin at the exact compositor-published VR-crosshair point,
-> including configured reticle stabilization; AI and remote units remain
-> stock. Evidence is E-H2-37 and its C-H2-44 headset-result addendum. The
-> accepted Halo 2 development baseline remains C-H2-40 `fa1f642` until explicit
-> headset acceptance.
+> **HALO 2 C-H2-45 DEPLOYED - REVERT; HEADSET VALIDATION REQUIRED - 2026-08-22.**
+> The player rejected C-H2-44 ("the last build had no fixes, it was a
+> hallucination") and C-H2-43 ("the one before had the same issue"), with the
+> same report that rejected C-H2-41: turning the character/camera with the
+> right stick had been taken away and given to controller motion, which is
+> "nothing like the other Halos". C-H2-45 therefore reverts the whole
+> controller-owned Halo 2 aim experiment (C-H2-41, C-H2-43 and C-H2-44) and
+> returns Halo 2 to the accepted C-H2-40 experience.
 >
-> | C-H2-44 deployed identity | Value |
+> What C-H2-45 changes, all through one switch
+> (`kHalo2ControllerOwnedAimEnabled` in `src/common/halo2_render_logic.h`) plus
+> the withdrawn `TitleCapability_ControllerAim` grant:
+>
+> - The physical right stick turns the character and camera exactly as it did
+>   at C-H2-40; the headset still owns pitch (C-H2-23). Halo 2 can never
+>   synthesize its own right stick again: `Game_ComputeAimStick` returns false
+>   for Halo 2 before any capability is consulted.
+> - The first-person weapon is no longer placed on the controller. The accepted
+>   C-H2-40 per-eye re-anchor and the interpolation reset both run again on
+>   every pass, so the gun is the classic pinned gun the player accepted.
+> - The E-H2-37 firing-helper detour at `+0x8F0F70` is **not installed at all**,
+>   and says so in `HaloMCCVR.log`. Shots return to the stock native aim.
+> - C-H2-44's `relativeOrientation[0] = -relativeOrientation[0]` is deleted. It
+>   was not an inverted pitch: negating one quaternion term produces
+>   `F * R^-1 * F`, a mirrored inverse rotation that also reverses how the
+>   hand's yaw and roll compose. It was reasoned, never measured, and the
+>   headset reported no change from it.
+>
+> Nothing about Halo 2 stereo, 6DOF, room scale, the virtual gamepad, rumble or
+> the renderer switch is touched. The rejected code stays compiled and inert
+> (per `AGENTS.md`), so the floaty-gun goal can be resumed one understood,
+> headset-tested step at a time.
+>
+> | C-H2-45 deployed identity | Value |
 > | --- | --- |
-> | Source | `0c11a3d3f43c15fafd4a3277a6cd1b9511059115` |
-> | Package | `0c11a3d-halo2-c44-controller-pitch-sign-20260823-044627395Z` |
-> | `HaloMCCVR.dll` | `415737A3F9A2A7D8E97B9FA263AD3913F91A0E6DA6FA38E7F5FE251577844ADF` |
-> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Source | `PENDING` |
+> | Package | `PENDING` |
+> | `HaloMCCVR.dll` | `PENDING` |
+> | `HaloMCCVRLauncher.exe` | `PENDING` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
-> | Verification | Release build PASS; core tests PASS; Reach consistency PASS; all three H2 retail identities match once in both editions |
+> | Verification | Release build PASS; core tests PASS |
 >
 > Headset test: in both Anniversary and Classic, confirm that the physical
-> right stick turns the character/camera normally; controller up aims the gun
-> and crosshair up; controller down aims them down; the controller never moves
-> the camera; and fired shots land on the visible VR crosshair. Record edition,
-> OpenXR runtime, headset, and refresh rate.
+> right stick turns the character and camera normally again, that looking up
+> and down is the headset's, and that moving the controller does not move the
+> camera or the gun. Record edition, OpenXR runtime, headset, and refresh rate.
+
+> **HALO 2 C-H2-44 REJECTED BY HEADSET - 2026-08-22.**
+> Source `0c11a3d`, DLL `415737A3F9A2A7D8E97B9FA263AD3913F91A0E6DA6FA38E7F5FE251577844ADF`.
+> The player reported it made no difference at all and called the reasoning
+> behind it a hallucination. Reverted by C-H2-45.
 
 > **HALO 2 C-H2-43 REJECTED BY HEADSET - 2026-08-22.**
-> It restored right-stick camera turning and direct controller-owned gun/shot
-> aim, but its vertical controller mapping was inverted. C-H2-44 supersedes it.
+> Source `e000c6b`, DLL `B01FB3797EE844AA35A2C8C5CF20AA6B8FDD157FF707CCB4D3CA88F8FE5E935F`.
+> It was recorded here as having "correctly restored ordinary right-stick
+> camera turning". That record was wrong: the player reports it had the SAME
+> issue as C-H2-41. Reverted by C-H2-45. Note for the next attempt: excluding
+> Halo 2 from `Game_ComputeAimStick` provably stops the mod from writing the
+> right stick, so whatever the player experienced came from the
+> controller-placed first-person assembly and the bypassed interpolation reset,
+> not from an XInput write. Do not re-arm those two together again.
 
 > **HALO 2 C-H2-41 REJECTED BY HEADSET - 2026-08-22.**
 > Built on the user-declared C-H2-40 source `fa1f642`; candidate source

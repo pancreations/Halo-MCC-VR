@@ -116,12 +116,14 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-43: matches kHalo2Capabilities in title_registry.cpp. Aim is
-    // firing-helper-only; Game_ComputeAimStick explicitly passes H2 through so
-    // the physical right stick retains ordinary camera/character turning.
+    // C-H2-45: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
+    // stays withdrawn for Halo 2 - it is the one bit that armed the rejected
+    // C-H2-41/43/44 controller-owned aim, gun placement and shot direction.
+    // Halo 2 keeps the accepted C-H2-40 experience: the physical right stick
+    // turns the character and camera, the headset owns pitch, and no hand
+    // motion reaches the camera, the weapon assembly or XInput.
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
-        TitleCapability_ControllerAim |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |
@@ -38013,7 +38015,11 @@ static bool ReachControllerAimActive() { return false; }
 bool Game_Halo2ControllerAimActive()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-    return TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+    // C-H2-45: the withdrawn capability already disarms every caller. The
+    // build switch is checked FIRST as well, so re-granting the capability
+    // alone can never silently re-arm a headset-rejected behavior.
+    return kHalo2ControllerOwnedAimEnabled &&
+        TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
         Game_HasTitleCapability(TitleCapability_ControllerAim) &&
         Halo2Observer6Dof_Armed() &&
         g_enabled.load(std::memory_order_acquire) &&
@@ -38415,10 +38421,11 @@ namespace
 
 bool Game_ComputeAimStick(float& outRx, float& outRy)
 {
-    // C-H2-43: Halo 2's controller ray owns only the visible primary weapon
-    // and the firing helper's returned direction. Never synthesize XInput for
-    // it: physical RX keeps ordinary character/camera turning, while the
-    // established H2 pitch owner remains the next input branch.
+    // C-H2-43, kept permanently by C-H2-45: Halo 2 is never allowed to
+    // synthesize the right stick. C-H2-41 did, and the headset verdict was
+    // that ordinary character/camera turning had been taken away and given to
+    // hand motion. Physical RX keeps the stock turn; the established Halo 2
+    // headset-pitch owner remains the next input branch.
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         return false;
     if (!Game_HasTitleCapability(TitleCapability_ControllerAim) &&

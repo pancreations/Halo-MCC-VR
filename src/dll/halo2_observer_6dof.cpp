@@ -1546,6 +1546,11 @@ namespace
         // stock firing function. Besides the helper, require the independent
         // H2EK-matched output-user iterator and player-update identities that
         // prove the local-player guard's two global pointers and datum layout.
+        //
+        // C-H2-45: the whole controller-owned aim experiment is reverted after
+        // three headset rejections, so the detour is not installed at all. Not
+        // installing it is louder and cheaper than installing a hot firing
+        // detour whose apply path can never run.
         uintptr_t aimMatch = 0;
         uint32_t aimMatchCount = 0;
         uintptr_t userIteratorMatch = 0;
@@ -1563,7 +1568,15 @@ namespace
             "41 54 41 55 41 56 41 57 48 8D AC 24 30 FF FF FF "
             "48 81 EC D0 01 00 00 4C 8B E9 E8 D1 2A 00 00 45 "
             "33 FF 84 C0 0F 85 D9 00 00 00 48 8B 15 D7 D0 7D 00";
-        if (!CountPatternMatches(
+        if (!kHalo2ControllerOwnedAimEnabled)
+        {
+            LOG("Halo 2 direct weapon aim NOT installed: C-H2-45 reverted the "
+                "rejected controller-owned aim (C-H2-41/43/44). The right "
+                "stick turns the character and camera, the headset owns "
+                "pitch, and hand motion reaches neither the camera nor the "
+                "weapon");
+        }
+        else if (!CountPatternMatches(
                 base, size, kWeaponAimPattern, aimMatch, aimMatchCount) ||
             aimMatchCount != 1 ||
             aimMatch != base + kHalo2WeaponAimHelperRva ||
