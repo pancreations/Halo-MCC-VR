@@ -1,5 +1,61 @@
 # Current state
 
+> **HALO 2 C-H2-53 AIM + CONSECUTIVE-MISSION LOADING FIX INSTALLED - 2026-08-23.**
+> C-H2-52 replaces the non-executing C-H2-50 generic-composer experiment with
+> the official-H2EK `first_person_weapons.cpp` final render-packet boundary,
+> verified in retail at `halo2.dll+0x8181F0`. It runs after Halo 2 has authored,
+> remapped and root-composed the visible matrices for both Classic and
+> Anniversary. The hands packet's authored remap selects the exact left and
+> right wrist descendant subtrees; every other hands-packet node collapses, and
+> the separate primary held-gun packet takes the right-wrist delta. Thus the
+> left hand follows only the left controller, the right hand and gun follow the
+> right controller, and no arm/body geometry remains. The final-world wrist
+> delta is invariant under camera/body turns. The rejected interpolator
+> controller path remains disabled, while the game's stock interpolation reset
+> remains enabled.
+>
+> The local-player firing helper now becomes controller-owned only after that
+> final packet transaction has succeeded within 250 ms. It preserves Halo 2's
+> stock muzzle origin and aims at the exact fresh compositor-presented crosshair
+> point, so stabilization cannot produce a second ray. Missing packets, invalid
+> authored remaps, graph/binding failure, missing tracking or non-finite data
+> leave this optional hands/gun/shot transaction stock for that frame without
+> disarming camera, stereo or OpenXR.
+>
+> C-H2-53 fixes the consecutive-mission lifecycle independently. Observer plus
+> packet/firing hooks, Anniversary stereo, Classic stereo, and the renderer
+> switch guard each retain one pinned physical `halo2.dll` lease for the MCC
+> session. When MCC temporarily withdraws title/level/cold-proof/renderer
+> identity during a mission transition, each lease logs `PARKED`, publishes its
+> hot gates false, and every callback passes through stock. A later logical
+> generation at the same module base clears all level-local pose, serial,
+> packet and recenter state and resumes without removing/recreating hooks or
+> releasing/reacquiring the DLL. Physical teardown is reserved for explicit
+> OpenXR failure or a proven non-zero different module base. This removes the
+> exact hook/free-reference/reinstall churn recorded before the second-mission
+> fatal error.
+>
+> Verification is complete without using the player as a discovery loop:
+> official H2EK discovery plus retail homolog verification; deterministic final
+> packet tests for independent hands, complete arm/body collapse, separate-gun
+> right-wrist motion and invalid-remap fail-before-write; clean Release build;
+> `halomccvr_core_tests`; Reach consistency gate; producer/installer manifest
+> contract; and separate installed-DLL hash verification in both editions all
+> PASS. MCC was not launched and neither existing `halomccvr.cfg` was changed.
+> The accepted-build pointer remains C-H2-40 until an explicit headset result,
+> but C-H2-53 is the complete new build containing both requested fixes; no
+> requested feature was disabled.
+>
+> | C-H2-53 deployed identity | Value |
+> | --- | --- |
+> | Source | `faac277c9f41d6494d32c083604c74d66a102d1e` |
+> | Packet behavior commit | `57c7f4f` (C-H2-52) |
+> | Same-DLL lease commit | `48ad89c` (C-H2-53) |
+> | Package | `faac277-halo2-c53-final-packet-same-dll-lease-20260823-163620704Z` |
+> | `HaloMCCVR.dll` | `039F70A3918D4C304E330EBCA2C975C480B10BFC5CD283E922A7848ED192686A` |
+> | `HaloMCCVRLauncher.exe` | `87F1DF6202BE26065BAEB769BC19E06B526F25DDC5FCBF6FE75FAE779C54A902` |
+> | Editions | installed and independently hash-verified in Steam and Microsoft Store; prior C-H2-51 preserved separately for each |
+
 > **HALO 2 C-H2-50 REJECTED; C-H2-51 SAFETY REVERT IN SOURCE - 2026-08-23.**
 > The player reported that aim was still head-owned and that loading a second
 > Halo 2 mission produced a fatal error. The preserved Steam run confirms both
