@@ -28,6 +28,9 @@ bool Halo2Observer6Dof_Poll(
 
 bool Halo2Observer6Dof_Installed() noexcept;
 bool Halo2Observer6Dof_Armed() noexcept;
+// C-H2-43: independently installed firing-only direction hook. False keeps
+// controller weapon placement dormant; it never controls camera admission.
+bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept;
 
 // The pose the observer core applied on its most recent successful frame
 // (E-H2-6 publication). Lock-free seqlock read, bounded; false when nothing

@@ -5899,7 +5899,7 @@ int main()
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics;
+        TitleCapability_Haptics | TitleCapability_ControllerAim;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6101,12 +6101,12 @@ int main()
                   GameTitle::Halo3, false),
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
-    // C-H2-42 withdraws C-H2-41 controller aim after the headset proved that
-    // using XInput as its actuator consumed ordinary camera turning. Aim, HUD,
-    // arm IK, and theatre remain denied until an independent H2 path exists.
+    // C-H2-43 grants controller aim through the independently installed
+    // firing-only helper; it never actuates XInput or a camera. HUD, arm IK,
+    // and theatre remain denied until each has Halo 2 evidence.
     constexpr uint32_t halo2DeniedCapabilities =
-        TitleCapability_ControllerAim | TitleCapability_Hud |
-        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
+        TitleCapability_Hud | TitleCapability_ArmIk |
+        TitleCapability_CutsceneTheater;
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedAdmission =
         TitleCapability_ControllerInput;
@@ -6187,12 +6187,12 @@ int main()
             halo2Runtime.Resolve(101, policy);
 #if HALOMCCVR_HALO2_STEREO6DOF
         // This helper's explicit mask strips only Stereo and RoomScale; the
-        // declared ControllerInput and Haptics bits survive it like
+        // declared ControllerInput, ControllerAim, and Haptics bits survive it like
         // RuntimeModes does (the worker applies the fuller
         // kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-            TitleCapability_Haptics;
+            TitleCapability_ControllerAim | TitleCapability_Haptics;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;
@@ -7520,6 +7520,24 @@ int main()
                 "C-H2-41 maps a controller yaw into Halo 2 world axes without "
                 "copying another engine's basis convention");
 
+            const float shotOrigin[3] = {0.0f, 1.0f, 0.0f};
+            Halo2CameraBasis shotCarrier = yawedCarrier;
+            std::memcpy(
+                shotCarrier.position, shotOrigin, sizeof(shotCarrier.position));
+            float shotDirection[3]{};
+            Check(Halo2BuildControllerShotDirection(
+                      shotOrigin, shotCarrier, 10.0f, shotDirection) &&
+                      nearlyEqual(shotDirection[0], 0.0f) &&
+                      nearlyEqual(shotDirection[1], 1.0f) &&
+                      nearlyEqual(shotDirection[2], 0.0f),
+                "C-H2-43 preserves the authored projectile origin and aims "
+                "its direction at the controller ray without a camera input");
+            const float invalidShotOrigin[3] = {
+                std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
+            Check(!Halo2BuildControllerShotDirection(
+                      invalidShotOrigin, shotCarrier, 10.0f, shotDirection),
+                "C-H2-43 rejects a non-finite shot origin locally");
+
             static Halo2FirstPersonSlotCache controllerCache{};
             controllerCache = Halo2FirstPersonSlotCache{};
             float node[13]{};
@@ -7562,6 +7580,21 @@ int main()
                       invalidNode, 1, head, carrier, 1.0f, controllerCache,
                       placed),
                 "C-H2-41 rejects a non-finite native palette locally");
+            Check(kHalo2WeaponAimHelperRva == 0x008F0F70 &&
+                      sizeof(kHalo2WeaponAimHelperEntryBytes) == 22 &&
+                      kHalo2WeaponAimHelperEntryBytes[0] == 0x48 &&
+                      kHalo2WeaponAimHelperEntryBytes[21] == 0x00 &&
+                      kHalo2PlayerUserIteratorRva == 0x006A1D50 &&
+                      kHalo2PlayerUpdateRva == 0x006A3910 &&
+                      kHalo2PlayersGlobalsPointerRva == 0x00E80A20 &&
+                      kHalo2PlayersDataArrayPointerRva == 0x00E80A28 &&
+                      kHalo2PlayerUserMappingOffset == 0x0C &&
+                      kHalo2DataArrayStorageOffset == 0x48 &&
+                      kHalo2PlayerDatumStride == 0x224 &&
+                      kHalo2PlayerUnitIndexOffset == 0x2C &&
+                      kHalo2MaximumPlayers == 16,
+                "E-H2-37 pins the unique H2EK-matched firing-only helper "
+                "and its output-user-0 player-unit guard used by C-H2-43");
         }
 
         // E-H2-21: main-view flags and Saber matrix matching.

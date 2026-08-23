@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c41-floaty-hand-native-aim-',
+            $head.Substring(0, 7) + '-halo2-c43-floaty-hand-direct-shot-aim-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-41' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-43' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_FLOATY_HAND_AND_CONTROLLER_AIM_VALIDATION_REQUIRED' -or
+            'HEADSET_FLOATY_HAND_AND_DIRECT_SHOT_AIM_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'primary-first-person-assembly-on-controller-native-unit-aim-feeds-projectile-direction' -or
+            'primary-first-person-assembly-on-controller-firing-helper-direction-only-right-stick-preserved' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -433,12 +433,18 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
             $manifest.halo2_candidate.controller_aim $true) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.floating_hands $true) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.physical_right_stick_preserved $true) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.controller_camera_writes $false) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.controller_xinput_synthesis $false) -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.controller_owned_first_person_slot 0) -or
         [string]$manifest.halo2_candidate.first_person_palette_source -cne
             'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices' -or
         [string]$manifest.halo2_candidate.projectile_aim_source -cne
-            'native-unit-aiming-vector-copied-by-stock-weapon-firing-path' -or
+            'h2ek-bsim-matched-firing-helper-return-direction-retail-rva-0x8f0f70-output-user-0-unit-guard' -or
         [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
             'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked' -or
         -not (Test-ExactBoolean `

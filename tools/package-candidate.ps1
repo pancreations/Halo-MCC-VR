@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c41-floaty-hand-native-aim',
+        'halo2-c43-floaty-hand-direct-shot-aim',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-41'
-            status = 'HEADSET_FLOATY_HAND_AND_CONTROLLER_AIM_VALIDATION_REQUIRED'
+            id = 'C-H2-43'
+            status = 'HEADSET_FLOATY_HAND_AND_DIRECT_SHOT_AIM_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'primary-first-person-assembly-on-controller-native-unit-aim-feeds-projectile-direction'
+                'primary-first-person-assembly-on-controller-firing-helper-direction-only-right-stick-preserved'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -378,11 +378,14 @@ try {
             headset_translation = $true
             controller_aim = $true
             floating_hands = $true
+            physical_right_stick_preserved = $true
+            controller_camera_writes = $false
+            controller_xinput_synthesis = $false
             controller_owned_first_person_slot = 0
             first_person_palette_source =
                 'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices'
             projectile_aim_source =
-                'native-unit-aiming-vector-copied-by-stock-weapon-firing-path'
+                'h2ek-bsim-matched-firing-helper-return-direction-retail-rva-0x8f0f70-output-user-0-unit-guard'
             interpolation_reset_policy =
                 'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked'
             hud = $false
@@ -480,7 +483,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-41 is one player-visible Halo 2 delta on accepted C-H2-40 source fa1f642: the primary native first-person palette is rigidly placed on the shared calibrated aim pose, and the ordinary XInput look loop steers Halo 2 native unit aim so the stock firing path launches shots along the gun ray. Official H2EK code proves both engine-local paths; retail bindings remain the already verified C-H2-37 interpolator read and observer publication. The interpolation reset is bypassed only while floaty hands are requested and both head and aim tracking are live. Any palette, tracking, hook, or servo failure leaves that feature stock and never disarms the camera, stereo core, or OpenXR. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
+        note = 'C-H2-43 replaces the headset-rejected C-H2-41 interaction. The primary native first-person palette remains rigidly placed on the shared calibrated aim pose, but Halo 2 is explicitly excluded from Game_ComputeAimStick: the physical right stick retains ordinary character/camera turning and controller motion cannot write XInput, the observer, or any camera field. Official H2EK weapons.cpp proves its firing-only helper returns a unit aiming vector; BSim maps the exact retail homolog to +0x8F0F70, whose 22-byte entry is unique in the pinned module and whose only code caller is the matched firing function. A separate high-confidence H2EK players_update match and output-user iterator prove the retail output-user-0 to player-unit guard, so AI and remote units never receive the local controller ray. The detour preserves the authored projectile origin and replaces only the local player shot direction so it converges on the controller ray. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

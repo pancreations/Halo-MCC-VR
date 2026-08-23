@@ -116,11 +116,12 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-42: matches kHalo2Capabilities in title_registry.cpp. C-H2-41's
-    // XInput aim loop is dormant because it consumed stock right-stick turning
-    // and made controller motion move the camera.
+    // C-H2-43: matches kHalo2Capabilities in title_registry.cpp. Aim is
+    // firing-helper-only; Game_ComputeAimStick explicitly passes H2 through so
+    // the physical right stick retains ordinary camera/character turning.
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
+        TitleCapability_ControllerAim |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |
@@ -38414,6 +38415,12 @@ namespace
 
 bool Game_ComputeAimStick(float& outRx, float& outRy)
 {
+    // C-H2-43: Halo 2's controller ray owns only the visible primary weapon
+    // and the firing helper's returned direction. Never synthesize XInput for
+    // it: physical RX keeps ordinary character/camera turning, while the
+    // established H2 pitch owner remains the next input branch.
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
+        return false;
     if (!Game_HasTitleCapability(TitleCapability_ControllerAim) &&
         !ReachControllerAimActive())
         return false;

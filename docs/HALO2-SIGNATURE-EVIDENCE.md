@@ -2481,3 +2481,60 @@ the C-H2-41 servo and palette transaction dormant without deleting them. The
 next candidate must write or hook the H2EK-proven unit/shot aim path directly;
 it may not use XInput or any observer/camera field as the motion-control
 actuator.
+
+## E-H2-37: direct local-player shot direction without camera or XInput (C-H2-43)
+
+C-H2-43 replaces the rejected actuator, not the H2EK-proven first-person
+palette. Halo 2 is now explicitly excluded from `Game_ComputeAimStick`, so
+the mod synthesizes no aim-stick value for this title. The physical right
+stick continues through the established Halo 2 input path for ordinary
+character/camera turning. Controller motion writes neither XInput, the
+observer, nor a camera field.
+
+The direct shot boundary starts in official H2EK and is matched to retail:
+
+- H2EK `weapons.cpp` firing function kit RVA `0x49C960` has one call at kit
+  RVA `0x49D0CD` to helper kit RVA `0x47DC20`. With its `use_unit_aim` flag,
+  the helper copies the firing unit's three-float aiming vector at `+0x174`
+  into the caller's direction output.
+- Local BSim maps that helper to retail `halo2.dll+0x8F0F70` (similarity
+  `0.3205`, significance `42`). Retail verification finds the same eight-
+  argument shape, the same `+0x174/+0x17C` copy under argument 7, and one code
+  caller at retail `+0x8E4FC8` inside the BSim-matched firing function
+  `+0x8E4940` (significance `120.9`).
+- The retail helper's 22-byte entry
+  `48 8B C4 48 89 58 20 55 56 41 55 48 8D 68 C1 48 81 EC C0 00 00 00`
+  occurs exactly once in the pinned Steam module
+  (`DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`)
+  and remains at RVA `0x8F0F70`.
+
+That helper is shared by all firing units, so helper identity alone is not
+sufficient. The local-player guard is independently proved:
+
+- H2EK `players.cpp` shows `players_globals->player_user_mapping` at globals
+  `+0x0C`, player `unit_index` at player datum `+0x2C`, and a maximum of 16
+  players. H2EK player update kit RVA `0x3FE80` also asserts that the unit's
+  `player_index` matches the player iterator.
+- BSim maps that complete player update to retail `+0x6A3910` with similarity
+  `0.4873` and significance `243.5`. Retail verification preserves player
+  datum `unit_index +0x2C`, stride `0x224`, the data-array storage pointer at
+  `+0x48`, player data-array pointer slot RVA `0xE80A28`, and players-globals
+  pointer slot RVA `0xE80A20`.
+- The independent H2EK output-user iterator kit RVA `0x3D270` maps to retail
+  `+0x6A1D50`; retail reads the same globals pointer, begins its four user
+  mappings at `+0x0C`, and returns only occupied output users. Both matched
+  identities are exact-RVA, unique-pattern prerequisites for the shot hook.
+
+The detour first lets the stock helper author origin and direction. It then
+resolves output user 0's live player unit read-only and requires the helper's
+unit handle to equal it. AI, remote-player, missing-player, and invalid-data
+calls retain their stock result. For the exact local player only, the authored
+projectile origin is preserved and the returned direction is normalized from
+that origin toward the configured-distance point on the controller ray. No
+projectile object is rewritten, and all barrel/projectile creation after the
+helper remains stock.
+
+The first-person palette remains primary slot 0 only. Headset acceptance must
+separately confirm: right-stick turning is unchanged; moving the controller
+moves the gun without moving the camera; shots follow the visible gun; and the
+behavior holds in both Anniversary and Classic.

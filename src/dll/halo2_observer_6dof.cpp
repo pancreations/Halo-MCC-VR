@@ -148,6 +148,19 @@ namespace
     std::atomic<uint64_t> g_floatyApplied{0};
     std::atomic<uint64_t> g_floatyFailed{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
+    // C-H2-43: H2EK-proven firing-only shot-direction result. Independent of
+    // observer ownership and intentionally unable to move a camera or XInput.
+    using Halo2WeaponAimHelperFn = void(__fastcall*)(
+        uint32_t, float*, float*, uint64_t, float*, uint8_t, uint8_t, uint8_t);
+    void* g_weaponAimTarget = nullptr;
+    std::atomic<uintptr_t> g_weaponAimOriginal{0};
+    std::atomic<uint32_t> g_weaponAimActiveCallbacks{0};
+    std::atomic<uint64_t> g_weaponAimCalls{0};
+    std::atomic<uint64_t> g_weaponAimApplied{0};
+    std::atomic<uint64_t> g_weaponAimStock{0};
+    std::atomic<uint64_t> g_weaponAimNonOwned{0};
+    std::atomic<uint64_t> g_weaponAimNoOwnedUnit{0};
+    std::atomic<uint64_t> g_weaponAimExceptions{0};
     uint64_t g_lastWitnessedReported = 0;
 
     // E-H2-6 publication: seqlock (even = stable), plain payload.
@@ -776,6 +789,124 @@ namespace
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    __declspec(noinline) void __fastcall Halo2WeaponAimHelperDetour(
+        uint32_t objectIndex, float* origin, float* direction, uint64_t marker,
+        float* offset, uint8_t projectOrigin, uint8_t useUnitAim,
+        uint8_t collisionAdjust)
+    {
+        g_weaponAimActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_weaponAimCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original = reinterpret_cast<Halo2WeaponAimHelperFn>(
+            g_weaponAimOriginal.load(std::memory_order_acquire));
+        bool originalCompleted = false;
+        if (original)
+        {
+            __try
+            {
+                original(objectIndex, origin, direction, marker, offset,
+                         projectOrigin, useUnitAim, collisionAdjust);
+                originalCompleted = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_weaponAimExceptions.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        bool applied = false;
+        if (originalCompleted && useUnitAim && origin && direction &&
+            Game_Halo2ControllerAimActive() &&
+            Halo2Observer6Dof_DirectWeaponAimArmed())
+        {
+            __try
+            {
+                // E-H2-37: the helper is shared by every firing unit. Resolve
+                // output user 0 through H2's own players_globals and datum
+                // layout, then require the helper's unit handle to match it.
+                // This is a read-only hot-path guard: no scan, lock, or call
+                // into another engine subsystem occurs here.
+                uint32_t ownedUnit = UINT32_MAX;
+                const uintptr_t module =
+                    reinterpret_cast<uintptr_t>(g_moduleReference);
+                const uintptr_t playersGlobals = module
+                    ? *reinterpret_cast<const volatile uintptr_t*>(
+                          module + kHalo2PlayersGlobalsPointerRva)
+                    : 0;
+                const uintptr_t playersData = module
+                    ? *reinterpret_cast<const volatile uintptr_t*>(
+                          module + kHalo2PlayersDataArrayPointerRva)
+                    : 0;
+                if (playersGlobals && playersData)
+                {
+                    const uint32_t playerIndex =
+                        *reinterpret_cast<const volatile uint32_t*>(
+                            playersGlobals + kHalo2PlayerUserMappingOffset +
+                            kOwnedUser * sizeof(uint32_t));
+                    const uint32_t absolutePlayer = playerIndex & 0xffffu;
+                    const uintptr_t storage =
+                        *reinterpret_cast<const volatile uintptr_t*>(
+                            playersData + kHalo2DataArrayStorageOffset);
+                    if (playerIndex != UINT32_MAX &&
+                        absolutePlayer < kHalo2MaximumPlayers && storage)
+                    {
+                        const uintptr_t player = playersData + storage +
+                            static_cast<uintptr_t>(absolutePlayer) *
+                                kHalo2PlayerDatumStride;
+                        ownedUnit =
+                            *reinterpret_cast<const volatile uint32_t*>(
+                                player + kHalo2PlayerUnitIndexOffset);
+                    }
+                }
+                if (ownedUnit == UINT32_MAX)
+                {
+                    g_weaponAimNoOwnedUnit.fetch_add(
+                        1, std::memory_order_relaxed);
+                    __leave;
+                }
+                if (objectIndex != ownedUnit)
+                {
+                    g_weaponAimNonOwned.fetch_add(
+                        1, std::memory_order_relaxed);
+                    __leave;
+                }
+
+                Halo2ObserverPosePublication publication{};
+                float headOrientation[4]{}, headPosition[3]{};
+                float aimOrientation[4]{}, aimPosition[3]{};
+                Halo2CameraBasis carrier{};
+                if (Halo2Observer6Dof_ReadPublishedPose(publication) &&
+                    publication.generation ==
+                        g_generation.load(std::memory_order_acquire) &&
+                    VR_GetHeadPose(headOrientation, headPosition) &&
+                    VR_GetAimPose(aimOrientation, aimPosition) &&
+                    Halo2BuildControllerCarrier(
+                        publication.tracked, headOrientation, headPosition,
+                        aimOrientation, aimPosition, Game_GetWorldScale(),
+                        std::clamp(g_config.gun_forward_m, -0.3f, 0.5f),
+                        carrier))
+                {
+                    const float range = std::clamp(
+                        g_config.crosshair_distance_m, 2.0f, 50.0f) *
+                        Game_GetWorldScale();
+                    float candidate[3]{};
+                    if (Halo2BuildControllerShotDirection(
+                            origin, carrier, range, candidate))
+                    {
+                        std::memcpy(direction, candidate, sizeof(candidate));
+                        applied = true;
+                    }
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_weaponAimExceptions.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        (applied ? g_weaponAimApplied : g_weaponAimStock)
+            .fetch_add(1, std::memory_order_relaxed);
+        g_weaponAimActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
     void DetourBody(uint32_t user) noexcept
     {
         const auto original =
@@ -1020,6 +1151,32 @@ namespace
                 return false;
             }
             g_target = nullptr;
+        }
+        if (g_weaponAimTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_weaponAimTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 direct weapon aim: disable failed (%d); ownership "
+                    "retained for cleanup", static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_weaponAimActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+            {
+                Sleep(10);
+            }
+            if (g_weaponAimActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 direct weapon aim callbacks did not drain; "
+                    "ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_weaponAimTarget);
+            g_weaponAimTarget = nullptr;
+            g_weaponAimOriginal.store(0, std::memory_order_release);
         }
         if (g_reanchorTarget)
         {
@@ -1379,6 +1536,90 @@ namespace
             }
         }
 
+        // E-H2-37: this optional hook owns only the direction returned to the
+        // stock firing function. Besides the helper, require the independent
+        // H2EK-matched output-user iterator and player-update identities that
+        // prove the local-player guard's two global pointers and datum layout.
+        uintptr_t aimMatch = 0;
+        uint32_t aimMatchCount = 0;
+        uintptr_t userIteratorMatch = 0;
+        uint32_t userIteratorMatchCount = 0;
+        uintptr_t playerUpdateMatch = 0;
+        uint32_t playerUpdateMatchCount = 0;
+        constexpr char kWeaponAimPattern[] =
+            "48 8B C4 48 89 58 20 55 56 41 55 48 8D 68 C1 "
+            "48 81 EC C0 00 00 00";
+        constexpr char kPlayerUserIteratorPattern[] =
+            "45 33 C9 8D 41 01 83 F9 FF 44 0F 45 C8 49 63 C9 "
+            "48 83 F9 04 7D 25 4C 8B 05 B3 EC 7D 00 49 83 C0 0C";
+        constexpr char kPlayerUpdatePattern[] =
+            "48 89 5C 24 08 48 89 74 24 18 48 89 7C 24 20 55 "
+            "41 54 41 55 41 56 41 57 48 8D AC 24 30 FF FF FF "
+            "48 81 EC D0 01 00 00 4C 8B E9 E8 D1 2A 00 00 45 "
+            "33 FF 84 C0 0F 85 D9 00 00 00 48 8B 15 D7 D0 7D 00";
+        if (!CountPatternMatches(
+                base, size, kWeaponAimPattern, aimMatch, aimMatchCount) ||
+            aimMatchCount != 1 ||
+            aimMatch != base + kHalo2WeaponAimHelperRva ||
+            !CountPatternMatches(
+                base, size, kPlayerUserIteratorPattern, userIteratorMatch,
+                userIteratorMatchCount) ||
+            userIteratorMatchCount != 1 ||
+            userIteratorMatch != base + kHalo2PlayerUserIteratorRva ||
+            !CountPatternMatches(
+                base, size, kPlayerUpdatePattern, playerUpdateMatch,
+                playerUpdateMatchCount) ||
+            playerUpdateMatchCount != 1 ||
+            playerUpdateMatch != base + kHalo2PlayerUpdateRva)
+        {
+            LOG("Halo 2 direct weapon aim WITHHELD: firing helper / user "
+                "iterator / player update identities were %u / %u / %u "
+                "matches; right stick and camera remain stock",
+                aimMatchCount,
+                userIteratorMatchCount, playerUpdateMatchCount);
+        }
+        else
+        {
+            void* trampoline = nullptr;
+            void* const aimTarget = reinterpret_cast<void*>(aimMatch);
+            const MH_STATUS created = MH_CreateHook(
+                aimTarget, reinterpret_cast<void*>(&Halo2WeaponAimHelperDetour),
+                &trampoline);
+            if (created != MH_OK || !trampoline)
+            {
+                LOG("Halo 2 direct weapon aim WITHHELD: hook create=%d; "
+                    "right stick and camera remain stock",
+                    static_cast<int>(created));
+                if (created == MH_OK)
+                    (void)MH_RemoveHook(aimTarget);
+            }
+            else
+            {
+                g_weaponAimTarget = aimTarget;
+                g_weaponAimOriginal.store(
+                    reinterpret_cast<uintptr_t>(trampoline),
+                    std::memory_order_release);
+                const MH_STATUS enabled = MH_EnableHook(aimTarget);
+                if (enabled != MH_OK)
+                {
+                    LOG("Halo 2 direct weapon aim WITHHELD: hook enable=%d; "
+                        "right stick and camera remain stock",
+                        static_cast<int>(enabled));
+                    (void)MH_RemoveHook(aimTarget);
+                    g_weaponAimTarget = nullptr;
+                    g_weaponAimOriginal.store(0, std::memory_order_release);
+                }
+                else
+                {
+                    LOG("Halo 2 direct weapon aim installed at firing helper "
+                        "+0x%X with output-user-0 unit guard: controller "
+                        "replaces only the local player's shot direction; "
+                        "AI, XInput, observer and camera are untouched",
+                        static_cast<unsigned>(kHalo2WeaponAimHelperRva));
+                }
+            }
+        }
+
         g_coreState = CoreState::Installed;
         LOG("Halo 2 observer 6DOF installed: observer final transform "
             "+0x%X, observer results +0x%X stride 0x%X, user %u. Three "
@@ -1447,7 +1688,9 @@ namespace
             "world %llu / camera-relative %llu / unknown %llu, pass cameras "
             "named %llu, newest-publication fallback %llu, busy %llu; last "
             "witnessed publication #%llu; controller placement: %llu applied, "
-            "%llu failed, %llu interpolation resets bypassed",
+            "%llu failed, %llu interpolation resets bypassed; direct shot "
+            "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
+            "%llu no-owned-unit, %llu exceptions",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1518,7 +1761,19 @@ namespace
                 g_floatyFailed.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponsResetsBypassedForFloaty.load(
-                    std::memory_order_relaxed)));
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimStock.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimNonOwned.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimNoOwnedUnit.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimExceptions.load(std::memory_order_relaxed)));
     }
 }
 
@@ -1596,6 +1851,14 @@ bool Halo2Observer6Dof_Installed() noexcept
 bool Halo2Observer6Dof_Armed() noexcept
 {
     return g_armed.load(std::memory_order_acquire);
+}
+
+bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept
+{
+    return g_weaponAimOriginal.load(std::memory_order_acquire) != 0 &&
+        g_armed.load(std::memory_order_acquire) &&
+        g_levelLive.load(std::memory_order_acquire) &&
+        !g_teardownRequested.load(std::memory_order_acquire);
 }
 
 bool Halo2Observer6Dof_ReadPublishedPose(
@@ -1698,6 +1961,7 @@ bool Halo2Observer6Dof_Poll(
 
 bool Halo2Observer6Dof_Installed() noexcept { return false; }
 bool Halo2Observer6Dof_Armed() noexcept { return false; }
+bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept { return false; }
 bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication&) noexcept { return false; }
 int Halo2Observer6Dof_ReadPublishedPoses(

@@ -1129,6 +1129,42 @@ inline bool Halo2BuildControllerCarrier(
     return true;
 }
 
+// C-H2-43: preserve the game's authored projectile origin and converge it on
+// the controller ray at the configured reticle distance. This changes only a
+// firing helper's direction result; it has no camera or input side effect.
+inline bool Halo2BuildControllerShotDirection(
+    const float origin[3], const Halo2CameraBasis& carrier,
+    float rangeWorld, float output[3]) noexcept
+{
+    if (!origin || !output || !Halo2ValidateCameraBasis(carrier) ||
+        !std::isfinite(rangeWorld) || rangeWorld <= 0.0f)
+    {
+        return false;
+    }
+    float candidate[3]{};
+    float lengthSquared = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(origin[axis]))
+            return false;
+        const float target = carrier.position[axis] +
+            carrier.forward[axis] * rangeWorld;
+        candidate[axis] = target - origin[axis];
+        lengthSquared += candidate[axis] * candidate[axis];
+    }
+    const float length = std::sqrt(lengthSquared);
+    if (!std::isfinite(length) || length <= 1.0e-4f)
+        return false;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        candidate[axis] /= length;
+        if (!std::isfinite(candidate[axis]))
+            return false;
+    }
+    std::memcpy(output, candidate, sizeof(candidate));
+    return true;
+}
+
 // E-H2-6 pose ownership. The observer core publishes, once per game frame,
 // the engine's camera as it found it (`stock`) and the camera it wrote
 // (`tracked`), with the recenter reference it used. A per-eye core then
@@ -2421,6 +2457,34 @@ inline constexpr uint32_t kHalo2FirstPersonNodeStride = 0x34;
 inline constexpr uint32_t kHalo2FirstPersonNodeAxesOffset = 0x04;
 inline constexpr uint32_t kHalo2FirstPersonNodePositionOffset = 0x28;
 inline constexpr int kHalo2FirstPersonNodeLimit = 256;
+
+// E-H2-37 (C-H2-43): H2EK weapons.cpp firing helper RVA 0x47DC20 copies the
+// owning unit's aiming_vector into the shot direction. BSim maps its exact x64
+// homolog to retail +0x8F0F70; the 22-byte entry below occurs once in the
+// pinned module and the retail function has the same sole firing caller at
+// +0x8E4FC8 and the same +0x174 copy. Its result is a shot-only ownership
+// boundary: no XInput, observer, or camera field is touched.
+inline constexpr uint32_t kHalo2WeaponAimHelperRva = 0x008F0F70;
+inline constexpr uint8_t kHalo2WeaponAimHelperEntryBytes[] = {
+    0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x20, 0x55, 0x56, 0x41, 0x55,
+    0x48, 0x8D, 0x68, 0xC1, 0x48, 0x81, 0xEC, 0xC0, 0x00, 0x00, 0x00};
+
+// The local-player guard for that shared firing helper is engine-native too.
+// H2EK players.cpp maps output users through players_globals +0x0C, stores a
+// player's unit handle at player datum +0x2C, and bounds players to 16. Its
+// player-update homolog is the high-confidence BSim match at retail +0x6A3910
+// (similarity 0.4873, significance 243.5); retail preserves the 0x224 player
+// datum stride and resolves its storage from data-array +0x48. The output-user
+// iterator at +0x6A1D50 independently verifies the retail globals pointer.
+inline constexpr uint32_t kHalo2PlayerUserIteratorRva = 0x006A1D50;
+inline constexpr uint32_t kHalo2PlayerUpdateRva = 0x006A3910;
+inline constexpr uint32_t kHalo2PlayersGlobalsPointerRva = 0x00E80A20;
+inline constexpr uint32_t kHalo2PlayersDataArrayPointerRva = 0x00E80A28;
+inline constexpr uint32_t kHalo2PlayerUserMappingOffset = 0x0C;
+inline constexpr uint32_t kHalo2DataArrayStorageOffset = 0x48;
+inline constexpr uint32_t kHalo2PlayerDatumStride = 0x224;
+inline constexpr uint32_t kHalo2PlayerUnitIndexOffset = 0x2C;
+inline constexpr uint32_t kHalo2MaximumPlayers = 16;
 
 // The world rotation that takes the tick camera's frame to the frame
 // camera's: R = F_frame * F_tick^T with F = [right forward up] as world
