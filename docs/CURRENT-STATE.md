@@ -30,8 +30,16 @@
 > (Steam, SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 120 Hz; log SHA-256
 > `0AE96156F50F33CCF9FD7FABEB4A4833B4F2F981ABB3B788E67957BB77FD1605`).
 > C-H2-51 Release build PASS, core tests PASS, and Reach consistency gate PASS.
-> Packaging/deployment identity remains to be recorded after the metadata
-> commit; the accepted pointer remains C-H2-40.
+> The manifest-verified candidate replaced C-H2-50 in both editions; each old
+> install is preserved independently. The accepted pointer remains C-H2-40.
+>
+> | C-H2-51 deployed identity | Value |
+> | --- | --- |
+> | Source | `ee175558af5871ed3bf349b9a9146defe6df9ec3` |
+> | Package | `ee17555-halo2-c51-safety-revert-20260823-153134878Z` |
+> | `HaloMCCVR.dll` | `80B39134F9D68DF9BAD94A544883EB049699173FA46BA778A9E71D4CE7C157D9` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Editions | installed and hash-verified in Steam and Microsoft Store; MCC not launched; config unchanged |
 
 > **SUPERSEDED/REJECTED CLAIM — HALO 2 C-H2-50 - 2026-08-23.** C-H2-48 is
 > rejected and C-H2-49 is its committed source revert. C-H2-50 does not reuse
