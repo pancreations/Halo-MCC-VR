@@ -2182,3 +2182,39 @@ exactly its designed offset, for any head motion since the tick, while the
 world keeps the frame own view. C-H2-34 therefore never calls the reset. Its
 entry bytes are still verified, because being its SINGLE caller is what proves
 0x818CA0 is first_person_weapons - the identity check stays, the call goes.
+
+## E-H2-29: the classic second eye drew into a different target (C-H2-35)
+
+This is why Classic never had depth while every other title does.
+
+The classic render-target selector `0x9540F0(target_id, ...)` resolves the
+world pass id 0 through a once-per-frame byte at RVA `0x1994935`:
+
+```c
+case 0:
+  if (DAT_181994935 == 0) target = *0x197EE60;   // the SCENE target
+  else                    target = *0x197EE58;   // the BACKBUFFER
+```
+
+`render_player_window 0x7E2130` clears that byte at `0x7E2368`, once, before
+its single `render_view`. The postprocess `0x951EC0` SETS it at `0x951F97`,
+inside `render_view`. The stereo core calls `render_view` twice inside one
+`render_player_window`, so when the second eye starts the byte is already 1
+and that eye world pass binds the backbuffer while the first eye bound the
+scene target. Both eyes render, both with the correct per-eye camera - and
+whatever the mod captures, one of them is not in it. That is exactly the
+8cb89b6 evidence: correct cameras (65.3 mm apart), the captured target written
+during the pair (93.5%), and the two eyes byte-identical.
+
+C-H2-35 saves the byte when the pair scope is built (as
+`render_player_window` left it) and restores it before EVERY eye, which is
+precisely what the Anniversary core already does with the Saber
+once-per-frame latch `kHalo2SaberSceneOnceLatchRva` between its two passes.
+The classic telemetry gains `sceneLatchRearmed` and `sceneLatchUnreadable`.
+
+Mechanism note: Classic cannot use the Halo 3 / ODST / Reach / Halo 4
+render-target REDIRECT, because the classic postprocess builds its shader
+resource view from the engine own scene texture, so a substituted view is
+invisible to it. Classic therefore uses the Anniversary mechanism - copy the
+finished frame after each eye - and with the latch restored both eyes finish
+in the same place.

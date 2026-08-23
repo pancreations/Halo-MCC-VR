@@ -173,6 +173,10 @@ namespace
         Halo2SymmetricHalfFovs engineHalfFovs[kHalo2EyeCount]{};
         bool engineHalfFovsValid[kHalo2EyeCount]{};
         bool dirty[kOwnedCameraSpanCount]{};
+        // E-H2-29: the engine's once-per-frame scene-target latch as it stood
+        // when this pair began, and whether it was readable.
+        uint8_t sceneTargetLatch = 0;
+        bool sceneTargetLatchValid = false;
     };
 
     HookTelemetry g_telemetry;
@@ -231,6 +235,10 @@ namespace
     std::atomic<bool> g_lastPublishedValid{false};
     // E-H2-14: claimed frames dropped this generation (reset on install).
     std::atomic<uint32_t> g_claimedFrameFailures{0};
+    // E-H2-29: how often the second eye's scene-target latch had to be
+    // re-armed, and how often it could not be.
+    std::atomic<uint64_t> g_sceneLatchRearmed{0};
+    std::atomic<uint64_t> g_sceneLatchUnreadable{0};
     uint64_t g_claimedFrameFailureLogMs = 0;
     uint32_t g_projectionReadbackLoggedStatus = 0;
     uint32_t g_projectionReadbackLoggedBits[4]{};
@@ -257,6 +265,30 @@ namespace
         __try
         {
             *reinterpret_cast<volatile uint32_t*>(address) = value;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    bool ReadByteGuarded(uintptr_t address, uint8_t& value) noexcept
+    {
+        if (!address)
+            return false;
+        __try
+        {
+            value = *reinterpret_cast<const volatile uint8_t*>(address);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    bool WriteByteGuarded(uintptr_t address, uint8_t value) noexcept
+    {
+        if (!address)
+            return false;
+        __try
+        {
+            *reinterpret_cast<volatile uint8_t*>(address) = value;
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -1498,6 +1530,43 @@ namespace
                     break;
                 }
 
+                // E-H2-29: the world pass's target id 0 resolves through the
+                // engine's once-per-frame latch, which the FIRST eye's
+                // postprocess has already flipped. Put it back to what
+                // render_player_window left, or this eye draws into a
+                // different target from the other one - which is exactly what
+                // "identical eyes with correct per-eye cameras" looked like.
+                if (scope->sceneTargetLatchValid)
+                {
+                    const uintptr_t base =
+                        g_moduleBase.load(std::memory_order_acquire);
+                    uint8_t current = 0;
+                    if (base &&
+                        ReadByteGuarded(
+                            base + kHalo2ClassicSceneTargetLatchRva, current))
+                    {
+                        if (current != scope->sceneTargetLatch)
+                        {
+                            if (WriteByteGuarded(
+                                    base + kHalo2ClassicSceneTargetLatchRva,
+                                    scope->sceneTargetLatch))
+                            {
+                                g_sceneLatchRearmed.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                            else
+                            {
+                                g_sceneLatchUnreadable.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        g_sceneLatchUnreadable.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
                 bool rasterEyeBegun = false;
                 bool rasterEyeAttempted = false;
                 bool originalReturned = false;
@@ -1719,6 +1788,17 @@ namespace
         }
 
         StereoScope candidate{};
+        // E-H2-29: the latch as render_player_window left it, before the first
+        // eye's postprocess flips it.
+        {
+            const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
+            uint8_t latch = 0;
+            if (base && ReadByteGuarded(base + kHalo2ClassicSceneTargetLatchRva, latch))
+            {
+                candidate.sceneTargetLatch = latch;
+                candidate.sceneTargetLatchValid = true;
+            }
+        }
         candidate.generation = generation;
         candidate.headReferenceResetSerial = headReferenceResetSerial;
         candidate.serial = snapshot.preparedSerial;
@@ -2083,7 +2163,8 @@ namespace
                 "stockInner=%llu snapshotMiss=%llu foreignOuter=%llu "
                 "foreignInner=%llu invalid=%llu duplicate=%llu claimed=%llu "
                 "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
-                "restoreFail=%llu exception=%llu poseOwner=%s "
+                "restoreFail=%llu exception=%llu sceneLatchRearmed=%llu "
+                "sceneLatchUnreadable=%llu poseOwner=%s "
                 "posePublished=%llu poseRederived=%llu poseSelf=%llu "
                 "poseUnavailable=%llu",
                 static_cast<unsigned long long>(current.outerCallbacks),
@@ -2102,6 +2183,10 @@ namespace
                 static_cast<unsigned long long>(current.droppedPairs),
                 static_cast<unsigned long long>(current.restoreFailures),
                 static_cast<unsigned long long>(current.transactionExceptions),
+                static_cast<unsigned long long>(
+                    g_sceneLatchRearmed.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_sceneLatchUnreadable.load(std::memory_order_relaxed)),
                 Halo2Observer6Dof_Armed() ? "observer" : "classicCore",
                 static_cast<unsigned long long>(current.posePublished),
                 static_cast<unsigned long long>(current.poseRederived),

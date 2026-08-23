@@ -2302,6 +2302,22 @@ inline bool Halo2CameraBasisMatchesExactly(
 // caches rotate across that whole set until a candidate's two eyes differ.
 // The rotation costs the same two probe copies per eye as before.
 inline constexpr uint32_t kHalo2ClassicRenderToTextureFlagRva = 0x01996A17;
+
+// E-H2-29 (C-H2-35): the classic render-target SELECTOR 0x9540F0 resolves the
+// world pass's target id 0 through a once-per-frame byte:
+//
+//     case 0:
+//       if (DAT_181994935 == 0) target = *0x197EE60;   // the scene target
+//       else                    target = *0x197EE58;   // the backbuffer
+//
+// render_player_window (0x7E2130) clears that byte at 0x7E2368, before its one
+// render_view; the postprocess 0x951EC0 sets it at 0x951F97, inside render_view.
+// The classic stereo core calls render_view TWICE inside one
+// render_player_window, so the byte is already 1 when the second eye starts and
+// that eye's world pass binds a different target from the first eye's. It is
+// the exact shape of the Saber once-per-frame latch the Anniversary core
+// re-arms between its two passes (kHalo2SaberSceneOnceLatchRva).
+inline constexpr uint32_t kHalo2ClassicSceneTargetLatchRva = 0x01994935;
 inline constexpr int kHalo2EyeBoundRtvSlots = 6;
 inline constexpr int kHalo2CaptureCandidateSlots = 2 + kHalo2EyeBoundRtvSlots;
 
