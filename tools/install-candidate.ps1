@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c48-hands-aim-turn-fix-',
+            $head.Substring(0, 7) + '-halo2-c50-final-palette-reticle-ray-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-48' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-50' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_HANDS_AIM_TURN_VALIDATION_REQUIRED' -or
+            'HEADSET_FINAL_PALETTE_AIM_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'two-exact-hand-subtrees-collapsed-arm-ancestors-camera-local-controller-delta-presented-reticle-shot-target' -or
+            'final-root-composed-world-palette-two-hand-subtrees-all-other-nodes-collapsed-exact-presented-reticle-ray' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or

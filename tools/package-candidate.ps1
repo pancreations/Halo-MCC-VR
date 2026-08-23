@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c48-hands-aim-turn-fix',
+        'halo2-c50-final-palette-reticle-ray',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-48'
-            status = 'HEADSET_HANDS_AIM_TURN_VALIDATION_REQUIRED'
+            id = 'C-H2-50'
+            status = 'HEADSET_FINAL_PALETTE_AIM_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'two-exact-hand-subtrees-collapsed-arm-ancestors-camera-local-controller-delta-presented-reticle-shot-target'
+                'final-root-composed-world-palette-two-hand-subtrees-all-other-nodes-collapsed-exact-presented-reticle-ray'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -493,7 +493,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-48 corrects the C-H2-47 headset rejection. Exact engine-flag-derived left and right wrist subtrees ride their own controllers; only their upper-arm and forearm ancestors collapse, while root, camera_control, and unrelated controls stay stock. Camera-relative matrices receive H-transpose-times-C instead of the incorrect world-space C-times-H-transpose, preserving tracking after body/camera turns. The local-player firing helper converges the authored muzzle origin on the fresh compositor-presented crosshair pose, including configured stabilization. Game look input, XInput, observer camera, stereo, AI, and remote units remain untouched. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
+        note = 'C-H2-50 replaces the headset-rejected C-H2-46/47/48 interpolator-space controller placement. Official H2EK proves that Halo 2 maps and root-composes that source into a final render packet; the uniquely verified retail composer is admitted only from its two exact first-person return sites and an exact witnessed source-node stride. The left and right wrist subtrees ride their own controllers in the finished world palette, every other node collapses so no arm remains, and the held gun stays in the right-hand subtree. The local-player firing helper preserves the stock muzzle origin and converges on the exact fresh compositor-presented reticle ray with no mesh-only gun_forward_m offset. Game look input, XInput, observer camera, stereo, AI, remote units and dual-wield slot 1 remain untouched. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
