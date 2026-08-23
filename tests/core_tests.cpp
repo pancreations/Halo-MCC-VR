@@ -7712,9 +7712,51 @@ int main()
                     "the three readers C-H2-47 calls");
             }
 
-            Check(!kHalo2ControllerOwnedAimEnabled,
-                "C-H2-49 disarms the headset-rejected C-H2-46/47/48 palette "
-                "and firing transaction at its one build switch");
+            Check(!kHalo2RejectedInterpolatorControllerOwnershipEnabled &&
+                      kHalo2FinalPaletteControllerOwnershipEnabled,
+                "C-H2-50 keeps the rejected interpolator placement dormant "
+                "while arming only the final visible-palette transaction");
+            Check(kHalo2MatrixComposeRva == 0x0072A150 &&
+                      kHalo2FirstPersonPrimaryComposeReturnRva == 0x00818623 &&
+                      kHalo2FirstPersonSecondaryComposeReturnRva == 0x00818773 &&
+                      sizeof(kHalo2MatrixComposeEntryBytes) == 32,
+                "E-H2-43 pins the final root composer and only its two "
+                "first-person palette return sites");
+            {
+                float wrist[kHalo2FirstPersonNodeFloats]{};
+                wrist[0] = 1.0f;
+                wrist[1] = wrist[5] = wrist[9] = 1.0f;
+                wrist[10] = 3.0f;
+                wrist[11] = -2.0f;
+                wrist[12] = 7.0f;
+                Halo2CameraBasis desired{};
+                desired.position[0] = -4.0f;
+                desired.position[1] = 9.0f;
+                desired.position[2] = 2.0f;
+                desired.forward[0] = 1.0f;
+                desired.up[2] = 1.0f;
+                float rotation[9]{}, stockPosition[3]{}, desiredPosition[3]{};
+                const bool built = Halo2BuildFinalPaletteWristDelta(
+                    wrist, desired, rotation, stockPosition, desiredPosition);
+                if (built)
+                    Halo2ReanchorFirstPersonNode(
+                        wrist, rotation, stockPosition, desiredPosition);
+                Check(built &&
+                          std::fabs(wrist[1]) < 1.0e-6f &&
+                          std::fabs(wrist[2] + 1.0f) < 1.0e-6f &&
+                          std::fabs(wrist[3]) < 1.0e-6f &&
+                          std::fabs(wrist[4] - 1.0f) < 1.0e-6f &&
+                          std::fabs(wrist[5]) < 1.0e-6f &&
+                          std::fabs(wrist[6]) < 1.0e-6f &&
+                          std::fabs(wrist[7]) < 1.0e-6f &&
+                          std::fabs(wrist[8]) < 1.0e-6f &&
+                          std::fabs(wrist[9] - 1.0f) < 1.0e-6f &&
+                          std::fabs(wrist[10] + 4.0f) < 1.0e-6f &&
+                          std::fabs(wrist[11] - 9.0f) < 1.0e-6f &&
+                          std::fabs(wrist[12] - 2.0f) < 1.0e-6f,
+                    "C-H2-50 aligns a final world-space wrist to a turned "
+                    "controller without a facing-forward special case");
+            }
 
             // Camera-local controller placement must be invariant under a
             // common world/body turn. C-H2-47 accidentally used C*H^T (a

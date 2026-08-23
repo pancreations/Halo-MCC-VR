@@ -85,12 +85,12 @@ namespace
     // pad) and rumble are granted. Without ControllerInput the XInput hook
     // passed the physical pad through untouched inside every Halo 2 level,
     // so the VR controllers only worked in the shell.
-    // C-H2-46 grants ControllerAim for the floating hands + gun mesh and the
+    // C-H2-50 grants ControllerAim for the floating hands + gun mesh and the
     // bullet direction that follows them. It is NOT permission to steer the
     // camera: `Game_ComputeAimStick` refuses Halo 2 before any capability is
     // read, so the physical right stick keeps ordinary character/camera
-    // turning. The second gate is kHalo2ControllerOwnedAimEnabled in
-    // halo2_render_logic.h; both must be true for any of it to run.
+    // turning. The second gate is the final-palette build switch plus its live
+    // hook state; the rejected interpolator-space switch remains false.
     constexpr uint32_t kHalo2Capabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |

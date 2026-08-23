@@ -110,6 +110,20 @@ public class DumpKitEvidence extends GhidraScript {
         }
     }
 
+    private void dumpBytes(long rva, int count) throws Exception {
+        if (count < 1 || count > 256)
+            throw new IllegalArgumentException("byte count must be 1..256");
+        Address address = fromRva(rva);
+        byte[] bytes = new byte[count];
+        currentProgram.getMemory().getBytes(address, bytes);
+        StringBuilder output = new StringBuilder();
+        for (byte value : bytes) {
+            if (output.length() != 0) output.append(' ');
+            output.append(String.format("%02X", value & 0xff));
+        }
+        println("BYTES RVA 0x" + Long.toHexString(rva) + ": " + output);
+    }
+
     @Override
     public void run() throws Exception {
         println("PROGRAM: " + currentProgram.getName());
@@ -136,6 +150,14 @@ public class DumpKitEvidence extends GhidraScript {
                     findInFunction(decompiler, parts[0],
                         Integer.parseInt(parts[1]),
                         Long.parseUnsignedLong(parts[2], 16));
+                }
+                else if (argument.startsWith("bytes:")) {
+                    String[] parts = argument.substring(6).split(":", 2);
+                    if (parts.length != 2)
+                        throw new IllegalArgumentException(
+                            "bytes syntax: bytes:<hex-rva>:<count>");
+                    dumpBytes(Long.parseUnsignedLong(parts[0], 16),
+                        Integer.parseInt(parts[1]));
                 }
             }
         }

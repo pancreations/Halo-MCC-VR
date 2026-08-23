@@ -1,5 +1,36 @@
 # Current state
 
+> **HALO 2 C-H2-50 READY FOR CANDIDATE PACKAGING - 2026-08-23.** C-H2-48 is
+> rejected and C-H2-49 is its committed source revert. C-H2-50 does not reuse
+> the failed controller transform at interpolator read `+0x722850`. Official
+> H2EK proves that Halo 2 subsequently maps and root-composes those source nodes
+> into the final render packet; retail verifies that operation at composer
+> `+0x72A150`, called from the first-person loops at `+0x81861E/+0x81876E`.
+> E-H2-43 records the complete discovery and retail identity proof.
+>
+> The new optional transaction witnesses the exact interpolator source pointer
+> but changes only the finished world-space destination matrix, admitted by the
+> two exact return addresses and source-node stride. The engine-proven left and
+> right wrist subtrees receive one rigid final-palette delta onto their own
+> controllers. Every other final node collapses, matching Halo 3/Reach/Halo 4,
+> so only the left hand and right hand plus gun remain. Because the correction
+> happens after Halo 2's root composition, turning no longer applies the camera
+> transform to the controller placement a second time.
+>
+> The firing-only local-player hook remains independent of camera and XInput.
+> Its target now uses the exact fresh compositor-presented reticle pose with
+> zero `gun_forward_m`: the compositor ray starts at the presented aim position,
+> while `gun_forward_m` is only a mesh trim. The stock muzzle origin converges
+> on that exact displayed point. If the final-palette hook is unavailable, the
+> shot hook is withheld too and this feature stays stock without disarming VR.
+>
+> Release DLL build PASS and core tests PASS. A deterministic final-world wrist
+> test covers a 90-degree turned carrier and exact destination position/basis.
+> Packaging/deployment identity is intentionally blank until the C-H2-50 source
+> commit exists. Required headset acceptance remains Anniversary and Classic at
+> 90 and 180 degrees, with edition/runtime/headset/refresh recorded; Halo 3 must
+> regress on the same DLL. Dual-wield slot 1 remains stock.
+
 > **HALO 2 C-H2-48 REJECTED BY HEADSET; C-H2-49 REVERT IN SOURCE - 2026-08-23.**
 > The player's C-H2-47 headset result rejected that candidate: both hands were
 > offset, both arm assemblies still rode the right controller, shots did not

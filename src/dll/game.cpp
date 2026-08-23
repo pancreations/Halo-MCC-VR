@@ -38015,13 +38015,14 @@ static bool ReachControllerAimActive() { return false; }
 bool Game_Halo2ControllerAimActive()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // C-H2-45: the withdrawn capability already disarms every caller. The
-    // build switch is checked FIRST as well, so re-granting the capability
-    // alone can never silently re-arm a headset-rejected behavior.
-    return kHalo2ControllerOwnedAimEnabled &&
+    // C-H2-50 re-grants ownership only to the final-palette implementation.
+    // The rejected interpolator-space placement has its own permanently-false
+    // switch and cannot be re-armed through this predicate.
+    return kHalo2FinalPaletteControllerOwnershipEnabled &&
         TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
         Game_HasTitleCapability(TitleCapability_ControllerAim) &&
         Halo2Observer6Dof_Armed() &&
+        Halo2Observer6Dof_FinalPaletteArmed() &&
         g_enabled.load(std::memory_order_acquire) &&
         g_vrAim.load(std::memory_order_acquire) && VR_IsStereoEnabled();
 #else

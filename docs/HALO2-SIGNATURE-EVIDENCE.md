@@ -2932,3 +2932,78 @@ unconditionally refuses Halo 2, so this correction does not write XInput or a
 camera field. A missing hand binding/pose now leaves the complete optional
 palette presentation stock for that frame instead of invoking C-H2-46's
 known-bad whole-slot/right-controller fallback.
+
+### C-H2-48 headset rejection
+
+The next headset sitting rejected C-H2-48 with the same four visible faults,
+reported as worse. The preserved Steam log is
+`out/test-runs/a64da3e-halo2-c48-rejected-20260823-0941/HaloMCCVR.log`
+(SHA-256 `73E3789AF0447486689BA01E819A587515FFE1519EF0984F05D8D7029E4C1D7A`).
+It recorded 5,152 successful controller placements with zero failures, one
+successful hand-binding build, and 18/18 local-player shot substitutions. This
+falsifies the claimed visible/coordinate semantics of the successful
+`+0x722850` writes. C-H2-49 disables the complete C-H2-46/47/48 transaction.
+Do not iterate another transform on that upstream bank.
+
+## E-H2-43 (C-H2-50): the final visible-palette root composition - 2026-08-23
+
+Halo 3, ODST, Reach and Halo 4 all apply controller ownership to a private or
+final render palette, after the title has completed its authored pose and root
+composition. Halo 2 C-H2-46/47/48 was the structural exception: it rewrote the
+interpolator source before Halo 2's renderer consumed it.
+
+Official H2EK supplies the missing boundary. In the pinned
+`halo2_tag_test.exe`, `first_person_weapons.cpp` kit RVA `0x306E04` obtains the
+interpolated source bank from kit `0xD7CD0`, then gives that source, the
+first-person root, the model mapping and the render-packet destination to the
+packet fill at kit `0x306D16`. That fill authors a 12-byte packet header followed
+by `0x34`-byte node matrices. Therefore the interpolator output is not itself
+the final visible palette: the packet fill still maps and composes it through
+the first-person root.
+
+Retail is used only to verify that H2EK-explained operation. The homologous
+retail first-person renderer is `halo2.dll+0x8181F0`. Immediately after its two
+existing interpolator reads at `+0x81858D` and `+0x81872E`, its node loops call
+the generic matrix composer at `+0x81861E` and `+0x81876E`. The calls are exactly
+`compose(first_person_root, interpolated_source_node,
+render_packet_destination_node)`. The composer is retail `+0x72A150`; its
+decompile proves `destination = root o source`, including basis, translation
+and scale. Its 32-byte entry
+`48 83 EC 48 49 3B C8 75 24 0F 10 01 8B 41 30 0F 10 49 10 89 44 24 30 0F 11 04 24 0F 10 41 20 48`
+is unique in the pinned module. The two admitted return addresses are
+`+0x818623` and `+0x818773`.
+
+C-H2-50 keeps `+0x722850` only as a read witness. It records the exact source
+pointer, graph id and count supplied by that render invocation. The generic
+composer detour first runs stock and may alter its destination only when all of
+the following agree: the caller return is one of the two final first-person
+loops; the source lies at an exact `0x34` stride inside that witnessed bank;
+the graph/count passes the E-H2-41 engine-native wrist binding; controller poses
+are live; and the output matrix is finite. This is the same source-identity plus
+final-palette shape used by the accepted Halo 3 and Reach paths.
+
+At each final wrist matrix, the rigid world motion is
+`D = desired_controller o inverse(stock_wrist)`. That one motion is carried
+over the exact wrist descendant mask. Every final-palette node outside the two
+hand masks is scale-collapsed after root composition, where no hierarchy is
+evaluated again. Thus the left hand alone follows the left controller; the
+right hand and its tag-proven held-weapon descendants follow the right
+controller; and no arm/root/control geometry can remain visible. The rejected
+interpolator-space controller switch remains false.
+
+The projectile hook remains the H2EK-proven firing-only helper from E-H2-37,
+guarded to output user 0's unit. C-H2-50 corrects its remaining crosshair
+divergence: the compositor places the visible reticle at the presented aim
+position plus its local `-Z` ray times `crosshair_distance_m`. The firing target
+now uses that exact stabilized pose with zero `gun_forward_m`; that setting is
+a mesh-only presentation trim and adding it to the shot created a second ray.
+The engine-owned muzzle origin is preserved and converges on the displayed
+point. A missing final-palette hook withholds the shot hook too, so this optional
+feature fails as one stock presentation rather than mixing a stock gun with a
+controller-owned shot.
+
+Dual-wield slot 1 remains outside this claim. Headset acceptance must cover
+primary weapons in Anniversary and Classic, including 90- and 180-degree body
+turns, and must separately record edition, OpenXR runtime, headset and refresh
+rate. Halo 3 regression is required on the same DLL because the shared VR-side
+presented-reticle publication is consumed but not changed.

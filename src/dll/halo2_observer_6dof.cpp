@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <intrin.h>
 
 #include "../common/halo2_render_logic.h"
 #include "../common/config.h"
@@ -167,6 +168,36 @@ namespace
     Halo2FirstPersonArmBinding g_armBinding{};
     int g_armBindingGraphId = 0;
     bool g_armBindingGraphIdValid = false;
+    using Halo2MatrixComposeFn = void(__fastcall*)(
+        const float*, const float*, float*);
+    void* g_finalPaletteTarget = nullptr;
+    std::atomic<uintptr_t> g_finalPaletteOriginal{0};
+    std::atomic<bool> g_finalPaletteReady{false};
+    std::atomic<uint32_t> g_finalPaletteActiveCallbacks{0};
+    std::atomic<uint64_t> g_finalPaletteCalls{0};
+    std::atomic<uint64_t> g_finalPaletteMovedRight{0};
+    std::atomic<uint64_t> g_finalPaletteMovedLeft{0};
+    std::atomic<uint64_t> g_finalPaletteCollapsed{0};
+    std::atomic<uint64_t> g_finalPaletteRefused{0};
+
+    struct Halo2FinalPaletteContext
+    {
+        bool valid = false;
+        const float* source = nullptr;
+        uint32_t count = 0;
+        Halo2FirstPersonArmBinding binding{};
+        Halo2CameraBasis rightCarrier{};
+        Halo2CameraBasis leftCarrier{};
+        bool rightDeltaValid = false;
+        bool leftDeltaValid = false;
+        float rightRotation[9]{};
+        float leftRotation[9]{};
+        float rightStockPosition[3]{};
+        float leftStockPosition[3]{};
+        float rightDesiredPosition[3]{};
+        float leftDesiredPosition[3]{};
+    };
+    thread_local Halo2FinalPaletteContext g_finalPaletteContext{};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     // C-H2-43: H2EK-proven firing-only shot-direction result. Independent of
     // observer ownership and intentionally unable to move a camera or XInput.
@@ -632,22 +663,20 @@ namespace
         return true;
     }
 
-    // C-H2-46. THE one first-person carrier, for every consumer.
-    //
-    // The visible hands/gun mesh, the VR crosshair the compositor draws on
-    // the hand ray, and the bullet direction must all be built from the SAME
-    // controller sample with the SAME trim. C-H2-43 and C-H2-44 did not: the
-    // mesh came from VR_GetAimPose with the gun_forward_m trim while the shot
-    // came from the presented reticle pose with no trim, so the bullets did
-    // not follow the gun the player was pointing. One builder now serves both.
+    // Shared controller-to-Halo-2 transform for both visible placement and the
+    // shot ray. The mesh receives gun_forward_m as a presentation trim. The
+    // shot deliberately receives zero trim: the compositor places the visible
+    // crosshair at `presented aim position + (-Z * distance)`, so adding the
+    // mesh-only trim to that origin would create a second, parallel ray.
     //
     // VR_GetAimPose is the shared, mount-calibrated aim pose (gun_yaw_deg /
     // gun_pitch_deg / gun_roll_deg and two-handed aim are already folded into
-    // it), and it is the same pose the compositor draws the VR crosshair
-    // from, so mesh, crosshair and bullet agree by construction.
+    // it), and the firing caller supplies the exact stabilized pose the
+    // compositor actually presented.
     bool BuildFirstPersonCarrierFromAimPose(
         const Halo2CameraBasis& renderCamera, const float aimOrientation[4],
-        const float aimPosition[3], Halo2CameraBasis& carrier) noexcept
+        const float aimPosition[3], float forwardTrimMeters,
+        Halo2CameraBasis& carrier) noexcept
     {
         float headOrientation[4]{}, headPosition[3]{};
         if (!VR_GetHeadPose(headOrientation, headPosition))
@@ -657,7 +686,7 @@ namespace
         return Halo2BuildControllerCarrier(
             renderCamera, headOrientation, headPosition, aimOrientation,
             aimPosition, Game_GetWorldScale(),
-            std::clamp(g_config.gun_forward_m, -0.3f, 0.5f), carrier);
+            forwardTrimMeters, carrier);
     }
 
     bool BuildFirstPersonCarrier(
@@ -667,7 +696,142 @@ namespace
         float aimOrientation[4]{}, aimPosition[3]{};
         return VR_GetAimPose(aimOrientation, aimPosition) &&
             BuildFirstPersonCarrierFromAimPose(
-                renderCamera, aimOrientation, aimPosition, carrier);
+                renderCamera, aimOrientation, aimPosition,
+                std::clamp(g_config.gun_forward_m, -0.3f, 0.5f), carrier);
+    }
+
+    bool PrepareFinalPaletteContext(
+        const Halo2CameraBasis& renderCamera, int graphId,
+        const float* source, uint32_t count) noexcept
+    {
+        g_finalPaletteContext = Halo2FinalPaletteContext{};
+        if (!kHalo2FinalPaletteControllerOwnershipEnabled || !source ||
+            !count || count > kHalo2FirstPersonPaletteCapacity ||
+            !Game_Halo2ControllerAimActive() ||
+            !g_finalPaletteReady.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+        Halo2FinalPaletteContext candidate{};
+        float leftOrientation[4]{}, leftPosition[3]{};
+        float headOrientation[4]{}, headPosition[3]{};
+        if (!ResolveArmBinding(graphId, count, candidate.binding) ||
+            !BuildFirstPersonCarrier(renderCamera, candidate.rightCarrier) ||
+            !VR_GetHeadPose(headOrientation, headPosition) ||
+            !VR_GetLeftControllerPose(leftOrientation, leftPosition) ||
+            !Halo2BuildControllerCarrier(
+                renderCamera, headOrientation, headPosition, leftOrientation,
+                leftPosition, Game_GetWorldScale(),
+                std::clamp(g_config.left_hand_forward_m, -0.3f, 0.5f),
+                candidate.leftCarrier))
+        {
+            return false;
+        }
+        candidate.source = source;
+        candidate.count = count;
+        candidate.valid = true;
+        g_finalPaletteContext = candidate;
+        return true;
+    }
+
+    __declspec(noinline) void __fastcall Halo2FinalPaletteComposeDetour(
+        const float* root, const float* source, float* destination)
+    {
+        g_finalPaletteActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        const auto original = reinterpret_cast<Halo2MatrixComposeFn>(
+            g_finalPaletteOriginal.load(std::memory_order_acquire));
+        if (original)
+            original(root, source, destination);
+
+        bool changed = false;
+        __try
+        {
+            const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
+            const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+            Halo2FinalPaletteContext& context = g_finalPaletteContext;
+            const bool admittedCaller = base &&
+                (caller == base + kHalo2FirstPersonPrimaryComposeReturnRva ||
+                 caller == base + kHalo2FirstPersonSecondaryComposeReturnRva);
+            if (original && admittedCaller && destination && source &&
+                context.valid && context.source && context.count &&
+                context.count <= kHalo2FirstPersonPaletteCapacity)
+            {
+                const uintptr_t first =
+                    reinterpret_cast<uintptr_t>(context.source);
+                const uintptr_t address = reinterpret_cast<uintptr_t>(source);
+                const uintptr_t bytes = static_cast<uintptr_t>(context.count) *
+                    kHalo2FirstPersonNodeStride;
+                if (first <= UINTPTR_MAX - bytes && address >= first &&
+                    address < first + bytes &&
+                    (address - first) % kHalo2FirstPersonNodeStride == 0)
+                {
+                    const uint32_t index = static_cast<uint32_t>(
+                        (address - first) / kHalo2FirstPersonNodeStride);
+                    const uint64_t bit = uint64_t{1} << index;
+                    const bool right = (context.binding.rightSubtree & bit) != 0;
+                    const bool left = (context.binding.leftSubtree & bit) != 0;
+                    if (right && index == static_cast<uint32_t>(
+                            context.binding.rightWrist))
+                    {
+                        context.rightDeltaValid =
+                            Halo2BuildFinalPaletteWristDelta(
+                                destination, context.rightCarrier,
+                                context.rightRotation,
+                                context.rightStockPosition,
+                                context.rightDesiredPosition);
+                    }
+                    if (left && index == static_cast<uint32_t>(
+                            context.binding.leftWrist))
+                    {
+                        context.leftDeltaValid =
+                            Halo2BuildFinalPaletteWristDelta(
+                                destination, context.leftCarrier,
+                                context.leftRotation,
+                                context.leftStockPosition,
+                                context.leftDesiredPosition);
+                    }
+                    if (right && context.rightDeltaValid)
+                    {
+                        Halo2ReanchorFirstPersonNode(
+                            destination, context.rightRotation,
+                            context.rightStockPosition,
+                            context.rightDesiredPosition);
+                        g_finalPaletteMovedRight.fetch_add(
+                            1, std::memory_order_relaxed);
+                        changed = true;
+                    }
+                    else if (left && context.leftDeltaValid)
+                    {
+                        Halo2ReanchorFirstPersonNode(
+                            destination, context.leftRotation,
+                            context.leftStockPosition,
+                            context.leftDesiredPosition);
+                        g_finalPaletteMovedLeft.fetch_add(
+                            1, std::memory_order_relaxed);
+                        changed = true;
+                    }
+                    else if (!right && !left && std::isfinite(destination[0]))
+                    {
+                        // This is the final independent palette: no hierarchy
+                        // is evaluated after it. Collapse every non-hand node,
+                        // matching Halo 3/Reach/Halo 4, so no arm can remain on
+                        // either controller while the held gun stays in the
+                        // right-wrist subtree.
+                        destination[0] *= 0.0001f;
+                        g_finalPaletteCollapsed.fetch_add(
+                            1, std::memory_order_relaxed);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (changed)
+            g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
+        g_finalPaletteActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     // E-H2-32 (C-H2-37): the re-anchor. Normally the interpolation reset holds
@@ -704,6 +868,8 @@ namespace
         g_reanchorLastSlot.store(slot, std::memory_order_relaxed);
         g_reanchorLastHandled.store(handled, std::memory_order_relaxed);
         const bool nodesPresent = nodesOut && countOut && *nodesOut;
+        if (slot == 0)
+            g_finalPaletteContext = Halo2FinalPaletteContext{};
         if (nodesPresent)
             g_reanchorLastCount.store(*countOut, std::memory_order_relaxed);
         const bool live = g_armed.load(std::memory_order_acquire) &&
@@ -786,6 +952,12 @@ namespace
             }
             if (tickValid && passValid)
             {
+                if (slot == 0)
+                {
+                    (void)PrepareFinalPaletteContext(
+                        pass.frame, id,
+                        reinterpret_cast<const float*>(*nodesOut), *countOut);
+                }
                 if (!pass.compensate &&
                     Halo2CameraBasesNearlyEqual(tick, pass.frame))
                 {
@@ -803,6 +975,7 @@ namespace
                         // hands and the gun mesh they hold - is ever moved.
                         // No body, no other slot, no world geometry.
                         const bool floaty = slot == 0 &&
+                            kHalo2RejectedInterpolatorControllerOwnershipEnabled &&
                             Game_Halo2ControllerAimActive();
                         if (floaty)
                         {
@@ -1079,7 +1252,7 @@ namespace
                     presentedAtMs <= nowMs && nowMs - presentedAtMs <= 250 &&
                     BuildFirstPersonCarrierFromAimPose(
                         publication.tracked, presentedOrientation,
-                        presentedPosition, carrier))
+                        presentedPosition, 0.0f, carrier))
                 {
                     const float range = std::clamp(
                         g_config.crosshair_distance_m, 2.0f, 50.0f) *
@@ -1347,6 +1520,34 @@ namespace
                 return false;
             }
             g_target = nullptr;
+        }
+        g_finalPaletteReady.store(false, std::memory_order_release);
+        if (g_finalPaletteTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_finalPaletteTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 final-palette hands: disable failed (%d); "
+                    "ownership retained for cleanup", static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_finalPaletteActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+            {
+                Sleep(10);
+            }
+            if (g_finalPaletteActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 final-palette callbacks did not drain; ownership "
+                    "retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_finalPaletteTarget);
+            g_finalPaletteTarget = nullptr;
+            g_finalPaletteOriginal.store(0, std::memory_order_release);
+            g_finalPaletteContext = Halo2FinalPaletteContext{};
         }
         if (g_weaponAimTarget)
         {
@@ -1710,7 +1911,7 @@ namespace
                                         kHalo2FirstPersonNodeAxesOffset),
                                     static_cast<unsigned>(
                                         kHalo2FirstPersonNodePositionOffset));
-                                if (kHalo2ControllerOwnedAimEnabled)
+                                if (kHalo2RejectedInterpolatorControllerOwnershipEnabled)
                                 {
                                     LOG("Halo 2 floating hands ARMED "
                                         "(C-H2-48): first-person slot 0 only "
@@ -1761,7 +1962,7 @@ namespace
         // hooked or patched. All three must match exactly once and sit at their
         // pinned RVAs, or the complete optional floating-hand presentation stays
         // stock for that frame.
-        if (kHalo2ControllerOwnedAimEnabled)
+        if (kHalo2FinalPaletteControllerOwnershipEnabled)
         {
             // The 8 leading padding bytes disambiguate the standalone function
             // from the two copies the optimizer inlined elsewhere.
@@ -1840,6 +2041,72 @@ namespace
             }
         }
 
+        // E-H2-43 / C-H2-50: the renderer's final root-composition boundary.
+        // The generic composer has many callers, so source-bank membership AND
+        // the two exact first-person return addresses gate every mutation.
+        g_finalPaletteReady.store(false, std::memory_order_release);
+        uintptr_t composeMatch = 0;
+        uint32_t composeMatchCount = 0;
+        constexpr char kMatrixComposePattern[] =
+            "48 83 EC 48 49 3B C8 75 24 0F 10 01 8B 41 30 0F "
+            "10 49 10 89 44 24 30 0F 11 04 24 0F 10 41 20 48";
+        if (!kHalo2FinalPaletteControllerOwnershipEnabled)
+        {
+            LOG("Halo 2 final-palette hands NOT installed: build switch off");
+        }
+        else if (!CountPatternMatches(
+                     base, size, kMatrixComposePattern, composeMatch,
+                     composeMatchCount) ||
+                 composeMatchCount != 1 ||
+                 composeMatch != base + kHalo2MatrixComposeRva)
+        {
+            LOG("Halo 2 final-palette hands WITHHELD: matrix composer identity "
+                "matched %u times; hands, gun and firing stay stock",
+                composeMatchCount);
+        }
+        else
+        {
+            void* trampoline = nullptr;
+            void* const composeTarget = reinterpret_cast<void*>(composeMatch);
+            const MH_STATUS created = MH_CreateHook(
+                composeTarget,
+                reinterpret_cast<void*>(&Halo2FinalPaletteComposeDetour),
+                &trampoline);
+            if (created == MH_OK && trampoline)
+                g_finalPaletteOriginal.store(
+                    reinterpret_cast<uintptr_t>(trampoline),
+                    std::memory_order_release);
+            const MH_STATUS enabled = created == MH_OK && trampoline
+                ? MH_EnableHook(composeTarget)
+                : MH_ERROR_NOT_CREATED;
+            if (created == MH_OK && trampoline && enabled == MH_OK)
+            {
+                g_finalPaletteTarget = composeTarget;
+                g_finalPaletteReady.store(true, std::memory_order_release);
+                LOG("Halo 2 final-palette hands ARMED (C-H2-50): composer "
+                    "+0x%X, admitted only from +0x%X/+0x%X; exact left/right "
+                    "wrist subtrees ride their controllers after the engine "
+                    "root composition, every other node collapses, and the "
+                    "gun remains in the right-hand subtree",
+                    static_cast<unsigned>(kHalo2MatrixComposeRva),
+                    static_cast<unsigned>(
+                        kHalo2FirstPersonPrimaryComposeReturnRva),
+                    static_cast<unsigned>(
+                        kHalo2FirstPersonSecondaryComposeReturnRva));
+            }
+            else
+            {
+                LOG("Halo 2 final-palette hands WITHHELD: hook create/enable "
+                    "failed; hands, gun and firing stay stock");
+                if (created == MH_OK)
+                {
+                    (void)MH_DisableHook(composeTarget);
+                    (void)MH_RemoveHook(composeTarget);
+                }
+                g_finalPaletteOriginal.store(0, std::memory_order_release);
+            }
+        }
+
         // E-H2-37: this optional hook owns only the direction returned to the
         // stock firing function. Besides the helper, require the independent
         // H2EK-matched output-user iterator and player-update identities that
@@ -1867,7 +2134,8 @@ namespace
             "41 54 41 55 41 56 41 57 48 8D AC 24 30 FF FF FF "
             "48 81 EC D0 01 00 00 4C 8B E9 E8 D1 2A 00 00 45 "
             "33 FF 84 C0 0F 85 D9 00 00 00 48 8B 15 D7 D0 7D 00";
-        if (!kHalo2ControllerOwnedAimEnabled)
+        if (!kHalo2FinalPaletteControllerOwnershipEnabled ||
+            !g_finalPaletteReady.load(std::memory_order_acquire))
         {
             LOG("Halo 2 direct weapon aim NOT installed: the controller-owned "
                 "first-person feature is disarmed at its build switch. The "
@@ -2008,7 +2276,8 @@ namespace
             "witnessed publication #%llu; controller placement: %llu applied, "
             "%llu failed, %llu interpolation resets bypassed; left hand: "
             "%llu on its own controller, %llu stock fallback, %llu binding "
-            "rebuilds, last binding reason %d; direct shot "
+            "rebuilds, last binding reason %d; final palette: %llu changed, "
+            "%llu right, %llu left, %llu collapsed, %llu refused; direct shot "
             "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
             "%llu no-owned-unit, %llu exceptions",
             static_cast<unsigned long long>(
@@ -2089,6 +2358,16 @@ namespace
             static_cast<unsigned long long>(
                 g_armBindingRebuilds.load(std::memory_order_relaxed)),
             g_armBindingLastReason.load(std::memory_order_relaxed),
+            static_cast<unsigned long long>(
+                g_finalPaletteCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_finalPaletteMovedRight.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_finalPaletteMovedLeft.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_finalPaletteCollapsed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_finalPaletteRefused.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponAimCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
@@ -2183,6 +2462,15 @@ bool Halo2Observer6Dof_Armed() noexcept
 bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept
 {
     return g_weaponAimOriginal.load(std::memory_order_acquire) != 0 &&
+        g_armed.load(std::memory_order_acquire) &&
+        g_levelLive.load(std::memory_order_acquire) &&
+        !g_teardownRequested.load(std::memory_order_acquire);
+}
+
+bool Halo2Observer6Dof_FinalPaletteArmed() noexcept
+{
+    return g_finalPaletteReady.load(std::memory_order_acquire) &&
+        g_finalPaletteOriginal.load(std::memory_order_acquire) != 0 &&
         g_armed.load(std::memory_order_acquire) &&
         g_levelLive.load(std::memory_order_acquire) &&
         !g_teardownRequested.load(std::memory_order_acquire);
@@ -2289,6 +2577,7 @@ bool Halo2Observer6Dof_Poll(
 bool Halo2Observer6Dof_Installed() noexcept { return false; }
 bool Halo2Observer6Dof_Armed() noexcept { return false; }
 bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept { return false; }
+bool Halo2Observer6Dof_FinalPaletteArmed() noexcept { return false; }
 bool Halo2Observer6Dof_ReadPublishedPose(
     Halo2ObserverPosePublication&) noexcept { return false; }
 int Halo2Observer6Dof_ReadPublishedPoses(

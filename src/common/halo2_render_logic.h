@@ -1074,7 +1074,14 @@ inline bool Halo2BuildTrackedCenterCamera(
 // the firing substitution likewise did not make shots follow the visible
 // crosshair. Keep the implementation dormant for evidence work; do not build a
 // replacement on this boundary.
-inline constexpr bool kHalo2ControllerOwnedAimEnabled = false;
+inline constexpr bool kHalo2RejectedInterpolatorControllerOwnershipEnabled = false;
+
+// C-H2-50 starts again at the boundary used by the working titles. H2EK's
+// first-person packet builder composes every interpolated source node through
+// the first-person root; retail does that at +0x72A150 from +0x81861E and
+// +0x81876E. Controller ownership is applied to that finished, world-space
+// matrix only. The rejected upstream implementation above remains dormant.
+inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = true;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
@@ -2486,6 +2493,19 @@ inline constexpr uint32_t kHalo2FirstPersonNodeAxesOffset = 0x04;
 inline constexpr uint32_t kHalo2FirstPersonNodePositionOffset = 0x28;
 inline constexpr int kHalo2FirstPersonNodeLimit = 256;
 
+// E-H2-43 (C-H2-50): final visible first-person palette composition. The
+// generic matrix composer is admitted only from the two H2EK-homologous node
+// loops in first_person render; all of its other callers remain byte-for-byte
+// stock. The source pointer is additionally required to fall inside the exact
+// interpolator bank witnessed immediately before the composition.
+inline constexpr uint32_t kHalo2MatrixComposeRva = 0x0072A150;
+inline constexpr uint32_t kHalo2FirstPersonPrimaryComposeReturnRva = 0x00818623;
+inline constexpr uint32_t kHalo2FirstPersonSecondaryComposeReturnRva = 0x00818773;
+inline constexpr uint8_t kHalo2MatrixComposeEntryBytes[] = {
+    0x48, 0x83, 0xEC, 0x48, 0x49, 0x3B, 0xC8, 0x75, 0x24, 0x0F, 0x10,
+    0x01, 0x8B, 0x41, 0x30, 0x0F, 0x10, 0x49, 0x10, 0x89, 0x44, 0x24,
+    0x30, 0x0F, 0x11, 0x04, 0x24, 0x0F, 0x10, 0x41, 0x20, 0x48};
+
 // ---------------------------------------------------------------------------
 // E-H2-40 / E-H2-41 (C-H2-47): Halo 2 tags its own hands.
 //
@@ -2646,6 +2666,48 @@ inline bool Halo2BuildFirstPersonArmBinding(
     out.leftSubtree = leftMask;
     out.rightSubtree = rightMask;
     out.armAncestors = armMask;
+    return true;
+}
+
+// Build the rigid world-space motion that places an already root-composed
+// wrist matrix on a controller carrier. This deliberately consumes the final
+// matrix, not the interpolator's local source. It is the same accepted shape as
+// Halo 3/Reach/Halo 4: D = desired * inverse(stock wrist), then D is carried
+// over the complete hand/held-object subtree.
+inline bool Halo2BuildWorldDeltaRotation(
+    const Halo2CameraBasis& tick, const Halo2CameraBasis& frame,
+    float out[9]) noexcept;
+
+inline bool Halo2BuildFinalPaletteWristDelta(
+    const float* stockWrist, const Halo2CameraBasis& desired,
+    float rotation[9], float stockPosition[3], float desiredPosition[3]) noexcept
+{
+    if (!stockWrist || !rotation || !stockPosition || !desiredPosition ||
+        !Halo2ValidateCameraBasis(desired) || !std::isfinite(stockWrist[0]) ||
+        std::fabs(stockWrist[0]) < 1.0e-6f)
+    {
+        return false;
+    }
+    Halo2CameraBasis stock{};
+    stock.forward[0] = stockWrist[4];
+    stock.forward[1] = stockWrist[5];
+    stock.forward[2] = stockWrist[6];
+    stock.up[0] = stockWrist[7];
+    stock.up[1] = stockWrist[8];
+    stock.up[2] = stockWrist[9];
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        stock.position[axis] = stockWrist[10 + axis];
+        stockPosition[axis] = stock.position[axis];
+        desiredPosition[axis] = desired.position[axis];
+        if (!std::isfinite(stock.position[axis]))
+            return false;
+    }
+    if (!Halo2ValidateCameraBasis(stock) ||
+        !Halo2BuildWorldDeltaRotation(stock, desired, rotation))
+    {
+        return false;
+    }
     return true;
 }
 
