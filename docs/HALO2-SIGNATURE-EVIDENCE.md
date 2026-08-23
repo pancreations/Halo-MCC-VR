@@ -2538,3 +2538,24 @@ The first-person palette remains primary slot 0 only. Headset acceptance must
 separately confirm: right-stick turning is unchanged; moving the controller
 moves the gun without moving the camera; shots follow the visible gun; and the
 behavior holds in both Anniversary and Classic.
+
+### C-H2-43 headset result and C-H2-44 pitch correction
+
+The first C-H2-43 headset result proved a single controller-carrier convention
+error: physical controller up produced Halo 2 aim down. This is not a game look
+setting and must not be corrected through XInput or the observer. The shared
+calibrated OpenXR aim pose presents physical pitch-up to this Halo 2 carrier as
+a negative local-X quaternion component; `Halo2BuildControllerCarrier` had
+passed that component directly to Halo 2's camera basis.
+
+C-H2-44 negates only that relative local-X component at the Halo 2 controller
+carrier. Controller position and yaw are unchanged, the physical right stick
+retains the C-H2-43 camera-turn path, and no camera field is written. The
+first-person palette consumes the corrected current aim carrier. The direct
+local-player shot path consumes the compositor-published reticle pose, so any
+configured reticle stabilization is part of the shot target the player
+actually sees. It builds that carrier with zero gun trim, then aims the
+authored barrel origin at the exact configured-distance reticle point. A
+deterministic pitch regression covers the headset-observed negative-X input;
+a separate parallax regression requires an offset barrel origin to converge on
+the presented reticle point rather than merely copying a parallel ray.

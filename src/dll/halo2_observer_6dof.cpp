@@ -872,17 +872,23 @@ namespace
 
                 Halo2ObserverPosePublication publication{};
                 float headOrientation[4]{}, headPosition[3]{};
-                float aimOrientation[4]{}, aimPosition[3]{};
+                float reticleOrientation[4]{}, reticlePosition[3]{};
+                uint64_t reticleSampleMs = 0;
                 Halo2CameraBasis carrier{};
+                const uint64_t nowMs = GetTickCount64();
                 if (Halo2Observer6Dof_ReadPublishedPose(publication) &&
                     publication.generation ==
                         g_generation.load(std::memory_order_acquire) &&
                     VR_GetHeadPose(headOrientation, headPosition) &&
-                    VR_GetAimPose(aimOrientation, aimPosition) &&
+                    VR_GetPresentedReticleAimPose(
+                        reticleOrientation, reticlePosition, reticleSampleMs) &&
+                    reticleSampleMs != 0 &&
+                    nowMs >= reticleSampleMs &&
+                    nowMs - reticleSampleMs <= 500 &&
                     Halo2BuildControllerCarrier(
                         publication.tracked, headOrientation, headPosition,
-                        aimOrientation, aimPosition, Game_GetWorldScale(),
-                        std::clamp(g_config.gun_forward_m, -0.3f, 0.5f),
+                        reticleOrientation, reticlePosition,
+                        Game_GetWorldScale(), 0.0f,
                         carrier))
                 {
                     const float range = std::clamp(

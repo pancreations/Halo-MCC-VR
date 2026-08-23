@@ -1087,6 +1087,13 @@ inline bool Halo2BuildControllerCarrier(
     float relativeOrientation[4]{};
     Halo2MultiplyQuaternion(inverseHead, controller, relativeOrientation);
 
+    // C-H2-44: headset testing of C-H2-43 proved that the aim pose's local
+    // X rotation arrives with the opposite vertical sign to Halo 2's camera
+    // frame. Correct that title-local convention at the controller carrier;
+    // do not invert the game's look input or touch the tracked camera. The
+    // same corrected carrier drives both the visible palette and shot ray.
+    relativeOrientation[0] = -relativeOrientation[0];
+
     Halo2CameraBasis candidate = trackedCamera;
     if (!Halo2ApplyLocalQuaternion(candidate, relativeOrientation))
         return false;

@@ -7520,6 +7520,21 @@ int main()
                 "C-H2-41 maps a controller yaw into Halo 2 world axes without "
                 "copying another engine's basis convention");
 
+            // The calibrated OpenXR aim pose reports physical controller-up
+            // as a negative local-X rotation. C-H2-43 passed that sign through
+            // and aimed the H2 carrier down. C-H2-44 corrects it locally.
+            const float halfPitch = pi / 12.0f;
+            const float raisedController[4] = {
+                -std::sin(halfPitch), 0.0f, 0.0f, std::cos(halfPitch)};
+            Halo2CameraBasis raisedCarrier{};
+            Check(Halo2BuildControllerCarrier(
+                      head, identity, headPosition, raisedController,
+                      headPosition, 0.5f, 0.0f, raisedCarrier) &&
+                      raisedCarrier.forward[0] > 0.8f &&
+                      raisedCarrier.forward[2] > 0.4f,
+                "C-H2-44 maps physical controller-up to Halo 2 aim-up without "
+                "changing camera or game look input");
+
             const float shotOrigin[3] = {0.0f, 1.0f, 0.0f};
             Halo2CameraBasis shotCarrier = yawedCarrier;
             std::memcpy(
@@ -7532,6 +7547,19 @@ int main()
                       nearlyEqual(shotDirection[2], 0.0f),
                 "C-H2-43 preserves the authored projectile origin and aims "
                 "its direction at the controller ray without a camera input");
+
+            const float offsetShotOrigin[3] = {1.0f, 0.0f, 0.0f};
+            Halo2CameraBasis reticleCarrier = yawedCarrier;
+            reticleCarrier.position[0] = 0.0f;
+            reticleCarrier.position[1] = 0.0f;
+            reticleCarrier.position[2] = 0.0f;
+            Check(Halo2BuildControllerShotDirection(
+                      offsetShotOrigin, reticleCarrier, 10.0f, shotDirection) &&
+                      nearlyEqual(shotDirection[0], -1.0f / std::sqrt(101.0f)) &&
+                      nearlyEqual(shotDirection[1], 10.0f / std::sqrt(101.0f)) &&
+                      nearlyEqual(shotDirection[2], 0.0f),
+                "C-H2-44 converges an authored barrel origin on the exact "
+                "presented VR-crosshair point instead of merely copying its ray");
             const float invalidShotOrigin[3] = {
                 std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
             Check(!Halo2BuildControllerShotDirection(

@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c43-floaty-hand-direct-shot-aim',
+        'halo2-c44-controller-pitch-sign',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +171,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 22
+        schema_version = 23
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-43'
-            status = 'HEADSET_FLOATY_HAND_AND_DIRECT_SHOT_AIM_VALIDATION_REQUIRED'
+            id = 'C-H2-44'
+            status = 'HEADSET_CONTROLLER_PITCH_SIGN_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'primary-first-person-assembly-on-controller-firing-helper-direction-only-right-stick-preserved'
+                'c-h2-43-with-halo2-local-controller-pitch-sign-and-presented-reticle-shot-target'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -483,7 +483,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-43 replaces the headset-rejected C-H2-41 interaction. The primary native first-person palette remains rigidly placed on the shared calibrated aim pose, but Halo 2 is explicitly excluded from Game_ComputeAimStick: the physical right stick retains ordinary character/camera turning and controller motion cannot write XInput, the observer, or any camera field. Official H2EK weapons.cpp proves its firing-only helper returns a unit aiming vector; BSim maps the exact retail homolog to +0x8F0F70, whose 22-byte entry is unique in the pinned module and whose only code caller is the matched firing function. A separate high-confidence H2EK players_update match and output-user iterator prove the retail output-user-0 to player-unit guard, so AI and remote units never receive the local controller ray. The detour preserves the authored projectile origin and replaces only the local player shot direction so it converges on the controller ray. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
+        note = 'C-H2-44 corrects the headset-proven vertical sign error in C-H2-43 at Halo 2''s controller carrier only; game look input and the camera remain untouched. The physical right stick retains ordinary character/camera turning. The visible primary first-person assembly uses the corrected carrier, and the H2EK-proven local-player firing-helper detour now consumes the compositor-published VR reticle pose, including configured stabilization, with zero gun trim. It preserves the authored projectile origin and aims at the exact configured-distance point displayed by the VR crosshair. AI and remote units remain stock. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
