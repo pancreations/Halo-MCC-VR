@@ -1,50 +1,60 @@
 # Current state
 
-> **HALO 2 C-H2-46 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-23.**
-> Halo 2 floating hands, on request: first-person slot 0 - the authored hands
-> and the gun mesh they hold, and nothing else - rides the right VR controller,
-> and the bullets follow it. Re-armed from C-H2-45's revert with the two defects
-> that sank C-H2-43 and C-H2-44 fixed. Evidence is E-H2-39.
+> **HALO 2 C-H2-47 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-23.**
+> Halo 2 floating hands, complete: the hands are on BOTH controllers, the gun is
+> on the right hand, and the bullets follow it. C-H2-47 adds the left hand to
+> C-H2-46 without changing anything C-H2-46 did. Evidence is E-H2-40 (H2EK) and
+> E-H2-41 (retail verification).
 >
-> - **One carrier for everything.** `BuildFirstPersonCarrier` builds the mesh
->   placement, and the firing helper's returned direction, from the SAME
->   controller sample with the SAME trim - and it is the same pose the
->   compositor draws the VR crosshair from. C-H2-43/44 built the mesh from
->   `VR_GetAimPose` + `gun_forward_m` and the shot from the presented reticle
->   pose + no trim, so shots did not follow the gun. A core test pins that a
->   shot from the carrier's origin travels along the carrier's forward at 2 m,
->   10 m and 50 m.
-> - **No mirrored carrier.** C-H2-44's `relativeOrientation[0] = -x` stays
->   deleted. The preserved C-H2-44 frame dump shows it tilted the rifle far off
->   the hand, and E-H2-39 derives the unmirrored mapping axis by axis.
-> - **Turning is untouched.** `Game_ComputeAimStick` refuses Halo 2 before any
->   capability is read, so the physical right stick keeps ordinary
->   character/camera turning and the headset keeps pitch (C-H2-23). The
->   controller reaches slot 0's node matrices and the local player's shot
->   direction. Nothing else - no camera field, no observer field, no XInput.
-> - **Scope.** Only slot 0. No body, no other slot, no world geometry. AI and
->   remote units keep their stock shot direction (output-user-0 unit guard,
->   E-H2-37). `floating_hands` in `halomccvr.cfg` is not consulted, exactly as
->   in Reach; the log names that and the live gun trims when the feature arms.
+> - **The left hand comes from Halo 2's own data.** Every animation-graph
+>   skeleton node carries a `model flags` byte whose bits the engine itself
+>   names and uses: `left hand` `0x08`, `right hand` `0x10`, `left arm member`
+>   `0x20`, plus a parent index. Retail's own
+>   `find_node_by_model_flags` at `+0x79E8D0` is called with `0x10` and `0x08`
+>   by `+0x81A8E0`. **No node index is hardcoded** - across nine shipped rigs
+>   the wrists sat at 5 and 6 every time, but the Elite rig has 36 nodes and
+>   puts its weapon at index 31 instead of 37. Counts move; flags do not.
+> - **Verified here, not just reported.** An offline PE mapper scanned both
+>   editions' `halo2.dll`; all four signatures matched exactly once at their
+>   pinned RVAs in both.
+> - **The gun did not move.** Everything outside the left wrist's subtree keeps
+>   C-H2-46's right-controller placement, and the engine parents the weapon to
+>   the right wrist in every shipped rig.
+> - **The left hand is its own transaction.** Any failure - missing signature,
+>   count mismatch against the graph, malformed parent tree, duplicated or
+>   absent hand flags, disagreement with the engine's own lookup, untracked left
+>   controller - drops the slot back to C-H2-46's single-controller placement,
+>   counted in the log as `left hand: N rigid fallback`. The gun and right hand
+>   never depend on it.
+> - **Turning is still untouched.** `Game_ComputeAimStick` refuses Halo 2 before
+>   any capability is read. Right stick turns the character and camera; the
+>   headset owns pitch.
 >
-> Not in this candidate: the left hand rides the gun rigidly as authored.
-> Putting it on the LEFT controller independently needs Halo 2's own
-> first-person node identity, which no Halo 2 evidence here establishes yet.
+> Not in this candidate: dual-wield slot 1. Retail demonstrably treats the
+> second weapon slot differently, so it is left stock rather than assumed.
 >
-> | C-H2-46 deployed identity | Value |
+> | C-H2-47 deployed identity | Value |
 > | --- | --- |
-> | Source | `ec01357e35322c89b816c784f260c168055d448b` |
-> | Package | `ec01357-halo2-c46-floaty-hands-shot-follows-gun-20260823-052343934Z` |
-> | `HaloMCCVR.dll` | `4C13A0B545F1FEDB33914B427E8AD230A441CF27BE4A985748CFF652106EFE2E` |
-> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Source | `PENDING` |
+> | Package | `PENDING` |
+> | `HaloMCCVR.dll` | `PENDING` |
+> | `HaloMCCVRLauncher.exe` | `PENDING` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
-> | Verification | Release build PASS; core tests PASS |
+> | Verification | Release build PASS; core tests PASS; all four E-H2-41 signatures verified unique in BOTH editions' halo2.dll offline |
 >
-> Headset test, in both Anniversary and Classic: the right stick still turns
-> the character and camera normally; the hands and gun follow the right
-> controller; the gun points where the controller points; and fired shots land
-> on the VR crosshair floating on the gun's line. Record edition, OpenXR
-> runtime, headset and refresh rate.
+> Headset test, in both Anniversary and Classic: the right stick still turns the
+> character and camera normally; the gun and right hand follow the right
+> controller; the LEFT hand follows the left controller on its own; and shots
+> land on the VR crosshair on the gun's line. If the left hand does not
+> separate, the log line `left hand:` names whether the binding armed and why.
+> Record edition, OpenXR runtime, headset and refresh rate.
+
+> **HALO 2 C-H2-46 - the base C-H2-47 builds on - 2026-08-23.**
+> Source `ec01357`, DLL `4C13A0B545F1FEDB33914B427E8AD230A441CF27BE4A985748CFF652106EFE2E`.
+> Floating hands and gun mesh on the right controller with one shared carrier
+> for mesh, VR crosshair and bullet. Superseded before a headset result by
+> C-H2-47, which is strictly additive to it; if C-H2-47's left hand is wrong,
+> this package under `out/candidates` is the exact fallback to reinstall.
 
 > **HALO 2 C-H2-45 - the revert C-H2-46 builds on - 2026-08-23.**
 > Source `e9d5db4`, DLL `D12D84ED403D9F76EFA3468332FB8AB1F6D5E3207280335799A88D1D0EA13A8E`.

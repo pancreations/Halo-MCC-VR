@@ -147,6 +147,26 @@ namespace
     std::atomic<uint64_t> g_weaponsResetsBypassedForFloaty{0};
     std::atomic<uint64_t> g_floatyApplied{0};
     std::atomic<uint64_t> g_floatyFailed{0};
+    // C-H2-47 (E-H2-41): the engine's own animation-graph readers, resolved by
+    // unique signature. They are pure leaf reads - no allocation, no lock, no
+    // logging - which is why they are safe to call from inside the palette
+    // detour. Zero means the left-hand transaction stays dormant and the
+    // single-carrier C-H2-46 placement runs instead.
+    using Halo2GraphDefinitionGetFn = const void*(__fastcall*)(uint32_t);
+    using Halo2GetSkeletonNodeFn = const void*(__fastcall*)(const void*, int);
+    using Halo2FindNodeByFlagsFn = int(__fastcall*)(const void*, uint32_t);
+    std::atomic<uintptr_t> g_graphDefinitionGet{0};
+    std::atomic<uintptr_t> g_graphGetSkeletonNode{0};
+    std::atomic<uintptr_t> g_graphFindNodeByFlags{0};
+    std::atomic<uint64_t> g_leftHandApplied{0};
+    std::atomic<uint64_t> g_leftHandRigidFallback{0};
+    std::atomic<uint64_t> g_armBindingRebuilds{0};
+    std::atomic<int> g_armBindingLastReason{-1};
+    // Cached per animation graph. Rebuilt only when the graph id or the node
+    // count changes, so the hot path is a compare, not a scan.
+    Halo2FirstPersonArmBinding g_armBinding{};
+    int g_armBindingGraphId = 0;
+    bool g_armBindingGraphIdValid = false;
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     // C-H2-43: H2EK-proven firing-only shot-direction result. Independent of
     // observer ownership and intentionally unable to move a camera or XInput.
@@ -520,6 +540,98 @@ namespace
         g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // C-H2-47. Resolve which first-person nodes are the LEFT hand, from the
+    // engine's own animation graph. E-H2-41 proves the retail layout; nothing
+    // here is a guessed index. Any deviation from the exact shape every shipped
+    // rig has returns false, and the caller then places the whole slot on the
+    // right controller exactly as C-H2-46 does.
+    //
+    // Runs inside the palette detour's existing SEH + busy guard. Bounded: one
+    // pass over at most 64 nodes, cached on the graph id and node count.
+    bool ResolveArmBinding(
+        int graphId, uint32_t count,
+        Halo2FirstPersonArmBinding& out) noexcept
+    {
+        auto fail = [&](int reason) {
+            g_armBindingLastReason.store(reason, std::memory_order_relaxed);
+            g_armBinding = Halo2FirstPersonArmBinding{};
+            g_armBindingGraphId = graphId;
+            g_armBindingGraphIdValid = true;
+            return false;
+        };
+        if (g_armBindingGraphIdValid && g_armBindingGraphId == graphId &&
+            g_armBinding.count == count)
+        {
+            if (!g_armBinding.valid)
+                return false;
+            out = g_armBinding;
+            return true;
+        }
+        g_armBindingRebuilds.fetch_add(1, std::memory_order_relaxed);
+        g_armBindingGraphIdValid = false;
+
+        const auto graphGet = reinterpret_cast<Halo2GraphDefinitionGetFn>(
+            g_graphDefinitionGet.load(std::memory_order_acquire));
+        const auto nodeGet = reinterpret_cast<Halo2GetSkeletonNodeFn>(
+            g_graphGetSkeletonNode.load(std::memory_order_acquire));
+        if (!graphGet || !nodeGet)
+            return fail(1);
+        if (!count || count > kHalo2FirstPersonPaletteCapacity)
+            return fail(2);
+        const void* const graph = graphGet(static_cast<uint32_t>(graphId));
+        if (!graph)
+            return fail(3);
+        // The group tag is never checked by the engine's own resolver, so a
+        // wrong id would silently hand back some other tag's bytes. This
+        // equality is the gate that catches it: the palette the interpolator
+        // just returned must have exactly as many nodes as the graph declares.
+        const uint32_t declared = *reinterpret_cast<const volatile uint16_t*>(
+            reinterpret_cast<uintptr_t>(graph) +
+            kHalo2AnimationGraphNodeCountOffset);
+        if (declared != count)
+            return fail(4);
+
+        uint8_t modelFlags[kHalo2FirstPersonPaletteCapacity]{};
+        int16_t parents[kHalo2FirstPersonPaletteCapacity]{};
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            const void* const node = nodeGet(graph, static_cast<int>(index));
+            if (!node)
+                return fail(5);
+            const uintptr_t address = reinterpret_cast<uintptr_t>(node);
+            parents[index] = *reinterpret_cast<const volatile int16_t*>(
+                address + kHalo2AnimationNodeParentOffset);
+            modelFlags[index] = *reinterpret_cast<const volatile uint8_t*>(
+                address + kHalo2AnimationNodeModelFlagsOffset);
+        }
+        Halo2FirstPersonArmBinding candidate{};
+        if (!Halo2BuildFirstPersonArmBinding(
+                modelFlags, parents, count, candidate))
+        {
+            return fail(6);
+        }
+        // Cross-check against the engine's OWN lookup where it is available:
+        // it must name the same two wrists we derived from the same bits.
+        const auto findByFlags = reinterpret_cast<Halo2FindNodeByFlagsFn>(
+            g_graphFindNodeByFlags.load(std::memory_order_acquire));
+        if (findByFlags)
+        {
+            if (findByFlags(graph, kHalo2ModelFlagRightHand) !=
+                    candidate.rightWrist ||
+                findByFlags(graph, kHalo2ModelFlagLeftHand) !=
+                    candidate.leftWrist)
+            {
+                return fail(7);
+            }
+        }
+        g_armBinding = candidate;
+        g_armBindingGraphId = graphId;
+        g_armBindingGraphIdValid = true;
+        g_armBindingLastReason.store(0, std::memory_order_relaxed);
+        out = candidate;
+        return true;
+    }
+
     // C-H2-46. THE one first-person carrier, for every consumer.
     //
     // The visible hands/gun mesh, the VR crosshair the compositor draws on
@@ -687,12 +799,64 @@ namespace
                         if (floaty)
                         {
                             Halo2CameraBasis carrier{};
-                            ok = BuildFirstPersonCarrier(pass.frame, carrier) &&
-                                Halo2PlaceFirstPersonSlotOnController(
-                                    reinterpret_cast<float*>(*nodesOut),
-                                    *countOut, pass.frame, carrier,
-                                    std::clamp(g_config.gun_scale, 0.3f, 3.0f),
-                                    g_slotCache[slot], outcome);
+                            ok = BuildFirstPersonCarrier(pass.frame, carrier);
+                            if (ok)
+                            {
+                                // C-H2-47: the left hand is its OWN
+                                // transaction. If the binding, the left
+                                // controller, or the split placement fails,
+                                // the whole slot falls back to the single
+                                // right-controller placement C-H2-46 shipped -
+                                // the gun and right hand never depend on it.
+                                Halo2FirstPersonArmBinding binding{};
+                                Halo2CameraBasis leftCarrier{};
+                                float leftOrientation[4]{}, leftPosition[3]{};
+                                float headOrientation[4]{}, headPosition[3]{};
+                                bool split = false;
+                                if (ResolveArmBinding(id, *countOut, binding) &&
+                                    VR_GetHeadPose(
+                                        headOrientation, headPosition) &&
+                                    VR_GetLeftControllerPose(
+                                        leftOrientation, leftPosition) &&
+                                    Halo2BuildControllerCarrier(
+                                        pass.frame, headOrientation,
+                                        headPosition, leftOrientation,
+                                        leftPosition, Game_GetWorldScale(),
+                                        std::clamp(
+                                            g_config.left_hand_forward_m,
+                                            -0.3f, 0.5f),
+                                        leftCarrier))
+                                {
+                                    split =
+                                        Halo2PlaceFirstPersonSlotOnTwoControllers(
+                                            reinterpret_cast<float*>(*nodesOut),
+                                            *countOut, pass.frame, carrier,
+                                            leftCarrier, binding,
+                                            std::clamp(
+                                                g_config.gun_scale, 0.3f, 3.0f),
+                                            std::clamp(
+                                                g_config.left_hand_scale,
+                                                0.3f, 3.0f),
+                                            g_slotCache[slot], outcome);
+                                }
+                                if (split)
+                                {
+                                    ok = true;
+                                    g_leftHandApplied.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                                else
+                                {
+                                    ok = Halo2PlaceFirstPersonSlotOnController(
+                                        reinterpret_cast<float*>(*nodesOut),
+                                        *countOut, pass.frame, carrier,
+                                        std::clamp(
+                                            g_config.gun_scale, 0.3f, 3.0f),
+                                        g_slotCache[slot], outcome);
+                                    g_leftHandRigidFallback.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                            }
                             (ok ? g_floatyApplied : g_floatyFailed)
                                 .fetch_add(1, std::memory_order_relaxed);
                         }
@@ -1575,6 +1739,90 @@ namespace
             }
         }
 
+        // E-H2-41 (C-H2-47): resolve the engine's own animation-graph readers so
+        // the LEFT hand can be identified from Halo 2's own data instead of a
+        // hardcoded node index. These are read-only leaf calls; nothing here is
+        // hooked or patched. All three must match exactly once and sit at their
+        // pinned RVAs, or the left-hand transaction stays dormant and the whole
+        // first-person slot rides the right controller as C-H2-46 shipped.
+        if (kHalo2ControllerOwnedAimEnabled)
+        {
+            // The 8 leading padding bytes disambiguate the standalone function
+            // from the two copies the optimizer inlined elsewhere.
+            constexpr char kGraphDefinitionGetPattern[] =
+                "CC CC CC CC CC CC CC CC 48 8B 05 ?? ?? ?? ?? 0F B7 C9 48 03 "
+                "C9 48 63 44 C8 08 48 03 05 ?? ?? ?? ?? C3";
+            constexpr uint32_t kGraphDefinitionGetSkew = 8;
+            constexpr char kGetSkeletonNodePattern[] =
+                "48 63 41 10 33 C9 83 F8 FF 74 26 85 C0 79 18 8B C8 48 63 C2 "
+                "0F BA F1 1F 48 C1 E0 05 48 03 0D ?? ?? ?? ?? 48 03 C1 C3 48 "
+                "8B C8 48 03 0D ?? ?? ?? ?? 48 63 C2 48 C1 E0 05 48 03 C1 C3";
+            constexpr char kFindNodeByFlagsPattern[] =
+                "48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 48 63 41 0C 45 "
+                "33 DB 85 C0 7E 53 4C 63 41 10 45 33 C9 48 8B 35 ?? ?? ?? ?? "
+                "45 33 D2 48 8B 3D ?? ?? ?? ?? 48 8B D8 33 C0 41 83 F8 FF 74 "
+                "15 45 85 C0 79 0C 41 8B C0 0F BA F0 1F 48 03 C6 EB 04 4A 8D "
+                "04 07 41 0F B6 4C 02 0A 23 CA 3B CA 74 24";
+            uintptr_t graphGetMatch = 0, nodeGetMatch = 0, findMatch = 0;
+            uint32_t graphGetCount = 0, nodeGetCount = 0, findCount = 0;
+            const bool graphGetOk = CountPatternMatches(
+                    base, size, kGraphDefinitionGetPattern, graphGetMatch,
+                    graphGetCount) &&
+                graphGetCount == 1 &&
+                graphGetMatch + kGraphDefinitionGetSkew ==
+                    base + kHalo2AnimationGraphDefinitionGetRva;
+            const bool nodeGetOk = CountPatternMatches(
+                    base, size, kGetSkeletonNodePattern, nodeGetMatch,
+                    nodeGetCount) &&
+                nodeGetCount == 1 &&
+                nodeGetMatch == base + kHalo2AnimationGraphGetSkeletonNodeRva;
+            const bool findOk = CountPatternMatches(
+                    base, size, kFindNodeByFlagsPattern, findMatch,
+                    findCount) &&
+                findCount == 1 &&
+                findMatch == base + kHalo2AnimationGraphFindNodeByFlagsRva;
+            if (graphGetOk && nodeGetOk)
+            {
+                g_graphDefinitionGet.store(
+                    base + kHalo2AnimationGraphDefinitionGetRva,
+                    std::memory_order_release);
+                g_graphGetSkeletonNode.store(
+                    base + kHalo2AnimationGraphGetSkeletonNodeRva,
+                    std::memory_order_release);
+                if (findOk)
+                {
+                    g_graphFindNodeByFlags.store(
+                        base + kHalo2AnimationGraphFindNodeByFlagsRva,
+                        std::memory_order_release);
+                }
+                LOG("Halo 2 left hand ARMED (C-H2-47): the left wrist and its "
+                    "descendants ride the LEFT controller, identified from the "
+                    "engine's own animation-graph model flags (node +0x%X, "
+                    "left-hand bit 0x%02X, right-hand bit 0x%02X, stride "
+                    "0x%X) - no hardcoded node index. Graph reader +0x%X, node "
+                    "reader +0x%X, engine flag lookup %s. The gun stays on the "
+                    "right hand; any failure drops this slot back to the "
+                    "single right-controller placement",
+                    static_cast<unsigned>(
+                        kHalo2AnimationNodeModelFlagsOffset),
+                    static_cast<unsigned>(kHalo2ModelFlagLeftHand),
+                    static_cast<unsigned>(kHalo2ModelFlagRightHand),
+                    static_cast<unsigned>(kHalo2AnimationNodeStride),
+                    static_cast<unsigned>(
+                        kHalo2AnimationGraphDefinitionGetRva),
+                    static_cast<unsigned>(
+                        kHalo2AnimationGraphGetSkeletonNodeRva),
+                    findOk ? "cross-checking" : "NOT located (skipped)");
+            }
+            else
+            {
+                LOG("Halo 2 left hand WITHHELD: animation-graph reader "
+                    "signatures matched %u / %u / %u times; the hands and gun "
+                    "stay together on the right controller",
+                    graphGetCount, nodeGetCount, findCount);
+            }
+        }
+
         // E-H2-37: this optional hook owns only the direction returned to the
         // stock firing function. Besides the helper, require the independent
         // H2EK-matched output-user iterator and player-update identities that
@@ -1741,7 +1989,9 @@ namespace
             "world %llu / camera-relative %llu / unknown %llu, pass cameras "
             "named %llu, newest-publication fallback %llu, busy %llu; last "
             "witnessed publication #%llu; controller placement: %llu applied, "
-            "%llu failed, %llu interpolation resets bypassed; direct shot "
+            "%llu failed, %llu interpolation resets bypassed; left hand: "
+            "%llu on its own controller, %llu rigid fallback, %llu binding "
+            "rebuilds, last binding reason %d; direct shot "
             "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
             "%llu no-owned-unit, %llu exceptions",
             static_cast<unsigned long long>(
@@ -1815,6 +2065,13 @@ namespace
             static_cast<unsigned long long>(
                 g_weaponsResetsBypassedForFloaty.load(
                     std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_leftHandApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_leftHandRigidFallback.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_armBindingRebuilds.load(std::memory_order_relaxed)),
+            g_armBindingLastReason.load(std::memory_order_relaxed),
             static_cast<unsigned long long>(
                 g_weaponAimCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(

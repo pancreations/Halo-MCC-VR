@@ -2802,3 +2802,87 @@ Until item 1 or item 3 is verified against the pinned retail module, the left
 hand keeps riding the gun rigidly as authored. A hardcoded index 5 / index 6
 binding is consistent with all nine shipped graphs but is NOT proven invariant,
 and shipping it would be exactly the guess `AGENTS.md` forbids.
+
+## E-H2-41 (C-H2-47): the retail verification of E-H2-40 - the left hand can be bound
+
+Every item E-H2-40 left UNKNOWN is now verified against the pinned retail
+module. H2EK explained the behavior; retail was used only to locate the
+homologs and confirm the layout, exactly as `AGENTS.md` requires.
+
+### The three readers, all matching exactly once
+
+| function | retail RVA | AOB skew | what proves it |
+| --- | --- | --- | --- |
+| `animation_graph_definition_get(tag_index)` | `0x0079EEA0` | +8 | `MOV RAX,[rip]; MOVZX ECX,CX; ADD RCX,RCX; MOVSXD RAX,[RAX+RCX*8+8]; ADD RAX,[rip]; RET`. The kit's `tag_get` is inlined into it; no standalone retail `tag_get` exists. The 8 padding bytes disambiguate it from two further inlined copies. |
+| `get_skeleton_node(graph, index)` | `0x0079F430` | 0 | `MOVSXD RAX,[RCX+0x10]` then `SHL RAX,5` - the node block address and the `0x20` stride in one instruction pair. |
+| `get_node_count(graph)` | `0x0079F470` | +15 | literally `MOVZX EAX, word [RCX+0x0C]; RET`. |
+| `find_node_by_model_flags(graph, mask)` | `0x0079E8D0` | 0 | scans at stride `0x20` testing `MOVZX ECX, byte [R10+RAX+0x0A]; AND ECX,EDX; CMP ECX,EDX`. |
+
+**Verified in this repository, not merely reported:** an offline PE mapper
+scanned both editions' `halo2.dll` (Steam
+`DE65B4F4...CF171946`, Store `81E5F41A...E6BE689D`, both file size 15807960,
+`SizeOfImage 0x02A38000`). All four patterns matched **exactly once**, at their
+pinned RVAs, in **both** editions.
+
+### The layout, PROVEN on retail
+
+Cache format shifts the skeleton-node block 8 bytes down from the kit's `+0x14`
+(a cache `tag_reference` is 8 bytes where an editing-format `tag_block` is 16):
+
+- `graph + 0x0C` node count (uint16), `graph + 0x10` node block address.
+- node stride `0x20`; `+0x00` name (string_id), `+0x08` parent (int16, `-1` at
+  the root), `+0x0A` model flags (byte).
+- `+0x04` next sibling and `+0x06` first child are read by NO located retail
+  code. They stay unverified and C-H2-47 does not read them; the parent walk
+  gives the same descendant sets.
+
+**The engine uses the hand bits itself.** `find_node_by_model_flags` is called
+from `+0x81A8E0` with `0x10` (right hand) and `0x08` (left hand), and that same
+function culls a hands remap table to `flags & 0x20` (left arm member) for the
+second weapon slot. The bits mean on retail exactly what H2EK named them.
+
+### The interpolator's count IS the graph's node count - PROVEN
+
+`weapon_data[+0x318] = get_node_count(graph)` -> `weapon_data[+0x31C] = [+0x318]`
+-> the publisher at `+0x7232F0` writes that number into the bank ->
+`+0x722850` returns it as `*count`. So `*count == *(uint16*)(graph + 0x0C)` is a
+free exactness gate, and C-H2-47 uses it as one. It matters:
+`animation_graph_definition_get` never compares the group tag, so a wrong index
+would silently hand back another tag's bytes - the count equality is what
+catches that.
+
+The first-person matrix palette is **64** entries (`weapon_data + 0x320`, stride
+`0x34`, struct `0x1028`). C-H2-47 refuses any palette past it, which is also
+what makes its 64-bit left-subtree mask exact rather than merely convenient.
+
+### What C-H2-47 does with it
+
+Inside the existing `+0x722850` detour: resolve the graph from the read's own
+second argument, gate on the count equality, read `(parent, model flags)` for
+every node through `get_skeleton_node`, and build the binding purely
+(`Halo2BuildFirstPersonArmBinding`). Where `find_node_by_model_flags` is
+available its answer must agree with ours, or the binding is refused. The result
+is cached per graph id, so the hot path is a comparison.
+
+The left wrist and its descendants then take the LEFT controller's carrier;
+everything else - including the gun, which the engine parents to the right wrist
+in every shipped rig - keeps the right controller's carrier from C-H2-46. The
+node matrices are absolute camera-relative frames (E-H2-32), so two independent
+rigid transforms compose without touching the arm nodes between them.
+
+**Failure isolation.** The left hand is its own transaction. A missing
+signature, a wrong count, a malformed parent tree, duplicated or absent hand
+flags, a disagreement with the engine's own lookup, or an untracked left
+controller all drop the slot back to C-H2-46's single right-controller
+placement, counted in the periodic report as `left hand: N rigid fallback`. The
+gun and the right hand never depend on any of it.
+
+### Still UNKNOWN - do not guess
+
+1. `+0x04` / `+0x06` sibling and child links: unverified on retail, unused.
+2. **Dual-wield slot 1 was never traced end to end.** What is now proven is that
+   retail treats it DIFFERENTLY - `+0x81A8E0` culls the hands table to left-arm
+   members only for the second slot. Do not assume slot 1 mirrors slot 0.
+   C-H2-47 owns slot 0 only.
+3. The kit's `first_person_weapon_data` valid-bit NAMES map onto retail bits
+   `0x02` / `0x04` by behaviour, not by symbol.

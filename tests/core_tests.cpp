@@ -7538,6 +7538,139 @@ int main()
                       raisedCarrier.forward[2] > 0.4f,
                 "C-H2-45 keeps the controller carrier an unmirrored "
                 "head-relative rotation (C-H2-44's sign flip is gone)");
+            // C-H2-47 / E-H2-41: the left-hand binding, built from Halo 2's
+            // own model flags. The table below is the shipped Master Chief
+            // fp_battle_rifle rig read out of the kit: 42 nodes, left wrist 5,
+            // right wrist 6, weapon 37..40 hanging off the RIGHT wrist.
+            {
+                constexpr uint32_t kNodes = 42;
+                uint8_t flags[kNodes]{};
+                int16_t parents[kNodes]{};
+                for (uint32_t i = 0; i < kNodes; ++i)
+                {
+                    flags[i] = kHalo2ModelFlagPrimary;
+                    parents[i] = 0;
+                }
+                flags[0] = kHalo2ModelFlagPrimary | kHalo2ModelFlagLocalRoot;
+                parents[0] = -1;
+                parents[1] = 0; parents[2] = 0;      // upper arms
+                parents[3] = 1; parents[4] = 2;      // forearms
+                parents[5] = 3; parents[6] = 4;      // wrists
+                flags[1] |= kHalo2ModelFlagLeftArmMember;
+                flags[3] |= kHalo2ModelFlagLeftArmMember;
+                flags[5] |= kHalo2ModelFlagLeftHand | kHalo2ModelFlagLeftArmMember;
+                flags[6] |= kHalo2ModelFlagRightHand;
+                for (uint32_t i = 7; i <= 11; ++i)
+                { parents[i] = 5; flags[i] |= kHalo2ModelFlagLeftArmMember; }
+                for (uint32_t i = 12; i <= 16; ++i) parents[i] = 6;
+                for (uint32_t i = 17; i <= 21; ++i)
+                { parents[i] = static_cast<int16_t>(i - 10);
+                  flags[i] |= kHalo2ModelFlagLeftArmMember; }
+                for (uint32_t i = 22; i <= 26; ++i)
+                    parents[i] = static_cast<int16_t>(i - 10);
+                for (uint32_t i = 27; i <= 31; ++i)
+                { parents[i] = static_cast<int16_t>(i - 10);
+                  flags[i] |= kHalo2ModelFlagLeftArmMember; }
+                for (uint32_t i = 32; i <= 36; ++i)
+                    parents[i] = static_cast<int16_t>(i - 10);
+                parents[37] = 6;                     // gun, on the RIGHT wrist
+                flags[37] = kHalo2ModelFlagSecondary | kHalo2ModelFlagLocalRoot;
+                for (uint32_t i = 38; i <= 40; ++i)
+                { parents[i] = 37; flags[i] = kHalo2ModelFlagSecondary; }
+                parents[41] = 0; flags[41] = 0;      // camera_control
+
+                Halo2FirstPersonArmBinding binding{};
+                bool built = Halo2BuildFirstPersonArmBinding(
+                    flags, parents, kNodes, binding);
+                uint64_t expectedLeft = 1ull << 5;
+                for (uint32_t i = 7; i <= 11; ++i) expectedLeft |= 1ull << i;
+                for (uint32_t i = 17; i <= 21; ++i) expectedLeft |= 1ull << i;
+                for (uint32_t i = 27; i <= 31; ++i) expectedLeft |= 1ull << i;
+                Check(built && binding.valid && binding.leftWrist == 5 &&
+                          binding.rightWrist == 6 &&
+                          binding.leftSubtree == expectedLeft,
+                    "C-H2-47 finds Halo 2's left wrist and its 15 finger nodes "
+                    "from the engine's own model flags, with no hardcoded index");
+                Check(built && (binding.leftSubtree & (1ull << 37)) == 0 &&
+                          (binding.leftSubtree & (1ull << 6)) == 0,
+                    "C-H2-47 leaves the gun and the right wrist on the right "
+                    "controller");
+
+                // The Elite rig: 36 nodes, weapon root at 31 not 37. The
+                // binding must follow the FLAGS, never the indices.
+                constexpr uint32_t kElite = 36;
+                uint8_t eliteFlags[kElite]{};
+                int16_t eliteParents[kElite]{};
+                for (uint32_t i = 0; i < kElite; ++i)
+                { eliteFlags[i] = kHalo2ModelFlagPrimary; eliteParents[i] = 0; }
+                eliteParents[0] = -1;
+                eliteFlags[0] |= kHalo2ModelFlagLocalRoot;
+                eliteParents[1] = 0; eliteParents[2] = 0;
+                eliteParents[3] = 1; eliteParents[4] = 2;
+                eliteParents[5] = 3; eliteParents[6] = 4;
+                eliteFlags[5] |= kHalo2ModelFlagLeftHand;
+                eliteFlags[6] |= kHalo2ModelFlagRightHand;
+                for (uint32_t i = 7; i < 31; ++i)
+                    eliteParents[i] = static_cast<int16_t>(i % 2 ? 5 : 6);
+                eliteParents[31] = 6;
+                eliteFlags[31] = kHalo2ModelFlagSecondary | kHalo2ModelFlagLocalRoot;
+                for (uint32_t i = 32; i < kElite; ++i)
+                { eliteParents[i] = 31; eliteFlags[i] = kHalo2ModelFlagSecondary; }
+                Halo2FirstPersonArmBinding elite{};
+                Check(Halo2BuildFirstPersonArmBinding(
+                          eliteFlags, eliteParents, kElite, elite) &&
+                          elite.leftWrist == 5 && elite.rightWrist == 6 &&
+                          (elite.leftSubtree & (1ull << 31)) == 0,
+                    "C-H2-47 binds the 36-node Elite rig, whose weapon root is "
+                    "at 31 not 37, from the same flags");
+
+                // Refusals: two left hands, none at all, a parent cycle, an
+                // out-of-range parent, and a palette past the engine's own
+                // 64-entry capacity must all fail to the single-carrier path.
+                uint8_t bad[kNodes];
+                std::memcpy(bad, flags, sizeof(bad));
+                bad[9] |= kHalo2ModelFlagLeftHand;
+                Halo2FirstPersonArmBinding refused{};
+                Check(!Halo2BuildFirstPersonArmBinding(
+                          bad, parents, kNodes, refused),
+                    "C-H2-47 refuses a rig with two left hands");
+                std::memcpy(bad, flags, sizeof(bad));
+                bad[5] &= static_cast<uint8_t>(~kHalo2ModelFlagLeftHand);
+                Check(!Halo2BuildFirstPersonArmBinding(
+                          bad, parents, kNodes, refused),
+                    "C-H2-47 refuses a rig with no left hand");
+                int16_t badParents[kNodes];
+                std::memcpy(badParents, parents, sizeof(badParents));
+                badParents[3] = 5;   // 5 -> 3 -> 5
+                Check(!Halo2BuildFirstPersonArmBinding(
+                          flags, badParents, kNodes, refused),
+                    "C-H2-47 refuses a cyclic parent tree");
+                std::memcpy(badParents, parents, sizeof(badParents));
+                badParents[7] = static_cast<int16_t>(kNodes);
+                Check(!Halo2BuildFirstPersonArmBinding(
+                          flags, badParents, kNodes, refused),
+                    "C-H2-47 refuses an out-of-range parent index");
+                Check(!Halo2BuildFirstPersonArmBinding(
+                          flags, parents,
+                          kHalo2FirstPersonPaletteCapacity + 1, refused) &&
+                          kHalo2FirstPersonPaletteCapacity == 64,
+                    "C-H2-47 refuses a palette past the engine's own 64-node "
+                    "first-person capacity");
+                Check(kHalo2AnimationNodeStride == 0x20 &&
+                          kHalo2AnimationNodeParentOffset == 0x08 &&
+                          kHalo2AnimationNodeModelFlagsOffset == 0x0A &&
+                          kHalo2AnimationGraphNodeCountOffset == 0x0C &&
+                          kHalo2ModelFlagLeftHand == 0x08 &&
+                          kHalo2ModelFlagRightHand == 0x10 &&
+                          kHalo2ModelFlagLeftArmMember == 0x20 &&
+                          kHalo2AnimationGraphDefinitionGetRva == 0x0079EEA0 &&
+                          kHalo2AnimationGraphGetSkeletonNodeRva == 0x0079F430 &&
+                          kHalo2AnimationGraphGetNodeCountRva == 0x0079F470 &&
+                          kHalo2AnimationGraphFindNodeByFlagsRva == 0x0079E8D0,
+                    "E-H2-41 pins the retail animation-graph node layout and "
+                    "the three readers C-H2-47 calls");
+            }
+
             Check(kHalo2ControllerOwnedAimEnabled,
                 "C-H2-46 arms Halo 2's controller-owned first-person mesh and "
                 "shot direction at its one build switch");

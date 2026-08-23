@@ -2483,6 +2483,142 @@ inline constexpr uint32_t kHalo2FirstPersonNodeAxesOffset = 0x04;
 inline constexpr uint32_t kHalo2FirstPersonNodePositionOffset = 0x28;
 inline constexpr int kHalo2FirstPersonNodeLimit = 256;
 
+// ---------------------------------------------------------------------------
+// E-H2-40 / E-H2-41 (C-H2-47): Halo 2 tags its own hands.
+//
+// Every animation-graph skeleton node carries a `model flags` byte whose bits
+// are named, in the official H2EK's own flag-name array, primary model /
+// secondary model / local root / left hand / right hand / left arm member, plus
+// a parent index. The retail engine reads exactly those fields for exactly
+// those purposes - `animation_graph_find_node_by_model_flags(graph, mask)` at
+// +0x79E8D0 scans nodes at stride 0x20 testing `byte[node+0x0A] & mask == mask`,
+// and its caller at +0x81A8E0 passes 0x10 (right hand) and 0x08 (left hand) and
+// culls a hands table to 0x20 (left arm member).
+//
+// So the left arm is identified from the engine's own data, with NO hardcoded
+// node index. That matters: across nine shipped first-person rigs the wrists sat
+// at indices 5 and 6 every time, but the Elite rig has 36 nodes instead of 42
+// and puts the held weapon at index 31 instead of 37. Counts and weapon indices
+// move; the flags do not. Bind on the flags.
+inline constexpr uint32_t kHalo2AnimationGraphDefinitionGetRva = 0x0079EEA0;
+inline constexpr uint32_t kHalo2AnimationGraphGetSkeletonNodeRva = 0x0079F430;
+inline constexpr uint32_t kHalo2AnimationGraphGetNodeCountRva = 0x0079F470;
+inline constexpr uint32_t kHalo2AnimationGraphFindNodeByFlagsRva = 0x0079E8D0;
+// Cache format shifts the skeleton-node block 8 bytes down from the kit's
+// +0x14, because a cache tag_reference is 8 bytes where an editing-format
+// tag_block is 16. Proven on retail: get_node_count is literally
+// `MOVZX EAX, word [RCX+0x0C]; RET`.
+inline constexpr uint32_t kHalo2AnimationGraphNodeCountOffset = 0x0C;
+inline constexpr uint32_t kHalo2AnimationNodeStride = 0x20;
+inline constexpr uint32_t kHalo2AnimationNodeParentOffset = 0x08;
+inline constexpr uint32_t kHalo2AnimationNodeModelFlagsOffset = 0x0A;
+// +0x04 next sibling and +0x06 first child are NOT read by any located retail
+// code, so they stay unverified and unused; the parent walk gives the same
+// descendant sets.
+inline constexpr uint8_t kHalo2ModelFlagPrimary = 0x01;
+inline constexpr uint8_t kHalo2ModelFlagSecondary = 0x02;
+inline constexpr uint8_t kHalo2ModelFlagLocalRoot = 0x04;
+inline constexpr uint8_t kHalo2ModelFlagLeftHand = 0x08;
+inline constexpr uint8_t kHalo2ModelFlagRightHand = 0x10;
+inline constexpr uint8_t kHalo2ModelFlagLeftArmMember = 0x20;
+// The engine's own first-person matrix palette is 64 entries
+// (weapon_data +0x320, stride 0x34, struct size 0x1028). Refuse anything past
+// it - and it is also what makes a 64-bit subtree mask exact rather than a
+// bound chosen for convenience.
+inline constexpr uint32_t kHalo2FirstPersonPaletteCapacity = 64;
+
+// Which first-person nodes ride which controller. `leftSubtree` bit i means
+// node i belongs to the left wrist and its descendants; every other node keeps
+// the right-controller transform, which is where the gun already hangs.
+struct Halo2FirstPersonArmBinding
+{
+    bool valid = false;
+    int leftWrist = -1;
+    int rightWrist = -1;
+    uint32_t count = 0;
+    uint64_t leftSubtree = 0;
+};
+
+// Pure, allocation-free, and deliberately unforgiving: anything that is not the
+// exact shape every shipped Halo 2 first-person rig has - one left hand, one
+// right hand, a well-formed parent tree, the right wrist outside the left
+// subtree - returns false and leaves the caller on its single-carrier path.
+inline bool Halo2BuildFirstPersonArmBinding(
+    const uint8_t* modelFlags, const int16_t* parents, uint32_t count,
+    Halo2FirstPersonArmBinding& out) noexcept
+{
+    out = Halo2FirstPersonArmBinding{};
+    if (!modelFlags || !parents || count == 0 ||
+        count > kHalo2FirstPersonPaletteCapacity)
+    {
+        return false;
+    }
+    int left = -1;
+    int right = -1;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        const int parent = parents[index];
+        if (parent < -1 || parent >= static_cast<int>(count) ||
+            parent == static_cast<int>(index))
+        {
+            return false;
+        }
+        if (modelFlags[index] & kHalo2ModelFlagLeftHand)
+        {
+            if (left >= 0)
+                return false;
+            left = static_cast<int>(index);
+        }
+        if (modelFlags[index] & kHalo2ModelFlagRightHand)
+        {
+            if (right >= 0)
+                return false;
+            right = static_cast<int>(index);
+        }
+    }
+    if (left < 0 || right < 0 || left == right)
+        return false;
+
+    // Every parent chain must reach the root within `count` steps. Stopping
+    // early at the left wrist would hide a cycle that runs through it, so the
+    // well-formedness of the whole tree is established first, on its own.
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        int node = parents[index];
+        uint32_t guard = 0;
+        while (node >= 0)
+        {
+            node = parents[node];
+            if (++guard > count)
+                return false;
+        }
+    }
+
+    uint64_t mask = 1ull << left;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        int node = parents[index];
+        while (node >= 0)
+        {
+            if (node == left)
+            {
+                mask |= 1ull << index;
+                break;
+            }
+            node = parents[node];
+        }
+    }
+    if (mask & (1ull << right))
+        return false;
+
+    out.valid = true;
+    out.leftWrist = left;
+    out.rightWrist = right;
+    out.count = count;
+    out.leftSubtree = mask;
+    return true;
+}
+
 // E-H2-37 (C-H2-43): H2EK weapons.cpp firing helper RVA 0x47DC20 copies the
 // owning unit's aiming_vector into the shot direction. BSim maps its exact x64
 // homolog to retail +0x8F0F70; the 22-byte entry below occurs once in the
@@ -2807,6 +2943,132 @@ struct Halo2FirstPersonReanchorResult
 // so one rigid transform applied to every node preserves the authored weapon,
 // hand and animation relationship without requiring a guessed wrist index.
 // Only the caller decides which first-person slot is controller-owned.
+// The rigid transform that carries first-person geometry from the render
+// camera's local frame onto a controller carrier: R = H^T C, t = H^T (Cp - Hp),
+// with camera columns ordered [right, forward, up].
+inline bool Halo2ComputeCarrierDelta(
+    const Halo2CameraBasis& trackedCamera, const Halo2CameraBasis& carrier,
+    float rotation[9], float translation[3]) noexcept
+{
+    if (!Halo2BuildWorldDeltaRotation(trackedCamera, carrier, rotation))
+        return false;
+    const float worldDelta[3] = {
+        carrier.position[0] - trackedCamera.position[0],
+        carrier.position[1] - trackedCamera.position[1],
+        carrier.position[2] - trackedCamera.position[2]};
+    const float headRight[3] = {
+        trackedCamera.forward[1] * trackedCamera.up[2] -
+            trackedCamera.forward[2] * trackedCamera.up[1],
+        trackedCamera.forward[2] * trackedCamera.up[0] -
+            trackedCamera.forward[0] * trackedCamera.up[2],
+        trackedCamera.forward[0] * trackedCamera.up[1] -
+            trackedCamera.forward[1] * trackedCamera.up[0]};
+    const float* const headAxes[3] = {
+        headRight, trackedCamera.forward, trackedCamera.up};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        translation[axis] = headAxes[axis][0] * worldDelta[0] +
+            headAxes[axis][1] * worldDelta[1] +
+            headAxes[axis][2] * worldDelta[2];
+        if (!std::isfinite(translation[axis]))
+            return false;
+    }
+    return true;
+}
+
+// C-H2-47: the same rigid placement, split across BOTH controllers.
+//
+// Every node outside `binding.leftSubtree` rides the right carrier exactly as
+// C-H2-46 placed the whole slot - so the gun, which the engine parents to the
+// right wrist in every shipped rig, is untouched by this change. The left
+// wrist and its descendants ride the left carrier instead. The node matrices
+// are absolute camera-relative frames (E-H2-32), not a parent-relative
+// hierarchy, so two independent rigid transforms compose correctly without
+// touching the arm nodes in between; the left arm simply spans from the body
+// to wherever the player's left hand is, which is what it should do.
+inline bool Halo2PlaceFirstPersonSlotOnTwoControllers(
+    float* nodes, uint32_t count, const Halo2CameraBasis& trackedCamera,
+    const Halo2CameraBasis& rightCarrier, const Halo2CameraBasis& leftCarrier,
+    const Halo2FirstPersonArmBinding& binding, float meshScale,
+    float leftMeshScale, Halo2FirstPersonSlotCache& cache,
+    Halo2FirstPersonReanchorResult& result) noexcept
+{
+    result = Halo2FirstPersonReanchorResult{};
+    result.space = Halo2FirstPersonNodeSpace::CameraRelative;
+    if (!nodes || count == 0 ||
+        count > static_cast<uint32_t>(kHalo2FirstPersonNodeLimit) ||
+        !binding.valid || binding.count != count ||
+        binding.leftWrist < 0 ||
+        static_cast<uint32_t>(binding.leftWrist) >= count ||
+        binding.rightWrist < 0 ||
+        static_cast<uint32_t>(binding.rightWrist) >= count ||
+        !Halo2ValidateCameraBasis(trackedCamera) ||
+        !Halo2ValidateCameraBasis(rightCarrier) ||
+        !Halo2ValidateCameraBasis(leftCarrier) ||
+        !std::isfinite(meshScale) || meshScale < 0.3f || meshScale > 3.0f ||
+        !std::isfinite(leftMeshScale) || leftMeshScale < 0.3f ||
+        leftMeshScale > 3.0f)
+    {
+        return false;
+    }
+    const size_t floats =
+        static_cast<size_t>(count) * kHalo2FirstPersonNodeFloats;
+    const size_t bytes = floats * sizeof(float);
+    if (cache.valid && cache.count == count &&
+        std::memcmp(nodes, cache.written, bytes) == 0)
+    {
+        result.fromCache = true;
+    }
+    else
+    {
+        std::memcpy(cache.original, nodes, bytes);
+        cache.count = count;
+        cache.valid = true;
+    }
+    std::memcpy(cache.written, cache.original, bytes);
+    float* const work = cache.written;
+
+    float rightRotation[9]{};
+    float rightTranslation[3]{};
+    float leftRotation[9]{};
+    float leftTranslation[3]{};
+    if (!Halo2ComputeCarrierDelta(
+            trackedCamera, rightCarrier, rightRotation, rightTranslation) ||
+        !Halo2ComputeCarrierDelta(
+            trackedCamera, leftCarrier, leftRotation, leftTranslation))
+    {
+        return false;
+    }
+
+    const float zero[3]{};
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        float* const node = work + index * kHalo2FirstPersonNodeFloats;
+        float* const position = node + kHalo2FirstPersonNodePositionOffset / 4;
+        const bool onLeft = index < kHalo2FirstPersonPaletteCapacity &&
+            (binding.leftSubtree & (1ull << index)) != 0;
+        const float scale = onLeft ? leftMeshScale : meshScale;
+        if (!std::isfinite(node[0]))
+            return false;
+        node[0] *= scale;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (!std::isfinite(position[axis]))
+                return false;
+            position[axis] *= scale;
+        }
+        Halo2ReanchorFirstPersonNode(
+            node, onLeft ? leftRotation : rightRotation, zero,
+            onLeft ? leftTranslation : rightTranslation);
+    }
+    for (size_t index = 0; index < floats; ++index)
+        if (!std::isfinite(work[index]))
+            return false;
+    std::memcpy(nodes, work, bytes);
+    result.applied = true;
+    return true;
+}
+
 inline bool Halo2PlaceFirstPersonSlotOnController(
     float* nodes, uint32_t count, const Halo2CameraBasis& trackedCamera,
     const Halo2CameraBasis& carrier, float meshScale,
