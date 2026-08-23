@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-44' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-48' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_CONTROLLER_PITCH_SIGN_VALIDATION_REQUIRED' -or
+            'HEADSET_HANDS_AIM_TURN_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'c-h2-43-with-halo2-local-controller-pitch-sign-and-presented-reticle-shot-target' -or
+            'two-exact-hand-subtrees-collapsed-arm-ancestors-camera-local-controller-delta-presented-reticle-shot-target' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -443,8 +443,20 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
             $manifest.halo2_candidate.controller_owned_first_person_slot 0) -or
         [string]$manifest.halo2_candidate.first_person_palette_source -cne
             'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices' -or
+        [string]$manifest.halo2_candidate.hand_binding_source -cne
+            'animation-graph-model-flags-left-0x08-right-0x10-parent-transitive-closure' -or
+        [string]$manifest.halo2_candidate.left_controller_nodes -cne
+            'exact-left-wrist-descendant-subtree' -or
+        [string]$manifest.halo2_candidate.right_controller_nodes -cne
+            'exact-right-wrist-descendant-subtree-including-authored-weapon-descendants' -or
+        [string]$manifest.halo2_candidate.collapsed_nodes -cne
+            'wrist-to-root-upper-arm-and-forearm-ancestors-excluding-wrists-root-camera-control-and-unrelated-controls' -or
+        [string]$manifest.halo2_candidate.controller_rotation_space -cne
+            'camera-local-H-transpose-times-C-invariant-under-common-world-body-turn' -or
         [string]$manifest.halo2_candidate.projectile_aim_source -cne
-            'h2ek-bsim-matched-firing-helper-return-direction-retail-rva-0x8f0f70-output-user-0-unit-guard' -or
+            'fresh-compositor-presented-reticle-pose-through-h2ek-bsim-matched-firing-helper-retail-rva-0x8f0f70-output-user-0-unit-guard' -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.projectile_presented_reticle_freshness_ms 250) -or
         [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
             'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked' -or
         -not (Test-ExactBoolean `
