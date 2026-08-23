@@ -1,5 +1,51 @@
 # Current state
 
+> **CURRENT HALO 2 BASELINE - 2026-08-22: C-H2-40, source `fa1f642`
+> (user-declared: "ok so this is our current baseline").** Halo 2 has true
+> per-eye stereo in BOTH renderers (Anniversary/Saber and Classic/Blam), headset
+> 6DOF via the observer, headset-owned pitch with the Halo 4-style servo,
+> controller admission, the renderer-switch guard, the Anniversary HUD replay,
+> and the classic first-person weapon drawn at the eye's vertical cover in
+> BOTH eyes (C-H2-40 fixed the second eye, which every pair since C-H2-27 had
+> drawn at the stock 49.6 deg - E-H2-35). Steam sitting 21:58-22:01, SteamVR/
+> OpenXR 2.17.7, `SteamVR/OpenXR : oculus` (Virtual Desktop / Link host),
+> 120 Hz panel. Log and the classic eye pictures are preserved under
+> `out/test-runs/fa1f642-halo2-c40-BASELINE-20260822-2158`.
+>
+> | Halo 2 baseline identity | Value |
+> | --- | --- |
+> | Source | `fa1f642` on `feature/halo2-c17-projection-readback` |
+> | Package | `fa1f642-halo2-c40-classic-fp-fov-per-eye-20260823-020455926Z` |
+> | `HaloMCCVR.dll` | `CD650EDBFCBEE43C581980E64288543BF389DD4F051D5D4643D980F65217E88F` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Editions | installed and hash-verified in Steam AND Microsoft Store folders; run on Steam |
+>
+> **Measured in that run (the log, not counters we wrote):**
+> `fpFovHeld(eye0/eye1)=5511/5511 fpFovLost=0/0` - both eyes' weapon passes
+> found the 110.1 deg constant. `eye-pair pixel check: DISTINCT eyes` in both
+> renderers. Classic eye pictures (22:00:27): weapon and arms pixel-identical
+> between the eyes (best shift 0 px) while the world carries parallax - the
+> classic first-person pass draws from a camera WITHOUT the per-eye offset, so
+> the classic gun is a flat layer at infinite depth, same size in both eyes.
+> Anniversary (C-H2-38 pictures): the gun carries a real ~26 cm disparity.
+>
+> **Known-inert in this baseline, recorded so nobody re-theorises it:** the
+> C-H2-37/39 weapon re-anchor on the interpolator read `0x722850` never moves
+> anything - the read returned 0 with NO node array on 30884 of 30884 normal
+> calls (only 2 calls in C-H2-38 ever returned nodes, count 42). That function
+> is not the per-frame first-person geometry path; the stale-camera
+> compensation of C-H2-39 therefore never applied (correctly - the pictures
+> show the classic gun has zero disparity, not the wrong sign E-H2-34 inferred
+> from the C-H2-36 pictures). The interpolation reset at the tick placement
+> remains on. The Anniversary weapon is drawn with the frame's own view.
+>
+> **Next (user): floaty hands (controller-driven weapon placement) and shots
+> following the gun aim.** That work needs the REAL first-person node/geometry
+> path, to be discovered with the H2EK tools (user directive: no Ghidra on
+> retail halo2.dll). The accepted Halo 2 pointer below (C-H2-1, read-only) is
+> superseded as the development baseline by this block; the published release
+> is still Alpha 0.3.3.
+
 > **CURRENT ACCEPTED DEVELOPMENT POINTER — 2026-08-20: Halo 2 C-H2-1
 > read-only cold observation, source `f8928bb`.** A Steam headset/log sitting
 > on SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 90 Hz exercised Halo 2
