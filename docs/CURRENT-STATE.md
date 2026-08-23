@@ -43,17 +43,36 @@
 > readiness proof and reinstall paths remain active. No camera, aiming, hands,
 > stereo, HUD, input or other player feature is disabled.
 >
-> C-H2-55 build/package verification and deployed identity are pending. Its
-> deterministic decision test covers a same-generation cached-proof rebind once
-> per level gate. C-H2-54 previously passed Release build,
+> C-H2-55 Release build, `halomccvr_core_tests`, Reach consistency gate,
+> the 14-call loader-refcount and same-generation rebind source gates,
+> PowerShell producer/installer parsing, and `git diff --check` all PASS. Its
+> deterministic decision test covers a cached-proof rebind exactly once per
+> level gate. The manifest-backed packager automatically installed the exact
+> candidate to Steam and Microsoft Store, preserved C-H2-54 separately for each,
+> and did not launch MCC or change either `halomccvr.cfg`. Independent
+> post-install hashes match in both editions. C-H2-54 previously passed the same
+> offline gates but is rejected for the missing second-level rehook. C-H2-55 is
+> ready for consecutive same-title levels but remains unaccepted until runtime
+> headset confirmation; the accepted pointer is not advanced.
+>
+> | C-H2-55 deployed identity | Value |
+> | --- | --- |
+> | Source | `d87314402bcf75fee7e515b9e477d2adb2b39eb9` |
+> | C-H2-54 required rejection/revert | `e9d12f9` |
+> | Package | `d873144-halo2-c55-consecutive-level-rehook-20260823-230708465Z` |
+> | Manifest SHA-256 | `F1969CEA6C80BD2C42ED5A0331B4F5743D331698CAE61A62C1F12BFC13BA8DDE` |
+> | `HaloMCCVR.dll` | `D1DB75E70E4EA75EDE7FEFA87DCE8509B25855EF1D5CA70D34E85FEBEFCCC2EA` |
+> | `HaloMCCVRLauncher.exe` | `87F1DF6202BE26065BAEB769BC19E06B526F25DDC5FCBF6FE75FAE779C54A902` |
+> | Editions | installed and independently hash-verified in Steam and Microsoft Store; rejected C-H2-54 preserved separately for each |
+>
+> C-H2-54 previously passed Release build,
 > `halomccvr_core_tests`, Reach consistency gate,
 > the 14-call loader-refcount source gate PASS, PowerShell producer/installer
 > parsing PASS, and `git diff --check` PASS. The manifest-backed packager
 > automatically installed the exact candidate to Steam and Microsoft Store,
 > preserved C-H2-53 separately for each, and did not launch MCC or change either
-> `halomccvr.cfg`. Independent post-install hashes match in both editions. This
-> but is rejected for the missing second-level rehook; the accepted pointer is
-> not advanced.
+> `halomccvr.cfg`. Independent post-install hashes match in both editions.
+> C-H2-54 is rejected for the missing second-level rehook.
 >
 > | Rejected C-H2-54 deployed identity | Value |
 > | --- | --- |

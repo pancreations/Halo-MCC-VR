@@ -3208,3 +3208,15 @@ Failure remains isolated and loud: a failed rebind leaves only dependent
 features stock for that level and does not disarm the camera core or OpenXR.
 The C-H2-52 hands/gun and presented-crosshair shot implementation remains
 enabled and unchanged.
+
+Offline verification PASS: Release build, core tests including the complete
+derived-rebind decision matrix, Reach consistency gate, loader-refcount and
+rehook source gates, producer/installer parsing, and diff check. Exact source
+`d87314402bcf75fee7e515b9e477d2adb2b39eb9`, package
+`d873144-halo2-c55-consecutive-level-rehook-20260823-230708465Z`, manifest
+SHA-256 `F1969CEA6C80BD2C42ED5A0331B4F5743D331698CAE61A62C1F12BFC13BA8DDE`,
+and DLL SHA-256 `D1DB75E70E4EA75EDE7FEFA87DCE8509B25855EF1D5CA70D34E85FEBEFCCC2EA`
+were installed and independently hash-verified in both Steam and Store editions.
+The rejected C-H2-54 bytes were preserved separately for each edition. MCC was
+not launched and neither existing configuration was changed. Runtime headset
+acceptance remains pending.
