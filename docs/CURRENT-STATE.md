@@ -24,12 +24,23 @@
 > on that exact displayed point. If the final-palette hook is unavailable, the
 > shot hook is withheld too and this feature stays stock without disarming VR.
 >
-> Release DLL build PASS and core tests PASS. A deterministic final-world wrist
+> Release DLL build PASS, core tests PASS, Reach consistency gate PASS, and the
+> manifest-verified package is installed to both editions with the previous
+> C-H2-48 DLL preserved separately for each. A deterministic final-world wrist
 > test covers a 90-degree turned carrier and exact destination position/basis.
-> Packaging/deployment identity is intentionally blank until the C-H2-50 source
-> commit exists. Required headset acceptance remains Anniversary and Classic at
-> 90 and 180 degrees, with edition/runtime/headset/refresh recorded; Halo 3 must
-> regress on the same DLL. Dual-wield slot 1 remains stock.
+>
+> | C-H2-50 deployed identity | Value |
+> | --- | --- |
+> | Source | `d43aaad0fff64f3d38f74c042b87506760445b9c` |
+> | Package | `d43aaad-halo2-c50-final-palette-reticle-ray-20260823-151246169Z` |
+> | `HaloMCCVR.dll` | `F36EF7D29AAE093D233A634D5DB931691616ECFF2083EB474F14D53775661143` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Editions | installed and hash-verified in Steam and Microsoft Store; MCC not launched; config unchanged |
+>
+> Required headset acceptance remains Anniversary and Classic at 90 and 180
+> degrees, with edition/runtime/headset/refresh recorded; Halo 3 must regress on
+> the same DLL. Dual-wield slot 1 remains stock. Do not advance the accepted
+> pointer before those headset results.
 
 > **HALO 2 C-H2-48 REJECTED BY HEADSET; C-H2-49 REVERT IN SOURCE - 2026-08-23.**
 > The player's C-H2-47 headset result rejected that candidate: both hands were
