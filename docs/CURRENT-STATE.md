@@ -35,10 +35,10 @@
 >
 > | C-H2-45 deployed identity | Value |
 > | --- | --- |
-> | Source | `PENDING` |
-> | Package | `PENDING` |
-> | `HaloMCCVR.dll` | `PENDING` |
-> | `HaloMCCVRLauncher.exe` | `PENDING` |
+> | Source | `e9d5db45d09ad38e2b55fd38f926fe11b8a2afcb` |
+> | Package | `e9d5db4-halo2-c45-revert-controller-aim-20260823-050259894Z` |
+> | `HaloMCCVR.dll` | `D12D84ED403D9F76EFA3468332FB8AB1F6D5E3207280335799A88D1D0EA13A8E` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
 > | Verification | Release build PASS; core tests PASS |
 >
