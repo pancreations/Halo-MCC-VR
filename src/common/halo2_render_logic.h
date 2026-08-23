@@ -1076,12 +1076,13 @@ inline bool Halo2BuildTrackedCenterCamera(
 // replacement on this boundary.
 inline constexpr bool kHalo2RejectedInterpolatorControllerOwnershipEnabled = false;
 
-// C-H2-50 starts again at the boundary used by the working titles. H2EK's
-// first-person packet builder composes every interpolated source node through
-// the first-person root; retail does that at +0x72A150 from +0x81861E and
-// +0x81876E. Controller ownership is applied to that finished, world-space
-// matrix only. The rejected upstream implementation above remains dormant.
-inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = true;
+// C-H2-50 tried the later H2EK final-palette boundary, but the rejected Steam
+// Anniversary run executed none of its admitted calls: final-palette changed,
+// right, left, collapsed and refused all remained zero. It therefore did not
+// and could not transfer visible hand/weapon ownership. C-H2-51 disables that
+// entire optional transaction while leaving the implementation available for
+// evidence work. Do not re-arm it from install/preflight success alone.
+inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
