@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-44'
-            status = 'HEADSET_CONTROLLER_PITCH_SIGN_VALIDATION_REQUIRED'
+            id = 'C-H2-48'
+            status = 'HEADSET_HANDS_AIM_TURN_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'c-h2-43-with-halo2-local-controller-pitch-sign-and-presented-reticle-shot-target'
+                'two-exact-hand-subtrees-collapsed-arm-ancestors-camera-local-controller-delta-presented-reticle-shot-target'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -384,8 +384,18 @@ try {
             controller_owned_first_person_slot = 0
             first_person_palette_source =
                 'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices'
+            hand_binding_source =
+                'animation-graph-model-flags-left-0x08-right-0x10-parent-transitive-closure'
+            left_controller_nodes = 'exact-left-wrist-descendant-subtree'
+            right_controller_nodes =
+                'exact-right-wrist-descendant-subtree-including-authored-weapon-descendants'
+            collapsed_nodes =
+                'wrist-to-root-upper-arm-and-forearm-ancestors-excluding-wrists-root-camera-control-and-unrelated-controls'
+            controller_rotation_space =
+                'camera-local-H-transpose-times-C-invariant-under-common-world-body-turn'
             projectile_aim_source =
-                'h2ek-bsim-matched-firing-helper-return-direction-retail-rva-0x8f0f70-output-user-0-unit-guard'
+                'fresh-compositor-presented-reticle-pose-through-h2ek-bsim-matched-firing-helper-retail-rva-0x8f0f70-output-user-0-unit-guard'
+            projectile_presented_reticle_freshness_ms = 250
             interpolation_reset_policy =
                 'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked'
             hud = $false
@@ -483,7 +493,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-44 corrects the headset-proven vertical sign error in C-H2-43 at Halo 2''s controller carrier only; game look input and the camera remain untouched. The physical right stick retains ordinary character/camera turning. The visible primary first-person assembly uses the corrected carrier, and the H2EK-proven local-player firing-helper detour now consumes the compositor-published VR reticle pose, including configured stabilization, with zero gun trim. It preserves the authored projectile origin and aims at the exact configured-distance point displayed by the VR crosshair. AI and remote units remain stock. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
+        note = 'C-H2-48 corrects the C-H2-47 headset rejection. Exact engine-flag-derived left and right wrist subtrees ride their own controllers; only their upper-arm and forearm ancestors collapse, while root, camera_control, and unrelated controls stay stock. Camera-relative matrices receive H-transpose-times-C instead of the incorrect world-space C-times-H-transpose, preserving tracking after body/camera turns. The local-player firing helper converges the authored muzzle origin on the fresh compositor-presented crosshair pose, including configured stabilization. Game look input, XInput, observer camera, stereo, AI, and remote units remain untouched. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
