@@ -1,6 +1,39 @@
 # Current state
 
-> **HALO 2 C-H2-50 READY FOR CANDIDATE PACKAGING - 2026-08-23.** C-H2-48 is
+> **HALO 2 C-H2-50 REJECTED; C-H2-51 SAFETY REVERT IN SOURCE - 2026-08-23.**
+> The player reported that aim was still head-owned and that loading a second
+> Halo 2 mission produced a fatal error. The preserved Steam run confirms both
+> facts that the runtime can prove. Although C-H2-50 logged its optional hooks
+> as installed, every live counter stayed at zero: no weapon-tick placements,
+> no interpolator entries, no final-palette changes/right/left/collapses/refusals,
+> and no direct-shot calls or applications. C-H2-50 therefore never moved the
+> visible hands, gun, or projectile aim to the controllers in that Anniversary
+> session. Install/preflight success was not execution evidence.
+>
+> During the second-mission transition the optional Halo 2 camera/stereo
+> transactions first removed themselves as the title generation changed. The
+> new generation then failed coherent game-time reads, stopped presenting, and
+> Windows recorded a real `0xc0000005` access violation in `halo2.dll` at RVA
+> `0xDE63E`. The log contains no mod callback exception and the C-H2-50
+> controller hooks had zero admitted calls, so the crash is recorded as part of
+> the rejection but is not falsely attributed to an unexecuted hook.
+>
+> C-H2-51 disables both rejected controller-owned palette implementations and
+> their dependent projectile substitution at the master switches. It retains
+> the user-declared C-H2-40 Halo 2 stereo/observer-6DOF baseline and leaves
+> Halo 3, ODST, Reach and Halo 4 unchanged. This safety revert does **not** claim
+> floating hands or controller projectile aim are fixed; a replacement must
+> first prove a boundary that executes in the live Anniversary path.
+>
+> The rejected run is preserved under
+> `out/test-runs/d43aaad-halo2-c50-rejected-fatal-20260823-1023`
+> (Steam, SteamVR/OpenXR 2.17.7, `SteamVR/OpenXR : oculus`, 120 Hz; log SHA-256
+> `0AE96156F50F33CCF9FD7FABEB4A4833B4F2F981ABB3B788E67957BB77FD1605`).
+> C-H2-51 Release build PASS, core tests PASS, and Reach consistency gate PASS.
+> Packaging/deployment identity remains to be recorded after the metadata
+> commit; the accepted pointer remains C-H2-40.
+
+> **SUPERSEDED/REJECTED CLAIM — HALO 2 C-H2-50 - 2026-08-23.** C-H2-48 is
 > rejected and C-H2-49 is its committed source revert. C-H2-50 does not reuse
 > the failed controller transform at interpolator read `+0x722850`. Official
 > H2EK proves that Halo 2 subsequently maps and root-composes those source nodes

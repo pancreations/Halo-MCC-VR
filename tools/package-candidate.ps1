@@ -139,7 +139,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c50-final-palette-reticle-ray',
+        'halo2-c51-safety-revert',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -253,12 +253,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-50'
-            status = 'HEADSET_FINAL_PALETTE_AIM_VALIDATION_REQUIRED'
+            id = 'C-H2-51'
+            status = 'SAFETY_REVERT_HEADSET_VALIDATION_REQUIRED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'final-root-composed-world-palette-two-hand-subtrees-all-other-nodes-collapsed-exact-presented-reticle-ray'
+                'c-h2-40-stereo-6dof-baseline-with-rejected-controller-hands-and-projectile-aim-disabled'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -376,28 +376,28 @@ try {
             six_dof = $true
             headset_rotation = $true
             headset_translation = $true
-            controller_aim = $true
-            floating_hands = $true
+            controller_aim = $false
+            floating_hands = $false
             physical_right_stick_preserved = $true
             controller_camera_writes = $false
             controller_xinput_synthesis = $false
-            controller_owned_first_person_slot = 0
+            controller_owned_first_person_slot = -1
             first_person_palette_source =
-                'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices'
+                'dormant-rejected-interpolator-and-final-composer-transactions'
             hand_binding_source =
-                'animation-graph-model-flags-left-0x08-right-0x10-parent-transitive-closure'
-            left_controller_nodes = 'exact-left-wrist-descendant-subtree'
+                'dormant-no-controller-owned-hand-binding'
+            left_controller_nodes = 'none-controller-ownership-disabled'
             right_controller_nodes =
-                'exact-right-wrist-descendant-subtree-including-authored-weapon-descendants'
+                'none-controller-ownership-disabled'
             collapsed_nodes =
-                'wrist-to-root-upper-arm-and-forearm-ancestors-excluding-wrists-root-camera-control-and-unrelated-controls'
+                'none-controller-ownership-disabled'
             controller_rotation_space =
-                'camera-local-H-transpose-times-C-invariant-under-common-world-body-turn'
+                'none-controller-ownership-disabled'
             projectile_aim_source =
-                'fresh-compositor-presented-reticle-pose-through-h2ek-bsim-matched-firing-helper-retail-rva-0x8f0f70-output-user-0-unit-guard'
-            projectile_presented_reticle_freshness_ms = 250
+                'stock-halo2-projectile-aim-controller-substitution-disabled'
+            projectile_presented_reticle_freshness_ms = 0
             interpolation_reset_policy =
-                'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked'
+                'stock-controller-ownership-bypass-disabled'
             hud = $false
             haptics = $true
             scene_target_redirect = $false
@@ -493,7 +493,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-50 replaces the headset-rejected C-H2-46/47/48 interpolator-space controller placement. Official H2EK proves that Halo 2 maps and root-composes that source into a final render packet; the uniquely verified retail composer is admitted only from its two exact first-person return sites and an exact witnessed source-node stride. The left and right wrist subtrees ride their own controllers in the finished world palette, every other node collapses so no arm remains, and the held gun stays in the right-hand subtree. The local-player firing helper preserves the stock muzzle origin and converges on the exact fresh compositor-presented reticle ray with no mesh-only gun_forward_m offset. Game look input, XInput, observer camera, stereo, AI, remote units and dual-wield slot 1 remain untouched. Halo 2 headset validation is required in Anniversary and Classic, followed by a Halo 3 regression.'
+        note = 'C-H2-51 is the mandatory safety revert of headset-rejected C-H2-50. The preserved Steam Anniversary log proves the advertised final-palette and direct-shot hooks executed zero admitted calls, so they did not move head aim to either hand. The same run ended in a halo2.dll access violation while loading a second mission. Both rejected controller-owned hand/palette paths and their dependent projectile substitution are disabled at the master switches. The accepted C-H2-40 Halo 2 stereo, observer 6DOF, physical right stick, controller transport, renderer guard and haptics remain; Halo 3, ODST, Reach and Halo 4 are unchanged. This is an unaccepted safety candidate and does not claim the requested floating-hand behavior is fixed.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c50-final-palette-reticle-ray-',
+            $head.Substring(0, 7) + '-halo2-c51-safety-revert-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-50' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-51' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_FINAL_PALETTE_AIM_VALIDATION_REQUIRED' -or
+            'SAFETY_REVERT_HEADSET_VALIDATION_REQUIRED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'final-root-composed-world-palette-two-hand-subtrees-all-other-nodes-collapsed-exact-presented-reticle-ray' -or
+            'c-h2-40-stereo-6dof-baseline-with-rejected-controller-hands-and-projectile-aim-disabled' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -430,9 +430,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.headset_translation $true) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.controller_aim $true) -or
+            $manifest.halo2_candidate.controller_aim $false) -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.floating_hands $true) -or
+            $manifest.halo2_candidate.floating_hands $false) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.physical_right_stick_preserved $true) -or
         -not (Test-ExactBoolean `
@@ -440,25 +440,25 @@ if (-not (Test-ExactInt32 $manifest.schema_version 23) -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.controller_xinput_synthesis $false) -or
         -not (Test-ExactInt32 `
-            $manifest.halo2_candidate.controller_owned_first_person_slot 0) -or
+            $manifest.halo2_candidate.controller_owned_first_person_slot -1) -or
         [string]$manifest.halo2_candidate.first_person_palette_source -cne
-            'native-frame-interpolator-read-0x34-byte-camera-relative-node-matrices' -or
+            'dormant-rejected-interpolator-and-final-composer-transactions' -or
         [string]$manifest.halo2_candidate.hand_binding_source -cne
-            'animation-graph-model-flags-left-0x08-right-0x10-parent-transitive-closure' -or
+            'dormant-no-controller-owned-hand-binding' -or
         [string]$manifest.halo2_candidate.left_controller_nodes -cne
-            'exact-left-wrist-descendant-subtree' -or
+            'none-controller-ownership-disabled' -or
         [string]$manifest.halo2_candidate.right_controller_nodes -cne
-            'exact-right-wrist-descendant-subtree-including-authored-weapon-descendants' -or
+            'none-controller-ownership-disabled' -or
         [string]$manifest.halo2_candidate.collapsed_nodes -cne
-            'wrist-to-root-upper-arm-and-forearm-ancestors-excluding-wrists-root-camera-control-and-unrelated-controls' -or
+            'none-controller-ownership-disabled' -or
         [string]$manifest.halo2_candidate.controller_rotation_space -cne
-            'camera-local-H-transpose-times-C-invariant-under-common-world-body-turn' -or
+            'none-controller-ownership-disabled' -or
         [string]$manifest.halo2_candidate.projectile_aim_source -cne
-            'fresh-compositor-presented-reticle-pose-through-h2ek-bsim-matched-firing-helper-retail-rva-0x8f0f70-output-user-0-unit-guard' -or
+            'stock-halo2-projectile-aim-controller-substitution-disabled' -or
         -not (Test-ExactInt32 `
-            $manifest.halo2_candidate.projectile_presented_reticle_freshness_ms 250) -or
+            $manifest.halo2_candidate.projectile_presented_reticle_freshness_ms 0) -or
         [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
-            'bypass-only-while-floaty-requested-hooks-live-and-head-plus-aim-tracked' -or
+            'stock-controller-ownership-bypass-disabled' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.hud $false) -or
         -not (Test-ExactBoolean `

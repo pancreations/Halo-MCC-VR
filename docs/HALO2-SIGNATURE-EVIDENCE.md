@@ -3007,3 +3007,39 @@ primary weapons in Anniversary and Classic, including 90- and 180-degree body
 turns, and must separately record edition, OpenXR runtime, headset and refresh
 rate. Halo 3 regression is required on the same DLL because the shared VR-side
 presented-reticle publication is consumed but not changed.
+
+## E-H2-44 (C-H2-50 rejection/C-H2-51 revert): installed is not executed - 2026-08-23
+
+The player's first C-H2-50 Steam Anniversary run rejects E-H2-43's runtime
+claim. The exact log is preserved at
+`out/test-runs/d43aaad-halo2-c50-rejected-fatal-20260823-1023/HaloMCCVR.log`,
+SHA-256 `0AE96156F50F33CCF9FD7FABEB4A4833B4F2F981ABB3B788E67957BB77FD1605`.
+It identifies source `d43aaad0fff64f3d38f74c042b87506760445b9c`, Steam,
+SteamVR/OpenXR 2.17.7, headset `SteamVR/OpenXR : oculus`, and a 120 Hz panel.
+
+The hook installer reported the C-H2-50 final-palette and direct weapon-aim
+transactions armed, but the periodic runtime witnesses stayed exactly zero
+through the playable mission:
+
+- weapon tick: 0 placements and 0 witnessed records;
+- interpolator read detour: 0 entries;
+- final palette: 0 changed, 0 right, 0 left, 0 collapsed, 0 refused;
+- direct shot aim: 0 calls and 0 applications.
+
+Therefore the uniquely matched `+0x72A150` composer and the two
+`first_person_weapons.cpp` return sites are not the live first-person consumer
+for this Anniversary path. The code identity proof remains a fact, but the
+claim that this boundary owns the player's visible Anniversary hands is
+falsified. The zero counters also prove C-H2-50 did not transfer head-owned aim
+to the controllers. A future attempt needs a positive execution witness in the
+actual Anniversary renderer path before it may alter a matrix.
+
+At the second-mission transition, the log records observer and Anniversary
+stereo removal before the module generation changed. The replacement generation
+then repeatedly failed coherent `game_time_globals` reads and stopped presenting.
+Windows Application Error event 1000 and WER event 1001 record an access
+violation (`0xc0000005`) in `halo2.dll` at RVA `0xDE63E`. No mod exception is
+logged, and the C-H2-50 optional controller callbacks had admitted zero calls.
+This proves the fatal error and preserves its exact native fault location; it
+does not prove that an unexecuted controller hook caused it. C-H2-51 still
+disables the full rejected optional transaction as the required safety revert.
