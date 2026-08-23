@@ -5899,7 +5899,7 @@ int main()
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics | TitleCapability_ControllerAim;
+        TitleCapability_Haptics;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6101,12 +6101,12 @@ int main()
                   GameTitle::Halo3, false),
         "The worker's shared draw-distance predicate hard-denies Halo 2 even "
         "after its read-only level gate opens");
-    // C-H2-41 grants controller aim after H2EK proved both the native
-    // first-person palette and the unit-aim-to-projectile path. HUD, arm IK,
-    // and theatre remain denied until each has Halo 2 evidence.
+    // C-H2-42 withdraws C-H2-41 controller aim after the headset proved that
+    // using XInput as its actuator consumed ordinary camera turning. Aim, HUD,
+    // arm IK, and theatre remain denied until an independent H2 path exists.
     constexpr uint32_t halo2DeniedCapabilities =
-        TitleCapability_Hud | TitleCapability_ArmIk |
-        TitleCapability_CutsceneTheater;
+        TitleCapability_ControllerAim | TitleCapability_Hud |
+        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedAdmission =
         TitleCapability_ControllerInput;
@@ -6187,12 +6187,12 @@ int main()
             halo2Runtime.Resolve(101, policy);
 #if HALOMCCVR_HALO2_STEREO6DOF
         // This helper's explicit mask strips only Stereo and RoomScale; the
-        // declared ControllerInput, ControllerAim, and Haptics bits survive it
-        // like RuntimeModes does (the worker applies the fuller
+        // declared ControllerInput and Haptics bits survive it like
+        // RuntimeModes does (the worker applies the fuller
         // kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-            TitleCapability_ControllerAim | TitleCapability_Haptics;
+            TitleCapability_Haptics;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;

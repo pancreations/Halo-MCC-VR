@@ -116,12 +116,11 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-41: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
-    // is title-local: the H2 observer publication closes the normal look loop,
-    // and H2EK proves that native unit aim feeds projectile simulation.
+    // C-H2-42: matches kHalo2Capabilities in title_registry.cpp. C-H2-41's
+    // XInput aim loop is dormant because it consumed stock right-stick turning
+    // and made controller motion move the camera.
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
-        TitleCapability_ControllerAim |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |

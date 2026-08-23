@@ -1,6 +1,6 @@
 # Current state
 
-> **HALO 2 C-H2-41 DEPLOYED, HEADSET ACCEPTANCE PENDING - 2026-08-22.**
+> **HALO 2 C-H2-41 REJECTED BY HEADSET - 2026-08-22.**
 > Built on the user-declared C-H2-40 source `fa1f642`; candidate source
 > `26cf827`. The primary first-person assembly is placed from the shared
 > calibrated controller aim pose, and Halo 2's ordinary look loop is closed on
@@ -17,13 +17,13 @@
 > | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
 >
-> Headset acceptance must identify edition/runtime/headset and exercise both
-> Anniversary and Classic: weapon follows the right controller in position and
-> orientation, the reticle agrees, shots converge along that aim, tracking loss
-> restores stock for the feature without losing stereo, and the existing
-> C-H2-40 eye/FOV behavior remains intact. Then run the required Halo 3
-> regression. Until that explicit result, the accepted Halo 2 development
-> baseline immediately below remains C-H2-40 `fa1f642`.
+> The headset proved the interaction wrong: hand motion drove Halo 2's native
+> look loop, consumed the physical right stick, and moved the character camera.
+> Required replacement: the right stick retains ordinary camera/character
+> turning; the controller moves and aims only the gun and shot line. C-H2-42
+> disables the C-H2-41 capability and leaves its implementation dormant. The
+> accepted Halo 2 development baseline immediately below remains C-H2-40
+> `fa1f642`.
 
 > **CURRENT HALO 2 BASELINE - 2026-08-22: C-H2-40, source `fa1f642`
 > (user-declared: "ok so this is our current baseline").** Halo 2 has true

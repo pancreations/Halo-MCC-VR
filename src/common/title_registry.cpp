@@ -80,17 +80,17 @@ namespace
     // C-H2-6 owns same-frame binocular geometry and headset room-scale only;
     // unclaimed frames retain stock screen presentation, while a partially
     // claimed failed stereo transaction drops only that frame.
-    // HUD and cutscene behavior remain denied.
+    // Controller aim, HUD and cutscene behavior remain denied.
     // C-H2-22: the virtual gamepad (VR controllers merged over any physical
     // pad) and rumble are granted. Without ControllerInput the XInput hook
     // passed the physical pad through untouched inside every Halo 2 level,
-    // so the VR controllers only worked in the shell. C-H2-41 grants aim:
-    // H2EK proves the native unit aiming vector feeds projectile simulation,
-    // and its first-person palette read is the visible placement transaction.
+    // so the VR controllers only worked in the shell. C-H2-42 disables the
+    // rejected C-H2-41 ControllerAim grant: steering native aim through XInput
+    // consumed the player's right stick and moved the camera with the hand.
     constexpr uint32_t kHalo2Capabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics | TitleCapability_ControllerAim;
+        TitleCapability_Haptics;
     constexpr uint32_t kHalo2AdmissionCapabilities =
         TitleCapability_ControllerInput;
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO

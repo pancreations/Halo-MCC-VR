@@ -2468,3 +2468,16 @@ right-controller primary-weapon behavior in the other titles. A second/left
 weapon slot remains stock until H2-specific dual-wield ownership is separately
 proven. Headset acceptance must test the primary weapon and shot convergence
 in both Anniversary and Classic, then regress Halo 3 on the same DLL.
+
+### C-H2-41 headset rejection and C-H2-42 disable
+
+The first C-H2-41 headset result rejected the interaction before visual
+placement could be accepted: its virtual-stick servo replaced the physical
+right stick and made hand motion turn the character camera. The required
+behavior is independent ownership: the physical right stick keeps ordinary
+character/camera turning, while the controller moves and aims only the gun and
+the shot line. C-H2-42 withdraws `TitleCapability_ControllerAim`, which makes
+the C-H2-41 servo and palette transaction dormant without deleting them. The
+next candidate must write or hook the H2EK-proven unit/shot aim path directly;
+it may not use XInput or any observer/camera field as the motion-control
+actuator.
