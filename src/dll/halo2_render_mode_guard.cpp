@@ -16,7 +16,6 @@ namespace
     using ApplierFn = void(__fastcall*)();
 
     std::atomic<bool> g_installed{false};
-    std::atomic<bool> g_eligible{false};
     std::atomic<uint32_t> g_generation{0};
     std::atomic<uintptr_t> g_moduleBase{0};
     std::atomic<uintptr_t> g_original{0};
@@ -28,7 +27,6 @@ namespace
     HMODULE g_moduleReference = nullptr;
     uint32_t g_rejectedGeneration = 0;
     uint64_t g_lastSuppressLogMs = 0;
-    bool g_leaseParked = false;
     char g_lastSwitch[160] = "none";
 
     template <typename T>
@@ -114,7 +112,6 @@ namespace
         int32_t requested = 0;
         int32_t applied = 0;
         if (base && g_installed.load(std::memory_order_acquire) &&
-            g_eligible.load(std::memory_order_acquire) &&
             ReadGuarded(base + kHalo2RequestedRenderModeRva, requested) &&
             ReadGuarded(base + kHalo2AppliedRenderModeRva, applied))
         {
@@ -166,7 +163,6 @@ namespace
     bool Remove(const char* reason) noexcept
     {
         g_installed.store(false, std::memory_order_release);
-        g_eligible.store(false, std::memory_order_release);
         if (g_target)
         {
             if (MH_DisableHook(g_target) != MH_OK)
@@ -181,7 +177,6 @@ namespace
         g_original.store(0, std::memory_order_release);
         g_moduleBase.store(0, std::memory_order_release);
         g_generation.store(0, std::memory_order_release);
-        g_leaseParked = false;
         if (g_moduleReference)
         {
             FreeLibrary(g_moduleReference);
@@ -238,7 +233,6 @@ namespace
             return false;
         }
         g_installed.store(true, std::memory_order_release);
-        g_eligible.store(true, std::memory_order_release);
         LOG("Halo 2 renderer switch guard installed on the render-mode applier "
             "+0x%X: a Classic/Anniversary switch request is honoured only while "
             "keyboard Tab, the physical pad's Back (halo2_gamepad_graphics_switch "
@@ -255,43 +249,18 @@ bool Halo2RenderModeGuard_Poll(
 {
     const bool desired = moduleBase && generation &&
         moduleSize == kHalo2RetailImageSize && activeAndRange && coldPassed;
-    const uint32_t ownedGeneration =
-        g_generation.load(std::memory_order_acquire);
-    const uintptr_t ownedBase = g_moduleBase.load(std::memory_order_acquire);
-    const bool foreignModule = g_target && moduleBase && ownedBase &&
-        ownedBase != moduleBase;
-    if (foreignModule)
+    const bool foreignModule = g_target &&
+        (g_generation.load(std::memory_order_acquire) != generation ||
+         g_moduleBase.load(std::memory_order_acquire) != moduleBase);
+    if (!desired || foreignModule)
     {
         if (g_target)
-            (void)Remove("physical module changed");
+            (void)Remove(foreignModule ? "module generation changed"
+                                       : "title no longer eligible");
         if (generation != g_rejectedGeneration)
             g_rejectedGeneration = 0;
         return false;
     }
-    if (!desired)
-    {
-        // C-H2-53: halo2.dll stays pinned between consecutive missions.  Keep
-        // the applier detour leased, but pass through stock while title proof
-        // is absent; do not churn MinHook against the retained DLL.
-        g_eligible.store(false, std::memory_order_release);
-        if (g_target && !g_leaseParked)
-        {
-            LOG("Halo 2 renderer switch guard lease PARKED: title proof is "
-                "temporarily absent; the detour passes through stock without "
-                "removing its hook from halo2.dll");
-            g_leaseParked = true;
-        }
-        return false;
-    }
-    g_leaseParked = false;
-    if (g_target && ownedBase == moduleBase && ownedGeneration != generation)
-    {
-        g_generation.store(generation, std::memory_order_release);
-        LOG("Halo 2 renderer switch guard lease resumed on the same halo2.dll "
-            "base for generation %u; no hook removal or recreation occurred",
-            generation);
-    }
-    g_eligible.store(true, std::memory_order_release);
     if (!g_installed.load(std::memory_order_acquire))
         return Install(moduleBase, generation);
     return true;
