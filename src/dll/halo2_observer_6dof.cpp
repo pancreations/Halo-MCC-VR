@@ -99,7 +99,18 @@ namespace
     // E-H2-30: the tick BEFORE it, so the weapon's view can follow the
     // interpolator's blend between the two instead of snapping to the newest.
     std::atomic<uint64_t> g_weaponTickPreviousIndex{0};
+    // E-H2-32: the tracked camera of the witnessed tick, seqlocked, and the
+    // re-anchor hook that moves the drawn weapon from it to the frame camera.
+    std::atomic<uint32_t> g_weaponTickBasisVersion{0};
+    Halo2CameraBasis g_weaponTickBasis{};
+    void* g_reanchorTarget = nullptr;
+    std::atomic<uintptr_t> g_reanchorOriginal{0};
+    std::atomic<uint32_t> g_reanchorActiveCallbacks{0};
+    std::atomic<uint64_t> g_reanchorApplied{0};
+    std::atomic<uint64_t> g_reanchorIdentity{0};
+    std::atomic<uint64_t> g_reanchorSkipped{0};
     std::atomic<uint64_t> g_publicationIndex{0};
+    std::atomic<uint64_t> g_weaponsSlotResets{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     uint64_t g_lastWitnessedReported = 0;
 
@@ -429,11 +440,136 @@ namespace
             return;
         }
         g_weaponTickGeneration.store(generation, std::memory_order_relaxed);
+        g_weaponTickBasisVersion.fetch_add(1, std::memory_order_acq_rel);
+        g_weaponTickBasis = published.tracked;
+        g_weaponTickBasisVersion.fetch_add(1, std::memory_order_acq_rel);
         const uint64_t previous =
             g_weaponTickIndex.exchange(published.index, std::memory_order_acq_rel);
         if (previous && previous != published.index)
             g_weaponTickPreviousIndex.store(previous, std::memory_order_release);
         g_weaponsWitnessed.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // E-H2-32 (C-H2-37): the weapon must share the world's tick-quantised
+    // state. The game's own yaw only changes at the 60 Hz tick, so the WORLD
+    // steps at the tick during a stick turn - but MCC's interpolator smooths
+    // the WEAPON between ticks, so the weapon trails the world it is attached
+    // to. That is the drag. Correcting the weapon's view cannot fix it,
+    // because the mismatch is against the world, not the head: the weapon has
+    // to be at the tick the world is at. C-H2-34 removed this reset to cure a
+    // 60 Hz feel that was really the CAMERA being tied to the tick (fixed
+    // separately in C-H2-33, and the camera stays at the player's frame rate).
+    void ResetFirstPersonInterpolation() noexcept
+    {
+        using ResetFn = void(__fastcall*)(int, int);
+        const auto reset = reinterpret_cast<ResetFn>(
+            g_interpolatorResetAddress.load(std::memory_order_acquire));
+        if (!reset)
+            return;
+        for (int slot = 0; slot < kHalo2FrameInterpolatorFirstPersonSlots; ++slot)
+            reset(static_cast<int>(kOwnedUser), slot);
+        g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // E-H2-32 (C-H2-37): the re-anchor. The interpolation reset holds the
+    // weapon exactly at the witnessed tick's placement; this detour runs at
+    // the per-frame read the renderer makes and moves the node geometry from
+    // the tick camera to the CURRENT frame camera - so the weapon follows a
+    // head turn at the frame rate and jumps with the world at every tick,
+    // in both renderers, without touching any view matrix.
+    using Halo2InterpolatorReadFn = uint8_t(__fastcall*)(
+        int, int, int, uintptr_t*, uint32_t*);
+
+    __declspec(noinline) uint8_t __fastcall Halo2InterpolatorReadDetour(
+        int player, int id, int slot, uintptr_t* nodesOut, uint32_t* countOut)
+    {
+        g_reanchorActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        const auto original = reinterpret_cast<Halo2InterpolatorReadFn>(
+            g_reanchorOriginal.load(std::memory_order_acquire));
+        if (!original)
+        {
+            g_reanchorActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+            return 0;
+        }
+        uint8_t handled = 0;
+        __try { handled = original(player, id, slot, nodesOut, countOut); }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            handled = 0;
+        }
+        if (handled && player == static_cast<int>(kOwnedUser) && nodesOut &&
+            countOut && *nodesOut &&
+            g_armed.load(std::memory_order_acquire) &&
+            g_levelLive.load(std::memory_order_acquire) &&
+            !g_teardownRequested.load(std::memory_order_acquire) &&
+            g_weaponTickIndex.load(std::memory_order_acquire) != 0)
+        {
+            Halo2CameraBasis tick{};
+            bool tickValid = false;
+            for (int attempt = 0; attempt < 4 && !tickValid; ++attempt)
+            {
+                const uint32_t before =
+                    g_weaponTickBasisVersion.load(std::memory_order_acquire);
+                if (before & 1u)
+                    continue;
+                Halo2CameraBasis candidate = g_weaponTickBasis;
+                if (g_weaponTickBasisVersion.load(std::memory_order_acquire) ==
+                    before)
+                {
+                    tick = candidate;
+                    tickValid = true;
+                }
+            }
+            Halo2ObserverPosePublication frame{};
+            if (tickValid && Halo2Observer6Dof_ReadPublishedPose(frame) &&
+                frame.generation ==
+                    g_generation.load(std::memory_order_acquire) &&
+                Halo2ValidateCameraBasis(frame.tracked))
+            {
+                if (Halo2CameraBasesNearlyEqual(tick, frame.tracked))
+                {
+                    g_reanchorIdentity.fetch_add(1, std::memory_order_relaxed);
+                }
+                else
+                {
+                    float rotation[9];
+                    const uint32_t count = *countOut;
+                    if (count > 0 &&
+                        count <= static_cast<uint32_t>(kHalo2FirstPersonNodeLimit) &&
+                        Halo2BuildWorldDeltaRotation(tick, frame.tracked, rotation))
+                    {
+                        __try
+                        {
+                            float* node = reinterpret_cast<float*>(*nodesOut);
+                            for (uint32_t index = 0; index < count; ++index)
+                            {
+                                Halo2ReanchorFirstPersonNode(
+                                    node, rotation, tick.position,
+                                    frame.tracked.position);
+                                node += kHalo2FirstPersonNodeStride / 4;
+                            }
+                            g_reanchorApplied.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                        __except (EXCEPTION_EXECUTE_HANDLER)
+                        {
+                            g_exceptions.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                    else
+                    {
+                        g_reanchorSkipped.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+            else
+            {
+                g_reanchorSkipped.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        g_reanchorActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        return handled;
     }
 
     __declspec(noinline) void __fastcall Halo2FirstPersonWeaponsDetour(
@@ -465,6 +601,14 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             g_exceptions.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (owned)
+        {
+            __try { ResetFirstPersonInterpolation(); }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_exceptions.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
@@ -714,6 +858,33 @@ namespace
             }
             g_target = nullptr;
         }
+        if (g_reanchorTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_reanchorTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 observer 6DOF: re-anchor disable failed (%d); "
+                    "ownership retained for cleanup",
+                    static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_reanchorActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+            {
+                Sleep(10);
+            }
+            if (g_reanchorActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 observer 6DOF: re-anchor callbacks did not "
+                    "drain; ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_reanchorTarget);
+            g_reanchorTarget = nullptr;
+            g_reanchorOriginal.store(0, std::memory_order_release);
+        }
         if (g_weaponsTarget)
         {
             const MH_STATUS disabled = MH_DisableHook(g_weaponsTarget);
@@ -949,6 +1120,82 @@ namespace
                 }
                 else
                 {
+                    const uintptr_t readSide =
+                        base + kHalo2FrameInterpolatorReadRva;
+                    uint8_t readBytes[sizeof(kHalo2FrameInterpolatorReadEntryBytes)]{};
+                    bool readReadable = false;
+                    __try
+                    {
+                        std::memcpy(readBytes,
+                                    reinterpret_cast<const void*>(readSide),
+                                    sizeof(readBytes));
+                        readReadable = true;
+                    }
+                    __except (EXCEPTION_EXECUTE_HANDLER) { readReadable = false; }
+                    if (!readReadable ||
+                        std::memcmp(readBytes,
+                                    kHalo2FrameInterpolatorReadEntryBytes,
+                                    sizeof(readBytes)) != 0)
+                    {
+                        LOG("Halo 2 weapon re-anchor WITHHELD: the entry bytes "
+                            "at +0x%X are not the interpolator read side; the "
+                            "weapon stays at the tick camera and will lag a "
+                            "head turn by up to one tick",
+                            static_cast<unsigned>(kHalo2FrameInterpolatorReadRva));
+                    }
+                    else
+                    {
+                        void* const readTarget =
+                            reinterpret_cast<void*>(readSide);
+                        void* readTrampoline = nullptr;
+                        const MH_STATUS readCreated = MH_CreateHook(
+                            readTarget,
+                            reinterpret_cast<void*>(&Halo2InterpolatorReadDetour),
+                            &readTrampoline);
+                        if (readCreated != MH_OK || !readTrampoline)
+                        {
+                            LOG("Halo 2 weapon re-anchor WITHHELD: hook "
+                                "create=%d", static_cast<int>(readCreated));
+                            if (readCreated == MH_OK)
+                                (void)MH_RemoveHook(readTarget);
+                        }
+                        else
+                        {
+                            g_reanchorTarget = readTarget;
+                            g_reanchorOriginal.store(
+                                reinterpret_cast<uintptr_t>(readTrampoline),
+                                std::memory_order_release);
+                            if (MH_EnableHook(readTarget) != MH_OK)
+                            {
+                                LOG("Halo 2 weapon re-anchor WITHHELD: hook "
+                                    "enable failed");
+                                (void)MH_RemoveHook(readTarget);
+                                g_reanchorTarget = nullptr;
+                                g_reanchorOriginal.store(
+                                    0, std::memory_order_release);
+                            }
+                            else
+                            {
+                                LOG("Halo 2 weapon re-anchor installed on the "
+                                    "first-person interpolator read +0x%X "
+                                    "(node stride 0x%X, axes +0x%X, position "
+                                    "+0x%X): every frame the drawn weapon is "
+                                    "moved rigidly from the witnessed tick's "
+                                    "camera to the frame's, so it follows a "
+                                    "head turn at the player's frame rate and "
+                                    "jumps with the world at every tick, in "
+                                    "both renderers",
+                                    static_cast<unsigned>(
+                                        kHalo2FrameInterpolatorReadRva),
+                                    static_cast<unsigned>(
+                                        kHalo2FirstPersonNodeStride),
+                                    static_cast<unsigned>(
+                                        kHalo2FirstPersonNodeAxesOffset),
+                                    static_cast<unsigned>(
+                                        kHalo2FirstPersonNodePositionOffset));
+                            }
+                        }
+                    }
                     LOG("Halo 2 weapon tick witness installed on "
                         "first_person_weapons +0x%X (the game tick's weapon "
                         "placement, the only caller of the interpolator's "
@@ -1026,9 +1273,10 @@ namespace
             "poses applied, %llu rejected samples, %llu unreadable, %llu "
             "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional "
             "%s); weapon tick witness: %llu placements, %llu witnessed, %llu "
-            "with a record the engine had moved, %llu with no publication; "
-            "the engine's inter-tick blending is left ON; last witnessed "
-            "publication #%llu",
+            "with a record the engine had moved, %llu with no publication, "
+            "%llu interpolation resets (the weapon shares the world's tick); "
+            "re-anchor applied %llu, identity %llu, skipped %llu; last "
+            "witnessed publication #%llu",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1048,6 +1296,14 @@ namespace
                 g_weaponsRecordForeign.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponsNoPublication.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponsSlotResets.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorIdentity.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorSkipped.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponTickIndex.load(std::memory_order_relaxed)));
     }

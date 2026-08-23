@@ -182,6 +182,7 @@ namespace
         // identically - the classic equivalent of the Saber renderer's
         // view-WITHOUT-translation first-person pass.
         Halo2CameraBasis rasterCenter{};
+        Halo2CameraBasis renderCenter{};
         bool rasterCenterValid = false;
     };
 
@@ -1131,26 +1132,63 @@ namespace
         }
         StereoScope* const scope = g_stereoScope;
         const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
-        uintptr_t camera = 0;
-        float saved[3]{};
+        // Both camera globals, whole basis. C-H2-36 centred the position of
+        // the raster camera alone and the weapon's disparity did not move, so
+        // the weapon is placed from the other global; with both carrying the
+        // pair's centre the two eyes run the pass with byte-identical camera
+        // state and the weapon cannot differ between them.
+        struct Centred
+        {
+            uintptr_t address = 0;
+            float saved[9]{};
+            bool active = false;
+        };
+        Centred owned[2];
         bool centred = false;
         if (scope && scope->rasterCenterValid && base && g_innerDepth)
         {
-            camera = base + kHalo2ClassicFirstPersonCameraGlobalRva +
-                kHalo2CameraPositionOffset;
-            if (GuardedCopyExact(saved, reinterpret_cast<const float*>(camera),
-                                 kHalo2CameraVectorBytes) &&
-                GuardedCopyExact(reinterpret_cast<void*>(camera),
-                                 scope->rasterCenter.position,
-                                 kHalo2CameraVectorBytes))
+            const uintptr_t globals[2] = {
+                base + kHalo2ClassicFirstPersonCameraGlobalRva,
+                base + kHalo2ClassicRenderCameraGlobalRva};
+            const Halo2CameraBasis* const centres[2] = {
+                &scope->rasterCenter, &scope->renderCenter};
+            for (int index = 0; index < 2; ++index)
             {
-                centred = true;
+                float replacement[9]{};
+                std::memcpy(replacement, centres[index]->position, sizeof(float) * 3);
+                std::memcpy(replacement + 3, centres[index]->forward, sizeof(float) * 3);
+                std::memcpy(replacement + 6, centres[index]->up, sizeof(float) * 3);
+                Centred& entry = owned[index];
+                entry.address = globals[index];
+                const uintptr_t position = entry.address + kHalo2CameraPositionOffset;
+                const uintptr_t forward = entry.address + kHalo2CameraForwardOffset;
+                const uintptr_t up = entry.address + kHalo2CameraUpOffset;
+                if (GuardedCopyExact(entry.saved,
+                                     reinterpret_cast<const float*>(position),
+                                     kHalo2CameraVectorBytes) &&
+                    GuardedCopyExact(entry.saved + 3,
+                                     reinterpret_cast<const float*>(forward),
+                                     kHalo2CameraVectorBytes) &&
+                    GuardedCopyExact(entry.saved + 6,
+                                     reinterpret_cast<const float*>(up),
+                                     kHalo2CameraVectorBytes) &&
+                    GuardedCopyExact(reinterpret_cast<void*>(position),
+                                     replacement, kHalo2CameraVectorBytes) &&
+                    GuardedCopyExact(reinterpret_cast<void*>(forward),
+                                     replacement + 3, kHalo2CameraVectorBytes) &&
+                    GuardedCopyExact(reinterpret_cast<void*>(up),
+                                     replacement + 6, kHalo2CameraVectorBytes))
+                {
+                    entry.active = true;
+                    centred = true;
+                }
+                else
+                {
+                    g_firstPersonUnreadable.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (centred)
                 g_firstPersonCentred.fetch_add(1, std::memory_order_relaxed);
-            }
-            else
-            {
-                g_firstPersonUnreadable.fetch_add(1, std::memory_order_relaxed);
-            }
         }
         __try { original(); }
         __except (EXCEPTION_EXECUTE_HANDLER)
@@ -1158,10 +1196,19 @@ namespace
             g_telemetry.transactionExceptions.fetch_add(
                 1, std::memory_order_relaxed);
         }
-        if (centred)
+        for (const Centred& entry : owned)
         {
-            (void)GuardedCopyExact(reinterpret_cast<void*>(camera), saved,
-                                   kHalo2CameraVectorBytes);
+            if (!entry.active)
+                continue;
+            (void)GuardedCopyExact(
+                reinterpret_cast<void*>(entry.address + kHalo2CameraPositionOffset),
+                entry.saved, kHalo2CameraVectorBytes);
+            (void)GuardedCopyExact(
+                reinterpret_cast<void*>(entry.address + kHalo2CameraForwardOffset),
+                entry.saved + 3, kHalo2CameraVectorBytes);
+            (void)GuardedCopyExact(
+                reinterpret_cast<void*>(entry.address + kHalo2CameraUpOffset),
+                entry.saved + 6, kHalo2CameraVectorBytes);
         }
         g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
@@ -1876,6 +1923,7 @@ namespace
         candidate.rasterCamera = static_cast<uint8_t*>(window) +
             kHalo2RasterCameraOffset;
         candidate.rasterCenter = rasterCenter;
+        candidate.renderCenter = renderCenter;
         candidate.rasterCenterValid = true;
         candidate.savedRender = render.basis;
         candidate.savedRaster = raster.basis;

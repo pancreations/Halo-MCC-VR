@@ -7357,6 +7357,48 @@ int main()
                 "E-H2-30 a factor outside 0..1 is clamped");
         }
 
+        // E-H2-32: the first-person node re-anchor follows the head exactly.
+        {
+            Halo2CameraBasis tick{};
+            tick.forward[0] = 1.0f; tick.up[2] = 1.0f;
+            tick.position[0] = 100.0f; tick.position[1] = 50.0f;
+            Halo2CameraBasis frame = tick;
+            float rotation[9]{};
+            Check(Halo2BuildWorldDeltaRotation(tick, frame, rotation) &&
+                      std::fabs(rotation[0] - 1.0f) < 1.0e-5f &&
+                      std::fabs(rotation[4] - 1.0f) < 1.0e-5f &&
+                      std::fabs(rotation[8] - 1.0f) < 1.0e-5f &&
+                      std::fabs(rotation[1]) < 1.0e-5f,
+                "E-H2-32 an unchanged camera gives the identity");
+            // A 90-degree yaw: forward x -> y, with a small head move.
+            frame.forward[0] = 0.0f; frame.forward[1] = 1.0f;
+            frame.position[0] = 100.2f; frame.position[1] = 50.1f;
+            Check(Halo2BuildWorldDeltaRotation(tick, frame, rotation),
+                "E-H2-32 the yaw delta builds");
+            // The node: axes = world identity, half a metre ahead of the tick
+            // camera along its forward (x).
+            float node[13]{};
+            node[0] = 1.0f;
+            node[1] = 1.0f; node[5] = 1.0f; node[9] = 1.0f;   // X,Y,Z axes
+            node[10] = 100.5f; node[11] = 50.0f; node[12] = 0.0f;
+            Halo2ReanchorFirstPersonNode(
+                node, rotation, tick.position, frame.position);
+            // The offset (0.5, 0, 0) rotates to (0, 0.5, 0) and re-roots at
+            // the frame camera: still half a metre ahead of the NEW forward.
+            Check(std::fabs(node[10] - 100.2f) < 1.0e-4f &&
+                      std::fabs(node[11] - 50.6f) < 1.0e-4f &&
+                      std::fabs(node[12]) < 1.0e-4f,
+                "E-H2-32 the node stays half a metre ahead of the camera");
+            // The node X axis rotates with the yaw: x -> y.
+            Check(std::fabs(node[1]) < 1.0e-4f &&
+                      std::fabs(node[2] - 1.0f) < 1.0e-4f &&
+                      std::fabs(node[3]) < 1.0e-4f,
+                "E-H2-32 the node axes turn with the head");
+            // The Z axis (up) is unchanged by a pure yaw.
+            Check(std::fabs(node[9] - 1.0f) < 1.0e-4f,
+                "E-H2-32 up survives a yaw untouched");
+        }
+
         // E-H2-21: main-view flags and Saber matrix matching.
         {
             Check(Halo2SaberViewRecordIsMainView(0) &&

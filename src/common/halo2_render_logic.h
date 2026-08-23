@@ -2330,8 +2330,144 @@ inline constexpr uint32_t kHalo2ClassicSceneTargetLatchRva = 0x01994935;
 // fast turn exposes. The weapon's view is built from the same blend.
 inline constexpr uint32_t kHalo2FrameInterpolatorFactorRva = 0x0164B300;
 
-// E-H2-31 (C-H2-36): the camera globals draw_first_person copies (E-H2-20).
+// E-H2-32 (C-H2-37): the first-person interpolator READ side.
+// 0x722850(player, id, slot, node**, count*) hands the renderer the blended
+// node array for one first-person slot: stride 0x34 per node, and 0x72A9C0 /
+// 0x723040 prove the layout - +0x00 scale, +0x04 the node frame's three
+// world-axis VECTORS in sequence (a quat (x,y,z,w) becomes [1-2(y2+z2),
+// 2(xy+wz), 2(xz-wy)] first, i.e. the world image of the X axis, then Y, then
+// Z), +0x28 the world position. Both of its call sites (0x81858D, 0x81872E in
+// the first-person render 0x8181F0) run per FRAME, after the tick placed the
+// weapon - the single point where the drawn weapon geometry can be re-anchored
+// from the tick's camera to the frame's.
+inline constexpr uint32_t kHalo2FrameInterpolatorReadRva = 0x00722850;
+inline constexpr uint8_t kHalo2FrameInterpolatorReadEntryBytes[] = {
+    0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18,
+    0x48, 0x89, 0x7C, 0x24, 0x20, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x20};
+inline constexpr uint32_t kHalo2FirstPersonNodeStride = 0x34;
+inline constexpr uint32_t kHalo2FirstPersonNodeAxesOffset = 0x04;
+inline constexpr uint32_t kHalo2FirstPersonNodePositionOffset = 0x28;
+inline constexpr int kHalo2FirstPersonNodeLimit = 256;
+
+// The world rotation that takes the tick camera's frame to the frame
+// camera's: R = F_frame * F_tick^T with F = [right forward up] as world
+// columns. Written as nine floats, three world COLUMN vectors in sequence
+// (the image of world X, then Y, then Z) - the same layout the nodes hold.
+inline bool Halo2BuildWorldDeltaRotation(
+    const Halo2CameraBasis& tick, const Halo2CameraBasis& frame,
+    float out[9]) noexcept
+{
+    if (!out || !Halo2ValidateCameraBasis(tick) ||
+        !Halo2ValidateCameraBasis(frame))
+    {
+        return false;
+    }
+    float tickAxes[9];
+    float frameAxes[9];
+    const Halo2CameraBasis* const cameras[2] = {&tick, &frame};
+    float* const axes[2] = {tickAxes, frameAxes};
+    for (int index = 0; index < 2; ++index)
+    {
+        const Halo2CameraBasis& camera = *cameras[index];
+        float right[3] = {
+            camera.forward[1] * camera.up[2] - camera.forward[2] * camera.up[1],
+            camera.forward[2] * camera.up[0] - camera.forward[0] * camera.up[2],
+            camera.forward[0] * camera.up[1] - camera.forward[1] * camera.up[0]};
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            axes[index][axis * 3 + 0] = right[axis];
+            axes[index][axis * 3 + 1] = camera.forward[axis];
+            axes[index][axis * 3 + 2] = camera.up[axis];
+        }
+    }
+    // out = frameAxes * tickAxes^T; rows of `axes` are world components, so
+    // element (r,c) = sum_k frameAxes[r][k] * tickAxes[c][k].
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int column = 0; column < 3; ++column)
+        {
+            float sum = 0.0f;
+            for (int k = 0; k < 3; ++k)
+                sum += frameAxes[row * 3 + k] * tickAxes[column * 3 + k];
+            if (!std::isfinite(sum))
+                return false;
+            // stored column-major: out column c = image of world axis c.
+            out[column * 3 + row] = sum;
+        }
+    }
+    return true;
+}
+
+// Applies the rigid re-anchor to one interpolated first-person node:
+// axes' = R * axes, position' = R * (position - tickCamera) + frameCamera.
+inline void Halo2ReanchorFirstPersonNode(
+    float* node, const float rotation[9], const float tickPosition[3],
+    const float framePosition[3]) noexcept
+{
+    float* const axes = node + kHalo2FirstPersonNodeAxesOffset / 4;
+    float* const position = node + kHalo2FirstPersonNodePositionOffset / 4;
+    for (int vec = 0; vec < 4; ++vec)
+    {
+        float source[3];
+        if (vec < 3)
+        {
+            source[0] = axes[vec * 3 + 0];
+            source[1] = axes[vec * 3 + 1];
+            source[2] = axes[vec * 3 + 2];
+        }
+        else
+        {
+            source[0] = position[0] - tickPosition[0];
+            source[1] = position[1] - tickPosition[1];
+            source[2] = position[2] - tickPosition[2];
+        }
+        float rotated[3];
+        for (int row = 0; row < 3; ++row)
+        {
+            rotated[row] = rotation[0 * 3 + row] * source[0] +
+                rotation[1 * 3 + row] * source[1] +
+                rotation[2 * 3 + row] * source[2];
+        }
+        if (vec < 3)
+        {
+            axes[vec * 3 + 0] = rotated[0];
+            axes[vec * 3 + 1] = rotated[1];
+            axes[vec * 3 + 2] = rotated[2];
+        }
+        else
+        {
+            position[0] = rotated[0] + framePosition[0];
+            position[1] = rotated[1] + framePosition[1];
+            position[2] = rotated[2] + framePosition[2];
+        }
+    }
+}
+
+// True when the two bases are so close the re-anchor would be a no-op.
+inline bool Halo2CameraBasesNearlyEqual(
+    const Halo2CameraBasis& a, const Halo2CameraBasis& b) noexcept
+{
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (std::fabs(a.position[axis] - b.position[axis]) > 1.0e-5f ||
+            std::fabs(a.forward[axis] - b.forward[axis]) > 1.0e-6f ||
+            std::fabs(a.up[axis] - b.up[axis]) > 1.0e-6f)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// E-H2-31 (C-H2-36/37): the camera globals the classic first-person pass uses.
+// 0x1996A28 is the PUSHED RASTER camera draw_first_person copies and rebuilds
+// its projection from (E-H2-20). 0x165C260 is the RENDER camera global that
+// render_view writes from the window's render camera and that the rest of the
+// pipeline reads. C-H2-36 centred only the raster one and the measured weapon
+// disparity did not move (eye dumps: world 3-24 px, weapon >240 px at full
+// resolution), so the placement is taken from the other. Both are centred.
 inline constexpr uint32_t kHalo2ClassicFirstPersonCameraGlobalRva = 0x01996A28;
+inline constexpr uint32_t kHalo2ClassicRenderCameraGlobalRva = 0x0165C260;
 
 // Blends two camera bases the way the interpolator blends the weapon, and
 // re-orthonormalises, so the result is always a valid basis.

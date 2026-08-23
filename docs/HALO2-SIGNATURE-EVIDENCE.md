@@ -2256,3 +2256,34 @@ offset) replaces the position at `0x1996A28`, the eye rotation is left alone,
 and the mod restores what it overwrote when the call returns. Both eyes then
 place the weapon identically, exactly like Anniversary. Counted as
 `firstPersonCentred` / `firstPersonUnreadable`.
+
+## E-H2-32: the weapon geometry is re-anchored per frame (C-H2-37)
+
+C-H2-36 failed on both guns and the failure identified the real consumers.
+
+Anniversary lag: writing the first-person view-projection (+0x5EC) was
+verified applied (358 writes, reconstruction MATCHES) and changed nothing on
+screen, so the weapon is not drawn through that matrix. The fix moves the
+GEOMETRY instead: 0x722850(player, id, slot, node**, count*) - the
+interpolator read the first-person render 0x8181F0 makes per frame at
+0x81858D/0x81872E - hands out the blended node array, stride 0x34:
++0x00 scale, +0x04 the node frame as three world-axis COLUMN vectors
+(0x72A9C0: a quat (x,y,z,w) is stored as [1-2(y2+z2), 2(xy+wz), 2(xz-wy)],
+the world image of X, then Y, then Z), +0x28 world position. The detour
+applies the rigid transform axes' = R*axes, pos' = R*(pos - C_tick) +
+C_frame with R = F_frame * F_tick^T, C_tick the witnessed tick camera and
+C_frame the newest published frame camera - so the weapon follows a head
+turn at the player frame rate and jumps with the world at every tick, in
+BOTH renderers. The interpolation reset is restored at the placement (the
+weapon must share the world tick-quantised state on stick turns; the 60 Hz
+complaint against it was really the camera, fixed in C-H2-33 and untouched).
+
+Classic double vision: draw_first_person read in full shows it re-uploads
+c0..c11 from the raster camera copy 0x1996A28 - which C-H2-36 centred with
+no effect on the measured weapon disparity (world 3-24 px, weapon >240 px at
+full resolution, railing the +-60 px quarter-scale search). The FP model
+draws therefore take their view from the per-object path (the render camera
+global 0x165C260), so C-H2-37 centres BOTH globals - position, forward and
+up - for the duration of draw_first_person and restores them after, giving
+the classic weapon the same zero eye separation the Saber first-person pass
+has.

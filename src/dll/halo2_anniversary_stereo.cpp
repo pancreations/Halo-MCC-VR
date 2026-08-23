@@ -574,30 +574,22 @@ namespace
                     {
                         weaponBasis = ring[found].tracked;
                         weaponBasisValid = true;
-                        // E-H2-30: the weapon is not AT the tick pose - the
-                        // frame interpolator has it at lerp(previous, current,
-                        // factor). Follow the engine's own factor, or the
-                        // weapon trails the view by up to a whole tick.
+                        // E-H2-32 (C-H2-37): the interpolator is reset at the
+                        // placement again, so the weapon IS at the tick pose -
+                        // no blend belongs here. The factor is still read and
+                        // reported, because a non-zero blend with the reset
+                        // armed would mean the reset stopped working.
                         float factor = 0.0f;
-                        if (foundPrevious >= 0 &&
-                            ReadGuarded(base + kHalo2FrameInterpolatorFactorRva, factor) &&
-                            std::isfinite(factor) && factor >= 0.0f && factor <= 1.0f)
+                        if (ReadGuarded(base + kHalo2FrameInterpolatorFactorRva, factor) &&
+                            std::isfinite(factor) && factor > 0.0f && factor < 1.0f)
                         {
-                            Halo2CameraBasis blended{};
-                            if (Halo2LerpCameraBasis(
-                                    ring[foundPrevious].tracked, ring[found].tracked,
-                                    factor, blended))
-                            {
-                                weaponBasis = blended;
-                                g_weaponViewBlended.fetch_add(
-                                    1, std::memory_order_relaxed);
-                            }
+                            g_weaponViewBlended.fetch_add(1, std::memory_order_relaxed);
                         }
                         else
                         {
-                            g_weaponViewUnblended.fetch_add(
-                                1, std::memory_order_relaxed);
+                            g_weaponViewUnblended.fetch_add(1, std::memory_order_relaxed);
                         }
+                        (void)foundPrevious;
                         g_sampleWitnessed.fetch_add(1, std::memory_order_relaxed);
                     }
                     else
@@ -1478,8 +1470,8 @@ namespace
             "rendered from the frame's own sample; the weapon's view came "
             "from the witnessed game tick %llu times, the witness was out of "
             "the ring %llu times (weapon view applied %llu, engine's own view "
-            "kept %llu; the view followed the interpolator's blend %llu times, "
-            "took the tick pose alone %llu times); views seen mask=0x%X "
+            "kept %llu; the interpolator reported a mid-tick blend %llu times, "
+            "the tick pose %llu times); views seen mask=0x%X "
             "last=%u; bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
