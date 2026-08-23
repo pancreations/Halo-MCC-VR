@@ -1,5 +1,31 @@
 # Current state
 
+> **HALO 2 C-H2-43 DEPLOYED; HEADSET VALIDATION REQUIRED - 2026-08-22.**
+> This is the direct replacement for the rejected C-H2-41 interaction. Halo 2
+> is excluded from the controller aim-stick synthesizer: the physical right
+> stick retains its established ordinary character/camera turning path, and
+> controller motion cannot write XInput, the observer, or any camera field.
+> The primary native first-person assembly remains controller-driven. Shots
+> use the H2EK-proven firing helper at retail `+0x8F0F70`; only the direction
+> returned for output user 0's exact live unit may be replaced, preserving the
+> authored projectile origin and leaving AI/remote units untouched. Evidence
+> is E-H2-37. The accepted Halo 2 development baseline remains C-H2-40
+> `fa1f642` until explicit headset acceptance.
+>
+> | C-H2-43 deployed identity | Value |
+> | --- | --- |
+> | Source | `e000c6bd487a236061b917f5b42e2109a35862ad` |
+> | Package | `e000c6b-halo2-c43-floaty-hand-direct-shot-aim-20260823-043238320Z` |
+> | `HaloMCCVR.dll` | `B01FB3797EE844AA35A2C8C5CF20AA6B8FDD157FF707CCB4D3CA88F8FE5E935F` |
+> | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
+> | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
+> | Verification | Release build PASS; core tests PASS; Reach consistency PASS; all three H2 retail identities match once in both editions |
+>
+> Headset test: in both Anniversary and Classic, confirm that the physical
+> right stick turns the character/camera normally; moving the right controller
+> moves and aims the gun without moving the camera; and fired shots follow the
+> visible gun. Record edition, OpenXR runtime, headset, and refresh rate.
+
 > **HALO 2 C-H2-41 REJECTED BY HEADSET - 2026-08-22.**
 > Built on the user-declared C-H2-40 source `fa1f642`; candidate source
 > `26cf827`. The primary first-person assembly is placed from the shared
