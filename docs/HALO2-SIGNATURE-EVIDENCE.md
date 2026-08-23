@@ -3289,3 +3289,17 @@ installer rejected it before copying because its exact manifest validator still
 required the preceding C-H2-55 slug and behavior fields. This is a safe
 packaging-contract refusal, not a runtime result. Producer and validator are
 advanced together before generating the final headset candidate.
+
+The final exact package is
+`74152be-halo2-c56-authored-hand-weapon-mounts-20260823-234134640Z`, source
+`74152be45b51b3956e30a137032cabdb740f0ce7`, manifest SHA-256
+`21B72ED320D86991DC6B13B9685FCD5259465D247E1E92F90E049AD2A306646F`,
+DLL SHA-256
+`7C8EA2B3BD54E6CA236BE5BE7EFB1CFA124735DC76E50F4478B2148DAEB70B0F`,
+and launcher SHA-256
+`87F1DF6202BE26065BAEB769BC19E06B526F25DDC5FCBF6FE75FAE779C54A902`.
+Its manifest identifies C-H2-56 and names both corrected policies. The verified
+installer preserved the preceding bytes independently and installed this exact
+DLL to Steam and Store; independent post-install SHA-256 checks match in both.
+MCC was not launched and neither configuration changed. This remains an
+unaccepted headset candidate.

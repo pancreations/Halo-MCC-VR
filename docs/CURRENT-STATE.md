@@ -21,8 +21,8 @@
 > substitutions, five classified non-owned units, and 19 calls left
 > unclassified stock before the local-player guard because the old detour
 > unnecessarily required the engine's `useUnitAim` flag. C-H2-56 owns the
-> completed direction for the
-> guarded local player for either flag value and converges the preserved muzzle
+> completed direction for the guarded local player for either flag value and
+> converges the preserved muzzle
 > origin on the exact fresh compositor-presented crosshair. AI and remote units
 > remain stock; no XInput, observer or camera field is changed.
 >
@@ -32,8 +32,23 @@
 > and immediately superseded for metadata correction before any headset run.
 > The correctly labeled package then built and passed every offline gate, but
 > the automatic installer safely refused it before copying because its schema
-> validator still required the old C-H2-55 contract. The validator is advancing
-> with the producer; a new exact-source package remains required.
+> validator still required the old C-H2-55 contract. The validator then advanced
+> with the producer. The final manifest-backed package from source `74152be`
+> passed the cumulative Release build, core tests and Reach consistency gate,
+> then automatically installed to both Steam and Store. Independent installed-
+> file hashes match. MCC was not launched and neither existing `halomccvr.cfg`
+> changed.
+>
+> | C-H2-56 deployed identity | Value |
+> | --- | --- |
+> | Source | `74152be45b51b3956e30a137032cabdb740f0ce7` |
+> | Gameplay behavior commit | `991e5962109895855c0edc0bf90be9fa1161b2a2` |
+> | Package | `74152be-halo2-c56-authored-hand-weapon-mounts-20260823-234134640Z` |
+> | Manifest SHA-256 | `21B72ED320D86991DC6B13B9685FCD5259465D247E1E92F90E049AD2A306646F` |
+> | `HaloMCCVR.dll` | `7C8EA2B3BD54E6CA236BE5BE7EFB1CFA124735DC76E50F4478B2148DAEB70B0F` |
+> | `HaloMCCVRLauncher.exe` | `87F1DF6202BE26065BAEB769BC19E06B526F25DDC5FCBF6FE75FAE779C54A902` |
+> | Editions | installed and independently hash-verified in Steam and Microsoft Store; prior C-H2-55 bytes preserved separately for each |
+>
 > Required headset acceptance is Anniversary and Classic:
 > verify each hand stays on its own controller through 90/180-degree body turns,
 > the right gun retains a stable authored offset, every shot follows the visible
