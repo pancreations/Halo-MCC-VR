@@ -30,6 +30,10 @@
 > PASS. The first package attempt correctly contained source `991e596` and the
 > new DLL, but inherited stale C-H2-55 package/manifest labels; it was installed
 > and immediately superseded for metadata correction before any headset run.
+> The correctly labeled package then built and passed every offline gate, but
+> the automatic installer safely refused it before copying because its schema
+> validator still required the old C-H2-55 contract. The validator is advancing
+> with the producer; a new exact-source package remains required.
 > Required headset acceptance is Anniversary and Classic:
 > verify each hand stays on its own controller through 90/180-degree body turns,
 > the right gun retains a stable authored offset, every shot follows the visible

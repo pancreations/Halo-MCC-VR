@@ -3281,3 +3281,11 @@ but the producer still emitted a stale `C-H2-55` id, behavior description and
 package slug. It is superseded before headset use. The producer metadata is
 corrected and a newly committed, manifest-identified C-H2-56 package is required
 before testing; the stale label is not accepted as C-H2-56 evidence.
+
+The next correctly labeled package from source `daf3e65` built, passed tests and
+was staged as
+`daf3e65-halo2-c56-authored-hand-weapon-mounts-20260823-234023690Z`, but the
+installer rejected it before copying because its exact manifest validator still
+required the preceding C-H2-55 slug and behavior fields. This is a safe
+packaging-contract refusal, not a runtime result. Producer and validator are
+advanced together before generating the final headset candidate.

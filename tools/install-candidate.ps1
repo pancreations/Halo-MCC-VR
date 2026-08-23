@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c55-consecutive-level-rehook-',
+            $head.Substring(0, 7) + '-halo2-c56-authored-hand-weapon-mounts-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-55' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-56' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_BUILD_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-shared-unload-safe-hook-epochs-and-same-generation-level-rehook' -or
+            'h2ek-final-render-packet-authored-root-mounted-two-controller-hands-right-gun-all-local-presented-crosshair-shots-plus-c55-rehook' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -458,9 +458,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo2_candidate.collapsed_nodes -cne
             'every-final-hands-packet-node-outside-left-and-right-hand-subtrees' -or
         [string]$manifest.halo2_candidate.controller_rotation_space -cne
-            'final-world-rigid-delta-desired-controller-times-inverse-stock-wrist-turn-invariant' -or
+            'final-world-rigid-root-replacement-controller-times-inverse-authored-camera-root-preserves-live-wrist-and-gun-mounts' -or
         [string]$manifest.halo2_candidate.projectile_aim_source -cne
-            'local-player-stock-muzzle-to-exact-fresh-compositor-presented-crosshair-point' -or
+            'all-guarded-local-helper-results-stock-muzzle-to-exact-fresh-compositor-presented-crosshair-point-independent-of-use-unit-aim-flag' -or
         -not (Test-ExactInt32 `
             $manifest.halo2_candidate.projectile_presented_reticle_freshness_ms 250) -or
         [string]$manifest.halo2_candidate.interpolation_reset_policy -cne
