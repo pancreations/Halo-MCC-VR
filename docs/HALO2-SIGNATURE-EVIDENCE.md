@@ -2162,3 +2162,23 @@ Two things kept that target out of reach, both fixed in C-H2-33:
 When a differently shaped source wins, the eye caches keep the FINAL slot
 shape (so nothing else in the pipeline churns) and the finished eye is
 blitted rather than copied; the switch and the blit are both logged.
+
+## E-H2-28: the interpolator reset was the 60 Hz (C-H2-34)
+
+MCC ships halo_frame_interpolator precisely so the 60 Hz game tick does not
+show at 72-144 Hz: the first-person weapon is blended between tick N-1 and
+tick N every frame. C-H2-31 called the engine own slot reset 0x723010 after
+every placement to stop the weapon swimming, which threw that blending away -
+so the weapon stepped at exactly the tick rate no matter what frame rate the
+player ran. That was the 60 Hz.
+
+It is no longer needed. E-H2-26 fixes the swim by mathematics rather than by
+removing motion: the weapon is drawn with the view of the pose it was placed
+at, so on screen it is
+
+    inverse(P_tick) x P_tick x L  =  L
+
+exactly its designed offset, for any head motion since the tick, while the
+world keeps the frame own view. C-H2-34 therefore never calls the reset. Its
+entry bytes are still verified, because being its SINGLE caller is what proves
+0x818CA0 is first_person_weapons - the identity check stays, the call goes.

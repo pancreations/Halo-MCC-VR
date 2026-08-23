@@ -91,12 +91,11 @@ namespace
     std::atomic<uint64_t> g_weaponsWitnessed{0};
     std::atomic<uint64_t> g_weaponsRecordForeign{0};
     std::atomic<uint64_t> g_weaponsNoPublication{0};
-    std::atomic<uint64_t> g_weaponsSlotResets{0};
+
     // generation << 32 is not enough for a 64-bit serial; two atomics, the
     // serial written last (release) and read first (acquire).
     std::atomic<uint32_t> g_weaponTickGeneration{0};
     std::atomic<uint64_t> g_weaponTickIndex{0};
-    std::atomic<uint64_t> g_weaponsResetSkippedClassic{0};
     std::atomic<uint64_t> g_publicationIndex{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
     uint64_t g_lastWitnessedReported = 0;
@@ -431,41 +430,6 @@ namespace
         g_weaponsWitnessed.fetch_add(1, std::memory_order_relaxed);
     }
 
-    bool RemasteredRendererLive() noexcept
-    {
-        const uintptr_t base = g_moduleBase.load(std::memory_order_acquire);
-        if (!base)
-            return false;
-        uint8_t classicDisabled = 0;
-        __try
-        {
-            classicDisabled = *reinterpret_cast<const volatile uint8_t*>(
-                base + kHalo2ClassicRenderDisabledByteRva);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-        return classicDisabled != 0;
-    }
-
-    void ResetFirstPersonInterpolation() noexcept
-    {
-        using ResetFn = void(__fastcall*)(int, int);
-        const auto reset = reinterpret_cast<ResetFn>(
-            g_interpolatorResetAddress.load(std::memory_order_acquire));
-        if (!reset)
-            return;
-        // Classic draws the weapon against the camera at draw time
-        // (E-H2-20) and wants the engine's inter-tick blending; only the
-        // Saber renderer draws the placed, interpolated object.
-        if (!RemasteredRendererLive())
-        {
-            g_weaponsResetSkippedClassic.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        for (int slot = 0; slot < kHalo2FrameInterpolatorFirstPersonSlots; ++slot)
-            reset(static_cast<int>(kOwnedUser), slot);
-        g_weaponsSlotResets.fetch_add(1, std::memory_order_relaxed);
-    }
-
     __declspec(noinline) void __fastcall Halo2FirstPersonWeaponsDetour(
         uint32_t a, uint32_t b, uint8_t c)
     {
@@ -495,14 +459,6 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             g_exceptions.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (owned)
-        {
-            __try { ResetFirstPersonInterpolation(); }
-            __except (EXCEPTION_EXECUTE_HANDLER)
-            {
-                g_exceptions.fetch_add(1, std::memory_order_relaxed);
-            }
         }
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
@@ -906,10 +862,14 @@ namespace
             return false;
         }
 
-        // E-H2-23: the weapon tick witness. Pinned by the entry bytes of
-        // first_person_weapons (the single caller of the interpolator's
-        // first-person slot reset) and of the reset itself. Absence is loud
-        // and leaves the observer exactly as it was before this candidate.
+        // E-H2-23: the weapon tick witness. first_person_weapons is
+        // identified by being the SINGLE caller of the interpolator's
+        // first-person slot reset, so the reset's entry bytes are still
+        // checked as the identity proof - C-H2-34 never calls it. Killing the
+        // interpolation was what pinned the weapon to the 60 Hz game tick;
+        // the weapon's own view (E-H2-26) cancels the head motion exactly, so
+        // the engine's blending stays on and the weapon stays smooth at
+        // whatever frame rate the player runs.
         const uintptr_t resetAddress =
             base + kHalo2FrameInterpolatorResetFirstPersonSlotRva;
         uint8_t resetBytes[sizeof(kHalo2FrameInterpolatorResetFirstPersonSlotEntryBytes)]{};
@@ -992,12 +952,11 @@ namespace
                         static_cast<unsigned>(kHalo2FirstPersonWeaponsRva),
                         static_cast<unsigned>(
                             kHalo2FrameInterpolatorResetFirstPersonSlotRva),
-                        resetPinned ? "reset pinned" : "reset NOT pinned",
-                        resetPinned
-                            ? " and resets the four first-person interpolation "
-                              "slots after the placement so the renderer draws "
-                              "that tick's placement un-blended"
-                            : "; the interpolator keeps blending the weapon");
+                        resetPinned ? "identity proven"
+                                    : "identity NOT proven",
+                        "; the engine's inter-tick blending is left ON so the "
+                        "weapon stays smooth at the player's frame rate, and "
+                        "the weapon's own view cancels the head motion");
                 }
             }
         }
@@ -1060,9 +1019,9 @@ namespace
             "poses applied, %llu rejected samples, %llu unreadable, %llu "
             "exceptions; lean now %.3f m at world_scale %.3f wu/m (positional "
             "%s); weapon tick witness: %llu placements, %llu witnessed, %llu "
-            "with a record the engine had moved, %llu with no publication, "
-            "%llu interpolation-slot resets (%llu skipped in Classic); last "
-            "witnessed publication #%llu",
+            "with a record the engine had moved, %llu with no publication; "
+            "the engine's inter-tick blending is left ON; last witnessed "
+            "publication #%llu",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1082,10 +1041,6 @@ namespace
                 g_weaponsRecordForeign.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponsNoPublication.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(
-                g_weaponsSlotResets.load(std::memory_order_relaxed)),
-            static_cast<unsigned long long>(
-                g_weaponsResetSkippedClassic.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponTickIndex.load(std::memory_order_relaxed)));
     }
