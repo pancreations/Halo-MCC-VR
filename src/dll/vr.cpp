@@ -444,6 +444,8 @@ namespace
     // changed it to the same picture twice (camera-side problem).
     ID3D11Texture2D* g_halo2PrePairCache = nullptr;
     std::atomic<bool> g_halo2PrePairWanted{false};
+    // E-H2-34: a one-shot eye-picture request (tick count it is due at).
+    std::atomic<uint64_t> g_halo2EyeDumpDueMs{0};
     std::atomic<bool> g_halo2PrePairHasImage{false};
     std::atomic<uint64_t> g_halo2PrePairSerial{0};
     D3D11_TEXTURE2D_DESC g_halo2ProbeDesc{};
@@ -5072,14 +5074,79 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 samples ? (100.0 * changed / samples) : 0.0;
             const double litPercent =
                 samples ? (100.0 * lit / samples) : 0.0;
+            // E-H2-34: the first-person weapon's disparity, measured. The
+            // lower-right box (where the gun is) and an upper world band are
+            // each searched for the horizontal shift that best matches eye 1
+            // to eye 0. Positive = eye 1's content sits to the RIGHT of eye
+            // 0's, which for a near object is the wrong way round (eye 0 is
+            // the left eye); the world band gives the sign a true stereo
+            // pair has. Sampled every 16 px; once every 2 s.
+            auto bestShift = [&](unsigned x0, unsigned x1, unsigned y0, unsigned y1,
+                                 int range, int stride, double& bestMatch,
+                                 double& zeroMatch) -> int {
+                int best = 0;
+                bestMatch = 1.0e9;
+                zeroMatch = 0.0;
+                const unsigned W = g_eyeCacheDesc.Width;
+                for (int dx = -range; dx <= range; dx += stride)
+                {
+                    unsigned long long acc = 0;
+                    unsigned n = 0;
+                    for (unsigned y = y0; y < y1; y += 16)
+                    {
+                        const auto* l =
+                            static_cast<const unsigned char*>(mapped[0].pData) +
+                            y * mapped[0].RowPitch;
+                        const auto* r =
+                            static_cast<const unsigned char*>(mapped[1].pData) +
+                            y * mapped[1].RowPitch;
+                        for (unsigned x = x0; x < x1; x += 16)
+                        {
+                            const int xr = static_cast<int>(x) + dx;
+                            if (xr < 0 || xr >= static_cast<int>(W))
+                                continue;
+                            const unsigned o = x * 4;
+                            const unsigned p = static_cast<unsigned>(xr) * 4;
+                            for (unsigned c = 0; c < 3; ++c)
+                            {
+                                const int d = (int)l[o + c] - (int)r[p + c];
+                                acc += (unsigned)(d < 0 ? -d : d);
+                            }
+                            ++n;
+                        }
+                    }
+                    const double m = n ? (double)acc / (n * 3.0) : 1.0e9;
+                    if (dx == 0)
+                        zeroMatch = m;
+                    if (m < bestMatch)
+                    {
+                        bestMatch = m;
+                        best = dx;
+                    }
+                }
+                return best;
+            };
+            const unsigned Wd = g_eyeCacheDesc.Width;
+            const unsigned Hd = g_eyeCacheDesc.Height;
+            double weaponMatch = 0.0, weaponZero = 0.0, worldMatch = 0.0, worldZero = 0.0;
+            const int weaponShift = bestShift(
+                Wd * 45 / 100, Wd * 80 / 100, Hd * 50 / 100, Hd * 95 / 100,
+                400, 8, weaponMatch, weaponZero);
+            const int worldShift = bestShift(
+                Wd * 30 / 100, Wd * 70 / 100, Hd * 8 / 100, Hd * 30 / 100,
+                64, 4, worldMatch, worldZero);
             // E-H2-13: the picture itself, every 10 s, quarter size, next to
             // the log (HaloMCCVR-halo2-eye0.bmp / eye1.bmp). "Cropped" and
             // "goggles" are judged by looking at the frame the mod actually
             // published, not by counters. Staging is already mapped here.
             {
                 static uint64_t lastDumpMs = 0;
-                if (nowMs - lastDumpMs >= 10000 && LogDirectory()[0])
+                const uint64_t dueMs = g_halo2EyeDumpDueMs.load(std::memory_order_acquire);
+                const bool requested = dueMs != 0 && nowMs >= dueMs;
+                if ((nowMs - lastDumpMs >= 10000 || requested) && LogDirectory()[0])
                 {
+                    if (requested)
+                        g_halo2EyeDumpDueMs.store(0, std::memory_order_release);
                     lastDumpMs = nowMs;
                     const bool bgr =
                         g_eyeCacheDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
@@ -5441,9 +5508,14 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             {
                 LOG("Halo 2 eye-pair pixel check: DISTINCT eyes, mean RGB "
                     "delta=%.3f, changed samples=%.1f%% (%u/%u), %.1f%% lit "
-                    "- true per-eye rendering",
+                    "- true per-eye rendering; weapon box (lower right) eye 1 "
+                    "vs eye 0 best shift %+d px (match %.1f, at zero %.1f), "
+                    "world band best shift %+d px (match %.1f, at zero %.1f) "
+                    "- a near object must shift the SAME way as the world, "
+                    "further",
                     meanChannelDelta, changedPercent, changed, samples,
-                    litPercent);
+                    litPercent, weaponShift, weaponMatch, weaponZero,
+                    worldShift, worldMatch, worldZero);
             }
         }
         else
@@ -13123,6 +13195,11 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
 #endif
 
 #if HALOMCCVR_HALO2_STEREO6DOF
+void VR_Halo2RequestEyeDump(uint32_t delayMs)
+{
+    g_halo2EyeDumpDueMs.store(GetTickCount64() + delayMs, std::memory_order_release);
+}
+
 void VR_Halo2NoteDraw()
 {
     const int eye = g_rasterEye.load(std::memory_order_relaxed);

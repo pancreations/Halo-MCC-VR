@@ -124,6 +124,22 @@ namespace
     std::atomic<int> g_reanchorLastSlot{-1};
     std::atomic<uint32_t> g_reanchorLastHandled{0};
     std::atomic<uint32_t> g_reanchorLastCount{0};
+    // E-H2-34 (C-H2-39): the pass cameras the owning core named (seqlocked),
+    // the per-slot idempotency caches, and what the re-anchor found.
+    std::atomic<uint32_t> g_passCamerasVersion{0};
+    Halo2FirstPersonPassCameras g_passCameras{};
+    std::atomic<bool> g_passCamerasSet{false};
+    Halo2FirstPersonSlotCache g_slotCache[kHalo2FrameInterpolatorFirstPersonSlots]{};
+    std::atomic<bool> g_slotCacheBusy{false};
+    std::atomic<uint64_t> g_reanchorFromCache{0};
+    std::atomic<uint64_t> g_reanchorCompensated{0};
+    std::atomic<uint64_t> g_reanchorSpaceWorld{0};
+    std::atomic<uint64_t> g_reanchorSpaceRelative{0};
+    std::atomic<uint64_t> g_reanchorSpaceUnknown{0};
+    std::atomic<uint64_t> g_reanchorPassCameras{0};
+    std::atomic<uint64_t> g_reanchorFallbackFrame{0};
+    std::atomic<uint64_t> g_reanchorBusy{0};
+    std::atomic<uint64_t> g_reanchorBadSlot{0};
     std::atomic<uint64_t> g_publicationIndex{0};
     std::atomic<uint64_t> g_weaponsSlotResets{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
@@ -518,13 +534,16 @@ namespace
         g_reanchorLastId.store(id, std::memory_order_relaxed);
         g_reanchorLastSlot.store(slot, std::memory_order_relaxed);
         g_reanchorLastHandled.store(handled, std::memory_order_relaxed);
-        const bool nodesPresent = handled && nodesOut && countOut && *nodesOut;
+        const bool nodesPresent = nodesOut && countOut && *nodesOut;
         if (nodesPresent)
             g_reanchorLastCount.store(*countOut, std::memory_order_relaxed);
         const bool live = g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
             !g_teardownRequested.load(std::memory_order_acquire);
-        if (!handled)
+        // C-H2-38 measured the read's return value: 0 on every one of 6388
+        // calls that handed back 42 valid nodes. It is not a success flag;
+        // the gate is the node array itself.
+        if (!nodesOut || !countOut || !*nodesOut)
             g_reanchorUnhandled.fetch_add(1, std::memory_order_relaxed);
         else if (player != static_cast<int>(kOwnedUser))
             g_reanchorOtherPlayer.fetch_add(1, std::memory_order_relaxed);
@@ -534,6 +553,9 @@ namespace
             g_reanchorNotLive.fetch_add(1, std::memory_order_relaxed);
         else if (g_weaponTickIndex.load(std::memory_order_acquire) == 0)
             g_reanchorNoTick.fetch_add(1, std::memory_order_relaxed);
+        else if (slot < 0 ||
+                 slot >= kHalo2FrameInterpolatorFirstPersonSlots)
+            g_reanchorBadSlot.fetch_add(1, std::memory_order_relaxed);
         else
         {
             Halo2CameraBasis tick{};
@@ -552,46 +574,100 @@ namespace
                     tickValid = true;
                 }
             }
-            Halo2ObserverPosePublication frame{};
-            if (tickValid && Halo2Observer6Dof_ReadPublishedPose(frame) &&
-                frame.generation ==
-                    g_generation.load(std::memory_order_acquire) &&
-                Halo2ValidateCameraBasis(frame.tracked))
+            // E-H2-34: the pass cameras the owning core named; the newest
+            // publication only when no core has named a pass.
+            Halo2FirstPersonPassCameras pass{};
+            bool passValid = false;
+            if (g_passCamerasSet.load(std::memory_order_acquire))
             {
-                if (Halo2CameraBasesNearlyEqual(tick, frame.tracked))
+                for (int attempt = 0; attempt < 4 && !passValid; ++attempt)
+                {
+                    const uint32_t before =
+                        g_passCamerasVersion.load(std::memory_order_acquire);
+                    if (before & 1u)
+                        continue;
+                    Halo2FirstPersonPassCameras candidate = g_passCameras;
+                    if (g_passCamerasVersion.load(std::memory_order_acquire) ==
+                        before)
+                    {
+                        pass = candidate;
+                        passValid = candidate.frameValid &&
+                            Halo2ValidateCameraBasis(candidate.frame);
+                    }
+                }
+            }
+            if (passValid)
+            {
+                g_reanchorPassCameras.fetch_add(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                Halo2ObserverPosePublication frame{};
+                if (Halo2Observer6Dof_ReadPublishedPose(frame) &&
+                    frame.generation ==
+                        g_generation.load(std::memory_order_acquire) &&
+                    Halo2ValidateCameraBasis(frame.tracked))
+                {
+                    pass = Halo2FirstPersonPassCameras{};
+                    pass.frame = frame.tracked;
+                    pass.frameValid = true;
+                    passValid = true;
+                    g_reanchorFallbackFrame.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (tickValid && passValid)
+            {
+                if (!pass.compensate &&
+                    Halo2CameraBasesNearlyEqual(tick, pass.frame))
                 {
                     g_reanchorIdentity.fetch_add(1, std::memory_order_relaxed);
                 }
-                else
+                bool expected = false;
+                if (g_slotCacheBusy.compare_exchange_strong(
+                        expected, true, std::memory_order_acq_rel))
                 {
-                    float rotation[9];
-                    const uint32_t count = *countOut;
-                    if (count > 0 &&
-                        count <= static_cast<uint32_t>(kHalo2FirstPersonNodeLimit) &&
-                        Halo2BuildWorldDeltaRotation(tick, frame.tracked, rotation))
+                    Halo2FirstPersonReanchorResult outcome{};
+                    bool ok = false;
+                    __try
                     {
-                        __try
-                        {
-                            float* node = reinterpret_cast<float*>(*nodesOut);
-                            for (uint32_t index = 0; index < count; ++index)
-                            {
-                                Halo2ReanchorFirstPersonNode(
-                                    node, rotation, tick.position,
-                                    frame.tracked.position);
-                                node += kHalo2FirstPersonNodeStride / 4;
-                            }
-                            g_reanchorApplied.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                        __except (EXCEPTION_EXECUTE_HANDLER)
-                        {
-                            g_exceptions.fetch_add(1, std::memory_order_relaxed);
-                        }
+                        ok = Halo2ReanchorFirstPersonSlot(
+                            reinterpret_cast<float*>(*nodesOut), *countOut,
+                            tick, pass, g_slotCache[slot], outcome);
+                    }
+                    __except (EXCEPTION_EXECUTE_HANDLER)
+                    {
+                        g_exceptions.fetch_add(1, std::memory_order_relaxed);
+                        ok = false;
+                    }
+                    g_slotCacheBusy.store(false, std::memory_order_release);
+                    switch (outcome.space)
+                    {
+                    case Halo2FirstPersonNodeSpace::World:
+                        g_reanchorSpaceWorld.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case Halo2FirstPersonNodeSpace::CameraRelative:
+                        g_reanchorSpaceRelative.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    default:
+                        g_reanchorSpaceUnknown.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    }
+                    if (ok && outcome.applied)
+                    {
+                        g_reanchorApplied.fetch_add(1, std::memory_order_relaxed);
+                        if (outcome.fromCache)
+                            g_reanchorFromCache.fetch_add(1, std::memory_order_relaxed);
+                        if (outcome.compensated)
+                            g_reanchorCompensated.fetch_add(1, std::memory_order_relaxed);
                     }
                     else
                     {
                         g_reanchorSkipped.fetch_add(1, std::memory_order_relaxed);
                     }
+                }
+                else
+                {
+                    g_reanchorBusy.fetch_add(1, std::memory_order_relaxed);
                 }
             }
             else
@@ -915,6 +991,9 @@ namespace
             (void)MH_RemoveHook(g_reanchorTarget);
             g_reanchorTarget = nullptr;
             g_reanchorOriginal.store(0, std::memory_order_release);
+            g_passCamerasSet.store(false, std::memory_order_release);
+            for (auto& cache : g_slotCache)
+                cache.valid = false;
         }
         if (g_weaponsTarget)
         {
@@ -1308,8 +1387,12 @@ namespace
             "%llu interpolation resets (the weapon shares the world's tick); "
             "re-anchor applied %llu, identity %llu, skipped %llu (read detour "
             "entered %llu: unhandled %llu, other player %llu, no nodes %llu, "
-            "not live %llu, no witnessed tick %llu; last call player %d id %d "
-            "slot %d handled %u count %u); last witnessed publication #%llu",
+            "not live %llu, no witnessed tick %llu, bad slot %llu; last call "
+            "player %d id %d slot %d handled %u count %u); geometry: from "
+            "cache %llu, classic stale-camera compensated %llu, node space "
+            "world %llu / camera-relative %llu / unknown %llu, pass cameras "
+            "named %llu, newest-publication fallback %llu, busy %llu; last "
+            "witnessed publication #%llu",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1349,11 +1432,29 @@ namespace
                 g_reanchorNotLive.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_reanchorNoTick.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorBadSlot.load(std::memory_order_relaxed)),
             g_reanchorLastPlayer.load(std::memory_order_relaxed),
             g_reanchorLastId.load(std::memory_order_relaxed),
             g_reanchorLastSlot.load(std::memory_order_relaxed),
             g_reanchorLastHandled.load(std::memory_order_relaxed),
             g_reanchorLastCount.load(std::memory_order_relaxed),
+            static_cast<unsigned long long>(
+                g_reanchorFromCache.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorCompensated.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorSpaceWorld.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorSpaceRelative.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorSpaceUnknown.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorPassCameras.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorFallbackFrame.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorBusy.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_weaponTickIndex.load(std::memory_order_relaxed)));
     }
@@ -1497,6 +1598,20 @@ bool Halo2Observer6Dof_WeaponTickPublication(
         g_weaponTickGeneration.load(std::memory_order_relaxed) == generation;
 }
 
+void Halo2Observer6Dof_SetFirstPersonPassCameras(
+    const Halo2FirstPersonPassCameras* cameras) noexcept
+{
+    if (!cameras)
+    {
+        g_passCamerasSet.store(false, std::memory_order_release);
+        return;
+    }
+    g_passCamerasVersion.fetch_add(1, std::memory_order_acq_rel);
+    g_passCameras = *cameras;
+    g_passCamerasVersion.fetch_add(1, std::memory_order_acq_rel);
+    g_passCamerasSet.store(true, std::memory_order_release);
+}
+
 void Halo2Observer6Dof_RequestRecenter() noexcept
 {
     g_recenterRequested.store(true, std::memory_order_release);
@@ -1532,6 +1647,8 @@ bool Halo2Observer6Dof_WeaponTickPublication(
     previousIndex = 0;
     return false;
 }
+void Halo2Observer6Dof_SetFirstPersonPassCameras(
+    const Halo2FirstPersonPassCameras*) noexcept {}
 void Halo2Observer6Dof_RequestRecenter() noexcept {}
 void Halo2Observer6Dof_ShutdownForVrFailure() noexcept {}
 

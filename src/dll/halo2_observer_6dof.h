@@ -49,6 +49,15 @@ int Halo2Observer6Dof_ReadPublishedPoses(
 bool Halo2Observer6Dof_WeaponTickPublication(
     uint32_t generation, uint64_t& index, uint64_t& previousIndex) noexcept;
 
+// E-H2-34 (C-H2-39): the stereo core that owns the frame names the cameras
+// of the eye pass about to render - the centre the eyes render from, and for
+// the classic pass the stale camera it draws from - so the weapon re-anchor
+// moves the first-person geometry to exactly that pass. nullptr clears.
+// Seqlocked copy; bounded; safe on the render thread.
+struct Halo2FirstPersonPassCameras;
+void Halo2Observer6Dof_SetFirstPersonPassCameras(
+    const Halo2FirstPersonPassCameras* cameras) noexcept;
+
 // Atomic-only. The next valid sample becomes the new orientation/translation
 // reference; safe to call from the universal recenter path.
 void Halo2Observer6Dof_RequestRecenter() noexcept;

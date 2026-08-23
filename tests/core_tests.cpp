@@ -7399,6 +7399,90 @@ int main()
                 "E-H2-32 up survives a yaw untouched");
         }
 
+        // E-H2-34: node-space classification, the stale-camera compensation,
+        // and the idempotent slot cache.
+        {
+            const float tickCamera[3] = {500.0f, 600.0f, 1.0f};
+            const float worldRoot[3] = {500.4f, 600.1f, 0.9f};
+            const float relativeRoot[3] = {0.4f, 0.1f, -0.1f};
+            const float farRoot[3] = {250.0f, 0.0f, 0.0f};
+            Check(Halo2ClassifyFirstPersonNodeSpace(worldRoot, tickCamera) ==
+                      Halo2FirstPersonNodeSpace::World,
+                "E-H2-34 a node next to the camera is in world space");
+            Check(Halo2ClassifyFirstPersonNodeSpace(relativeRoot, tickCamera) ==
+                      Halo2FirstPersonNodeSpace::CameraRelative,
+                "E-H2-34 a node near the origin with a far camera is camera-relative");
+            Check(Halo2ClassifyFirstPersonNodeSpace(farRoot, tickCamera) ==
+                      Halo2FirstPersonNodeSpace::Unknown,
+                "E-H2-34 a node far from both is unknown");
+
+            static Halo2FirstPersonSlotCache cache{};
+            cache = Halo2FirstPersonSlotCache{};
+            Halo2CameraBasis tick{};
+            tick.forward[1] = 1.0f; tick.up[2] = 1.0f;
+            tick.position[0] = 500.0f; tick.position[1] = 600.0f; tick.position[2] = 1.0f;
+            Halo2FirstPersonPassCameras pass{};
+            pass.frame = tick;
+            pass.frameValid = true;
+            pass.correct = tick;
+            pass.correct.position[0] -= 0.01f;   // left eye: 10 mm left of centre
+            pass.viewing = tick;
+            pass.viewing.position[0] += 0.01f;   // the pass draws from the RIGHT eye
+            pass.compensate = true;
+            float nodes[2 * 13]{};
+            for (int n = 0; n < 2; ++n)
+            {
+                float* node = nodes + n * 13;
+                node[0] = 1.0f;
+                node[1] = 1.0f; node[5] = 1.0f; node[9] = 1.0f;
+                node[10] = 500.0f; node[11] = 600.5f + 0.1f * n; node[12] = 0.9f;
+            }
+            Halo2FirstPersonReanchorResult outcome{};
+            Check(Halo2ReanchorFirstPersonSlot(nodes, 2, tick, pass, cache, outcome) &&
+                      outcome.applied && outcome.compensated && !outcome.fromCache &&
+                      outcome.space == Halo2FirstPersonNodeSpace::World,
+                "E-H2-34 a world-space slot is re-anchored and compensated");
+            // Same orientation for both eyes: the compensation is a pure
+            // translation by (viewing - correct) = +20 mm along x, so the
+            // stale right-eye camera sees what the left eye should.
+            Check(std::fabs(nodes[10] - 500.02f) < 1.0e-4f &&
+                      std::fabs(nodes[11] - 600.5f) < 1.0e-4f &&
+                      std::fabs(nodes[23] - 500.02f) < 1.0e-4f &&
+                      std::fabs(nodes[24] - 600.6f) < 1.0e-4f,
+                "E-H2-34 the compensation shifts every node by the eye offset difference");
+            Check(std::fabs(nodes[1] - 1.0f) < 1.0e-5f && std::fabs(nodes[5] - 1.0f) < 1.0e-5f,
+                "E-H2-34 equal orientations leave the node axes alone");
+            // Idempotent: hand the cache back exactly what it wrote.
+            Check(Halo2ReanchorFirstPersonSlot(nodes, 2, tick, pass, cache, outcome) &&
+                      outcome.fromCache && std::fabs(nodes[10] - 500.02f) < 1.0e-4f,
+                "E-H2-34 a second pass over the same array does not accumulate");
+            // Fresh engine output is taken as the new original.
+            nodes[10] = 500.0f; nodes[11] = 600.7f;
+            Check(Halo2ReanchorFirstPersonSlot(nodes, 2, tick, pass, cache, outcome) &&
+                      !outcome.fromCache && std::fabs(nodes[10] - 500.02f) < 1.0e-4f &&
+                      std::fabs(nodes[11] - 600.7f) < 1.0e-4f,
+                "E-H2-34 fresh engine nodes replace the cached original");
+            // Unknown space: untouched, refused.
+            float farNode[13]{};
+            farNode[0] = 1.0f; farNode[1] = 1.0f; farNode[5] = 1.0f; farNode[9] = 1.0f;
+            farNode[10] = 250.0f;
+            Check(!Halo2ReanchorFirstPersonSlot(farNode, 1, tick, pass, cache, outcome) &&
+                      std::fabs(farNode[10] - 250.0f) < 1.0e-6f,
+                "E-H2-34 nodes of unknown space are left as the engine made them");
+            // Camera-relative nodes: rotation only, never translated.
+            cache = Halo2FirstPersonSlotCache{};
+            float rel[13]{};
+            rel[0] = 1.0f; rel[1] = 1.0f; rel[5] = 1.0f; rel[9] = 1.0f;
+            rel[10] = 0.0f; rel[11] = 0.5f; rel[12] = -0.1f;
+            Halo2FirstPersonPassCameras turned = pass;
+            turned.compensate = false;
+            turned.frame.forward[0] = -1.0f; turned.frame.forward[1] = 0.0f;  // yaw +90: y -> -x
+            Check(Halo2ReanchorFirstPersonSlot(rel, 1, tick, turned, cache, outcome) &&
+                      outcome.space == Halo2FirstPersonNodeSpace::CameraRelative &&
+                      std::fabs(rel[10] + 0.5f) < 1.0e-4f && std::fabs(rel[11]) < 1.0e-4f,
+                "E-H2-34 camera-relative nodes turn with the head about the origin");
+        }
+
         // E-H2-21: main-view flags and Saber matrix matching.
         {
             Check(Halo2SaberViewRecordIsMainView(0) &&

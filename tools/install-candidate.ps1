@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 22) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c37-weapon-reanchor-classic-both-globals-',
+            $head.Substring(0, 7) + '-halo2-c39-weapon-reanchor-classic-stale-camera-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or

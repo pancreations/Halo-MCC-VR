@@ -8,6 +8,7 @@
 #include "../common/log.h"
 #include "game.h"
 #include "halo2_render_mode_guard.h"
+#include "vr.h"
 
 #ifndef HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION
 #define HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION 0
@@ -1013,6 +1014,9 @@ Halo2GraphicsMode Halo2ColdObservation_GraphicsMode(
             static_cast<unsigned>(live),
             Halo2ClassicRenderTreeRuns(live) ? "DOES" : "does NOT",
             recentButtons, guard);
+        // E-H2-34: a picture of the renderer we just switched TO, 3 s in,
+        // so a short visit still leaves eye pictures next to the log.
+        VR_Halo2RequestEyeDump(3000);
     }
     return g_graphicsMode;
 #endif

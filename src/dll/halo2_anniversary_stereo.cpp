@@ -26,6 +26,9 @@
 
 namespace
 {
+    // E-H2-34 (C-H2-39): draw the weapon with the tick's view (C-H2-33/36)
+    // instead of the frame's. Off: the geometry is re-anchored to the frame.
+    constexpr bool kHalo2AnniversaryWeaponTickView = false;
     // Recovered from all three engine call sites, which set only rcx and r8d:
     //   lea rcx,[r15+0x10] / xor edx,edx / mov r8d,0xC8 / call memset
     //   mov r8d,ebx        / mov rcx,r15 / call 0x2DF190
@@ -788,6 +791,15 @@ namespace
         }
 
         bool ok = true;
+        // E-H2-34: the weapon re-anchor moves the first-person geometry to
+        // the tracked centre THESE eyes are rendered from; no stale-camera
+        // compensation - the Saber record is rebuilt per eye by the engine.
+        {
+            Halo2FirstPersonPassCameras passCameras{};
+            passCameras.frame = tracked;
+            passCameras.frameValid = true;
+            Halo2Observer6Dof_SetFirstPersonPassCameras(&passCameras);
+        }
         for (int eye = 0; eye < kHalo2EyeCount && ok; ++eye)
         {
             if (eye != 0)
@@ -824,7 +836,11 @@ namespace
             // frame rate. Cleared when there is no witness, and the rebuild
             // then keeps the engine's own first-person view.
             g_weaponViewValid.store(false, std::memory_order_release);
-            if (weaponBasisValid)
+            // E-H2-34 (C-H2-39): the weapon GEOMETRY is now re-anchored to
+            // the frame camera by the interpolator-read hook, so the weapon
+            // must be drawn with the frame's own view - the engine's +0x56C -
+            // and not the tick's. The tick view stays available, disabled.
+            if (weaponBasisValid && kHalo2AnniversaryWeaponTickView)
             {
                 Halo2CameraBasis weaponEye{};
                 Halo2SaberViewMatrix weaponMatrix{};
@@ -948,6 +964,7 @@ namespace
 
         // The engine's own state is put back before anything else, always:
         // the stock camera AND the stock first-person projection.
+        Halo2Observer6Dof_SetFirstPersonPassCameras(nullptr);
         g_fpPatchRecord.store(0, std::memory_order_release);
         const bool restored = RestoreCamera(record, savedCamera);
         if (haveLatch)

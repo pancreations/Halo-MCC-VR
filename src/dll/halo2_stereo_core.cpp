@@ -249,6 +249,9 @@ namespace
     std::atomic<uintptr_t> g_firstPersonOriginal{0};
     std::atomic<uint64_t> g_firstPersonCentred{0};
     std::atomic<uint64_t> g_firstPersonUnreadable{0};
+    // E-H2-34: first-pass eyes rendered with no known previous pop (the
+    // weapon keeps the stale camera's offset for that one pass).
+    std::atomic<uint64_t> g_firstPersonUncompensated{0};
     std::atomic<uint64_t> g_sceneLatchRearmed{0};
     std::atomic<uint64_t> g_sceneLatchUnreadable{0};
     uint64_t g_claimedFrameFailureLogMs = 0;
@@ -415,6 +418,16 @@ namespace
     thread_local StereoScope* g_stereoScope = nullptr;
     thread_local uint32_t g_suppressedOuterDepth = 0;
     thread_local uint32_t g_innerDepth = 0;
+    // E-H2-34: the eye camera the last render_view on this thread popped -
+    // the camera the classic first-person pass draws the NEXT pass from.
+    thread_local Halo2CameraBasis g_lastPassEyeCamera{};
+    thread_local bool g_lastPassEyeCameraValid = false;
+    // E-H2-31/E-H2-34: centring the camera globals inside draw_first_person
+    // never moved the weapon (the pass draws from the previous render_view's
+    // popped camera, not from the globals at draw time) and the Saber
+    // first-person pass has a real eye separation anyway. Disabled, not
+    // deleted; the hook stays pinned.
+    constexpr bool kHalo2ClassicCentreFirstPersonCameras = false;
 
     void ResetHeadReferenceAtomic() noexcept
     {
@@ -1145,7 +1158,8 @@ namespace
         };
         Centred owned[2];
         bool centred = false;
-        if (scope && scope->rasterCenterValid && base && g_innerDepth)
+        if (kHalo2ClassicCentreFirstPersonCameras && scope &&
+            scope->rasterCenterValid && base && g_innerDepth)
         {
             const uintptr_t globals[2] = {
                 base + kHalo2ClassicFirstPersonCameraGlobalRva,
@@ -1527,6 +1541,9 @@ namespace
         if (!original)
             return;
         g_telemetry.stockInnerCalls.fetch_add(1, std::memory_order_relaxed);
+        // A stock render_view pops the stock camera: whatever the next
+        // first-person pass draws from is no longer an eye of ours.
+        g_lastPassEyeCameraValid = false;
         original(
             argument01, argument02, argument03, argument04,
             argument05, argument06, argument07, argument08,
@@ -1643,6 +1660,32 @@ namespace
                     InvalidateScope(*scope);
                     break;
                 }
+                // E-H2-34: name this pass's cameras for the weapon re-anchor.
+                // The classic first-person pass draws from the camera the
+                // PREVIOUS render_view popped (C-H2-36 pictures: the gun
+                // carried the full eye offset the wrong way round while the
+                // world was right), so the pass's viewing camera is the
+                // other eye's - the previous pair's last eye for the first
+                // pass, this pair's first eye for the second.
+                {
+                    Halo2FirstPersonPassCameras passCameras{};
+                    passCameras.frame = scope->renderCenter;
+                    passCameras.frameValid = scope->rasterCenterValid;
+                    passCameras.correct = scope->eyes[eye].render;
+                    if (pass == 0)
+                    {
+                        passCameras.viewing = g_lastPassEyeCamera;
+                        passCameras.compensate = g_lastPassEyeCameraValid;
+                    }
+                    else
+                    {
+                        passCameras.viewing = scope->eyes[firstEye].render;
+                        passCameras.compensate = true;
+                    }
+                    if (!passCameras.compensate)
+                        g_firstPersonUncompensated.fetch_add(1, std::memory_order_relaxed);
+                    Halo2Observer6Dof_SetFirstPersonPassCameras(&passCameras);
+                }
 
                 // E-H2-29: the world pass's target id 0 resolves through the
                 // engine's once-per-frame latch, which the FIRST eye's
@@ -1722,7 +1765,13 @@ namespace
                             // Before anything else can push another raster
                             // context: the popped slot is this eye's only now.
                             if (originalReturned)
+                            {
                                 (void)ReadEngineProjection(*scope, eye);
+                                // E-H2-34: this pop is what the next
+                                // first-person pass will draw from.
+                                g_lastPassEyeCamera = scope->eyes[eye].render;
+                                g_lastPassEyeCameraValid = true;
+                            }
                         }
                     }
                 }
@@ -1761,6 +1810,7 @@ namespace
         }
         __finally
         {
+            Halo2Observer6Dof_SetFirstPersonPassCameras(nullptr);
             finalSpansRestored = RestoreOwnedSpans(*scope);
             --g_innerDepth;
         }
@@ -2281,7 +2331,8 @@ namespace
                 "foreignInner=%llu invalid=%llu duplicate=%llu claimed=%llu "
                 "innerClaimed=%llu eyes=%llu complete=%llu dropped=%llu "
                 "restoreFail=%llu exception=%llu firstPersonCentred=%llu "
-                "firstPersonUnreadable=%llu sceneLatchRearmed=%llu "
+                "firstPersonUnreadable=%llu firstPassUncompensated=%llu "
+                "sceneLatchRearmed=%llu "
                 "sceneLatchUnreadable=%llu poseOwner=%s "
                 "posePublished=%llu poseRederived=%llu poseSelf=%llu "
                 "poseUnavailable=%llu",
@@ -2305,6 +2356,8 @@ namespace
                     g_firstPersonCentred.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_firstPersonUnreadable.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_firstPersonUncompensated.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_sceneLatchRearmed.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
@@ -3062,15 +3115,14 @@ namespace
                     }
                     else
                     {
-                        LOG("Halo 2 classic first-person weapon pass owned at "
-                            "draw_first_person +0x%X: the weapon is drawn from "
-                            "the pair's CENTRE position with the eye's own "
-                            "rotation, so both eyes place it identically - the "
-                            "same zero separation the Saber renderer's "
-                            "view-without-translation first-person pass gives "
-                            "it, and the reason a weapon centimetres from the "
-                            "eye can be fused at all",
-                            static_cast<unsigned>(kHalo2ClassicDrawFirstPersonRva));
+                        LOG("Halo 2 classic first-person weapon pass pinned at "
+                            "draw_first_person +0x%X (camera centring %s): the "
+                            "weapon geometry is instead moved per eye pass by "
+                            "the interpolator re-anchor, from the previous "
+                            "render_view's popped camera - the one this pass "
+                            "draws from (E-H2-34) - to this eye's own",
+                            static_cast<unsigned>(kHalo2ClassicDrawFirstPersonRva),
+                            kHalo2ClassicCentreFirstPersonCameras ? "ON" : "OFF");
                     }
                 }
             }

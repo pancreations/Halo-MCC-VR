@@ -2325,3 +2325,58 @@ Consequences for the C-H2-36/37 conclusions:
 
 C-H2-38 pins first and hooks second. Per user directive (2026-08-22) Halo 2
 discovery from here on uses the H2EK tools, not Ghidra on retail.
+
+## E-H2-34: the classic weapon is drawn from the PREVIOUS pass's camera; the re-anchor's gate was the wrong term (C-H2-39)
+
+Measured, not read. Two eye-picture pairs and the C-H2-38 headset log.
+
+**Anniversary (C-H2-38 pictures, 20:40:48, 110 deg):** the weapon sits ~50 px
+(quarter scale) further LEFT in eye 1 than in eye 0; the world ~4 px. With
+eye 0 the left eye, a near object shifts that way: the Saber first-person pass
+draws the weapon with a real eye separation at ~26 cm, and the user calls this
+gun good. E-H2-31's premise ("Saber's first-person pass has zero eye
+separation") is therefore withdrawn - the view WITHOUT translation is the
+camera-relative precision trick, not zero parallax.
+
+**Classic (C-H2-36 pictures, 49.6 deg unpinned, raster camera centred):** the
+gun sits ~150 px further RIGHT in eye 1 (scope 620 -> 760, ammo 650 -> 815 at
+quarter scale) while the world matches to 0-2 px. That is the full eye offset,
+the wrong way round, x3.1 by the unpinned FOV (3.1 x 50 = 155). A classic pass
+therefore draws the weapon from the OTHER eye's camera - full magnitude, so the
+camera it uses is an eye of ours, not the centre. The only per-pass camera that
+is "the other eye" is the one the previous render_view popped: E-H2-12 says the
+pop 0x955F60 re-applies slot[depth] and REBUILDS the derived projection/camera
+state from the OUTER camera, and draw_first_person copies the render camera
+globals whole (E-H2-20). Centring the raw fields at draw time (C-H2-36/37) could
+not touch state rebuilt at the previous pop - which is exactly what happened.
+The mechanism is inferred; the symptom (other-eye camera, full magnitude) is
+measured, and C-H2-39 corrects the measured symptom.
+
+**The re-anchor never ran (C-H2-38 log):** `read detour entered 6388: unhandled
+6386 ... last call player 0 id -96724985 slot 0 handled 0 count 42`. The read's
+return value is 0 on every call that hands back 42 valid nodes: it is not a
+success flag, and the gate on it was the one closed term.
+
+**C-H2-39:**
+1. The gate is the node array itself. Per-slot cache makes the transform
+   idempotent (the engine may hand back the array the mod wrote last time);
+   the node space is classified at runtime (world / camera-relative / unknown -
+   unknown is left untouched) and reported.
+2. The owning core names the pass cameras (`Halo2Observer6Dof_SetFirstPerson
+   PassCameras`): the tracked centre the eyes render from, and for classic the
+   stale camera the pass draws from (previous pair's last eye for the first
+   pass, this pair's first eye for the second) plus the correct eye. The
+   geometry is moved tick -> frame centre, then correct eye -> viewing camera
+   (x' = F_v F_c^T (x - c) + v), so the stale camera's image is the right eye's.
+3. Anniversary draws the weapon with the frame's own +0x56C view again (the
+   tick view of C-H2-33/36 is disabled, not deleted); classic camera centring
+   is disabled, not deleted; the interpolation reset stays on (the geometry is
+   at the witnessed tick exactly, which the re-anchor needs).
+4. The eye-pair pixel check now measures the weapon box's best horizontal
+   shift against the world band's, signed, every 2 s; and a renderer switch
+   requests eye pictures 3 s later, so a short classic visit leaves pictures.
+
+**Read first next time:** `weapon box ... best shift %+d px` vs `world band` -
+same sign and larger = a fused gun; `geometry: ... node space world N /
+camera-relative N / unknown N` - unknown means the re-anchor did nothing;
+`classic stale-camera compensated N`.

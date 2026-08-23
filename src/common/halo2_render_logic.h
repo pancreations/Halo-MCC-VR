@@ -2551,3 +2551,164 @@ inline int Halo2NextProbeRotation(
     const int next = rotation + filledSlots;
     return next % candidateCount;
 }
+
+// E-H2-34 (C-H2-39): the cameras of the eye pass being rendered, handed to
+// the weapon re-anchor by whichever stereo core owns the frame.
+//   frame   - the tracked CENTRE camera the eyes are rendered from (world
+//             units). The interpolated weapon geometry is moved rigidly from
+//             the witnessed tick's camera to it, so the weapon follows the
+//             head at the player's frame rate in both renderers.
+//   correct - this eye's own camera (centre + eye offset).
+//   viewing - the camera the first-person pass will ACTUALLY draw from.
+// `compensate` names a classic defect measured in the C-H2-36 eye pictures:
+// the classic first-person pass draws from the camera of the PREVIOUS
+// render_view (the gun sat 150 px to the right in eye 1 while the world
+// matched - the full eye offset, the wrong way round). When set, the
+// geometry is additionally moved so that the stale camera's image of it is
+// exactly the correct camera's image: x' = F_v F_c^T (x - c) + v.
+struct Halo2FirstPersonPassCameras
+{
+    Halo2CameraBasis frame{};
+    Halo2CameraBasis correct{};
+    Halo2CameraBasis viewing{};
+    bool frameValid = false;
+    bool compensate = false;
+};
+
+enum class Halo2FirstPersonNodeSpace : uint8_t
+{
+    Unknown = 0,
+    World = 1,
+    CameraRelative = 2,
+};
+
+// Decides from the root node's position and the tick camera whether the
+// interpolated nodes carry WORLD positions (within a few world units of the
+// camera) or positions RELATIVE to the camera (near the origin while the
+// camera is far from it). Anything else is Unknown and the nodes are left
+// exactly as the engine produced them.
+inline Halo2FirstPersonNodeSpace Halo2ClassifyFirstPersonNodeSpace(
+    const float rootPosition[3], const float tickCamera[3]) noexcept
+{
+    constexpr float kNearSquared = 4.0f * 4.0f;   // 4 wu ~ 12 m
+    constexpr float kFarSquared = 8.0f * 8.0f;
+    float fromCamera = 0.0f;
+    float fromOrigin = 0.0f;
+    float cameraFromOrigin = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(rootPosition[axis]) || !std::isfinite(tickCamera[axis]))
+            return Halo2FirstPersonNodeSpace::Unknown;
+        const float d = rootPosition[axis] - tickCamera[axis];
+        fromCamera += d * d;
+        fromOrigin += rootPosition[axis] * rootPosition[axis];
+        cameraFromOrigin += tickCamera[axis] * tickCamera[axis];
+    }
+    if (!std::isfinite(fromCamera) || !std::isfinite(fromOrigin) ||
+        !std::isfinite(cameraFromOrigin))
+    {
+        return Halo2FirstPersonNodeSpace::Unknown;
+    }
+    if (fromCamera < kNearSquared)
+        return Halo2FirstPersonNodeSpace::World;
+    if (fromOrigin < kNearSquared && cameraFromOrigin > kFarSquared)
+        return Halo2FirstPersonNodeSpace::CameraRelative;
+    return Halo2FirstPersonNodeSpace::Unknown;
+}
+
+inline constexpr uint32_t kHalo2FirstPersonNodeFloats =
+    kHalo2FirstPersonNodeStride / 4;
+
+// Per-slot cache that makes the re-anchor idempotent. The interpolator may
+// hand the renderer the same node array it returned last time (not
+// re-blended), in which case the array still holds the mod's previous
+// output; the engine's own values are kept here and every call re-derives
+// its output from them, so a transform can never accumulate.
+struct Halo2FirstPersonSlotCache
+{
+    uint32_t count = 0;
+    bool valid = false;
+    float original[kHalo2FirstPersonNodeLimit * kHalo2FirstPersonNodeFloats]{};
+    float written[kHalo2FirstPersonNodeLimit * kHalo2FirstPersonNodeFloats]{};
+};
+
+struct Halo2FirstPersonReanchorResult
+{
+    bool applied = false;
+    bool fromCache = false;
+    bool compensated = false;
+    Halo2FirstPersonNodeSpace space = Halo2FirstPersonNodeSpace::Unknown;
+};
+
+// Re-anchors one interpolator slot in place: every node is moved rigidly
+// from the tick camera to the pass's frame camera (rotation only for
+// camera-relative nodes), then - for a pass that draws from a stale camera -
+// from the correct eye camera to the viewing one. Returns false, with the
+// engine's nodes untouched, when the inputs or the node space cannot be
+// trusted. Allocation-free; the cache is the caller's static storage.
+inline bool Halo2ReanchorFirstPersonSlot(
+    float* nodes, uint32_t count, const Halo2CameraBasis& tick,
+    const Halo2FirstPersonPassCameras& pass, Halo2FirstPersonSlotCache& cache,
+    Halo2FirstPersonReanchorResult& result) noexcept
+{
+    result = Halo2FirstPersonReanchorResult{};
+    if (!nodes || count == 0 ||
+        count > static_cast<uint32_t>(kHalo2FirstPersonNodeLimit) ||
+        !pass.frameValid)
+    {
+        return false;
+    }
+    const size_t floats = static_cast<size_t>(count) * kHalo2FirstPersonNodeFloats;
+    const size_t bytes = floats * sizeof(float);
+    // Source: the engine's fresh output, or the cached engine values when
+    // the engine handed back exactly what the mod wrote last time.
+    if (cache.valid && cache.count == count &&
+        std::memcmp(nodes, cache.written, bytes) == 0)
+    {
+        result.fromCache = true;
+    }
+    else
+    {
+        std::memcpy(cache.original, nodes, bytes);
+        cache.count = count;
+        cache.valid = true;
+    }
+    std::memcpy(cache.written, cache.original, bytes);
+    float* const work = cache.written;
+    result.space = Halo2ClassifyFirstPersonNodeSpace(
+        work + kHalo2FirstPersonNodePositionOffset / 4, tick.position);
+    if (result.space == Halo2FirstPersonNodeSpace::Unknown)
+        return false;
+    float rotation[9];
+    if (!Halo2BuildWorldDeltaRotation(tick, pass.frame, rotation))
+        return false;
+    const float zero[3] = {0.0f, 0.0f, 0.0f};
+    const bool world = result.space == Halo2FirstPersonNodeSpace::World;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        Halo2ReanchorFirstPersonNode(
+            work + index * kHalo2FirstPersonNodeFloats, rotation,
+            world ? tick.position : zero, world ? pass.frame.position : zero);
+    }
+    if (pass.compensate && world)
+    {
+        float compensation[9];
+        if (!Halo2BuildWorldDeltaRotation(pass.correct, pass.viewing, compensation))
+            return false;
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            Halo2ReanchorFirstPersonNode(
+                work + index * kHalo2FirstPersonNodeFloats, compensation,
+                pass.correct.position, pass.viewing.position);
+        }
+        result.compensated = true;
+    }
+    for (size_t index = 0; index < floats; ++index)
+    {
+        if (!std::isfinite(work[index]))
+            return false;
+    }
+    std::memcpy(nodes, work, bytes);
+    result.applied = true;
+    return true;
+}

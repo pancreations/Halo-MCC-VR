@@ -517,6 +517,10 @@ void VR_EndRasterEye();
 // say whether the classic world is drawn INSIDE the render_view the core
 // wraps or after it. One atomic increment per draw; reported every 2 s.
 void VR_Halo2NoteDraw();
+// E-H2-34: asks the periodic Halo 2 eye-pair check to write the eye
+// pictures at its next run after `delayMs` (a renderer switch should leave
+// a picture of the renderer it switched TO even when the visit is short).
+void VR_Halo2RequestEyeDump(uint32_t delayMs);
 // One-shot Halo 2 evidence: describes the textures behind three engine RTV
 // slots and the render target bound at the moment of the call. COM work,
 // caller gates it to once per module generation; never per frame.
