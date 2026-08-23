@@ -31,12 +31,12 @@
 >
 > | C-H2-48 deployed identity | Value |
 > | --- | --- |
-> | Source | `a873613b925d62e427406016361e433473b553b4` |
-> | Package | `a873613-halo2-c48-hands-aim-turn-fix-20260823-143613603Z` |
-> | `HaloMCCVR.dll` | `A47D89BD23DC82D4E889705116E90DF701EC0D854EA7C64C0109183A9E536540` |
+> | Source | `a64da3e310e3c1fc0e8ee23915e61ed6858f3819` |
+> | Package | `a64da3e-halo2-c48-hands-aim-turn-fix-20260823-144003444Z` |
+> | `HaloMCCVR.dll` | `E592B4DD481BCD2AB0D6BDDABE00698AEE53113D8D7E67299B391B5E1F519D7A` |
 > | `HaloMCCVRLauncher.exe` | `B1238F2329307047ED02C7E295452EC43D5AD0E0A20E43B74081ED1845B35B43` |
 > | Editions | manifest/hash verified and installed to Steam and Microsoft Store; MCC not launched; config unchanged |
-> | Verification | Release build PASS; core tests PASS; Reach consistency check PASS; common world/body-turn invariance and exact hand/arm visibility tests PASS |
+> | Verification | Release build PASS; core tests PASS; Reach consistency check PASS; common world/body-turn invariance and exact hand/arm visibility tests PASS; C-H2-48 producer/installer manifest contract PASS |
 >
 > Required headset test in both Anniversary and Classic: turn at least 90 and
 > 180 degrees away from initial facing; confirm each hand remains on its own
