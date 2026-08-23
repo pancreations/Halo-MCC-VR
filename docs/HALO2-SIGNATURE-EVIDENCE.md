@@ -2426,7 +2426,9 @@ The kit gives the first-person geometry path directly:
 - Its only first-person consumers are the two calls in
   `first_person_weapons.cpp` at kit RVA `0x306E04`, homologous to the existing
   retail render-path calls. The fallback is the current weapon palette at
-  weapon-data `+0x800`.
+  weapon-data `+0x320` (**corrected by E-H2-40**: the original reading of
+  `+0x800` took Ghidra's DECIMAL `weapon_data + 800` for hex;
+  `node_matrices_count` sits at `+0x31C`).
 - The placement tail in the same source at kit RVA `0x307536` constructs a
   transform with an identity 3x3 and a translation, then assembles the node
   matrices. The helper at kit RVA `0xBB2F0` confirms that transform shape.
@@ -2665,3 +2667,138 @@ the LEFT controller independently needs Halo 2's own first-person node identity
 (which of slot 0's 42 nodes are the left wrist/forearm/upperarm chain), which no
 Halo 2 evidence in this repository establishes yet. Do not infer it from Halo 3,
 Reach or Halo 4 node names or indices.
+
+## E-H2-40: Halo 2 tags its own left and right hand - the node binding for an independent left controller (H2EK, 2026-08-23)
+
+Discovery source: the official H2EK only - `halo2_tag_test.exe`
+(SHA-256 `D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`),
+the already-analysed local kit Ghidra project, and nine
+`model_animation_graph` tags plus one `.jmm` extracted read-only from the kit's
+own shipped archive. Retail `halo2.dll` was not read. This answers the question
+C-H2-46 left open: which of first-person slot 0's nodes are the left arm.
+
+**No node index needs to be hardcoded. Halo 2 marks the hands itself.**
+
+### The animation-graph skeleton node record - PROVEN
+
+Argument 2 of the interpolator read (retail `+0x722850`, kit `0xD7CD0`) is NOT a
+pointer: it is the `model_animation_graph` (`'jmad'`) **tag index**. The kit only
+integer-compares it, and its sole first-person consumer
+`first_person_weapons.cpp` (kit `0x306E04`) passes
+`first_person_weapon_interface->animations.index` under the assert
+`"weapon_data->animation_manager.get_graph_tag_index() == first_person_weapon_interface->animations.index"`.
+
+The skeleton nodes are a tag_block at kit graph `+0x14`, element stride `0x20`.
+Proven twice: `get_node_count()` (kit `0x1512D0`) is literally
+`MOV AX,[ECX+0x14]; RET`, and kit `0x14E600` iterates the same block at stride
+`0x20`. The record layout is proven byte-for-byte by the v0 -> current upgrade
+function at kit `0x14C420` and the field array at kit `0xA6F328`
+(`sizeof(animation_graph_node)` = `0x20`):
+
+| offset | size | field |
+| --- | --- | --- |
+| `+0x00` | 4 | name (`string_id`) |
+| `+0x04` | 2 | next sibling index (i16) |
+| `+0x06` | 2 | first child index (i16) |
+| `+0x08` | 2 | **parent index (i16)**, `-1` at the root |
+| `+0x0A` | 1 | **model flags (byte)** |
+| `+0x0B` | 1 | joint flags |
+| `+0x0C` | 12 | base vector |
+| `+0x18` | 4 | vector range |
+| `+0x1C` | 4 | z_pos |
+
+`model flags` bit names come from the flag-name array at kit `0xA6F2F8`, in bit
+order - PROVEN:
+
+| bit | mask | name |
+| --- | --- | --- |
+| 0 | `0x01` | primary model |
+| 1 | `0x02` | secondary model |
+| 2 | `0x04` | local root |
+| 3 | `0x08` | **left hand** |
+| 4 | `0x10` | **right hand** |
+| 5 | `0x20` | **left arm member** |
+
+The array the mod already holds is indexed by animation-graph node index -
+PROVEN: kit `0x307536` asserts
+`"animation_graph_node_index>=0 && animation_graph_node_index<weapon_data->node_orientations_count"`,
+and the publisher `0xD87E0` writes `count = get_node_count()`. So the interpolator's
+`*count` and the graph's node count are the same number, which makes their
+equality a free correctness gate.
+
+### What the shipped rigs actually contain - PROVEN
+
+`masterchief fp_battle_rifle`, 42 nodes - the exact count the retail log reports
+for slot 0:
+
+```
+ 0  base          parent -1  flags 0x05 primary|local root
+ 1  l_upperarm    parent  0  flags 0x21 primary|left arm member
+ 2  r_upperarm    parent  0  flags 0x01 primary
+ 3  l_forearm     parent  1  flags 0x21 primary|left arm member
+ 4  r_forearm     parent  2  flags 0x01 primary
+ 5  l_hand        parent  3  flags 0x29 primary|LEFT HAND|left arm member
+ 6  r_hand        parent  4  flags 0x11 primary|RIGHT HAND
+ 7..36  finger roots/mids/tips, left ones carrying left arm member
+37  gun           parent  6  flags 0x06 secondary|local root
+38  magazine      parent 37  flags 0x02 secondary
+39  OpHandle      parent 37  flags 0x02 secondary
+40  safety        parent 37  flags 0x02 secondary
+41  camera_control parent 0  flags 0x00
+```
+
+`l_hand` = `0x06000097`, `r_hand` = `0x0600009B`, `camera_control` = `0x0E0000E0`,
+each an exact index+length match against the kit's own 2462-entry `string_id`
+table at kit RVA `0x7B50A8`.
+
+Cross-checked on nine shipped first-person graphs (eight Master Chief, one
+Elite), 36 to 44 nodes: **every one** has exactly one `left hand` node, exactly
+one `right hand` node, left chain `5 -> 3 -> 1 -> 0`, right chain
+`6 -> 4 -> 2 -> 0`, and a `secondary|local root` weapon node parented to the
+RIGHT hand. The Elite rig has 36 nodes and its weapon root at index **31, not
+37** - so node counts and the weapon-root index vary. **Only the flags are
+invariant. Bind on the flags, never on an index.**
+
+### The binding, when the retail side is verified
+
+Inside the `+0x722850` detour, with `(user, graphTagIndex, slot, node**, count*)`:
+
+1. Resolve `graphTagIndex` to `'jmad'` tag data.
+2. Read the skeleton-node block at stride `0x20` and REQUIRE its count to equal
+   the interpolator's `*count`. Mismatch fails the feature to stock.
+3. `rightWrist` = the single node with `flags & 0x10`; `leftWrist` = the single
+   node with `flags & 0x08`. Missing or duplicated fails to stock.
+4. Arm chains by walking `parent (+0x08)` to `-1` or to a `local root` (`0x04`).
+   Equivalently, `flags & 0x20` marks the whole left arm.
+5. Wrist descendants = transitive closure over `+0x08`. The held weapon is
+   exactly the `flags & 0x02` set, whose local root parents to the right wrist.
+6. To drive the left hand independently: apply the existing rigid
+   `Head^-1 * RightController` transform to `{rightWrist} + descendants` (which
+   already contains the gun), and a separate `Head^-1 * LeftController`
+   transform to `{leftWrist} + descendants`. The matrices are absolute
+   camera-relative frames (stride `0x34`, E-H2-32), so per-subtree rigid
+   transforms compose without touching the parent nodes.
+
+### What H2EK CANNOT give - do not guess these
+
+1. **The retail cache-format offset of the skeleton-node block inside a `jmad`
+   tag.** `graph + 0x14` is an EDITING-format kit offset (12-byte `tag_block`);
+   retail maps are cache format. The node CONTENT and ORDER transfer - they are
+   the same authored tags baked into the shipped maps - the block offset does not.
+2. **Retail homologs of `tag_get` (kit `0x60660`) and
+   `animation_graph_definition_get` (kit `0x150650`).** Legitimate signature /
+   BSim targets now that H2EK explains them, but that is a retail VERIFICATION
+   step and it has not been done.
+3. **Retail `first_person_weapon_data` offsets.** In the kit: `+0x7C` graph tag
+   index, `+0x10C`/`+0x114` weapon remap table, `+0x110`/`+0x214` **hands** remap
+   table, `+0x318` orientation count, `+0x31C`/`+0x320` node matrices. If they
+   hold on retail, `+0x214` is a shorter path - it lists exactly the animation
+   node indices the arms model uses. Also unverified on retail.
+4. **Dual-wield slot 1 was not traced.** `first_person_weapons.cpp` loops two
+   weapon slots, each with its own graph and palette. Do not assume slot 1
+   mirrors slot 0.
+
+Until item 1 or item 3 is verified against the pinned retail module, the left
+hand keeps riding the gun rigidly as authored. A hardcoded index 5 / index 6
+binding is consistent with all nine shipped graphs but is NOT proven invariant,
+and shipping it would be exactly the guess `AGENTS.md` forbids.
