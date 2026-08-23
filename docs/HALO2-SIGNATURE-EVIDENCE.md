@@ -2287,3 +2287,41 @@ global 0x165C260), so C-H2-37 centres BOTH globals - position, forward and
 up - for the duration of draw_first_person and restores them after, giving
 the classic weapon the same zero eye separation the Saber first-person pass
 has.
+
+## E-H2-33: the classic FOV pin failed behind the mod's own hook (C-H2-38)
+
+Not an engine fact - a mod-install ordering defect, proven by the C-H2-36 and
+C-H2-37 headset logs, both of which print, one line apart:
+
+    Halo 2 classic first-person weapon pass owned at draw_first_person +0x7E0C60 ...
+    Halo 2 classic first-person FOV constant NOT pinned for generation 1:
+      draw_first_person entry / its MOVSS / the stock value do not match the
+      proven module; the weapon keeps the engine's 49.6 deg
+
+`PinFirstPersonFovConstant` (E-H2-20) verifies the entry bytes of
+`draw_first_person` before it will write the constant. C-H2-36 added the
+weapon-pass hook on that same function and created it BEFORE the pin ran, so
+the bytes the pin read were MinHook's jump and the pin refused every run. The
+classic gun was therefore drawn at the engine's 49.594 degrees inside a
+110 degree eye frustum - 3.1x magnified, "FOV awful, shoved in my face" -
+from C-H2-36 on, while C-H2-27..35 had it pinned.
+
+Consequences for the C-H2-36/37 conclusions:
+
+- The classic weapon-disparity measurement that "railed the +-60 px search"
+  was taken on that 3.1x gun; a search that rails has found no match, not a
+  240 px disparity. "Centring 0x1996A28 had no effect" is therefore unproven
+  and E-H2-31/E-H2-32's classic reasoning is withdrawn until re-measured with
+  the pin working (this candidate; `firstPersonCentred` ran for every eye in
+  the C-H2-37 log, 482 of 482).
+- The C-H2-37 re-anchor detour on 0x722850 never opened its gate in either
+  renderer (`re-anchor applied 0, identity 0, skipped 0`). No counter said
+  which term closed it; C-H2-38 classifies every entry (unhandled / other
+  player / no nodes / not live / no witnessed tick) and reports the last
+  call's arguments. The Anniversary weapon seen in C-H2-37 was therefore the
+  C-H2-36 view-matrix weapon with the interpolation reset restored: geometry
+  held at the tick while the view blends between ticks, which is the
+  "trailing mesh" the user reports and the next target.
+
+C-H2-38 pins first and hooks second. Per user directive (2026-08-22) Halo 2
+discovery from here on uses the H2EK tools, not Ghidra on retail.

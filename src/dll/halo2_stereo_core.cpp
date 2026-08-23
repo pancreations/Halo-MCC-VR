@@ -3000,9 +3000,17 @@ namespace
             return false;
         }
 
+        // E-H2-33 (C-H2-38): the FOV constant pin verifies draw_first_person's
+        // entry bytes, and the weapon-pass hook below REWRITES those bytes.
+        // C-H2-36 and C-H2-37 hooked first and pinned second, so the pin
+        // failed every run ("NOT pinned ... the weapon keeps the engine's
+        // 49.6 deg") and the classic gun was drawn 3.1x the eye's frustum.
+        // The pin must read the module before anything of ours is in it.
+        (void)PinFirstPersonFovConstant(base, generation);
+
         // E-H2-31: the first-person weapon pass, pinned by the same entry
-        // bytes the FOV constant pin already verifies. Its absence is loud and
-        // leaves the weapon exactly as the previous candidate drew it.
+        // bytes the FOV constant pin has just verified. Its absence is loud
+        // and leaves the weapon exactly as the previous candidate drew it.
         {
             const uintptr_t firstPerson = base + kHalo2ClassicDrawFirstPersonRva;
             uint8_t entry[sizeof(kHalo2ClassicDrawFirstPersonEntryBytes)]{};
@@ -3068,7 +3076,6 @@ namespace
             }
         }
 
-        (void)PinFirstPersonFovConstant(base, generation);
         g_moduleReference = module;
         g_innerTarget = innerTarget;
         g_outerTarget = outerTarget;

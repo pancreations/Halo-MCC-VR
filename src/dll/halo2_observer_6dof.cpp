@@ -109,6 +109,21 @@ namespace
     std::atomic<uint64_t> g_reanchorApplied{0};
     std::atomic<uint64_t> g_reanchorIdentity{0};
     std::atomic<uint64_t> g_reanchorSkipped{0};
+    // C-H2-38: the C-H2-37 log reported "re-anchor applied 0, identity 0,
+    // skipped 0" in both renderers - the detour's gate never opened and no
+    // counter said which term closed it. Every entry is now classified and
+    // the last call's arguments are kept for the report.
+    std::atomic<uint64_t> g_reanchorEntered{0};
+    std::atomic<uint64_t> g_reanchorUnhandled{0};
+    std::atomic<uint64_t> g_reanchorOtherPlayer{0};
+    std::atomic<uint64_t> g_reanchorNoNodes{0};
+    std::atomic<uint64_t> g_reanchorNotLive{0};
+    std::atomic<uint64_t> g_reanchorNoTick{0};
+    std::atomic<int> g_reanchorLastPlayer{-1};
+    std::atomic<int> g_reanchorLastId{-1};
+    std::atomic<int> g_reanchorLastSlot{-1};
+    std::atomic<uint32_t> g_reanchorLastHandled{0};
+    std::atomic<uint32_t> g_reanchorLastCount{0};
     std::atomic<uint64_t> g_publicationIndex{0};
     std::atomic<uint64_t> g_weaponsSlotResets{0};
     std::atomic<uintptr_t> g_interpolatorResetAddress{0};
@@ -498,12 +513,28 @@ namespace
             g_exceptions.fetch_add(1, std::memory_order_relaxed);
             handled = 0;
         }
-        if (handled && player == static_cast<int>(kOwnedUser) && nodesOut &&
-            countOut && *nodesOut &&
-            g_armed.load(std::memory_order_acquire) &&
+        g_reanchorEntered.fetch_add(1, std::memory_order_relaxed);
+        g_reanchorLastPlayer.store(player, std::memory_order_relaxed);
+        g_reanchorLastId.store(id, std::memory_order_relaxed);
+        g_reanchorLastSlot.store(slot, std::memory_order_relaxed);
+        g_reanchorLastHandled.store(handled, std::memory_order_relaxed);
+        const bool nodesPresent = handled && nodesOut && countOut && *nodesOut;
+        if (nodesPresent)
+            g_reanchorLastCount.store(*countOut, std::memory_order_relaxed);
+        const bool live = g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
-            !g_teardownRequested.load(std::memory_order_acquire) &&
-            g_weaponTickIndex.load(std::memory_order_acquire) != 0)
+            !g_teardownRequested.load(std::memory_order_acquire);
+        if (!handled)
+            g_reanchorUnhandled.fetch_add(1, std::memory_order_relaxed);
+        else if (player != static_cast<int>(kOwnedUser))
+            g_reanchorOtherPlayer.fetch_add(1, std::memory_order_relaxed);
+        else if (!nodesPresent)
+            g_reanchorNoNodes.fetch_add(1, std::memory_order_relaxed);
+        else if (!live)
+            g_reanchorNotLive.fetch_add(1, std::memory_order_relaxed);
+        else if (g_weaponTickIndex.load(std::memory_order_acquire) == 0)
+            g_reanchorNoTick.fetch_add(1, std::memory_order_relaxed);
+        else
         {
             Halo2CameraBasis tick{};
             bool tickValid = false;
@@ -1275,8 +1306,10 @@ namespace
             "%s); weapon tick witness: %llu placements, %llu witnessed, %llu "
             "with a record the engine had moved, %llu with no publication, "
             "%llu interpolation resets (the weapon shares the world's tick); "
-            "re-anchor applied %llu, identity %llu, skipped %llu; last "
-            "witnessed publication #%llu",
+            "re-anchor applied %llu, identity %llu, skipped %llu (read detour "
+            "entered %llu: unhandled %llu, other player %llu, no nodes %llu, "
+            "not live %llu, no witnessed tick %llu; last call player %d id %d "
+            "slot %d handled %u count %u); last witnessed publication #%llu",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -1304,6 +1337,23 @@ namespace
                 g_reanchorIdentity.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_reanchorSkipped.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorEntered.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorUnhandled.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorOtherPlayer.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorNoNodes.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorNotLive.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_reanchorNoTick.load(std::memory_order_relaxed)),
+            g_reanchorLastPlayer.load(std::memory_order_relaxed),
+            g_reanchorLastId.load(std::memory_order_relaxed),
+            g_reanchorLastSlot.load(std::memory_order_relaxed),
+            g_reanchorLastHandled.load(std::memory_order_relaxed),
+            g_reanchorLastCount.load(std::memory_order_relaxed),
             static_cast<unsigned long long>(
                 g_weaponTickIndex.load(std::memory_order_relaxed)));
     }
