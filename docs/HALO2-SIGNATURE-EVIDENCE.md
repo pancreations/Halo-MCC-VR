@@ -3218,5 +3218,6 @@ SHA-256 `F1969CEA6C80BD2C42ED5A0331B4F5743D331698CAE61A62C1F12BFC13BA8DDE`,
 and DLL SHA-256 `D1DB75E70E4EA75EDE7FEFA87DCE8509B25855EF1D5CA70D34E85FEBEFCCC2EA`
 were installed and independently hash-verified in both Steam and Store editions.
 The rejected C-H2-54 bytes were preserved separately for each edition. MCC was
-not launched and neither existing configuration was changed. Runtime headset
-acceptance remains pending.
+not launched and neither existing configuration was changed. The player's
+2026-08-23 headset result confirms the fix and explicitly promotes C-H2-55 to
+the new accepted cumulative development baseline.

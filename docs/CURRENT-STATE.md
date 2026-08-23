@@ -1,7 +1,9 @@
 # Current state
 
-> **C-H2-54 REJECTED; C-H2-55 SAME-GENERATION LEVEL REHOOK IMPLEMENTED -
-> 2026-08-23.** C-H2-54 fixed the fatal consecutive-load crash, but its Steam
+> **CURRENT ACCEPTED DEVELOPMENT BASELINE: C-H2-55 CONSECUTIVE-LEVEL REHOOK -
+> 2026-08-23.** The player's headset result confirms the consecutive-level fix
+> and explicitly declares C-H2-55 the new baseline. C-H2-54 fixed the fatal
+> consecutive-load crash, but its Steam
 > headset run proved that most Halo 2 hooks did not reinstall for the second
 > level. The preserved log is
 > `out/test-runs/85afbd0-halo2-c54-no-crash-rehook-failed-20260823-1755/HaloMCCVR.log`
@@ -52,8 +54,8 @@
 > and did not launch MCC or change either `halomccvr.cfg`. Independent
 > post-install hashes match in both editions. C-H2-54 previously passed the same
 > offline gates but is rejected for the missing second-level rehook. C-H2-55 is
-> ready for consecutive same-title levels but remains unaccepted until runtime
-> headset confirmation; the accepted pointer is not advanced.
+> accepted as the cumulative development pointer at source `d873144`; the later
+> documentation-only commit does not change the installed binary identity.
 >
 > | C-H2-55 deployed identity | Value |
 > | --- | --- |
