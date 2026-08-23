@@ -1509,6 +1509,19 @@ constexpr bool Halo2ColdObservationNeedsImageScan(
     return !completedForModuleInstance;
 }
 
+// The expensive loaded-image proof is valid for a physical module instance,
+// but level/title rearm deliberately clears level-derived live bindings. When
+// MCC begins another level without unloading/rebasing halo2.dll, reconstruct
+// those bindings once from the already-proven image instead of either repeating
+// the complete proof or leaving every dependent hook permanently stock.
+constexpr bool Halo2ColdObservationNeedsDerivedRebind(
+    bool completedForModuleInstance, bool cachedProofPassed,
+    bool rebindAttemptedForGate, bool derivedBindingsValid)
+{
+    return completedForModuleInstance && cachedProofPassed &&
+        !rebindAttemptedForGate && !derivedBindingsValid;
+}
+
 // Pure decision core for the read-only game-time liveness gate. The false->true
 // initialized transition is only a new baseline: it is never mistaken for a
 // game tick. A later different tick proves game_update reached the official

@@ -3123,6 +3123,7 @@ complete non-hand collapse, separate-gun right-wrist motion, stock interpolation
 reset policy, Release compilation, core tests, and the Reach consistency gate.
 Dual-wield slot 1 remains outside the ownership claim because E-H2-41 proves it
 has different culling semantics.
+
 ## E-H2-47 (C-H2-53 rejection / C-H2-54): MCC owns every game-DLL lifetime - 2026-08-23
 
 C-H2-53 is rejected. The preserved Steam run is
@@ -3174,5 +3175,36 @@ PASS. Exact source `85afbd0bf4000b404038a167b66d5715f5489571`, package
 `85afbd0-halo2-c54-shared-unload-safe-hook-epochs-20260823-222828978Z`, and DLL
 SHA-256 `B0DCE4E27F7BD2A6A6173D44488E538ACC9DBA7B19E72415E1C31827E978D436`
 were installed and independently hash-verified in both editions without launch
-or config change. Runtime acceptance remains pending for consecutive same-title
-loads plus the normal shared-change Halo 3 regression.
+or config change. The headset result rejects C-H2-54 as a complete fix: it did
+not crash, but its second same-generation Halo 2 level failed to reinstall the
+dependent hooks, as E-H2-48 records.
+
+## E-H2-48 (C-H2-54 rejection / C-H2-55): cached proof must rebuild level-derived bindings - 2026-08-23
+
+The preserved Steam C-H2-54 run is
+`out/test-runs/85afbd0-halo2-c54-no-crash-rehook-failed-20260823-1755/HaloMCCVR.log`,
+SHA-256 `B31798F0908C7A1E0AA7206F3F0701B8D9A8144512D5B1B6C7696A592BD46117`.
+It proves the unload-safe epoch change removed the consecutive-level crash.
+Generation 1's first level passed cold proof, installed and executed observer,
+Classic/Anniversary stereo, final-packet and firing hooks, then retired them at
+the level-liveness boundary. When a second level opened in the same generation,
+only the renderer switch guard reinstalled; observer, stereo, packet and firing
+hooks stayed absent and stereo pairing remained zero.
+
+The source exactly explains this split. `Halo2ColdObservation_Rearm` resets the
+level-derived graphics-mode validity, observer-result array and Classic gate
+address, while intentionally retaining the expensive full-image proof for the
+same physical module instance. The next gate therefore sees completed cached
+proof and skips `RunColdObservation`; before C-H2-55, that routine was also the
+only caller of `ObserveGraphicsMode`, so the cleared bindings could never return.
+The guard could reinstall from cached proof alone, while every missing hook
+depended on one or more of those derived bindings.
+
+C-H2-55 preserves the cached image proof and C-H2-54's non-owning, unload-safe
+hook epochs. After each new level gate opens, a passed same-instance proof with
+cleared derived bindings invokes `ObserveGraphicsMode` exactly once for that
+gate epoch. Normal hook readiness checks then consume the rebuilt addresses.
+Failure remains isolated and loud: a failed rebind leaves only dependent
+features stock for that level and does not disarm the camera core or OpenXR.
+The C-H2-52 hands/gun and presented-crosshair shot implementation remains
+enabled and unchanged.

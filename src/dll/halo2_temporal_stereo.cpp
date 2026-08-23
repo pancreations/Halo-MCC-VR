@@ -475,7 +475,6 @@ namespace
 
     void ClearRuntimeState() noexcept
     {
-        HMODULE module = g_moduleReference;
         g_moduleReference = nullptr;
         g_hookTarget = nullptr;
         g_originalAddress.store(0, std::memory_order_release);
@@ -486,8 +485,6 @@ namespace
         g_installed.store(false, std::memory_order_release);
         g_armed.store(false, std::memory_order_release);
         g_coreState = CoreState::StockFallback;
-        if (module)
-            FreeLibrary(module);
     }
 
     bool RemoveCore(const char* reason) noexcept
@@ -542,13 +539,12 @@ namespace
     {
         module = nullptr;
         if (!base || !GetModuleHandleExW(
-                         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                          reinterpret_cast<LPCWSTR>(base), &module) ||
             reinterpret_cast<uintptr_t>(module) != base ||
             GetModuleHandleW(L"halo2.dll") != module)
         {
-            if (module)
-                FreeLibrary(module);
             module = nullptr;
             return false;
         }
@@ -594,7 +590,6 @@ namespace
                     kHalo2RetailRenderPlayerWindowRva),
                 callEdge ? 1 : 0, executableTarget ? 1 : 0,
                 mappingStable ? 1 : 0);
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }
@@ -603,7 +598,6 @@ namespace
         {
             LOG("Halo 2 C-H2-2 install WITHHELD: prior hook ownership was not "
                 "cleared; worker cleanup must finish first");
-            FreeLibrary(module);
             g_coreState = CoreState::CleanupRequired;
             return false;
         }
@@ -643,7 +637,6 @@ namespace
                 "%d); temporal stereo stays stock for generation %u",
                 static_cast<int>(created), static_cast<int>(rollback),
                 generation);
-            FreeLibrary(module);
             g_rejectedGeneration = generation;
             return false;
         }

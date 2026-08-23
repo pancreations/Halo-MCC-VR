@@ -3730,11 +3730,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     class ReachModuleReference
     {
     public:
-        ~ReachModuleReference()
-        {
-            if (m_module)
-                FreeLibrary(m_module);
-        }
+        ~ReachModuleReference() = default;
 
         bool Acquire(uintptr_t moduleBase) noexcept
         {
@@ -3742,12 +3738,11 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 return false;
             HMODULE module = nullptr;
             if (!GetModuleHandleExW(
-                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                     reinterpret_cast<LPCWSTR>(moduleBase), &module) ||
                 reinterpret_cast<uintptr_t>(module) != moduleBase)
             {
-                if (module)
-                    FreeLibrary(module);
                 return false;
             }
             m_module = module;

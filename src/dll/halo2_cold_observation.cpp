@@ -43,6 +43,7 @@ namespace
     bool g_appliedRenderModeValid = false;
     uintptr_t g_observerResultArray = 0;
     uintptr_t g_classicRenderDisabledByteAddress = 0;
+    bool g_derivedRebindAttempted = false;
 
     int HexNibble(char c) noexcept
     {
@@ -368,6 +369,7 @@ namespace
         g_appliedRenderModeValid = false;
         g_observerResultArray = 0;
         g_classicRenderDisabledByteAddress = 0;
+        g_derivedRebindAttempted = false;
     }
 
     bool PrepareGate() noexcept
@@ -480,24 +482,17 @@ namespace
     class Halo2ModulePin
     {
     public:
-        ~Halo2ModulePin()
-        {
-            if (m_module)
-                FreeLibrary(m_module);
-        }
+        ~Halo2ModulePin() = default;
 
         bool Acquire(uintptr_t expectedBase) noexcept
         {
             if (!expectedBase || !GetModuleHandleExW(
-                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                     reinterpret_cast<LPCWSTR>(expectedBase), &m_module) ||
                 reinterpret_cast<uintptr_t>(m_module) != expectedBase)
             {
-                if (m_module)
-                {
-                    FreeLibrary(m_module);
-                    m_module = nullptr;
-                }
+                m_module = nullptr;
                 return false;
             }
             return true;
@@ -829,6 +824,7 @@ namespace
                 kHalo2RetailPeTimestamp,
                 static_cast<uint32_t>(kHalo2RetailImageSize),
                 kHalo2RetailAnchorCount, kHalo2GameTimeSlotRva);
+            g_derivedRebindAttempted = true;
             ObserveGraphicsMode(g_gateBase, g_gateSize);
         }
         else
@@ -948,6 +944,37 @@ bool Halo2ColdObservation_Poll(
     }
     if (Halo2ColdObservationNeedsImageScan(completedForModuleInstance))
         RunColdObservation();
+    else
+    {
+        const bool cachedProofPassed = g_passed &&
+            g_passedGeneration == generation;
+        const bool derivedBindingsValid = g_graphicsModeValid &&
+            g_graphicsModeGeneration == generation &&
+            g_observerResultArray != 0 &&
+            g_classicRenderDisabledByteAddress != 0;
+        if (Halo2ColdObservationNeedsDerivedRebind(
+                completedForModuleInstance, cachedProofPassed,
+                g_derivedRebindAttempted, derivedBindingsValid))
+        {
+            g_derivedRebindAttempted = true;
+            ObserveGraphicsMode(g_gateBase, g_gateSize);
+            if (g_graphicsModeValid &&
+                g_graphicsModeGeneration == generation &&
+                g_observerResultArray != 0 &&
+                g_classicRenderDisabledByteAddress != 0)
+            {
+                LOG("Halo 2 cold observation: cached image proof rebound the "
+                    "graphics-mode and observer-result bindings for the new "
+                    "level in generation %u", generation);
+            }
+            else
+            {
+                LOG("Halo 2 cold observation: cached image proof could not "
+                    "rebind the new level's derived camera/renderer addresses; "
+                    "dependent hooks stay stock for this level");
+            }
+        }
+    }
     return g_gateLogic.IsOpen();
 #endif
 }

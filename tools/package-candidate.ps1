@@ -73,6 +73,53 @@ try {
         }
     }
 
+    # C-H2-55 shared loader-lifecycle and same-generation rehook gate. Game DLL mappings are identities,
+    # never references owned by the mod. A future title adapter must not bring
+    # back the exact refcount/unload race this candidate fixes.
+    $dllSources = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src\dll') `
+        -Filter '*.cpp' -File
+    $dllSourceText = ($dllSources | ForEach-Object {
+        [IO.File]::ReadAllText($_.FullName)
+    }) -join "`n"
+    if ($dllSourceText -match '(?m)^\s*FreeLibrary\s*\(') {
+        throw 'C-H2-55 gate failed: a title-DLL FreeLibrary call remains.'
+    }
+    $moduleHandleCalls = [regex]::Matches(
+        $dllSourceText, 'GetModuleHandleExW\s*\((?<args>[\s\S]{0,320}?)\)')
+    foreach ($call in $moduleHandleCalls) {
+        $argsText = $call.Groups['args'].Value
+        if ($argsText -match 'GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS' -and
+                $argsText -notmatch
+                    'GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT') {
+            throw 'C-H2-55 gate failed: a FROM_ADDRESS module lookup still increments the loader refcount.'
+        }
+    }
+    $gameSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\game.cpp'))
+    $guardSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo2_render_mode_guard.cpp'))
+    if ($gameSource -notmatch
+            '!soleReachTitle\s*\|\|\s*!levelRunning' -or
+        $gameSource -notmatch
+            '!soleHalo4Title\s*\|\|\s*!levelRunning' -or
+        $gameSource -notmatch
+            'Halo 3 hook epoch retired at the level-liveness boundary' -or
+        $gameSource -notmatch
+            'ODST level-liveness boundary: retiring hooks' -or
+        $guardSource -notmatch
+            'activeAndRange\s*&&\s*\r?\n\s*levelRunning\s*&&\s*coldPassed') {
+        throw 'C-H2-55 gate failed: a required title hook epoch is not level-liveness scoped.'
+    }
+    $halo2ColdSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo2_cold_observation.cpp'))
+    $halo2LogicSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo2_render_logic.h'))
+    if ($halo2LogicSource -notmatch
+            'Halo2ColdObservationNeedsDerivedRebind' -or
+        $halo2ColdSource -notmatch 'cached image proof rebound the') {
+        throw 'C-H2-55 gate failed: the same-generation Halo 2 derived-binding rearm is missing.'
+    }
+
     Invoke-Tool { & cmake --preset $packagePreset }
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed for preset $packagePreset."
@@ -139,7 +186,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c53-final-packet-same-dll-lease',
+        'halo2-c55-consecutive-level-rehook',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -171,7 +218,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 23
+        schema_version = 25
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -253,12 +300,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-53'
+            id = 'C-H2-55'
             status = 'READY_FOR_BUILD_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-and-session-long-same-dll-hook-lease'
+                'h2ek-final-render-packet-two-controller-hands-right-gun-presented-crosshair-shots-shared-unload-safe-hook-epochs-and-same-generation-level-rehook'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -299,6 +346,10 @@ try {
             both_eye_capture_serials_equal_current_prepared_serial = $true
             same_game_frame_pair = $true
             same_generation_resource_epoch_and_attempt_required = $true
+            same_generation_level_rehook = $true
+            same_generation_rebind_source =
+                'cached-image-proof-rebinds-graphics-mode-observer-result-after-level-gate-reopens'
+            same_generation_rebind_retry_policy = 'once-per-level-gate-epoch'
             duplicate_or_missing_eye_allowed = $false
             temporal_previous_eye_allowed = $false
             temporal_eye_gap_frames = 0
@@ -398,11 +449,13 @@ try {
             projectile_presented_reticle_freshness_ms = 250
             interpolation_reset_policy =
                 'stock-reset-preserved-rejected-interpolator-controller-path-remains-disabled'
-            same_module_hook_lease = $true
+            same_module_hook_lease = $false
             same_module_hook_lease_scope =
-                'observer-anniversary-classic-renderer-guard-retained-and-stock-pass-through-across-title-level-proof-gaps'
+                'rejected-c-h2-53-session-long-loader-reference-lease-reverted'
+            loader_refcount_policy =
+                'non-owning-exact-base-validation-no-game-dll-refcount-increments'
             physical_hook_teardown_policy =
-                'only-proven-nonzero-different-module-base-or-explicit-openxr-failure'
+                'retire-at-level-liveness-boundary-while-title-mapping-is-current'
             hud = $false
             haptics = $true
             scene_target_redirect = $false
@@ -498,7 +551,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-53 cumulatively includes C-H2-52, which replaces the unexecuted C-H2-50 composer experiment with the H2EK first_person_weapons final packet builder verified at retail +0x8181F0. The authored hands remap identifies exact left/right hand subtrees after root composition; all other hands-packet nodes collapse, and the separate primary gun packet follows the right wrist. Local-player shots preserve the stock muzzle and converge on the exact fresh compositor-presented crosshair. The rejected interpolator controller path remains disabled and stock interpolation resets remain enabled. C-H2-53 adds one pinned halo2.dll lease for observer, Anniversary, Classic and renderer-guard hooks across mission/title proof gaps; all callbacks pass through stock while parked, preventing remove/recreate churn when MCC loads the same DLL consecutively. No requested feature is disabled. Halo 3, ODST, Reach and Halo 4 behavior is unchanged. This candidate is offline-verified and unaccepted.'
+        note = 'C-H2-55 retains C-H2-52 final-packet hands/gun ownership and exact presented-crosshair projectile aim plus C-H2-54 unload-safe title-hook epochs. The C-H2-54 headset run proves the crash is gone but also proves that a second Halo 2 level in the same physical DLL generation cleared per-level graphics/observer bindings while cached image proof suppressed their reconstruction. C-H2-55 reuses that proven image and rebinds those derived addresses exactly once after each new level gate opens, allowing observer, Anniversary/Classic stereo, final-packet/firing, and renderer hooks to reinstall through their normal readiness checks. No feature is disabled. This candidate is offline-verified and unaccepted.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

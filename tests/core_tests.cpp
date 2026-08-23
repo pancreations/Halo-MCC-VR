@@ -8286,6 +8286,17 @@ int main()
     Check(!Halo2ColdObservationNeedsImageScan(true) &&
               Halo2ColdObservationNeedsImageScan(false),
         "A completed Halo 2 module instance never repeats its image scan");
+    Check(Halo2ColdObservationNeedsDerivedRebind(
+              true, true, false, false) &&
+              !Halo2ColdObservationNeedsDerivedRebind(
+                  false, true, false, false) &&
+              !Halo2ColdObservationNeedsDerivedRebind(
+                  true, false, false, false) &&
+              !Halo2ColdObservationNeedsDerivedRebind(
+                  true, true, true, false) &&
+              !Halo2ColdObservationNeedsDerivedRebind(
+                  true, true, false, true),
+        "A same-generation Halo 2 level rearms cleared derived bindings exactly once from cached proof");
     {
         Halo2ColdObservationResult broken = halo2Cold;
         broken.moduleRangeValid = false;

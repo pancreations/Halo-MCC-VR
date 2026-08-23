@@ -1,7 +1,26 @@
 # Current state
 
-> **C-H2-53 REJECTED; SHARED CONSECUTIVE-LOAD FIX C-H2-54 INSTALLED -
-> 2026-08-23.** The consecutive-level failure is not Halo 2- or
+> **C-H2-54 REJECTED; C-H2-55 SAME-GENERATION LEVEL REHOOK IMPLEMENTED -
+> 2026-08-23.** C-H2-54 fixed the fatal consecutive-load crash, but its Steam
+> headset run proved that most Halo 2 hooks did not reinstall for the second
+> level. The preserved log is
+> `out/test-runs/85afbd0-halo2-c54-no-crash-rehook-failed-20260823-1755/HaloMCCVR.log`
+> (SHA-256 `B31798F0908C7A1E0AA7206F3F0701B8D9A8144512D5B1B6C7696A592BD46117`).
+> The first level installed and executed observer, Classic/Anniversary stereo,
+> final-packet and firing hooks, then retired them safely. The second level
+> reopened under the same physical `halo2.dll` generation, but only the renderer
+> guard returned; stereo stayed off and observer/packet/aim hooks stayed absent.
+>
+> Level rearm correctly clears live graphics-mode, observer-result and Classic
+> gate addresses while retaining the valid physical-module image proof. C-H2-54
+> then skipped the routine that was also solely responsible for reconstructing
+> those cleared addresses. C-H2-55 keeps the cached proof and crash-safe
+> lifecycle, but reconstructs the derived bindings exactly once after every new
+> level gate opens. Existing readiness checks reinstall every dependent hook
+> normally. No camera, aiming, hands, stereo, HUD, input, or other feature is
+> disabled.
+>
+> C-H2-53 remains rejected. The consecutive-level failure is not Halo 2- or
 > mission-specific. The rejected Steam C-H2-53 run unloaded one Halo 2 level,
 > kept `halo2.dll` visible as generation 1 because the mod's new session lease
 > held the Windows loader reference count, then faulted at
@@ -11,7 +30,9 @@
 > boundary. This matches the player's broader report that the same game fails
 > when entered consecutively while changing games can work.
 >
-> Commit `f182e8c` reverts the failed C-H2-53 lease as required. C-H2-54 keeps
+> Commit `f182e8c` reverts the failed C-H2-53 lease as required. Commit
+> `e9d12f9` records the required rejection/revert of C-H2-54 before C-H2-55
+> reapplies its proven no-crash lifecycle with the rehook correction. C-H2-55 keeps
 > C-H2-52's live final-packet hand/gun ownership and exact presented-crosshair
 > projectile aim, and changes only shared title-DLL lifecycle. Exact-base checks
 > now use `GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT`; no title hook or cold
@@ -22,17 +43,19 @@
 > readiness proof and reinstall paths remain active. No camera, aiming, hands,
 > stereo, HUD, input or other player feature is disabled.
 >
-> Release build PASS, `halomccvr_core_tests` PASS, Reach consistency gate PASS,
+> C-H2-55 build/package verification and deployed identity are pending. Its
+> deterministic decision test covers a same-generation cached-proof rebind once
+> per level gate. C-H2-54 previously passed Release build,
+> `halomccvr_core_tests`, Reach consistency gate,
 > the 14-call loader-refcount source gate PASS, PowerShell producer/installer
 > parsing PASS, and `git diff --check` PASS. The manifest-backed packager
 > automatically installed the exact candidate to Steam and Microsoft Store,
 > preserved C-H2-53 separately for each, and did not launch MCC or change either
 > `halomccvr.cfg`. Independent post-install hashes match in both editions. This
-> is ready for the requested consecutive same-title loads, but remains
-> unaccepted until runtime/headset confirmation; the accepted pointer is not
-> advanced.
+> but is rejected for the missing second-level rehook; the accepted pointer is
+> not advanced.
 >
-> | C-H2-54 deployed identity | Value |
+> | Rejected C-H2-54 deployed identity | Value |
 > | --- | --- |
 > | Source | `85afbd0bf4000b404038a167b66d5715f5489571` |
 > | C-H2-53 required revert | `f182e8c` |
@@ -64,7 +87,7 @@
 > leave this optional hands/gun/shot transaction stock for that frame without
 > disarming camera, stereo or OpenXR.
 >
-> C-H2-53 fixes the consecutive-mission lifecycle independently. Observer plus
+> C-H2-53 attempted to fix the consecutive-mission lifecycle independently. Observer plus
 > packet/firing hooks, Anniversary stereo, Classic stereo, and the renderer
 > switch guard each retain one pinned physical `halo2.dll` lease for the MCC
 > session. When MCC temporarily withdraws title/level/cold-proof/renderer
@@ -84,9 +107,9 @@
 > `halomccvr_core_tests`; Reach consistency gate; producer/installer manifest
 > contract; and separate installed-DLL hash verification in both editions all
 > PASS. MCC was not launched and neither existing `halomccvr.cfg` was changed.
-> The accepted-build pointer remains C-H2-40 until an explicit headset result,
-> but C-H2-53 is the complete new build containing both requested fixes; no
-> requested feature was disabled.
+> The headset/runtime result rejected this lifecycle direction. Its installed
+> identity below is preserved only as failure evidence and must not be treated
+> as a fix or reinstalled.
 >
 > | C-H2-53 deployed identity | Value |
 > | --- | --- |
