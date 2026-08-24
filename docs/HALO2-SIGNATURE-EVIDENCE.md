@@ -3413,3 +3413,46 @@ write guards remain. Runtime telemetry now separates weapon-state, publication,
 controller-snapshot, carrier and ownership failures and reports last/maximum
 right and left wrist displacement in millimetres. Release compilation and core
 tests pass; headset acceptance remains required.
+
+## E-H2-53 / E-H2-54 (C-H2-60 rejection / C-H2-62): the visible matrix copy occurs inside the builder; native unit aim is the shared engine consumer - 2026-08-23
+
+The exact C-H2-60 Steam log is preserved at
+`out/test-runs/c3ebb45-halo2-c60-material-writes-no-visible-effect-20260823-1929/HaloMCCVR.log`,
+SHA-256 `0BD91BEA0588A7B738B9CA657D81A439E254B9A0BA61AD4F791CB11BE8B31314`.
+It identifies source `c3ebb45ae781835b52799da7ab77a67a05c8aa70`. The packet
+transaction continuously reached 2,262 owned builds and measured wrist motion
+up to 0.631 m. The firing detour materially changed 21 directions by up to
+32.635 degrees. The player's result was still "nothing changed." This rejects
+both consumers, not their admission or arithmetic. C-H2-61 disables that
+behavior in commit `95b40a7`.
+
+The official H2EK packet fill remains kit `+0x306D16`, but retail optimization
+inlines the primary hands and weapon fills into outer builder `+0x8181F0`. More
+importantly, retail's verified outer tail reads the registered callback pointer
+at RVA `0x187C2E8` and, while still inside the builder, invokes it once per
+completed packet with `(user, model, owner, weapon_slot, matrices)`. The pointer
+is assigned at retail `+0x69A67` to `halo2.dll+0x6BB40`. That callback consumes
+the matrix pointer immediately and copies node transforms into the live render
+model under its own synchronization. Therefore any matrix edit after
+`+0x8181F0` returns is too late. The `+0x6BB40` 29-byte entry pattern and the
+builder pattern each occur exactly once in the pinned retail module.
+
+C-H2-62 detours both functions. The outer detour publishes only thread-local
+identity, graph/remap, controller and authored-root context before calling
+stock. The registered callback detour recognizes the hands packet by owner unit
+and slot `-1`, applies the independently tagged left/right wrist subtrees, then
+recognizes primary held model slot 0 and applies the exact right-wrist delta.
+It calls the stock callback only after those writes. No post-return packet path
+is enabled.
+
+For aim, official H2EK `units.cpp` function kit `+0x48E350` is the native
+`unit_update_aiming`: it updates `desired_aiming_vector` at unit `+0x168` and
+`aiming_vector` at `+0x174`, validates the result, and publishes an aim-change
+witness. BSim maps it to retail `halo2.dll+0x8FDF50` (similarity `0.335462`,
+significance `55.5718`). Retail preserves the same members (its unit pointer is
+typed as `ushort*`, so `+0xB4*2=+0x168` and `+0xBA*2=+0x174`). Its 31-byte
+wildcarded entry pattern occurs once. Retail object-datum accessor `+0x8D7000`
+and its entry pattern also occur once. C-H2-62 runs stock aim update first, then
+for output user 0's exact unit writes both native vectors from the same immutable
+observer/controller publication used by the visible mesh. The rejected
+firing-helper detour is not installed.

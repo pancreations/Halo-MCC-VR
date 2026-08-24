@@ -7714,10 +7714,11 @@ int main()
 
             Check(!kHalo2RejectedInterpolatorControllerOwnershipEnabled &&
                       !kHalo2FinalPaletteControllerOwnershipEnabled &&
-                      kHalo2StableFinalPacketControllerOwnershipEnabled,
-                "C-H2-60 leaves both headset-rejected Halo 2 controller "
-                "transactions dormant and enables only the stable final-packet "
-                "replacement");
+                      !kHalo2StableFinalPacketControllerOwnershipEnabled &&
+                      kHalo2VisibleConsumerControllerOwnershipEnabled,
+                "C-H2-62 leaves every headset-rejected Halo 2 controller "
+                "transaction dormant and enables only the pre-copy visible "
+                "consumer replacement");
             Check(kHalo2MatrixComposeRva == 0x0072A150 &&
                       kHalo2FirstPersonPrimaryComposeReturnRva == 0x00818623 &&
                       kHalo2FirstPersonSecondaryComposeReturnRva == 0x00818773 &&
@@ -7726,6 +7727,8 @@ int main()
                 "first-person palette return sites");
             Check(kHalo2FirstPersonPacketBuilderRva == 0x008181F0 &&
                       sizeof(kHalo2FirstPersonPacketBuilderEntryBytes) == 29 &&
+                      kHalo2FirstPersonVisibleConsumerRva == 0x0006BB40 &&
+                      sizeof(kHalo2FirstPersonVisibleConsumerEntryBytes) == 29 &&
                       kHalo2FirstPersonUserDataPointerRva == 0x0187C300 &&
                       kHalo2FirstPersonUserStride == 0x20FC &&
                       kHalo2FirstPersonWeaponDataOffset == 0x0C &&
@@ -7734,8 +7737,16 @@ int main()
                       kHalo2FirstPersonAnimationNodeCountOffset == 0x31C &&
                       kHalo2FirstPersonRenderPacketHeaderBytes == 0x0C &&
                       kHalo2FirstPersonRenderPacketStride == 0x0D0C,
-                "E-H2-45 pins H2EK's verified final first-person packet "
-                "boundary and weapon-data layout");
+                "E-H2-45/E-H2-53 pin H2EK's first-person packet builder, its "
+                "registered pre-copy visible consumer, and weapon-data layout");
+            Check(kHalo2NativeAimUpdateRva == 0x008FDF50 &&
+                      sizeof(kHalo2NativeAimUpdateEntryBytes) == 22 &&
+                      kHalo2ObjectDatumAccessorRva == 0x008D7000 &&
+                      kHalo2ObjectsDataArrayPointerRva == 0x018B7398 &&
+                      kHalo2UnitDesiredAimingVectorOffset == 0x168 &&
+                      kHalo2UnitAimingVectorOffset == 0x174,
+                "E-H2-54 pins Halo 2's native desired/current aiming-vector "
+                "updater and local object-datum access path");
             {
                 constexpr uint32_t kPacketNodes = 4;
                 float hands[kPacketNodes * kHalo2FirstPersonNodeFloats]{};
@@ -7787,6 +7798,33 @@ int main()
                     "C-H2-60 final packets place each independent wrist at its "
                     "physical target, scale each complete subtree about that "
                     "wrist, carry the separate gun once, and collapse body nodes");
+
+                identityNode(hands + 0 * kHalo2FirstPersonNodeFloats, 0.0f);
+                identityNode(hands + 1 * kHalo2FirstPersonNodeFloats, -2.0f);
+                identityNode(hands + 2 * kHalo2FirstPersonNodeFloats, 2.0f);
+                identityNode(hands + 3 * kHalo2FirstPersonNodeFloats, -3.0f);
+                identityNode(gun, 4.0f);
+                Halo2FirstPersonTransform visibleRightDelta{};
+                Halo2FinalPacketOwnershipResult visibleHands{};
+                Halo2FinalPacketOwnershipResult visibleGun{};
+                const bool ownedVisibleHands = Halo2OwnVisibleFirstPersonHands(
+                    hands, kPacketNodes, remap, packetBinding, authoredRoot,
+                    right, left, false, 2.0f, 0.5f, 1.0f,
+                    visibleRightDelta, visibleHands);
+                const bool ownedVisibleGun = ownedVisibleHands &&
+                    Halo2OwnVisibleFirstPersonGun(
+                        gun, 1, visibleRightDelta, visibleGun);
+                Check(ownedVisibleHands && ownedVisibleGun &&
+                          visibleHands.rightNodes == 1 &&
+                          visibleHands.leftNodes == 2 &&
+                          visibleHands.collapsedNodes == 1 &&
+                          visibleGun.gunNodes == 1 &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
+                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                          nearlyEqual(gun[10], 14.0f),
+                    "C-H2-62's sequential registered-consumer calls apply the "
+                    "same wrist ownership before copy and carry the held model "
+                    "with the exact right-wrist delta");
 
                 float unchanged[kPacketNodes * kHalo2FirstPersonNodeFloats]{};
                 std::memcpy(unchanged, hands, sizeof(unchanged));

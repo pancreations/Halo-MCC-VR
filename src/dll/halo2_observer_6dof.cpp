@@ -200,6 +200,48 @@ namespace
     std::atomic<uint32_t> g_packetBuilderLeftDeltaMillimeters{0};
     std::atomic<uint32_t> g_packetBuilderMaxRightDeltaMillimeters{0};
     std::atomic<uint32_t> g_packetBuilderMaxLeftDeltaMillimeters{0};
+    using Halo2VisibleFirstPersonConsumerFn = void(__fastcall*)(
+        uint32_t, uint32_t, uint32_t, int32_t, float*);
+    void* g_visibleConsumerTarget = nullptr;
+    std::atomic<uintptr_t> g_visibleConsumerOriginal{0};
+    std::atomic<uint32_t> g_visibleConsumerActiveCallbacks{0};
+    std::atomic<uint64_t> g_visibleConsumerCalls{0};
+    std::atomic<uint64_t> g_visibleConsumerHandsApplied{0};
+    std::atomic<uint64_t> g_visibleConsumerGunsApplied{0};
+
+    struct Halo2VisibleConsumerContext
+    {
+        bool valid = false;
+        uint32_t user = UINT32_MAX;
+        uint32_t unitObject = UINT32_MAX;
+        uint32_t weaponObject = UINT32_MAX;
+        uint32_t handsCount = 0;
+        uint32_t gunCount = 0;
+        const int32_t* handsRemap = nullptr;
+        Halo2FirstPersonArmBinding binding{};
+        Halo2CameraBasis renderCamera{};
+        Halo2CameraBasis rightCarrier{};
+        Halo2CameraBasis leftCarrier{};
+        bool twoHandAimActive = false;
+        float rightScale = 1.0f;
+        float leftScale = 1.0f;
+        float worldScale = 1.0f;
+        bool handsApplied = false;
+        bool gunApplied = false;
+        Halo2FirstPersonTransform rightDelta{};
+    };
+    thread_local Halo2VisibleConsumerContext g_visibleConsumerContext{};
+
+    using Halo2NativeAimUpdateFn = uint64_t(__fastcall*)(uint32_t);
+    using Halo2ObjectDatumAccessorFn = void*(__fastcall*)(const void*);
+    void* g_nativeAimTarget = nullptr;
+    std::atomic<uintptr_t> g_nativeAimOriginal{0};
+    std::atomic<uintptr_t> g_objectDatumAccessor{0};
+    std::atomic<uint32_t> g_nativeAimActiveCallbacks{0};
+    std::atomic<uint64_t> g_nativeAimCalls{0};
+    std::atomic<uint64_t> g_nativeAimApplied{0};
+    std::atomic<uint64_t> g_nativeAimNonOwned{0};
+    std::atomic<uint64_t> g_nativeAimRefused{0};
 
     struct Halo2FinalPaletteContext
     {
@@ -904,6 +946,107 @@ namespace
         g_finalPaletteActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    __declspec(noinline) void __fastcall Halo2VisibleFirstPersonConsumerDetour(
+        uint32_t user, uint32_t modelObject, uint32_t ownerObject,
+        int32_t weaponSlot, float* matrices)
+    {
+        g_visibleConsumerActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_visibleConsumerCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original =
+            reinterpret_cast<Halo2VisibleFirstPersonConsumerFn>(
+                g_visibleConsumerOriginal.load(std::memory_order_acquire));
+        auto& context = g_visibleConsumerContext;
+        if (original && matrices && context.valid && user == context.user &&
+            g_armed.load(std::memory_order_acquire) &&
+            g_levelLive.load(std::memory_order_acquire) &&
+            !g_teardownRequested.load(std::memory_order_acquire))
+        {
+            __try
+            {
+                Halo2FinalPacketOwnershipResult result{};
+                if (!context.handsApplied && weaponSlot == -1 &&
+                    ownerObject == context.unitObject &&
+                    Halo2OwnVisibleFirstPersonHands(
+                        matrices, context.handsCount, context.handsRemap,
+                        context.binding, context.renderCamera,
+                        context.rightCarrier, context.leftCarrier,
+                        context.twoHandAimActive, context.rightScale,
+                        context.leftScale, context.worldScale,
+                        context.rightDelta, result))
+                {
+                    context.handsApplied = true;
+                    g_visibleConsumerHandsApplied.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
+                    g_finalPaletteMovedRight.fetch_add(
+                        result.rightNodes, std::memory_order_relaxed);
+                    g_finalPaletteMovedLeft.fetch_add(
+                        result.leftNodes, std::memory_order_relaxed);
+                    g_finalPaletteCollapsed.fetch_add(
+                        result.collapsedNodes, std::memory_order_relaxed);
+                    const auto millimeters = [&context](float world) {
+                        return static_cast<uint32_t>(std::min(
+                            world / context.worldScale * 1000.0f, 100000.0f));
+                    };
+                    const uint32_t rightMm =
+                        millimeters(result.rightWristDeltaWorld);
+                    const uint32_t leftMm =
+                        millimeters(result.leftWristDeltaWorld);
+                    g_packetBuilderRightDeltaMillimeters.store(
+                        rightMm, std::memory_order_relaxed);
+                    g_packetBuilderLeftDeltaMillimeters.store(
+                        leftMm, std::memory_order_relaxed);
+                    auto publishMaximum = [](std::atomic<uint32_t>& destination,
+                                             uint32_t value) {
+                        uint32_t previous =
+                            destination.load(std::memory_order_relaxed);
+                        while (previous < value &&
+                               !destination.compare_exchange_weak(
+                                   previous, value, std::memory_order_relaxed,
+                                   std::memory_order_relaxed))
+                        {
+                        }
+                    };
+                    publishMaximum(
+                        g_packetBuilderMaxRightDeltaMillimeters, rightMm);
+                    publishMaximum(
+                        g_packetBuilderMaxLeftDeltaMillimeters, leftMm);
+                }
+                else if (!context.gunApplied && context.handsApplied &&
+                         weaponSlot == 0 &&
+                         ownerObject == context.weaponObject &&
+                         Halo2OwnVisibleFirstPersonGun(
+                             matrices, context.gunCount, context.rightDelta,
+                             result))
+                {
+                    context.gunApplied = true;
+                    g_visibleConsumerGunsApplied.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_packetBuilderGunNodes.fetch_add(
+                        result.gunNodes, std::memory_order_relaxed);
+                    g_packetBuilderLastAppliedMs.store(
+                        GetTickCount64(), std::memory_order_release);
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (original)
+        {
+            __try
+            {
+                original(user, modelObject, ownerObject, weaponSlot, matrices);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        g_visibleConsumerActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
     __declspec(noinline) int __fastcall Halo2FirstPersonPacketBuilderDetour(
         uint32_t user, uint32_t unitObject, const float* position,
         const float* forward, const float* up, int packetCapacity,
@@ -913,27 +1056,9 @@ namespace
         g_packetBuilderCalls.fetch_add(1, std::memory_order_relaxed);
         const auto original = reinterpret_cast<Halo2FirstPersonPacketBuilderFn>(
             g_packetBuilderOriginal.load(std::memory_order_acquire));
-        int packetCount = 0;
-        if (original)
-        {
-            __try
-            {
-                packetCount = original(
-                    user, unitObject, position, forward, up, packetCapacity,
-                    packets, publishToRenderer);
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER)
-            {
-                g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-
-        bool applied = false;
+        g_visibleConsumerContext = Halo2VisibleConsumerContext{};
         if (original && user == kOwnedUser && publishToRenderer && packets &&
-            packetCapacity > 0 && packetCount > 0 &&
-            packetCount <= packetCapacity &&
-            packetCount <= kHalo2FrameInterpolatorFirstPersonSlots + 1 &&
-            g_armed.load(std::memory_order_acquire) &&
+            packetCapacity > 0 && g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
             !g_teardownRequested.load(std::memory_order_acquire) &&
             g_finalPaletteReady.load(std::memory_order_acquire))
@@ -947,10 +1072,9 @@ namespace
                           module + kHalo2FirstPersonUserDataPointerRva)
                     : 0;
                 const uintptr_t weaponData = userArray
-                    ? userArray +
-                        static_cast<uintptr_t>(user) *
-                            kHalo2FirstPersonUserStride +
-                        kHalo2FirstPersonWeaponDataOffset
+                    ? userArray + static_cast<uintptr_t>(user) *
+                          kHalo2FirstPersonUserStride +
+                          kHalo2FirstPersonWeaponDataOffset
                     : 0;
                 const uint8_t flags = weaponData
                     ? *reinterpret_cast<const volatile uint8_t*>(weaponData)
@@ -980,31 +1104,6 @@ namespace
                     ? reinterpret_cast<const int32_t*>(
                           weaponData + kHalo2FirstPersonHandsRemapOffset)
                     : nullptr;
-
-                float* handsMatrices = nullptr;
-                float* gunMatrices = nullptr;
-                for (int packetIndex = 0; packetIndex < packetCount;
-                     ++packetIndex)
-                {
-                    uint8_t* const packet =
-                        reinterpret_cast<uint8_t*>(packets) +
-                        static_cast<uintptr_t>(packetIndex) *
-                            kHalo2FirstPersonRenderPacketStride;
-                    const uint32_t packetObject =
-                        *reinterpret_cast<const uint32_t*>(packet + 4);
-                    if (!handsMatrices && packetObject == unitObject)
-                    {
-                        handsMatrices = reinterpret_cast<float*>(
-                            packet + kHalo2FirstPersonRenderPacketHeaderBytes);
-                    }
-                    else if (!gunMatrices && packetObject == weaponObject)
-                    {
-                        gunMatrices = reinterpret_cast<float*>(
-                            packet + kHalo2FirstPersonRenderPacketHeaderBytes);
-                    }
-                }
-
-                Halo2FirstPersonArmBinding binding{};
                 Halo2CameraBasis renderCamera{};
                 if (position && forward && up)
                 {
@@ -1012,19 +1111,17 @@ namespace
                     std::memcpy(renderCamera.forward, forward, 12);
                     std::memcpy(renderCamera.up, up, 12);
                 }
-                Halo2CameraBasis rightCarrier{};
-                Halo2CameraBasis leftCarrier{};
+                Halo2FirstPersonArmBinding binding{};
+                Halo2CameraBasis rightCarrier{}, leftCarrier{};
                 Halo2ObserverPosePublication publication{};
-                Halo2FinalPacketOwnershipResult result{};
                 const uint32_t generation =
                     g_generation.load(std::memory_order_acquire);
                 g_packetBuilderEligible.fetch_add(1, std::memory_order_relaxed);
-                const bool weaponStateReady =
-                    (flags & 0x07u) == 0x07u &&
-                    weaponObject != UINT32_MAX &&
-                    ResolveArmBinding(graphId, animationCount, binding) &&
-                    Halo2ValidateCameraBasis(renderCamera);
-                if (!weaponStateReady)
+                if ((flags & 0x07u) != 0x07u ||
+                    weaponObject == UINT32_MAX || !gunCount || !handsCount ||
+                    !handsRemap ||
+                    !ResolveArmBinding(graphId, animationCount, binding) ||
+                    !Halo2ValidateCameraBasis(renderCamera))
                 {
                     g_packetBuilderWeaponStateMiss.fetch_add(
                         1, std::memory_order_relaxed);
@@ -1041,71 +1138,32 @@ namespace
                         1, std::memory_order_relaxed);
                 }
                 else if (!BuildStableFirstPersonCarriers(
-                             publication, generation,
-                             rightCarrier, leftCarrier))
+                             publication, generation, rightCarrier, leftCarrier))
                 {
                     g_packetBuilderCarrierMiss.fetch_add(
                         1, std::memory_order_relaxed);
                 }
-                else if (Halo2OwnFinalFirstPersonPackets(
-                             handsMatrices, handsCount, handsRemap, binding,
-                             gunMatrices, gunCount, renderCamera, rightCarrier,
-                             leftCarrier,
-                             publication.snapshot.twoHandAimActive,
-                             std::clamp(g_config.gun_scale, 0.3f, 3.0f),
-                             std::clamp(
-                                 g_config.left_hand_scale, 0.3f, 3.0f),
-                             Game_GetWorldScale(), result))
-                {
-                    g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
-                    g_finalPaletteMovedRight.fetch_add(
-                        result.rightNodes, std::memory_order_relaxed);
-                    g_finalPaletteMovedLeft.fetch_add(
-                        result.leftNodes, std::memory_order_relaxed);
-                    g_finalPaletteCollapsed.fetch_add(
-                        result.collapsedNodes, std::memory_order_relaxed);
-                    g_packetBuilderGunNodes.fetch_add(
-                        result.gunNodes, std::memory_order_relaxed);
-                    g_packetBuilderLastAppliedMs.store(
-                        GetTickCount64(), std::memory_order_release);
-                    const float worldScale = Game_GetWorldScale();
-                    const auto millimeters = [worldScale](float world) {
-                        if (!std::isfinite(world) ||
-                            !std::isfinite(worldScale) || worldScale <= 0.0f)
-                            return uint32_t{0};
-                        return static_cast<uint32_t>(std::min(
-                            world / worldScale * 1000.0f, 100000.0f));
-                    };
-                    const uint32_t rightMm =
-                        millimeters(result.rightWristDeltaWorld);
-                    const uint32_t leftMm =
-                        millimeters(result.leftWristDeltaWorld);
-                    g_packetBuilderRightDeltaMillimeters.store(
-                        rightMm, std::memory_order_relaxed);
-                    g_packetBuilderLeftDeltaMillimeters.store(
-                        leftMm, std::memory_order_relaxed);
-                    auto publishMaximum = [](std::atomic<uint32_t>& destination,
-                                             uint32_t value) {
-                        uint32_t previous = destination.load(
-                            std::memory_order_relaxed);
-                        while (previous < value &&
-                               !destination.compare_exchange_weak(
-                                   previous, value,
-                                   std::memory_order_relaxed,
-                                   std::memory_order_relaxed))
-                        {
-                        }
-                    };
-                    publishMaximum(
-                        g_packetBuilderMaxRightDeltaMillimeters, rightMm);
-                    publishMaximum(
-                        g_packetBuilderMaxLeftDeltaMillimeters, leftMm);
-                    applied = true;
-                }
                 else
                 {
-                    g_packetBuilderOwnershipMiss.fetch_add(
-                        1, std::memory_order_relaxed);
+                    auto& context = g_visibleConsumerContext;
+                    context.valid = true;
+                    context.user = user;
+                    context.unitObject = unitObject;
+                    context.weaponObject = weaponObject;
+                    context.handsCount = handsCount;
+                    context.gunCount = gunCount;
+                    context.handsRemap = handsRemap;
+                    context.binding = binding;
+                    context.renderCamera = renderCamera;
+                    context.rightCarrier = rightCarrier;
+                    context.leftCarrier = leftCarrier;
+                    context.twoHandAimActive =
+                        publication.snapshot.twoHandAimActive;
+                    context.rightScale =
+                        std::clamp(g_config.gun_scale, 0.3f, 3.0f);
+                    context.leftScale =
+                        std::clamp(g_config.left_hand_scale, 0.3f, 3.0f);
+                    context.worldScale = Game_GetWorldScale();
                 }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
@@ -1113,6 +1171,26 @@ namespace
                 g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
             }
         }
+
+        int packetCount = 0;
+        if (original)
+        {
+            __try
+            {
+                packetCount = original(
+                    user, unitObject, position, forward, up, packetCapacity,
+                    packets, publishToRenderer);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        const bool applied = g_visibleConsumerContext.handsApplied &&
+            g_visibleConsumerContext.gunApplied;
+        if (g_visibleConsumerContext.valid && !applied)
+            g_packetBuilderOwnershipMiss.fetch_add(1, std::memory_order_relaxed);
+        g_visibleConsumerContext = Halo2VisibleConsumerContext{};
         (applied ? g_packetBuilderApplied : g_packetBuilderStock)
             .fetch_add(1, std::memory_order_relaxed);
         g_packetBuilderActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
@@ -1434,6 +1512,126 @@ namespace
             }
         }
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    __declspec(noinline) uint64_t __fastcall Halo2NativeAimUpdateDetour(
+        uint32_t objectIndex)
+    {
+        g_nativeAimActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_nativeAimCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original = reinterpret_cast<Halo2NativeAimUpdateFn>(
+            g_nativeAimOriginal.load(std::memory_order_acquire));
+        uint64_t result = 0;
+        if (original)
+        {
+            __try { result = original(objectIndex); }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_nativeAimRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        bool applied = false;
+        if (original && Game_Halo2ControllerAimActive() &&
+            Halo2Observer6Dof_DirectWeaponAimArmed())
+        {
+            __try
+            {
+                const uintptr_t module =
+                    g_moduleBase.load(std::memory_order_acquire);
+                uint32_t ownedUnit = UINT32_MAX;
+                const uintptr_t playersGlobals = module
+                    ? *reinterpret_cast<const volatile uintptr_t*>(
+                          module + kHalo2PlayersGlobalsPointerRva)
+                    : 0;
+                const uintptr_t playersData = module
+                    ? *reinterpret_cast<const volatile uintptr_t*>(
+                          module + kHalo2PlayersDataArrayPointerRva)
+                    : 0;
+                if (playersGlobals && playersData)
+                {
+                    const uint32_t playerIndex =
+                        *reinterpret_cast<const volatile uint32_t*>(
+                            playersGlobals + kHalo2PlayerUserMappingOffset +
+                            kOwnedUser * sizeof(uint32_t));
+                    const uint32_t absolutePlayer = playerIndex & 0xffffu;
+                    const uintptr_t storage =
+                        *reinterpret_cast<const volatile uintptr_t*>(
+                            playersData + kHalo2DataArrayStorageOffset);
+                    if (playerIndex != UINT32_MAX &&
+                        absolutePlayer < kHalo2MaximumPlayers && storage)
+                    {
+                        const uintptr_t player = playersData + storage +
+                            static_cast<uintptr_t>(absolutePlayer) *
+                                kHalo2PlayerDatumStride;
+                        ownedUnit =
+                            *reinterpret_cast<const volatile uint32_t*>(
+                                player + kHalo2PlayerUnitIndexOffset);
+                    }
+                }
+                if (ownedUnit == UINT32_MAX || objectIndex != ownedUnit)
+                {
+                    g_nativeAimNonOwned.fetch_add(1, std::memory_order_relaxed);
+                    __leave;
+                }
+
+                Halo2ObserverPosePublication publication{};
+                Halo2CameraBasis rightCarrier{}, leftCarrier{};
+                const uint32_t generation =
+                    g_generation.load(std::memory_order_acquire);
+                if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
+                    !Halo2ObserverControllerSnapshotUsable(
+                        publication, generation) ||
+                    !BuildStableFirstPersonCarriers(
+                        publication, generation, rightCarrier, leftCarrier))
+                    __leave;
+                const float range = std::clamp(
+                    g_config.crosshair_distance_m, 2.0f, 50.0f) *
+                    Game_GetWorldScale();
+                float direction[3]{};
+                if (!Halo2BuildControllerShotDirection(
+                        publication.stock.position, rightCarrier, range,
+                        direction))
+                    __leave;
+
+                const uintptr_t objectsData = module
+                    ? *reinterpret_cast<const volatile uintptr_t*>(
+                          module + kHalo2ObjectsDataArrayPointerRva)
+                    : 0;
+                const uintptr_t objectStorage = objectsData
+                    ? *reinterpret_cast<const volatile uintptr_t*>(
+                          objectsData + kHalo2DataArrayStorageOffset)
+                    : 0;
+                const auto objectAccessor =
+                    reinterpret_cast<Halo2ObjectDatumAccessorFn>(
+                        g_objectDatumAccessor.load(std::memory_order_acquire));
+                if (!objectsData || !objectStorage || !objectAccessor)
+                    __leave;
+                const uintptr_t entry = objectsData + objectStorage +
+                    static_cast<uintptr_t>(objectIndex & 0xffffu) *
+                        kHalo2ObjectDataEntryStride;
+                auto* const unit = static_cast<uint8_t*>(
+                    objectAccessor(reinterpret_cast<const void*>(entry)));
+                if (!unit)
+                    __leave;
+                std::memcpy(
+                    unit + kHalo2UnitDesiredAimingVectorOffset,
+                    direction, sizeof(direction));
+                std::memcpy(
+                    unit + kHalo2UnitAimingVectorOffset,
+                    direction, sizeof(direction));
+                applied = true;
+                result |= 1u;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_nativeAimRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (applied)
+            g_nativeAimApplied.fetch_add(1, std::memory_order_relaxed);
+        g_nativeAimActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        return result;
     }
 
     __declspec(noinline) void __fastcall Halo2WeaponAimHelperDetour(
@@ -1881,6 +2079,31 @@ namespace
             g_packetBuilderOriginal.store(0, std::memory_order_release);
             g_packetBuilderLastAppliedMs.store(0, std::memory_order_release);
         }
+        if (g_visibleConsumerTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_visibleConsumerTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 visible consumer: disable failed (%d); ownership "
+                    "retained for cleanup", static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_visibleConsumerActiveCallbacks.load(
+                     std::memory_order_acquire); ++attempt)
+                Sleep(10);
+            if (g_visibleConsumerActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 visible-consumer callbacks did not drain; "
+                    "ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_visibleConsumerTarget);
+            g_visibleConsumerTarget = nullptr;
+            g_visibleConsumerOriginal.store(0, std::memory_order_release);
+            g_visibleConsumerContext = Halo2VisibleConsumerContext{};
+        }
         if (g_finalPaletteTarget)
         {
             const MH_STATUS disabled = MH_DisableHook(g_finalPaletteTarget);
@@ -1933,6 +2156,31 @@ namespace
             (void)MH_RemoveHook(g_weaponAimTarget);
             g_weaponAimTarget = nullptr;
             g_weaponAimOriginal.store(0, std::memory_order_release);
+        }
+        if (g_nativeAimTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_nativeAimTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 native controller aim: disable failed (%d); "
+                    "ownership retained for cleanup", static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_nativeAimActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+                Sleep(10);
+            if (g_nativeAimActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 native controller-aim callbacks did not drain; "
+                    "ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_nativeAimTarget);
+            g_nativeAimTarget = nullptr;
+            g_nativeAimOriginal.store(0, std::memory_order_release);
+            g_objectDatumAccessor.store(0, std::memory_order_release);
         }
         if (g_reanchorTarget)
         {
@@ -2317,7 +2565,7 @@ namespace
         // hooked or patched. All three must match exactly once and sit at their
         // pinned RVAs, or the complete optional floating-hand presentation stays
         // stock for that frame.
-        if (kHalo2StableFinalPacketControllerOwnershipEnabled)
+        if (kHalo2VisibleConsumerControllerOwnershipEnabled)
         {
             // The 8 leading padding bytes disambiguate the standalone function
             // from the two copies the optimizer inlined elsewhere.
@@ -2396,167 +2644,187 @@ namespace
             }
         }
 
-        // E-H2-45: own the complete first-person render packet after H2 has
-        // authored and root-composed it. This exact H2EK boundary feeds both
-        // Classic and Anniversary and does not depend on an interpolator/tick
-        // witness being present for the current mission.
+        // E-H2-53: +0x8181F0 calls the registered +0x6BB40 consumer before it
+        // returns. The outer detour only establishes exact same-thread identity
+        // and controller context; the consumer detour owns the matrices before
+        // the renderer copies them. There is no post-return ownership path.
         g_finalPaletteReady.store(false, std::memory_order_release);
         uintptr_t packetMatch = 0;
         uint32_t packetMatchCount = 0;
+        uintptr_t consumerMatch = 0;
+        uint32_t consumerMatchCount = 0;
         constexpr char kPacketBuilderPattern[] =
             "48 89 5C 24 18 4C 89 4C 24 20 89 54 24 10 89 4C 24 08 "
             "55 56 57 41 54 41 55 41 56 41 57";
-        if (!kHalo2StableFinalPacketControllerOwnershipEnabled)
+        constexpr char kVisibleConsumerPattern[] =
+            "48 8B C4 89 48 08 55 41 54 41 55 41 56 41 57 48 8D A8 "
+            "48 FE FF FF 48 81 EC 90 02 00 00";
+        if (!kHalo2VisibleConsumerControllerOwnershipEnabled)
         {
-            LOG("Halo 2 final-palette hands NOT installed: build switch off");
+            LOG("Halo 2 visible-consumer hands NOT installed: build switch off");
         }
         else if (!CountPatternMatches(
                      base, size, kPacketBuilderPattern, packetMatch,
                      packetMatchCount) ||
                  packetMatchCount != 1 ||
-                 packetMatch != base + kHalo2FirstPersonPacketBuilderRva)
+                 packetMatch != base + kHalo2FirstPersonPacketBuilderRva ||
+                 !CountPatternMatches(
+                     base, size, kVisibleConsumerPattern, consumerMatch,
+                     consumerMatchCount) ||
+                 consumerMatchCount != 1 ||
+                 consumerMatch !=
+                     base + kHalo2FirstPersonVisibleConsumerRva)
         {
-            LOG("Halo 2 final-packet hands WITHHELD: packet-builder identity "
-                "matched %u times; hands, gun and firing stay stock",
-                packetMatchCount);
+            LOG("Halo 2 visible-consumer hands WITHHELD: builder / consumer "
+                "identities matched %u / %u times",
+                packetMatchCount, consumerMatchCount);
         }
         else
         {
-            void* trampoline = nullptr;
+            void* packetTrampoline = nullptr;
+            void* consumerTrampoline = nullptr;
             void* const packetTarget = reinterpret_cast<void*>(packetMatch);
-            const MH_STATUS created = MH_CreateHook(
+            void* const consumerTarget =
+                reinterpret_cast<void*>(consumerMatch);
+            const MH_STATUS consumerCreated = MH_CreateHook(
+                consumerTarget,
+                reinterpret_cast<void*>(
+                    &Halo2VisibleFirstPersonConsumerDetour),
+                &consumerTrampoline);
+            const MH_STATUS packetCreated = MH_CreateHook(
                 packetTarget,
                 reinterpret_cast<void*>(&Halo2FirstPersonPacketBuilderDetour),
-                &trampoline);
-            if (created == MH_OK && trampoline)
-                g_packetBuilderOriginal.store(
-                    reinterpret_cast<uintptr_t>(trampoline),
+                &packetTrampoline);
+            if (consumerCreated == MH_OK && consumerTrampoline)
+                g_visibleConsumerOriginal.store(
+                    reinterpret_cast<uintptr_t>(consumerTrampoline),
                     std::memory_order_release);
-            const MH_STATUS enabled = created == MH_OK && trampoline
+            if (packetCreated == MH_OK && packetTrampoline)
+                g_packetBuilderOriginal.store(
+                    reinterpret_cast<uintptr_t>(packetTrampoline),
+                    std::memory_order_release);
+            const MH_STATUS consumerEnabled =
+                consumerCreated == MH_OK && consumerTrampoline
+                ? MH_EnableHook(consumerTarget)
+                : MH_ERROR_NOT_CREATED;
+            const MH_STATUS packetEnabled =
+                packetCreated == MH_OK && packetTrampoline
                 ? MH_EnableHook(packetTarget)
                 : MH_ERROR_NOT_CREATED;
-            if (created == MH_OK && trampoline && enabled == MH_OK)
+            if (consumerCreated == MH_OK && consumerTrampoline &&
+                packetCreated == MH_OK && packetTrampoline &&
+                consumerEnabled == MH_OK && packetEnabled == MH_OK)
             {
+                g_visibleConsumerTarget = consumerTarget;
                 g_packetBuilderTarget = packetTarget;
                 g_finalPaletteReady.store(true, std::memory_order_release);
-                LOG("Halo 2 final-packet hands ARMED (C-H2-60): H2EK packet "
-                    "builder +0x%X; one prepared-frame snapshot maps physical "
-                    "wrists from the stable body/recenter frame, two-hand mode "
-                    "locks the authored support grip, subtree scale is affine "
-                    "about each wrist, and the separate gun follows the right "
-                    "wrist once",
-                    static_cast<unsigned>(kHalo2FirstPersonPacketBuilderRva));
+                LOG("Halo 2 visible-consumer hands ARMED (C-H2-62): builder "
+                    "+0x%X establishes the exact packet context and registered "
+                    "renderer consumer +0x%X receives controller-owned hands "
+                    "and held-model matrices before its internal copy",
+                    static_cast<unsigned>(kHalo2FirstPersonPacketBuilderRva),
+                    static_cast<unsigned>(
+                        kHalo2FirstPersonVisibleConsumerRva));
             }
             else
             {
-                LOG("Halo 2 final-packet hands WITHHELD: hook create/enable "
-                    "failed; hands, gun and firing stay stock");
-                if (created == MH_OK)
+                LOG("Halo 2 visible-consumer hands WITHHELD: callback create/"
+                    "enable %d/%d, builder create/enable %d/%d",
+                    static_cast<int>(consumerCreated),
+                    static_cast<int>(consumerEnabled),
+                    static_cast<int>(packetCreated),
+                    static_cast<int>(packetEnabled));
+                if (packetCreated == MH_OK)
                 {
                     (void)MH_DisableHook(packetTarget);
                     (void)MH_RemoveHook(packetTarget);
                 }
+                if (consumerCreated == MH_OK)
+                {
+                    (void)MH_DisableHook(consumerTarget);
+                    (void)MH_RemoveHook(consumerTarget);
+                }
                 g_packetBuilderOriginal.store(0, std::memory_order_release);
+                g_visibleConsumerOriginal.store(0, std::memory_order_release);
             }
         }
 
-        // E-H2-37: this optional hook owns only the direction returned to the
-        // stock firing function. Besides the helper, require the independent
-        // H2EK-matched output-user iterator and player-update identities that
-        // prove the local-player guard's two global pointers and datum layout.
-        //
-        // C-H2-60 installs it only with the stable final-packet transaction,
-        // because "the bullets follow the crosshair" is exactly what this
-        // detour delivers. It is still the ONLY thing the
-        // controller is allowed to steer besides the visible mesh: no XInput,
-        // no observer field, no camera field.
+        // E-H2-54: own Halo 2's native desired/current aiming vectors at their
+        // updater, rather than rewriting one later firing-helper result. This
+        // single engine aim reaches crosshair, weapon simulation and projectile
+        // construction together, using the same publication as the mesh.
         uintptr_t aimMatch = 0;
         uint32_t aimMatchCount = 0;
-        uintptr_t userIteratorMatch = 0;
-        uint32_t userIteratorMatchCount = 0;
-        uintptr_t playerUpdateMatch = 0;
-        uint32_t playerUpdateMatchCount = 0;
-        constexpr char kWeaponAimPattern[] =
-            "48 8B C4 48 89 58 20 55 56 41 55 48 8D 68 C1 "
-            "48 81 EC C0 00 00 00";
-        constexpr char kPlayerUserIteratorPattern[] =
-            "45 33 C9 8D 41 01 83 F9 FF 44 0F 45 C8 49 63 C9 "
-            "48 83 F9 04 7D 25 4C 8B 05 B3 EC 7D 00 49 83 C0 0C";
-        constexpr char kPlayerUpdatePattern[] =
-            "48 89 5C 24 08 48 89 74 24 18 48 89 7C 24 20 55 "
-            "41 54 41 55 41 56 41 57 48 8D AC 24 30 FF FF FF "
-            "48 81 EC D0 01 00 00 4C 8B E9 E8 D1 2A 00 00 45 "
-            "33 FF 84 C0 0F 85 D9 00 00 00 48 8B 15 D7 D0 7D 00";
-        if (!kHalo2StableFinalPacketControllerOwnershipEnabled ||
+        uintptr_t accessorMatch = 0;
+        uint32_t accessorMatchCount = 0;
+        constexpr char kNativeAimPattern[] =
+            "40 55 53 56 57 41 54 48 8D 6C 24 D0 48 81 EC 30 01 00 00 "
+            "48 8B 05 ?? ?? ?? ?? 33 FF 44 8B E1";
+        constexpr char kObjectAccessorPattern[] =
+            "8B 51 08 48 8B 0D ?? ?? ?? ?? E9 ?? ?? ?? ??";
+        if (!kHalo2VisibleConsumerControllerOwnershipEnabled ||
             !g_finalPaletteReady.load(std::memory_order_acquire))
         {
-            LOG("Halo 2 direct weapon aim NOT installed: the controller-owned "
-                "final-packet dependency is unavailable. The "
-                "right stick turns the character and camera, the headset owns "
-                "pitch, and hand motion reaches neither the camera nor the "
-                "weapon");
+            LOG("Halo 2 native controller aim NOT installed: visible consumer "
+                "ownership is unavailable");
         }
         else if (!CountPatternMatches(
-                base, size, kWeaponAimPattern, aimMatch, aimMatchCount) ||
+                base, size, kNativeAimPattern, aimMatch, aimMatchCount) ||
             aimMatchCount != 1 ||
-            aimMatch != base + kHalo2WeaponAimHelperRva ||
+            aimMatch != base + kHalo2NativeAimUpdateRva ||
             !CountPatternMatches(
-                base, size, kPlayerUserIteratorPattern, userIteratorMatch,
-                userIteratorMatchCount) ||
-            userIteratorMatchCount != 1 ||
-            userIteratorMatch != base + kHalo2PlayerUserIteratorRva ||
-            !CountPatternMatches(
-                base, size, kPlayerUpdatePattern, playerUpdateMatch,
-                playerUpdateMatchCount) ||
-            playerUpdateMatchCount != 1 ||
-            playerUpdateMatch != base + kHalo2PlayerUpdateRva)
+                base, size, kObjectAccessorPattern, accessorMatch,
+                accessorMatchCount) ||
+            accessorMatchCount != 1 ||
+            accessorMatch != base + kHalo2ObjectDatumAccessorRva)
         {
-            LOG("Halo 2 direct weapon aim WITHHELD: firing helper / user "
-                "iterator / player update identities were %u / %u / %u "
-                "matches; right stick and camera remain stock",
-                aimMatchCount,
-                userIteratorMatchCount, playerUpdateMatchCount);
+            LOG("Halo 2 native controller aim WITHHELD: updater / object "
+                "accessor identities matched %u / %u times",
+                aimMatchCount, accessorMatchCount);
         }
         else
         {
             void* trampoline = nullptr;
             void* const aimTarget = reinterpret_cast<void*>(aimMatch);
             const MH_STATUS created = MH_CreateHook(
-                aimTarget, reinterpret_cast<void*>(&Halo2WeaponAimHelperDetour),
+                aimTarget, reinterpret_cast<void*>(&Halo2NativeAimUpdateDetour),
                 &trampoline);
             if (created != MH_OK || !trampoline)
             {
-                LOG("Halo 2 direct weapon aim WITHHELD: hook create=%d; "
-                    "right stick and camera remain stock",
+                LOG("Halo 2 native controller aim WITHHELD: hook create=%d",
                     static_cast<int>(created));
                 if (created == MH_OK)
                     (void)MH_RemoveHook(aimTarget);
             }
             else
             {
-                g_weaponAimTarget = aimTarget;
-                g_weaponAimOriginal.store(
+                g_nativeAimTarget = aimTarget;
+                g_nativeAimOriginal.store(
                     reinterpret_cast<uintptr_t>(trampoline),
                     std::memory_order_release);
+                g_objectDatumAccessor.store(
+                    accessorMatch, std::memory_order_release);
                 const MH_STATUS enabled = MH_EnableHook(aimTarget);
                 if (enabled != MH_OK)
                 {
-                    LOG("Halo 2 direct weapon aim WITHHELD: hook enable=%d; "
-                        "right stick and camera remain stock",
+                    LOG("Halo 2 native controller aim WITHHELD: hook enable=%d",
                         static_cast<int>(enabled));
                     (void)MH_RemoveHook(aimTarget);
-                    g_weaponAimTarget = nullptr;
-                    g_weaponAimOriginal.store(0, std::memory_order_release);
+                    g_nativeAimTarget = nullptr;
+                    g_nativeAimOriginal.store(0, std::memory_order_release);
+                    g_objectDatumAccessor.store(0, std::memory_order_release);
                 }
                 else
                 {
-                    LOG("Halo 2 direct weapon aim installed (C-H2-60) at firing helper "
-                        "+0x%X with output-user-0 unit guard: controller "
-                        "replaces only the local player's shot direction from "
-                        "the stable presented-crosshair ray and records actual "
-                        "angular deflection; "
-                        "AI, XInput, observer and camera are untouched",
-                        static_cast<unsigned>(kHalo2WeaponAimHelperRva));
+                    LOG("Halo 2 native controller aim installed (C-H2-62): "
+                        "unit aim updater +0x%X writes local user 0 desired/"
+                        "current aim +0x%X/+0x%X from the same stable "
+                        "controller sight line as the visible mesh; the old "
+                        "firing-helper substitution is not installed",
+                        static_cast<unsigned>(kHalo2NativeAimUpdateRva),
+                        static_cast<unsigned>(
+                            kHalo2UnitDesiredAimingVectorOffset),
+                        static_cast<unsigned>(kHalo2UnitAimingVectorOffset));
                 }
             }
         }
@@ -2637,9 +2905,8 @@ namespace
             "snapshot miss, %llu carrier miss, %llu ownership miss; wrist motion "
             "right %u/%u mm last/max, left %u/%u mm last/max; palette result: "
             "%llu changed, %llu right, %llu left, %llu collapsed, %llu refused; "
-            "direct shot aim: %llu calls, %llu applied, %llu stock, %llu "
-            "non-owned, %llu no-owned-unit, %llu exceptions, %llu materially "
-            "changed, max deflection %.3f deg",
+            "visible consumer: %llu calls, %llu hands owned, %llu guns owned; "
+            "native aim: %llu calls, %llu applied, %llu non-owned, %llu refused",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -2758,22 +3025,19 @@ namespace
             static_cast<unsigned long long>(
                 g_finalPaletteRefused.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimCalls.load(std::memory_order_relaxed)),
+                g_visibleConsumerCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimApplied.load(std::memory_order_relaxed)),
+                g_visibleConsumerHandsApplied.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimStock.load(std::memory_order_relaxed)),
+                g_visibleConsumerGunsApplied.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimNonOwned.load(std::memory_order_relaxed)),
+                g_nativeAimCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimNoOwnedUnit.load(std::memory_order_relaxed)),
+                g_nativeAimApplied.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimExceptions.load(std::memory_order_relaxed)),
+                g_nativeAimNonOwned.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimChanged.load(std::memory_order_relaxed)),
-            static_cast<double>(
-                g_weaponAimMaxDeflectionMilliDegrees.load(
-                    std::memory_order_relaxed)) / 1000.0);
+                g_nativeAimRefused.load(std::memory_order_relaxed)));
     }
 }
 
@@ -2855,7 +3119,8 @@ bool Halo2Observer6Dof_Armed() noexcept
 
 bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept
 {
-    return g_weaponAimOriginal.load(std::memory_order_acquire) != 0 &&
+    return g_nativeAimOriginal.load(std::memory_order_acquire) != 0 &&
+        g_objectDatumAccessor.load(std::memory_order_acquire) != 0 &&
         g_armed.load(std::memory_order_acquire) &&
         g_levelLive.load(std::memory_order_acquire) &&
         !g_teardownRequested.load(std::memory_order_acquire);
@@ -2868,6 +3133,7 @@ bool Halo2Observer6Dof_FinalPaletteArmed() noexcept
     const uint64_t now = GetTickCount64();
     return g_finalPaletteReady.load(std::memory_order_acquire) &&
         g_packetBuilderOriginal.load(std::memory_order_acquire) != 0 &&
+        g_visibleConsumerOriginal.load(std::memory_order_acquire) != 0 &&
         appliedAt && appliedAt <= now && now - appliedAt <= 250 &&
         g_armed.load(std::memory_order_acquire) &&
         g_levelLive.load(std::memory_order_acquire) &&

@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c60-observer-published-controller-packets-',
+            $head.Substring(0, 7) + '-halo2-c62-visible-consumer-native-aim-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-60' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-62' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_BUILD_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'h2ek-final-packet-observer-published-controller-snapshot-stable-wrists-rigid-two-hand-support-affine-scale-right-gun-presented-crosshair-shots-plus-c55-rehook' -or
+            'h2ek-registered-pre-copy-visible-consumer-stable-two-hand-mesh-native-unit-aim-plus-c55-rehook' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -229,6 +229,19 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
             $true -or
         $manifest.halo2_candidate.observer_6dof_requires_restore -ne $false -or
         $manifest.halo2_candidate.observer_6dof_reaches_both_renderers -ne $true -or
+        [string]$manifest.halo2_candidate.hand_mesh_context_builder_rva -cne
+            '0x008181F0' -or
+        [string]$manifest.halo2_candidate.hand_mesh_visible_consumer_rva -cne
+            '0x0006BB40' -or
+        [string]$manifest.halo2_candidate.hand_mesh_ownership -cne
+            'registered-render-model-callback-before-internal-copy' -or
+        [string]$manifest.halo2_candidate.native_aim_update_rva -cne
+            '0x008FDF50' -or
+        [string]$manifest.halo2_candidate.native_aim_ownership -cne
+            'desired-and-current-unit-aiming-vectors' -or
+        $manifest.halo2_candidate.rejected_post_return_packet_enabled -ne
+            $false -or
+        $manifest.halo2_candidate.rejected_firing_helper_enabled -ne $false -or
         $manifest.halo2_candidate.live_renderer_report -ne $true -or
         [string]$manifest.halo2_candidate.live_renderer_source -cne
             'unique-signature-decoded-classic-render-gate' -or

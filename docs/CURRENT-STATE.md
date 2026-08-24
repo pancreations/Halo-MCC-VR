@@ -1,5 +1,33 @@
 # Current state
 
+> **HALO 2 C-H2-60 REJECTED; C-H2-61 SAFETY REVERT COMMITTED; UNACCEPTED
+> C-H2-62 VISIBLE-CONSUMER HANDS/GUN + NATIVE AIM IN SOURCE - 2026-08-23.**
+> The exact C-H2-60 Steam run is preserved at
+> `out/test-runs/c3ebb45-halo2-c60-material-writes-no-visible-effect-20260823-1929/HaloMCCVR.log`
+> (SHA-256
+> `0BD91BEA0588A7B738B9CA657D81A439E254B9A0BA61AD4F791CB11BE8B31314`).
+> C-H2-60 continuously owned 2,262 packet builds and reported physical wrist
+> changes as large as 0.631 m; 21 firing-helper results changed by as much as
+> 32.635 degrees. The player saw no change. This proves those writes were
+> material but targeted copies that the visible renderer and native aim did not
+> consume. Commit `95b40a7` disables C-H2-60 without deleting it.
+>
+> Retail verification of the H2EK packet path supplies the missing ordering:
+> builder `+0x8181F0` invokes the registered render-model callback `+0x6BB40`
+> for every completed packet before returning, and that callback immediately
+> copies the supplied matrices. Post-return packet edits can never become
+> visible. C-H2-62 uses the outer builder only to establish exact same-thread
+> user/unit/weapon/binding/controller context, then owns hands and the held model
+> inside `+0x6BB40` before its copy. The old post-return packet path remains off.
+>
+> Official H2EK `units.cpp` identifies `unit_update_aiming` kit `+0x48E350` as
+> the native desired/current aim owner at unit `+0x168/+0x174`; BSim and retail
+> verification map it to `halo2.dll+0x8FDF50` with the same members. C-H2-62
+> writes both for local user 0 from the same observer-published controller sight
+> line used by the mesh. The rejected firing-helper substitution is not
+> installed. Release build and core tests pass; headset acceptance is required
+> before the accepted C-H2-55 pointer advances.
+
 > **HALO 2 C-H2-58 REJECTED; C-H2-59 SAFETY REVERT COMMITTED; UNACCEPTED
 > C-H2-60 ASYNCHRONOUS PACKET FIX IN SOURCE - 2026-08-23.** The exact Steam
 > headset run from source `7ffcf2b` is preserved at

@@ -1092,6 +1092,13 @@ inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 // and recenter reference, and applies ownership only to the final packets.
 inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = false;
 
+// C-H2-62: the packet builder invokes the registered render-model consumer
+// before it returns.  This is the sole live controller-ownership transaction:
+// the outer builder establishes exact same-thread object/binding context, the
+// registered consumer receives and modifies the matrices before copying them,
+// and the native unit aiming-vector updater owns the corresponding engine aim.
+inline constexpr bool kHalo2VisibleConsumerControllerOwnershipEnabled = true;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -2661,6 +2668,14 @@ inline constexpr uint8_t kHalo2FirstPersonPacketBuilderEntryBytes[] = {
     0x48, 0x89, 0x5C, 0x24, 0x18, 0x4C, 0x89, 0x4C, 0x24, 0x20,
     0x89, 0x54, 0x24, 0x10, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x56,
     0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57};
+// E-H2-53: +0x8181F0 calls this registered renderer callback for every packet
+// while still inside the builder.  It consumes the supplied final matrices
+// immediately; edits made after the builder returns are necessarily invisible.
+inline constexpr uint32_t kHalo2FirstPersonVisibleConsumerRva = 0x0006BB40;
+inline constexpr uint8_t kHalo2FirstPersonVisibleConsumerEntryBytes[] = {
+    0x48, 0x8B, 0xC4, 0x89, 0x48, 0x08, 0x55, 0x41, 0x54, 0x41,
+    0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0xA8, 0x48, 0xFE,
+    0xFF, 0xFF, 0x48, 0x81, 0xEC, 0x90, 0x02, 0x00, 0x00};
 inline constexpr uint32_t kHalo2FirstPersonUserDataPointerRva = 0x0187C300;
 inline constexpr uint32_t kHalo2FirstPersonUserStride = 0x20FC;
 inline constexpr uint32_t kHalo2FirstPersonWeaponDataOffset = 0x0C;
@@ -2673,6 +2688,22 @@ inline constexpr uint32_t kHalo2FirstPersonHandsRemapOffset = 0x214;
 inline constexpr uint32_t kHalo2FirstPersonAnimationNodeCountOffset = 0x31C;
 inline constexpr uint32_t kHalo2FirstPersonRenderPacketHeaderBytes = 0x0C;
 inline constexpr uint32_t kHalo2FirstPersonRenderPacketStride = 0x0D0C;
+
+// E-H2-54: official H2EK units.cpp `unit_update_aiming` (kit +0x48E350)
+// updates desired_aiming_vector +0x168 and aiming_vector +0x174.  BSim maps it
+// to retail +0x8FDF50; the retail decompile preserves those exact members.
+inline constexpr uint32_t kHalo2NativeAimUpdateRva = 0x008FDF50;
+inline constexpr uint8_t kHalo2NativeAimUpdateEntryBytes[] = {
+    0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x48, 0x8D, 0x6C,
+    0x24, 0xD0, 0x48, 0x81, 0xEC, 0x30, 0x01, 0x00, 0x00, 0x48,
+    0x8B, 0x05};
+inline constexpr uint32_t kHalo2ObjectsDataArrayPointerRva = 0x018B7398;
+inline constexpr uint32_t kHalo2ObjectDataEntryStride = 0x0C;
+inline constexpr uint32_t kHalo2ObjectDatumAccessorRva = 0x008D7000;
+inline constexpr uint8_t kHalo2ObjectDatumAccessorEntryBytes[] = {
+    0x8B, 0x51, 0x08, 0x48, 0x8B, 0x0D};
+inline constexpr uint32_t kHalo2UnitDesiredAimingVectorOffset = 0x168;
+inline constexpr uint32_t kHalo2UnitAimingVectorOffset = 0x174;
 
 // ---------------------------------------------------------------------------
 // E-H2-40 / E-H2-41 (C-H2-47): Halo 2 tags its own hands.
@@ -3249,6 +3280,165 @@ struct Halo2FinalPacketOwnershipResult
     float rightWristDeltaWorld = 0.0f;
     float leftWristDeltaWorld = 0.0f;
 };
+
+// C-H2-62 split transaction for the registered visible consumer.  Retail
+// publishes the hands packet first and the held-model packet afterwards.  The
+// hands call therefore owns the two wrist subtrees and publishes the exact
+// right-wrist affine delta for the immediately following held-model call.
+inline bool Halo2OwnVisibleFirstPersonHands(
+    float* handsMatrices, uint32_t handsCount, const int32_t* handsRemap,
+    const Halo2FirstPersonArmBinding& binding,
+    const Halo2CameraBasis& authoredRoot,
+    const Halo2CameraBasis& rightCarrier,
+    const Halo2CameraBasis& leftCarrier, bool twoHandAimActive,
+    float rightScale, float leftScale, float worldScale,
+    Halo2FirstPersonTransform& rightDeltaOut,
+    Halo2FinalPacketOwnershipResult& out) noexcept
+{
+    out = Halo2FinalPacketOwnershipResult{};
+    rightDeltaOut = Halo2FirstPersonTransform{};
+    if (!handsMatrices || !handsRemap || !binding.valid || binding.count == 0 ||
+        binding.count > kHalo2FirstPersonPaletteCapacity || handsCount == 0 ||
+        handsCount > kHalo2FirstPersonPaletteCapacity ||
+        !Halo2ValidateCameraBasis(authoredRoot) ||
+        !Halo2ValidateCameraBasis(rightCarrier) ||
+        !Halo2ValidateCameraBasis(leftCarrier) || !std::isfinite(rightScale) ||
+        !std::isfinite(leftScale) || !std::isfinite(worldScale) ||
+        rightScale <= 0.0f || leftScale <= 0.0f || worldScale <= 0.0f)
+        return false;
+
+    int rightWristDestination = -1;
+    int leftWristDestination = -1;
+    for (uint32_t destination = 0; destination < handsCount; ++destination)
+    {
+        const int32_t source = handsRemap[destination];
+        if (source < -1 || source >= static_cast<int32_t>(binding.count))
+            return false;
+        if (source == binding.rightWrist)
+            rightWristDestination = static_cast<int>(destination);
+        if (source == binding.leftWrist)
+            leftWristDestination = static_cast<int>(destination);
+    }
+    if (rightWristDestination < 0 || leftWristDestination < 0)
+        return false;
+
+    float stagedHands[
+        kHalo2FirstPersonPaletteCapacity * kHalo2FirstPersonNodeFloats]{};
+    std::memcpy(stagedHands, handsMatrices,
+                static_cast<size_t>(handsCount) * kHalo2FirstPersonNodeStride);
+    const float* const rightWristMatrix = stagedHands +
+        static_cast<uint32_t>(rightWristDestination) *
+            kHalo2FirstPersonNodeFloats;
+    const float* const leftWristMatrix = stagedHands +
+        static_cast<uint32_t>(leftWristDestination) *
+            kHalo2FirstPersonNodeFloats;
+    Halo2FirstPersonTransform stockRight{}, stockLeft{};
+    Halo2FirstPersonTransform desiredRight{}, desiredLeft{};
+    if (!Halo2ReadFirstPersonTransform(rightWristMatrix, stockRight) ||
+        !Halo2ReadFirstPersonTransform(leftWristMatrix, stockLeft) ||
+        !Halo2BuildControllerRerootedWristTarget(
+            rightCarrier, authoredRoot, stockRight, rightScale, desiredRight) ||
+        !(twoHandAimActive
+              ? Halo2BuildRigidSupportWristTarget(
+                    desiredRight, stockRight, stockLeft, leftScale, desiredLeft)
+              : Halo2BuildControllerRerootedWristTarget(
+                    leftCarrier, authoredRoot, stockLeft, leftScale,
+                    desiredLeft)) ||
+        !Halo2FirstPersonWristDeltaPlausible(
+            stockRight, desiredRight, worldScale) ||
+        !Halo2FirstPersonWristDeltaPlausible(
+            stockLeft, desiredLeft, worldScale))
+        return false;
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float right =
+            desiredRight.translation[axis] - stockRight.translation[axis];
+        const float left =
+            desiredLeft.translation[axis] - stockLeft.translation[axis];
+        out.rightWristDeltaWorld += right * right;
+        out.leftWristDeltaWorld += left * left;
+    }
+    out.rightWristDeltaWorld = std::sqrt(out.rightWristDeltaWorld);
+    out.leftWristDeltaWorld = std::sqrt(out.leftWristDeltaWorld);
+    Halo2FirstPersonTransform leftDelta{};
+    if (!std::isfinite(out.rightWristDeltaWorld) ||
+        !std::isfinite(out.leftWristDeltaWorld) ||
+        !Halo2BuildFirstPersonWorldDelta(
+            desiredRight, stockRight, rightDeltaOut) ||
+        !Halo2BuildFirstPersonWorldDelta(desiredLeft, stockLeft, leftDelta))
+        return false;
+
+    for (uint32_t destination = 0; destination < handsCount; ++destination)
+    {
+        float* const node =
+            stagedHands + destination * kHalo2FirstPersonNodeFloats;
+        const int32_t source = handsRemap[destination];
+        const uint64_t bit = source >= 0 ? uint64_t{1} << source : 0;
+        Halo2FirstPersonTransform stockNode{}, moved{};
+        if (bit && (binding.rightSubtree & bit))
+        {
+            if (!Halo2ReadFirstPersonTransform(node, stockNode) ||
+                !Halo2ComposeFirstPersonTransforms(
+                    rightDeltaOut, stockNode, moved))
+                return false;
+            Halo2WriteFirstPersonTransform(moved, node);
+            ++out.rightNodes;
+        }
+        else if (bit && (binding.leftSubtree & bit))
+        {
+            if (!Halo2ReadFirstPersonTransform(node, stockNode) ||
+                !Halo2ComposeFirstPersonTransforms(leftDelta, stockNode, moved))
+                return false;
+            Halo2WriteFirstPersonTransform(moved, node);
+            ++out.leftNodes;
+        }
+        else
+        {
+            node[0] *= 0.0001f;
+            ++out.collapsedNodes;
+        }
+    }
+    out.applied = out.rightNodes != 0 && out.leftNodes != 0;
+    if (!out.applied)
+        return false;
+    std::memcpy(handsMatrices, stagedHands,
+                static_cast<size_t>(handsCount) * kHalo2FirstPersonNodeStride);
+    return true;
+}
+
+inline bool Halo2OwnVisibleFirstPersonGun(
+    float* gunMatrices, uint32_t gunCount,
+    const Halo2FirstPersonTransform& rightDelta,
+    Halo2FinalPacketOwnershipResult& out) noexcept
+{
+    out = Halo2FinalPacketOwnershipResult{};
+    if (!gunMatrices || gunCount == 0 ||
+        gunCount > kHalo2FirstPersonPaletteCapacity ||
+        !Halo2FirstPersonTransformValid(rightDelta))
+        return false;
+    float stagedGun[
+        kHalo2FirstPersonPaletteCapacity * kHalo2FirstPersonNodeFloats]{};
+    std::memcpy(stagedGun, gunMatrices,
+                static_cast<size_t>(gunCount) * kHalo2FirstPersonNodeStride);
+    for (uint32_t nodeIndex = 0; nodeIndex < gunCount; ++nodeIndex)
+    {
+        float* const node =
+            stagedGun + nodeIndex * kHalo2FirstPersonNodeFloats;
+        Halo2FirstPersonTransform stockNode{}, moved{};
+        if (!Halo2ReadFirstPersonTransform(node, stockNode) ||
+            !Halo2ComposeFirstPersonTransforms(rightDelta, stockNode, moved))
+            return false;
+        Halo2WriteFirstPersonTransform(moved, node);
+        ++out.gunNodes;
+    }
+    out.applied = out.gunNodes != 0;
+    if (!out.applied)
+        return false;
+    std::memcpy(gunMatrices, stagedGun,
+                static_cast<size_t>(gunCount) * kHalo2FirstPersonNodeStride);
+    return true;
+}
 
 // E-H2-45: transform the already root-composed render packets, using the
 // engine-authored hands remap to carry the animation graph's invariant hand

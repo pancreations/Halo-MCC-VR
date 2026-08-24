@@ -38025,11 +38025,10 @@ static bool ReachControllerAimActive() { return false; }
 bool Game_Halo2ControllerAimActive()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // C-H2-60 grants ownership only after the H2EK-derived final render-packet
-    // transaction has succeeded recently. The rejected interpolator-space
-    // placement has its own permanently-false switch and cannot be re-armed
-    // through this predicate.
-    return kHalo2StableFinalPacketControllerOwnershipEnabled &&
+    // C-H2-62 grants ownership only after the registered visible render
+    // consumer has accepted both hands and the held model recently. Rejected
+    // interpolator and post-return packet paths remain permanently separate.
+    return kHalo2VisibleConsumerControllerOwnershipEnabled &&
         TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
         Game_HasTitleCapability(TitleCapability_ControllerAim) &&
         Halo2Observer6Dof_Armed() &&
