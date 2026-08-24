@@ -1,5 +1,15 @@
 # Current state
 
+> **HALO 2 C-H2-66 REJECTED; C-H2-67 SAFETY REVERT IN SOURCE -
+> 2026-08-24.** The exact Steam / SteamVR / Oculus / 120 Hz run is preserved at
+> `out/test-runs/161dd68-halo2-c66-left-hand-whack-arbiter-face-arms-steam-20260824-0650/HaloMCCVR.log`
+> (SHA-256 `ED057EA0DEF6C4C54566119594C31606C44456B57D06AE7FC034BF51EE8593CD`).
+> The user rejected the left-hand orientation in both Classic and Anniversary
+> and reported that Arbiter's arms remained at the face instead of attaching
+> like Chief. C-H2-67 disables the complete C-H2-66 presentation selection and
+> restores C-H2-65/C-H2-63 behavior before the next experiment. C-H2-65 remains
+> the safety baseline and C-H2-63 remains the accepted Halo 2 development build.
+
 > **UNACCEPTED HALO 2 C-H2-66 AUTHORED BARREL/HAND ALIGNMENT IN SOURCE -
 > 2026-08-23.** C-H2-65 remains the safety baseline. C-H2-66 replaces the
 > rejected wrist-axis alignment with Halo 2's live authored final geometry.

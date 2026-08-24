@@ -3592,3 +3592,15 @@ the untouched hands before returning. Classic already retains both packets and
 applies the same combined helper directly before its accepted per-eye camera
 compensation. All writes remain staged and fail open to stock; no camera,
 observer, projectile, input, or non-Halo-2 path is changed.
+
+## E-H2-58 (C-H2-67): C-H2-66 headset rejection - 2026-08-24
+
+The exact Steam / SteamVR / Oculus / 120 Hz run is preserved under
+`out/test-runs/161dd68-halo2-c66-left-hand-whack-arbiter-face-arms-steam-20260824-0650/`.
+The user reported the left hand was wrong in both renderers and that Arbiter's
+arms floated at the face rather than attaching like Chief. The log proves both
+Classic and Anniversary consumed owned hands and gun packets with no palette
+refusals, so this is not evidence of a renderer callback failure. It rejects
+the C-H2-66 thumb-ray pi rotation and rejects claiming one undifferentiated
+Chief/Elite presentation from aggregate packet ownership. C-H2-67 disables the
+C-H2-66 selection and restores the prior safety path before further work.

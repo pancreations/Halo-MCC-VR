@@ -7794,20 +7794,14 @@ int main()
                           nearlyEqual(hands[0], 0.0001f) &&
                            nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
                            nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 1], 1.0f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 5], -1.0f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 9], -1.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -10.5f) &&
-                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 10.0f) &&
-                           nearlyEqual(gun[11], 4.0f) &&
-                           nearlyEqual(gun[1], 0.0f) && nearlyEqual(gun[2], 1.0f) &&
-                           nearlyEqual(gun[3], 0.0f) &&
-                          nearlyEqual(result.rightWristDeltaWorld, 8.0f) &&
-                          nearlyEqual(result.leftWristDeltaWorld, 8.0f),
-                    "C-H2-66 maps the authored gun +X barrel onto the crosshair, "
-                    "turns the free palm around its live thumb ray, and keeps scaling");
+                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f) &&
+                           nearlyEqual(result.rightWristDeltaWorld, 8.0f) &&
+                           nearlyEqual(result.leftWristDeltaWorld, 8.0f),
+                    "C-H2-67 disables the rejected C-H2-66 authored alignment and "
+                    "restores the C-H2-63 wrist placement transaction");
 
                 identityNode(hands + 0 * kHalo2FirstPersonNodeFloats, 0.0f);
                 identityNode(hands + 1 * kHalo2FirstPersonNodeFloats, -2.0f);
@@ -7896,20 +7890,14 @@ int main()
                 Halo2FinalPacketOwnershipResult supported{};
                 const bool ownedSupport = Halo2OwnFinalFirstPersonPackets(
                     hands, kPacketNodes, remap, packetBinding, gun, 1,
-                    authoredRoot, right, left, true, 1.0f, 1.0f, 2.0f,
+                    authoredRoot, right, left, true, 1.0f, 1.0f, 1.0f,
                     supported);
                 Check(ownedSupport && supported.applied &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 11], -4.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 6.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 11], -5.0f) &&
-                           nearlyEqual(gun[10], 10.0f) && nearlyEqual(gun[11], 2.0f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 1], gun[1]) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 2], gun[2]) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 5], gun[5]),
-                    "C-H2-66 preserves the authored rigid support grip while "
-                    "the barrel axis turns onto the crosshair");
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 5.0f) &&
+                           nearlyEqual(gun[10], 12.0f),
+                    "C-H2-67 restores the C-H2-63 authored rigid support grip");
             }
             {
                 float wrist[kHalo2FirstPersonNodeFloats]{};

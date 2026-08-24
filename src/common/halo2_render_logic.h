@@ -1106,6 +1106,13 @@ inline constexpr bool kHalo2VisibleConsumerControllerOwnershipEnabled = true;
 // selected until weapon-authored geometry supplies all three targets.
 inline constexpr bool kHalo2C64GenericLeftPresentationEnabled = false;
 
+// C-H2-67 safety revert. C-H2-66's live thumb-ray pi rotation was visibly
+// wrong for both Classic and Anniversary, and the same combined presentation
+// did not attach the Arbiter arms like the Chief path. Retain the bounded
+// authored-geometry helpers as evidence, but select C-H2-65/C-H2-63 placement
+// until the rig-specific marker solve below is enabled by a later candidate.
+inline constexpr bool kHalo2C66AuthoredAlignmentEnabled = false;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -3722,27 +3729,42 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         }
     }
     Halo2FirstPersonTransform rightDelta{};
-    if (thumbDestination < 0 ||
-        !Halo2BuildAuthoredBarrelDelta(
-            stockRight, stockGunRoot, rightCarrier, rightScale,
-            rightDelta, desiredRight))
-        return false;
-    if (twoHandAimActive)
+    if (!kHalo2C66AuthoredAlignmentEnabled)
     {
-        if (!Halo2ComposeFirstPersonTransforms(
-                rightDelta, stockLeft, desiredLeft))
+        if (!Halo2BuildControllerRerootedWristTarget(
+                rightCarrier, authoredRoot, stockRight, rightScale,
+                desiredRight) ||
+            !Halo2BuildLeftPresentationWristTarget(
+                twoHandAimActive, desiredRight, stockRight, stockLeft,
+                authoredRoot, leftCarrier, leftScale, desiredLeft) ||
+            !Halo2BuildFirstPersonWorldDelta(
+                desiredRight, stockRight, rightDelta))
             return false;
-        desiredLeft.scale = stockLeft.scale * leftScale;
     }
     else
     {
-        Halo2FirstPersonTransform controllerLeft{};
-        if (!Halo2BuildControllerRerootedWristTarget(
-                leftCarrier, authoredRoot, stockLeft, leftScale,
-                controllerLeft) ||
-            !Halo2BuildAnatomicalFreeLeftTarget(
-                stockLeft, stockThumb, controllerLeft, desiredLeft))
+        if (thumbDestination < 0 ||
+            !Halo2BuildAuthoredBarrelDelta(
+                stockRight, stockGunRoot, rightCarrier, rightScale,
+                rightDelta, desiredRight))
             return false;
+        if (twoHandAimActive)
+        {
+            if (!Halo2ComposeFirstPersonTransforms(
+                    rightDelta, stockLeft, desiredLeft))
+                return false;
+            desiredLeft.scale = stockLeft.scale * leftScale;
+        }
+        else
+        {
+            Halo2FirstPersonTransform controllerLeft{};
+            if (!Halo2BuildControllerRerootedWristTarget(
+                    leftCarrier, authoredRoot, stockLeft, leftScale,
+                    controllerLeft) ||
+                !Halo2BuildAnatomicalFreeLeftTarget(
+                    stockLeft, stockThumb, controllerLeft, desiredLeft))
+                return false;
+        }
     }
     if (!Halo2FirstPersonTransformValid(desiredLeft) ||
         !Halo2FirstPersonWristDeltaPlausible(
