@@ -24,10 +24,15 @@ uses this shared decision. Core tests enumerate all eight combinations of
 active/installed/running so another title cannot silently invert the rule.
 Camera/render implementations and all per-title engine bindings are unchanged.
 
-Acceptance requires one continuous MCC session that enters Halo 3, ODST,
-Reach, Halo 4 and Halo 2, switches among them, and loads two consecutive levels
-inside each title. Logs must show each old core retiring and each new/same-title
-core re-earning its own level gate and installing.
+The user explicitly promoted source
+`1939eabc21c1607ef93ccaec97de004271d70091` as the new baseline on 2026-08-24.
+Its installed DLL SHA-256 is
+`D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4` in
+both Steam and Microsoft Store MCC. The supported-title regression matrix for
+later shared lifecycle changes remains one continuous MCC session that enters
+Halo 3, ODST, Reach, Halo 4 and Halo 2, switches among them, and loads two
+consecutive levels inside each title. Logs should show each old core retiring
+and each new/same-title core re-earning its own level gate and installing.
 
 ## 2026-08-24: C-H2-72 restores Halo 4 to the shared handoff contract
 

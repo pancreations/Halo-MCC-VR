@@ -1,7 +1,8 @@
 # Current state
 
-> **UNACCEPTED C-RUNTIME-1 SUPPORTED-TITLE / CONSECUTIVE-LEVEL HANDOFF IN
-> SOURCE - 2026-08-24.** C-H2-71's culling behavior and C-H2-72's Halo 4
+> **CURRENT ACCEPTED CUMULATIVE DEVELOPMENT BASELINE: C-RUNTIME-1
+> SUPPORTED-TITLE / CONSECUTIVE-LEVEL HANDOFF - 2026-08-24.** C-H2-71's
+> culling behavior and C-H2-72's Halo 4
 > registration remain enabled. The first C-H2-72 Steam run proves Halo 2 ->
 > Halo 4 now completes: Halo 4 installed, armed, and continuously submitted
 > stereo pairs. The following Halo 4 -> Reach transition then detected Reach as
@@ -20,10 +21,18 @@
 > the full eight-state truth table is pinned in core tests. No camera, render,
 > hand, culling, input, or engine binding changes.
 >
-> Required headset validation is a single MCC session covering every supported
-> VR title (Halo 3, ODST, Reach, Halo 4, Halo 2), cross-title switches, and two
-> consecutive levels in each title. This remains unaccepted until that matrix
-> passes; the accepted per-title gameplay baselines remain rollback evidence.
+> Source is `1939eabc21c1607ef93ccaec97de004271d70091`; installed DLL SHA-256
+> is `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
+> The exact package is
+> `out/candidates/1939eab-runtime-c1-supported-title-level-handoff-20260824-130722605Z/`;
+> its manifest-verified DLL and launcher were installed into both Steam and
+> Microsoft Store MCC. The user explicitly promoted this candidate: "ok this
+> is our new commit baseline". This accepts the cumulative source and deployed
+> artifact as the next development baseline. The supported-title regression
+> matrix remains the required check for later shared lifecycle changes: one MCC
+> session covering Halo 3, ODST, Reach, Halo 4 and Halo 2, cross-title switches,
+> and two consecutive levels in each. Halo CE remains stock because this source
+> has no Halo CE VR camera adapter.
 
 > **UNACCEPTED C-H2-72 CROSS-TITLE HALO 4 HANDOFF IN SOURCE - 2026-08-24.**
 > C-H2-71's Halo 2 visibility-cover behavior remains enabled; this candidate
