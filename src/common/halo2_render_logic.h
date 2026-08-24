@@ -2769,6 +2769,7 @@ struct Halo2FirstPersonArmBinding
     uint32_t count = 0;
     uint64_t leftSubtree = 0;
     uint64_t rightSubtree = 0;
+    uint64_t leftDirectChildren = 0;
     uint64_t armAncestors = 0;
 };
 
@@ -2873,6 +2874,11 @@ inline bool Halo2BuildFirstPersonArmBinding(
     out.count = count;
     out.leftSubtree = leftMask;
     out.rightSubtree = rightMask;
+    for (uint32_t index = 0; index < count; ++index)
+        if (parents[index] == left)
+            out.leftDirectChildren |= 1ull << index;
+    if (!out.leftDirectChildren)
+        return false;
     out.armAncestors = armMask;
     return true;
 }
@@ -3135,6 +3141,106 @@ inline bool Halo2BuildRigidSupportWristTarget(
     result.scale = stockLeft.scale * leftScale;
     if (!Halo2FirstPersonTransformValid(result)) return false;
     desiredLeft = result;
+    return true;
+}
+
+// Halo 2 authors the firing axis in the held render model, not in either wrist.
+// H2EK's shotgun render_model proves local +X is the primary_trigger direction;
+// its root and pump-mounted left_hand marker are then carried by the same final
+// packet matrices.  Map that live authored +X/+Z frame onto the controller aim
+// frame and pivot the complete assembly at the physical right hand.
+inline bool Halo2BuildAuthoredBarrelDelta(
+    const Halo2FirstPersonTransform& stockRight,
+    const Halo2FirstPersonTransform& stockGunRoot,
+    const Halo2CameraBasis& rightCarrier, float rightScale,
+    Halo2FirstPersonTransform& delta,
+    Halo2FirstPersonTransform& desiredRight) noexcept
+{
+    if (!Halo2FirstPersonTransformValid(stockRight) ||
+        !Halo2FirstPersonTransformValid(stockGunRoot) ||
+        !Halo2ValidateCameraBasis(rightCarrier) ||
+        !std::isfinite(rightScale) || rightScale <= 0.0f)
+        return false;
+    float right[3] = {
+        rightCarrier.forward[1] * rightCarrier.up[2] -
+            rightCarrier.forward[2] * rightCarrier.up[1],
+        rightCarrier.forward[2] * rightCarrier.up[0] -
+            rightCarrier.forward[0] * rightCarrier.up[2],
+        rightCarrier.forward[0] * rightCarrier.up[1] -
+            rightCarrier.forward[1] * rightCarrier.up[0]};
+    float targetGun[9] = {
+        rightCarrier.forward[0], rightCarrier.forward[1], rightCarrier.forward[2],
+        -right[0], -right[1], -right[2],
+        rightCarrier.up[0], rightCarrier.up[1], rightCarrier.up[2]};
+    float inverseStockGun[9]{};
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            inverseStockGun[column * 3 + row] =
+                stockGunRoot.rotation[row * 3 + column];
+    Halo2FirstPersonTransform result{};
+    result.scale = rightScale;
+    Halo2MultiplyFirstPersonBases(
+        targetGun, inverseStockGun, result.rotation);
+    for (int row = 0; row < 3; ++row)
+    {
+        float rotated = 0.0f;
+        for (int column = 0; column < 3; ++column)
+            rotated += result.rotation[column * 3 + row] *
+                stockRight.translation[column];
+        result.translation[row] = rightCarrier.position[row] -
+            result.scale * rotated;
+    }
+    Halo2FirstPersonTransform movedRight{};
+    if (!Halo2FirstPersonTransformValid(result) ||
+        !Halo2ComposeFirstPersonTransforms(result, stockRight, movedRight))
+        return false;
+    delta = result;
+    desiredRight = movedRight;
+    return true;
+}
+
+// The official Master Chief and Elite first-person rigs both author the thumb
+// base as the closest direct child of l_hand.  Turn the free palm by pi about
+// that live anatomical ray, matching the accepted other-title rule without
+// guessing a controller/world axis.  Translation and scale remain untouched.
+inline bool Halo2BuildAnatomicalFreeLeftTarget(
+    const Halo2FirstPersonTransform& stockWrist,
+    const Halo2FirstPersonTransform& stockThumbBase,
+    const Halo2FirstPersonTransform& controllerTarget,
+    Halo2FirstPersonTransform& desiredWrist) noexcept
+{
+    if (!Halo2FirstPersonTransformValid(stockWrist) ||
+        !Halo2FirstPersonTransformValid(stockThumbBase) ||
+        !Halo2FirstPersonTransformValid(controllerTarget))
+        return false;
+    float thumbWorld[3]{};
+    float lengthSquared = 0.0f;
+    for (int row = 0; row < 3; ++row)
+    {
+        thumbWorld[row] = stockThumbBase.translation[row] -
+            stockWrist.translation[row];
+        lengthSquared += thumbWorld[row] * thumbWorld[row];
+    }
+    if (!std::isfinite(lengthSquared) || lengthSquared < 1.0e-8f)
+        return false;
+    const float inverseLength = 1.0f / std::sqrt(lengthSquared);
+    for (float& value : thumbWorld) value *= inverseLength;
+    float thumbLocal[3]{};
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            thumbLocal[column] += stockWrist.rotation[column * 3 + row] *
+                thumbWorld[row];
+    float palmFlip[9]{};
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            palmFlip[column * 3 + row] =
+                2.0f * thumbLocal[row] * thumbLocal[column] -
+                (row == column ? 1.0f : 0.0f);
+    Halo2FirstPersonTransform result = controllerTarget;
+    Halo2MultiplyFirstPersonBases(
+        controllerTarget.rotation, palmFlip, result.rotation);
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    desiredWrist = result;
     return true;
 }
 
@@ -3581,16 +3687,64 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     const float* const leftWristMatrix = stagedHands +
         static_cast<uint32_t>(leftWristDestination) *
             kHalo2FirstPersonNodeFloats;
-    Halo2FirstPersonTransform stockRight{}, stockLeft{};
+    Halo2FirstPersonTransform stockRight{}, stockLeft{}, stockGunRoot{};
     Halo2FirstPersonTransform desiredRight{}, desiredLeft{};
     if (!Halo2ReadFirstPersonTransform(rightWristMatrix, stockRight) ||
         !Halo2ReadFirstPersonTransform(leftWristMatrix, stockLeft) ||
-        !Halo2BuildControllerRerootedWristTarget(
-            rightCarrier, authoredRoot, stockRight, rightScale,
-            desiredRight) ||
-        !Halo2BuildLeftPresentationWristTarget(
-            twoHandAimActive, desiredRight, stockRight, stockLeft,
-            authoredRoot, leftCarrier, leftScale, desiredLeft) ||
+        !Halo2ReadFirstPersonTransform(stagedGun, stockGunRoot))
+        return false;
+
+    int thumbDestination = -1;
+    float closestThumbSquared = std::numeric_limits<float>::infinity();
+    Halo2FirstPersonTransform stockThumb{};
+    for (uint32_t destination = 0; destination < handsCount; ++destination)
+    {
+        const int32_t source = handsRemap[destination];
+        const uint64_t bit = source >= 0 ? uint64_t{1} << source : 0;
+        if (!(bit && (binding.leftDirectChildren & bit))) continue;
+        Halo2FirstPersonTransform candidateThumb{};
+        if (!Halo2ReadFirstPersonTransform(
+                stagedHands + destination * kHalo2FirstPersonNodeFloats,
+                candidateThumb))
+            return false;
+        float distanceSquared = 0.0f;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const float distance = candidateThumb.translation[axis] -
+                stockLeft.translation[axis];
+            distanceSquared += distance * distance;
+        }
+        if (distanceSquared < closestThumbSquared)
+        {
+            closestThumbSquared = distanceSquared;
+            thumbDestination = static_cast<int>(destination);
+            stockThumb = candidateThumb;
+        }
+    }
+    Halo2FirstPersonTransform rightDelta{};
+    if (thumbDestination < 0 ||
+        !Halo2BuildAuthoredBarrelDelta(
+            stockRight, stockGunRoot, rightCarrier, rightScale,
+            rightDelta, desiredRight))
+        return false;
+    if (twoHandAimActive)
+    {
+        if (!Halo2ComposeFirstPersonTransforms(
+                rightDelta, stockLeft, desiredLeft))
+            return false;
+        desiredLeft.scale = stockLeft.scale * leftScale;
+    }
+    else
+    {
+        Halo2FirstPersonTransform controllerLeft{};
+        if (!Halo2BuildControllerRerootedWristTarget(
+                leftCarrier, authoredRoot, stockLeft, leftScale,
+                controllerLeft) ||
+            !Halo2BuildAnatomicalFreeLeftTarget(
+                stockLeft, stockThumb, controllerLeft, desiredLeft))
+            return false;
+    }
+    if (!Halo2FirstPersonTransformValid(desiredLeft) ||
         !Halo2FirstPersonWristDeltaPlausible(
             stockRight, desiredRight, worldScale) ||
         !Halo2FirstPersonWristDeltaPlausible(
@@ -3612,10 +3766,8 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     if (!std::isfinite(out.rightWristDeltaWorld) ||
         !std::isfinite(out.leftWristDeltaWorld))
         return false;
-    Halo2FirstPersonTransform rightDelta{}, leftDelta{};
+    Halo2FirstPersonTransform leftDelta{};
     if (!Halo2BuildFirstPersonWorldDelta(
-            desiredRight, stockRight, rightDelta) ||
-        !Halo2BuildFirstPersonWorldDelta(
             desiredLeft, stockLeft, leftDelta))
         return false;
 

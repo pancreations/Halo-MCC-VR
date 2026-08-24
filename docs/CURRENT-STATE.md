@@ -1,5 +1,28 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-66 AUTHORED BARREL/HAND ALIGNMENT IN SOURCE -
+> 2026-08-23.** C-H2-65 remains the safety baseline. C-H2-66 replaces the
+> rejected wrist-axis alignment with Halo 2's live authored final geometry.
+> The gun render-model root's +X firing axis is mapped onto the same controller
+> ray used by the crosshair and native aim; that one rigid delta moves the right
+> hand, gun, and (in two-hand mode) the complete authored support hand together.
+> The shotgun's pump-mounted `left_hand` contact therefore remains attached to
+> the moving barrel assembly instead of being overwritten by a generic left-
+> controller position.
+>
+> In free mode, the left palm turns by pi around its live wrist-to-thumb-base
+> anatomical ray. The thumb base is resolved from Halo 2's graph topology as
+> the closest direct child of the tagged left wrist, matching both official
+> Master Chief and Elite first-person rigs; no foreign-title bone index or
+> world/controller axis is copied. Anniversary briefly defers the hands copy
+> until the immediately following gun callback so both packets use the same
+> frame's authored barrel; a missing gun publishes the untouched hands before
+> the builder returns. Classic already exposes both retained packets and applies
+> the identical combined transaction before its existing per-eye compensation.
+> Release build and core tests pass. Headset acceptance is required in both
+> Classic and Anniversary; Halo 3 regression is also required before advancing
+> the accepted pointer.
+
 > **HALO 2 C-H2-64 REJECTED; C-H2-65 SAFETY REVERT IN SOURCE -
 > 2026-08-23.** The exact Steam run is preserved at
 > `out/test-runs/b41330d-halo2-c64-visible-difference-no-alignment-steam-20260823-2119/HaloMCCVR.log`,

@@ -3555,3 +3555,40 @@ alignment improved: free left hand, double-barrel support location, and visible
 barrel-to-crosshair direction all remain wrong. C-H2-65 disables C-H2-64 and
 restores C-H2-63. A future correction requires weapon-authored geometry; no
 additional constant hand rotation or translation is supported by this result.
+
+## E-H2-57 (C-H2-66): live authored barrel frame, pump grip and anatomical palm turnover - 2026-08-23
+
+Official H2EK tags supply the geometry C-H2-64 lacked. The shipped shotgun
+first-person render model authors root node 0 `gun`, pump node 3 as its child,
+`primary_trigger` on node 0 at local translation `(0.169144, 0, -0.003689)`
+with identity rotation, and `left_hand` on the pump. Thus the gun root's local
+`+X` is the firing/barrel direction and the support contact inherits the live
+pump animation. The shotgun weapon tag independently selects `primary_trigger`
+for its muzzle-flash attachment.
+
+The same official exports prove the free-hand anatomy. Master Chief's
+`l_thumb_low` is node 11, a direct child of tagged `l_hand` node 5, at local
+translation `(0.008537, -0.004043, 0.014680)`; all four finger bases are more
+than twice as far from the wrist. The Elite shotgun rig has the same shape with
+`l_thumb_low` node 10 and fewer fingers. C-H2-66 therefore resolves the thumb
+base without a hardcoded node index: among the final hands packet nodes whose
+verified animation-graph parent is the tagged left wrist, select the closest
+live origin. A malformed topology or non-finite/degenerate ray refuses only
+this packet transaction.
+
+C-H2-66 reads the current gun packet root and constructs one proper rigid delta
+whose rotation maps its live `+X/+Z` authored frame to controller forward/up,
+while its translation pivots at the physical right hand. That same delta moves
+the right subtree, every gun node, and the left subtree during two-hand aim, so
+the pump contact cannot separate from the barrel. In free mode the existing
+controller-rerooted left wrist is turned by pi around the resolved live thumb
+ray (`R = 2aa^T - I`), preserving translation, scale and thumb side.
+
+Retail's verified callback order is hands then gun. Anniversary therefore
+defers only the hands consumer call until the immediately following gun packet,
+applies the combined staged transaction, then calls the stock consumer in its
+original hands/gun order. If no matching gun arrives, the outer builder flushes
+the untouched hands before returning. Classic already retains both packets and
+applies the same combined helper directly before its accepted per-eye camera
+compensation. All writes remain staged and fail open to stock; no camera,
+observer, projectile, input, or non-Halo-2 path is changed.

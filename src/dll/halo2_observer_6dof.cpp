@@ -230,6 +230,10 @@ namespace
         bool handsApplied = false;
         bool gunApplied = false;
         Halo2FirstPersonTransform rightDelta{};
+        bool handsDeferred = false;
+        uint32_t handsModelObject = UINT32_MAX;
+        uint32_t handsOwnerObject = UINT32_MAX;
+        float* handsMatrices = nullptr;
     };
     thread_local Halo2VisibleConsumerContext g_visibleConsumerContext{};
 
@@ -982,6 +986,7 @@ namespace
             reinterpret_cast<Halo2VisibleFirstPersonConsumerFn>(
                 g_visibleConsumerOriginal.load(std::memory_order_acquire));
         auto& context = g_visibleConsumerContext;
+        bool callCurrentOriginal = true;
         if (original && matrices && context.valid && user == context.user &&
             g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
@@ -989,69 +994,80 @@ namespace
         {
             __try
             {
-                Halo2FinalPacketOwnershipResult result{};
-                if (!context.handsApplied && weaponSlot == -1 &&
-                    ownerObject == context.unitObject &&
-                    Halo2OwnVisibleFirstPersonHands(
-                        matrices, context.handsCount, context.handsRemap,
-                        context.binding, context.renderCamera,
-                        context.rightCarrier, context.leftCarrier,
-                        context.twoHandAimActive, context.rightScale,
-                        context.leftScale, context.worldScale,
-                        context.rightDelta, result))
+                if (!context.handsDeferred && weaponSlot == -1 &&
+                    ownerObject == context.unitObject)
                 {
-                    context.handsApplied = true;
-                    g_visibleConsumerHandsApplied.fetch_add(
-                        1, std::memory_order_relaxed);
-                    g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
-                    g_finalPaletteMovedRight.fetch_add(
-                        result.rightNodes, std::memory_order_relaxed);
-                    g_finalPaletteMovedLeft.fetch_add(
-                        result.leftNodes, std::memory_order_relaxed);
-                    g_finalPaletteCollapsed.fetch_add(
-                        result.collapsedNodes, std::memory_order_relaxed);
-                    const auto millimeters = [&context](float world) {
-                        return static_cast<uint32_t>(std::min(
-                            world / context.worldScale * 1000.0f, 100000.0f));
-                    };
-                    const uint32_t rightMm =
-                        millimeters(result.rightWristDeltaWorld);
-                    const uint32_t leftMm =
-                        millimeters(result.leftWristDeltaWorld);
-                    g_packetBuilderRightDeltaMillimeters.store(
-                        rightMm, std::memory_order_relaxed);
-                    g_packetBuilderLeftDeltaMillimeters.store(
-                        leftMm, std::memory_order_relaxed);
-                    auto publishMaximum = [](std::atomic<uint32_t>& destination,
-                                             uint32_t value) {
-                        uint32_t previous =
-                            destination.load(std::memory_order_relaxed);
-                        while (previous < value &&
-                               !destination.compare_exchange_weak(
-                                   previous, value, std::memory_order_relaxed,
-                                   std::memory_order_relaxed))
-                        {
-                        }
-                    };
-                    publishMaximum(
-                        g_packetBuilderMaxRightDeltaMillimeters, rightMm);
-                    publishMaximum(
-                        g_packetBuilderMaxLeftDeltaMillimeters, leftMm);
+                    context.handsDeferred = true;
+                    context.handsModelObject = modelObject;
+                    context.handsOwnerObject = ownerObject;
+                    context.handsMatrices = matrices;
+                    callCurrentOriginal = false;
                 }
-                else if (!context.gunApplied && context.handsApplied &&
-                         weaponSlot == 0 &&
-                         ownerObject == context.weaponObject &&
-                         Halo2OwnVisibleFirstPersonGun(
-                             matrices, context.gunCount, context.rightDelta,
-                             result))
+                else if (!context.gunApplied && context.handsDeferred &&
+                          weaponSlot == 0 &&
+                          ownerObject == context.weaponObject)
                 {
-                    context.gunApplied = true;
-                    g_visibleConsumerGunsApplied.fetch_add(
-                        1, std::memory_order_relaxed);
-                    g_packetBuilderGunNodes.fetch_add(
-                        result.gunNodes, std::memory_order_relaxed);
-                    g_packetBuilderLastAppliedMs.store(
-                        GetTickCount64(), std::memory_order_release);
+                    Halo2FinalPacketOwnershipResult result{};
+                    if (Halo2OwnFinalFirstPersonPackets(
+                            context.handsMatrices, context.handsCount,
+                            context.handsRemap, context.binding, matrices,
+                            context.gunCount, context.renderCamera,
+                            context.rightCarrier, context.leftCarrier,
+                            context.twoHandAimActive, context.rightScale,
+                            context.leftScale, context.worldScale, result))
+                    {
+                        context.handsApplied = true;
+                        context.gunApplied = true;
+                        g_visibleConsumerHandsApplied.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_visibleConsumerGunsApplied.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
+                        g_finalPaletteMovedRight.fetch_add(
+                            result.rightNodes, std::memory_order_relaxed);
+                        g_finalPaletteMovedLeft.fetch_add(
+                            result.leftNodes, std::memory_order_relaxed);
+                        g_finalPaletteCollapsed.fetch_add(
+                            result.collapsedNodes, std::memory_order_relaxed);
+                        g_packetBuilderGunNodes.fetch_add(
+                            result.gunNodes, std::memory_order_relaxed);
+                        const auto millimeters = [&context](float world) {
+                            return static_cast<uint32_t>(std::min(
+                                world / context.worldScale * 1000.0f,
+                                100000.0f));
+                        };
+                        const uint32_t rightMm =
+                            millimeters(result.rightWristDeltaWorld);
+                        const uint32_t leftMm =
+                            millimeters(result.leftWristDeltaWorld);
+                        g_packetBuilderRightDeltaMillimeters.store(
+                            rightMm, std::memory_order_relaxed);
+                        g_packetBuilderLeftDeltaMillimeters.store(
+                            leftMm, std::memory_order_relaxed);
+                        auto publishMaximum = [](
+                            std::atomic<uint32_t>& destination,
+                            uint32_t value) {
+                            uint32_t previous =
+                                destination.load(std::memory_order_relaxed);
+                            while (previous < value &&
+                                   !destination.compare_exchange_weak(
+                                       previous, value,
+                                       std::memory_order_relaxed,
+                                       std::memory_order_relaxed))
+                            {
+                            }
+                        };
+                        publishMaximum(
+                            g_packetBuilderMaxRightDeltaMillimeters, rightMm);
+                        publishMaximum(
+                            g_packetBuilderMaxLeftDeltaMillimeters, leftMm);
+                        g_packetBuilderLastAppliedMs.store(
+                            GetTickCount64(), std::memory_order_release);
+                    }
+                    original(user, context.handsModelObject,
+                        context.handsOwnerObject, -1, context.handsMatrices);
+                    context.handsDeferred = false;
+                    context.handsMatrices = nullptr;
                 }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
@@ -1059,7 +1075,7 @@ namespace
                 g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        if (original)
+        if (original && callCurrentOriginal)
         {
             __try
             {
@@ -1224,6 +1240,31 @@ namespace
                 g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        // The Anniversary callback normally publishes hands then gun. If a
+        // malformed/empty packet set omits the gun, fail this optional alignment
+        // transaction open by publishing the untouched deferred hands now.
+        if (anniversaryConsumer && g_visibleConsumerContext.handsDeferred)
+        {
+            const auto consumer =
+                reinterpret_cast<Halo2VisibleFirstPersonConsumerFn>(
+                    g_visibleConsumerOriginal.load(std::memory_order_acquire));
+            if (consumer)
+            {
+                __try
+                {
+                    consumer(user, g_visibleConsumerContext.handsModelObject,
+                        g_visibleConsumerContext.handsOwnerObject, -1,
+                        g_visibleConsumerContext.handsMatrices);
+                }
+                __except (EXCEPTION_EXECUTE_HANDLER)
+                {
+                    g_finalPaletteRefused.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+            g_visibleConsumerContext.handsDeferred = false;
+            g_visibleConsumerContext.handsMatrices = nullptr;
+        }
         bool applied = anniversaryConsumer &&
             g_visibleConsumerContext.handsApplied &&
             g_visibleConsumerContext.gunApplied;
@@ -1256,9 +1297,7 @@ namespace
                             packet + kHalo2FirstPersonRenderPacketHeaderBytes);
                     }
                 }
-                Halo2FirstPersonTransform rightDelta{};
-                Halo2FinalPacketOwnershipResult handsResult{};
-                Halo2FinalPacketOwnershipResult gunResult{};
+                Halo2FinalPacketOwnershipResult packetResult{};
                 float stockHands[
                     kHalo2FirstPersonPaletteCapacity *
                     kHalo2FirstPersonNodeFloats]{};
@@ -1281,16 +1320,13 @@ namespace
                     std::memcpy(stockHands, handsMatrices, handsBytes);
                     std::memcpy(stockGun, gunMatrices, gunBytes);
                 }
-                if (packetBoundsValid && Halo2OwnVisibleFirstPersonHands(
+                if (packetBoundsValid && Halo2OwnFinalFirstPersonPackets(
                         handsMatrices, candidate.handsCount,
-                        candidate.handsRemap, candidate.binding,
-                        candidate.renderCamera, candidate.rightCarrier,
-                        candidate.leftCarrier, candidate.twoHandAimActive,
-                        candidate.rightScale, candidate.leftScale,
-                        candidate.worldScale, rightDelta, handsResult) &&
-                    Halo2OwnVisibleFirstPersonGun(
-                        gunMatrices, candidate.gunCount, rightDelta,
-                        gunResult))
+                        candidate.handsRemap, candidate.binding, gunMatrices,
+                        candidate.gunCount, candidate.renderCamera,
+                        candidate.rightCarrier, candidate.leftCarrier,
+                        candidate.twoHandAimActive, candidate.rightScale,
+                        candidate.leftScale, candidate.worldScale, packetResult))
                 {
                     auto& classic = g_classicPacketContext;
                     classic.hands = handsMatrices;
@@ -1305,13 +1341,13 @@ namespace
                         1, std::memory_order_relaxed);
                     g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
                     g_finalPaletteMovedRight.fetch_add(
-                        handsResult.rightNodes, std::memory_order_relaxed);
+                        packetResult.rightNodes, std::memory_order_relaxed);
                     g_finalPaletteMovedLeft.fetch_add(
-                        handsResult.leftNodes, std::memory_order_relaxed);
+                        packetResult.leftNodes, std::memory_order_relaxed);
                     g_finalPaletteCollapsed.fetch_add(
-                        handsResult.collapsedNodes, std::memory_order_relaxed);
+                        packetResult.collapsedNodes, std::memory_order_relaxed);
                     g_packetBuilderGunNodes.fetch_add(
-                        gunResult.gunNodes, std::memory_order_relaxed);
+                        packetResult.gunNodes, std::memory_order_relaxed);
                     g_packetBuilderLastAppliedMs.store(
                         classic.appliedAtMs, std::memory_order_release);
                 }

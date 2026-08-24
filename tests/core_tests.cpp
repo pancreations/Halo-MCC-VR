@@ -7755,6 +7755,7 @@ int main()
                 float hands[kPacketNodes * kHalo2FirstPersonNodeFloats]{};
                 float gun[kHalo2FirstPersonNodeFloats]{};
                 auto identityNode = [](float* node, float x) {
+                    std::memset(node, 0, kHalo2FirstPersonNodeStride);
                     node[0] = 1.0f;
                     node[1] = node[5] = node[9] = 1.0f;
                     node[10] = x;
@@ -7772,6 +7773,7 @@ int main()
                 packetBinding.count = kPacketNodes;
                 packetBinding.leftSubtree = (1ull << 1) | (1ull << 3);
                 packetBinding.rightSubtree = 1ull << 2;
+                packetBinding.leftDirectChildren = 1ull << 3;
                 Halo2CameraBasis right{};
                 right.position[0] = 10.0f;
                 right.forward[1] = 1.0f;
@@ -7790,16 +7792,22 @@ int main()
                           result.leftNodes == 2 && result.collapsedNodes == 1 &&
                           result.gunNodes == 1 &&
                           nearlyEqual(hands[0], 0.0001f) &&
-                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
-                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
-                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 1], 1.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 5], -1.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 9], -1.0f) &&
+                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -10.5f) &&
-                          nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f) &&
+                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 10.0f) &&
+                           nearlyEqual(gun[11], 4.0f) &&
+                           nearlyEqual(gun[1], 0.0f) && nearlyEqual(gun[2], 1.0f) &&
+                           nearlyEqual(gun[3], 0.0f) &&
                           nearlyEqual(result.rightWristDeltaWorld, 8.0f) &&
                           nearlyEqual(result.leftWristDeltaWorld, 8.0f),
-                    "C-H2-65 restores C-H2-63 independent wrist placement and "
-                    "scaling while leaving the rejected generic turnover dormant");
+                    "C-H2-66 maps the authored gun +X barrel onto the crosshair, "
+                    "turns the free palm around its live thumb ray, and keeps scaling");
 
                 identityNode(hands + 0 * kHalo2FirstPersonNodeFloats, 0.0f);
                 identityNode(hands + 1 * kHalo2FirstPersonNodeFloats, -2.0f);
@@ -7888,14 +7896,20 @@ int main()
                 Halo2FinalPacketOwnershipResult supported{};
                 const bool ownedSupport = Halo2OwnFinalFirstPersonPackets(
                     hands, kPacketNodes, remap, packetBinding, gun, 1,
-                    authoredRoot, right, left, true, 1.0f, 1.0f, 1.0f,
+                    authoredRoot, right, left, true, 1.0f, 1.0f, 2.0f,
                     supported);
                 Check(ownedSupport && supported.applied &&
-                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 6.0f) &&
-                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 5.0f) &&
-                          nearlyEqual(gun[10], 12.0f),
-                    "C-H2-65 restores C-H2-63's authored rigid support grip");
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 11], -4.0f) &&
+                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 11], -5.0f) &&
+                           nearlyEqual(gun[10], 10.0f) && nearlyEqual(gun[11], 2.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 1], gun[1]) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 2], gun[2]) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 5], gun[5]),
+                    "C-H2-66 preserves the authored rigid support grip while "
+                    "the barrel axis turns onto the crosshair");
             }
             {
                 float wrist[kHalo2FirstPersonNodeFloats]{};
