@@ -2858,10 +2858,12 @@ namespace
                 g_visibleConsumerTarget = consumerTarget;
                 g_packetBuilderTarget = packetTarget;
                 g_finalPaletteReady.store(true, std::memory_order_release);
-                LOG("Halo 2 renderer-selected hands ARMED (C-H2-63): builder "
-                    "+0x%X establishes exact packet context; Anniversary "
-                    "consumer +0x%X owns matrices before copy, while Classic "
-                    "owns its returned persistent packets at each eye draw",
+                LOG("Halo 2 renderer-selected hands ARMED (C-H2-64): builder "
+                     "+0x%X establishes exact packet context; Anniversary "
+                     "consumer +0x%X owns matrices before copy, while Classic "
+                     "owns its returned persistent packets at each eye draw; "
+                     "free left palm turnover and live two-hand barrel seating "
+                     "are shared by both renderers",
                     static_cast<unsigned>(kHalo2FirstPersonPacketBuilderRva),
                     static_cast<unsigned>(
                         kHalo2FirstPersonVisibleConsumerRva));

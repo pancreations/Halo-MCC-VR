@@ -1,5 +1,24 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-64 HAND/GUN PRESENTATION ALIGNMENT -
+> 2026-08-23.** The accepted C-H2-63 renderer ownership remains unchanged:
+> Anniversary still owns matrices in the registered callback and Classic still
+> owns the returned persistent packets with per-eye compensation. The player's
+> next headset report identifies the remaining presentation defects in both
+> modes: the free left hand is flipped and the two-hand support pose needs to
+> sit closer to the barrel.
+>
+> C-H2-64 changes only the shared Halo 2 final-packet hand presentation. In
+> free-hand mode it turns the left wrist by pi about the live controller-forward
+> axis, preserving translation, scale, pointing direction, and a proper
+> determinant-+1 basis. In two-hand mode it keeps the authored rigid support
+> rotation but seats the wrist at the live left carrier, which is the endpoint
+> used by the shared two-hand barrel aim line. The accepted right-hand/gun
+> controller-to-authored-root alignment is unchanged. Halo 3, ODST, Reach and
+> Halo 4 do not call this helper. Release build and core tests pass; headset
+> acceptance is required in both Classic and Anniversary before advancing the
+> accepted pointer.
+
 > **CURRENT ACCEPTED HALO 2 DEVELOPMENT BASELINE: C-H2-63 CLASSIC
 > PERSISTENT-PACKET STEREO + ANNIVERSARY CALLBACK HANDS/GUN - 2026-08-23.**
 > C-H2-62 was a partial headset success: Anniversary hands/gun worked, but

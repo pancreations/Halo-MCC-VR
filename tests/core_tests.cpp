@@ -7716,7 +7716,7 @@ int main()
                       !kHalo2FinalPaletteControllerOwnershipEnabled &&
                       !kHalo2StableFinalPacketControllerOwnershipEnabled &&
                       kHalo2VisibleConsumerControllerOwnershipEnabled,
-                "C-H2-63 leaves every headset-rejected Halo 2 controller "
+                "C-H2-64 leaves every headset-rejected Halo 2 controller "
                 "transaction dormant and enables one renderer-selected packet "
                 "ownership path");
             Check(kHalo2MatrixComposeRva == 0x0072A150 &&
@@ -7791,15 +7791,19 @@ int main()
                           nearlyEqual(hands[0], 0.0001f) &&
                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 1], -1.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 5], 1.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 9], -1.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -10.5f) &&
+                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -9.5f) &&
                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f) &&
                           nearlyEqual(result.rightWristDeltaWorld, 8.0f) &&
                           nearlyEqual(result.leftWristDeltaWorld, 8.0f),
-                    "C-H2-60 final packets place each independent wrist at its "
-                    "physical target, scale each complete subtree about that "
-                    "wrist, carry the separate gun once, and collapse body nodes");
+                    "C-H2-64 final packets place each independent wrist at its "
+                    "physical target, turn the free left palm over, scale each "
+                    "complete subtree about its wrist, carry the separate gun "
+                    "once, and collapse body nodes");
 
                 identityNode(hands + 0 * kHalo2FirstPersonNodeFloats, 0.0f);
                 identityNode(hands + 1 * kHalo2FirstPersonNodeFloats, -2.0f);
@@ -7822,11 +7826,13 @@ int main()
                           visibleHands.collapsedNodes == 1 &&
                           visibleGun.gunNodes == 1 &&
                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 1], -1.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 9], -1.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
                           nearlyEqual(gun[10], 14.0f),
-                    "C-H2-62's sequential registered-consumer calls apply the "
-                    "same wrist ownership before copy and carry the held model "
-                    "with the exact right-wrist delta");
+                    "C-H2-64's sequential registered-consumer calls apply the "
+                    "same free-hand turnover before copy and carry the held "
+                    "model with the exact right-wrist delta");
 
                 float classicEye[kHalo2FirstPersonNodeFloats]{};
                 identityNode(classicEye, 1.0f);
@@ -7892,13 +7898,13 @@ int main()
                     authoredRoot, right, left, true, 1.0f, 1.0f, 1.0f,
                     supported);
                 Check(ownedSupport && supported.applied &&
-                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 6.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 5.0f) &&
+                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -11.0f) &&
                           nearlyEqual(gun[10], 12.0f),
-                    "C-H2-60 two-hand aim carries the authored support grip by "
-                    "the right-wrist rigid delta instead of snapping it to the "
-                    "left controller");
+                    "C-H2-64 two-hand aim retains the authored support rotation "
+                    "but seats the wrist at the live left carrier on the barrel "
+                    "line");
             }
             {
                 float wrist[kHalo2FirstPersonNodeFloats]{};

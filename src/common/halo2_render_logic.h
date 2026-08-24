@@ -3131,6 +3131,70 @@ inline bool Halo2BuildRigidSupportWristTarget(
     return true;
 }
 
+// C-H2-64 keeps Halo 2's two presentation states separate, matching the
+// headset-confirmed policy in the other titles instead of treating an idle
+// left hand as though it were already gripping a weapon.
+//
+// In two-hand mode the authored support-hand rotation remains rigidly locked
+// to the gun, but its wrist is seated at the live support carrier.  The shared
+// aim solve already points the barrel through that carrier, so this removes the
+// remaining stock first-person lateral gap without inventing a weapon-specific
+// marker or moving the right hand/gun.
+//
+// In free mode the independently tracked hand keeps its controller-owned
+// translation and scale, then turns over by pi around the live controller
+// forward axis.  That preserves pointing direction and handedness while
+// correcting Halo 2's upside-down idle palm.  The operation is a proper
+// determinant-+1 rotation and is never selected during the support grip.
+inline bool Halo2BuildLeftPresentationWristTarget(
+    bool twoHandAimActive,
+    const Halo2FirstPersonTransform& desiredRight,
+    const Halo2FirstPersonTransform& stockRight,
+    const Halo2FirstPersonTransform& stockLeft,
+    const Halo2CameraBasis& authoredRoot,
+    const Halo2CameraBasis& leftCarrier, float leftScale,
+    Halo2FirstPersonTransform& desiredLeft) noexcept
+{
+    Halo2FirstPersonTransform result{};
+    if (twoHandAimActive)
+    {
+        if (!Halo2BuildRigidSupportWristTarget(
+                desiredRight, stockRight, stockLeft, leftScale, result))
+            return false;
+        std::memcpy(result.translation, leftCarrier.position,
+                    sizeof(result.translation));
+    }
+    else
+    {
+        if (!Halo2BuildControllerRerootedWristTarget(
+                leftCarrier, authoredRoot, stockLeft, leftScale, result))
+            return false;
+        const float axisLengthSquared =
+            leftCarrier.forward[0] * leftCarrier.forward[0] +
+            leftCarrier.forward[1] * leftCarrier.forward[1] +
+            leftCarrier.forward[2] * leftCarrier.forward[2];
+        if (!std::isfinite(axisLengthSquared) || axisLengthSquared < 1.0e-8f)
+            return false;
+        const float inverseLength = 1.0f / std::sqrt(axisLengthSquared);
+        float axis[3] = {
+            leftCarrier.forward[0] * inverseLength,
+            leftCarrier.forward[1] * inverseLength,
+            leftCarrier.forward[2] * inverseLength};
+        float turnover[9]{};
+        for (int column = 0; column < 3; ++column)
+            for (int row = 0; row < 3; ++row)
+                turnover[column * 3 + row] =
+                    2.0f * axis[column] * axis[row] -
+                    (column == row ? 1.0f : 0.0f);
+        float turned[9]{};
+        Halo2MultiplyFirstPersonBases(turnover, result.rotation, turned);
+        std::memcpy(result.rotation, turned, sizeof(result.rotation));
+    }
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    desiredLeft = result;
+    return true;
+}
+
 inline bool Halo2FirstPersonWristDeltaPlausible(
     const Halo2FirstPersonTransform& stock,
     const Halo2FirstPersonTransform& desired, float worldScale) noexcept
@@ -3340,12 +3404,9 @@ inline bool Halo2OwnVisibleFirstPersonHands(
         !Halo2ReadFirstPersonTransform(leftWristMatrix, stockLeft) ||
         !Halo2BuildControllerRerootedWristTarget(
             rightCarrier, authoredRoot, stockRight, rightScale, desiredRight) ||
-        !(twoHandAimActive
-              ? Halo2BuildRigidSupportWristTarget(
-                    desiredRight, stockRight, stockLeft, leftScale, desiredLeft)
-              : Halo2BuildControllerRerootedWristTarget(
-                    leftCarrier, authoredRoot, stockLeft, leftScale,
-                    desiredLeft)) ||
+        !Halo2BuildLeftPresentationWristTarget(
+            twoHandAimActive, desiredRight, stockRight, stockLeft,
+            authoredRoot, leftCarrier, leftScale, desiredLeft) ||
         !Halo2FirstPersonWristDeltaPlausible(
             stockRight, desiredRight, worldScale) ||
         !Halo2FirstPersonWristDeltaPlausible(
@@ -3512,13 +3573,9 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         !Halo2BuildControllerRerootedWristTarget(
             rightCarrier, authoredRoot, stockRight, rightScale,
             desiredRight) ||
-        !(twoHandAimActive
-              ? Halo2BuildRigidSupportWristTarget(
-                    desiredRight, stockRight, stockLeft, leftScale,
-                    desiredLeft)
-              : Halo2BuildControllerRerootedWristTarget(
-                    leftCarrier, authoredRoot, stockLeft, leftScale,
-                    desiredLeft)) ||
+        !Halo2BuildLeftPresentationWristTarget(
+            twoHandAimActive, desiredRight, stockRight, stockLeft,
+            authoredRoot, leftCarrier, leftScale, desiredLeft) ||
         !Halo2FirstPersonWristDeltaPlausible(
             stockRight, desiredRight, worldScale) ||
         !Halo2FirstPersonWristDeltaPlausible(

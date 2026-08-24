@@ -3518,3 +3518,29 @@ future bug fixing/tuning. This advances the accepted Halo 2 pointer from
 C-H2-55 to C-H2-63. The pixel-box heuristic remained `+0 px` in its sampled
 lower-right region and is retained as an inconclusive diagnostic, not allowed
 to override the headset acceptance.
+
+## E-H2-56 (C-H2-64): separate free-hand turnover from live two-hand barrel seating - 2026-08-23
+
+The player's first tuning report after accepting C-H2-63 identifies two
+presentation defects in both Classic and Anniversary: the independently tracked
+left hand is flipped in its idle/free state, and the two-hand support pose needs
+to sit closer to the barrel. This is headset evidence about presentation, not a
+new engine binding. E-H2-55 already proves both renderers consume the same split
+hand/gun algebra at different renderer boundaries, so no renderer-specific
+address or title-global transform is introduced.
+
+C-H2-64 changes only the left target selected inside that shared Halo 2 packet
+transaction. Free mode retains the controller-rerooted wrist translation and
+scale, then applies a determinant-+1 pi rotation about the live controller
+forward axis. The axis is normalized and finite-checked; failure leaves the
+complete optional hand/gun packet stock. Two-hand mode retains C-H2-63's
+authored rigid support-grip rotation, but replaces its stale flat-screen wrist
+translation with the immutable publication's live left carrier. The same
+publication's right aim already uses that support point as its barrel-line end,
+so the visible support hand and barrel aim now share one sample.
+
+The right wrist and separate gun still receive the exact existing
+`controller * inverse(authored root)` rigid delta, native unit aim remains at
+the proven `+0x168/+0x174` members, and Classic per-eye compensation remains
+after this centre-packet presentation solve. Tests pin free turnover, live
+support translation, staged-write isolation and the unchanged gun delta.
