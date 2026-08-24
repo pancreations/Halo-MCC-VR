@@ -1,5 +1,24 @@
 # Current state
 
+> **HALO 2 C-H2-64 REJECTED; C-H2-65 SAFETY REVERT IN SOURCE -
+> 2026-08-23.** The exact Steam run is preserved at
+> `out/test-runs/b41330d-halo2-c64-visible-difference-no-alignment-steam-20260823-2119/HaloMCCVR.log`,
+> SHA-256 `1426DED54B29ED273286205036D61229171B190DCB613512D9F3EDD0BD2347AF`.
+> It identifies source `b41330d61ff9c6be06f85138ef18e2ce98557402`,
+> Steam, SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz, and exercises both
+> Anniversary and Classic with 12,148 owned packets, 10,864 Anniversary hands/
+> guns, 1,284 Classic packets, and zero palette or Classic-eye refusals. The
+> player saw a difference but reports that none of the requested alignment was
+> fixed: the left hand is still not properly aligned, the double-barrel support
+> hand is misplaced, and the rendered barrel does not face the crosshair.
+>
+> This proves C-H2-64 executed and rejects its geometry: a generic pi palm turn
+> and live-wrist translation cannot replace the weapon's authored hand/barrel
+> relations. C-H2-65 disables that behavior without deleting it and restores
+> the accepted C-H2-63 hand/gun presentation. The next candidate must derive
+> the left hand, double-barrel support location, and visible barrel direction
+> from Halo 2 weapon geometry rather than another title-global offset.
+
 > **UNACCEPTED HALO 2 C-H2-64 HAND/GUN PRESENTATION ALIGNMENT -
 > 2026-08-23.** The accepted C-H2-63 renderer ownership remains unchanged:
 > Anniversary still owns matrices in the registered callback and Classic still

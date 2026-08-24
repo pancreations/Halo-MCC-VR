@@ -147,7 +147,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-halo2-c64-hand-gun-alignment-',
+            $head.Substring(0, 7) + '-halo2-c65-safety-revert-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +200,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-64' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-65' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_BUILD_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'c63-both-renderers-plus-free-left-turnover-and-live-two-hand-barrel-seat' -or
+            'c63-both-renderers-with-rejected-c64-generic-alignment-disabled' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -243,9 +243,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo2_candidate.classic_hand_mesh_ownership -cne
             'persistent-packet-post-builder-plus-per-eye-draw-first-person-compensation' -or
         [string]$manifest.halo2_candidate.free_left_hand_presentation -cne
-            'pi-turnover-about-live-controller-forward-axis' -or
+            'restored-c63-controller-reroot' -or
         [string]$manifest.halo2_candidate.two_hand_support_presentation -cne
-            'authored-rigid-grip-rotation-with-live-left-carrier-translation' -or
+            'restored-c63-authored-rigid-grip' -or
         [string]$manifest.halo2_candidate.right_hand_gun_transform -cne
             'unchanged-c63-controller-barrel-alignment' -or
         [string]$manifest.halo2_candidate.native_aim_update_rva -cne

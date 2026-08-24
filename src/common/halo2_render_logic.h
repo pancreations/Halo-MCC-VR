@@ -1099,6 +1099,13 @@ inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = false;
 // the native unit aiming-vector updater owns the corresponding engine aim.
 inline constexpr bool kHalo2VisibleConsumerControllerOwnershipEnabled = true;
 
+// C-H2-65 safety revert. The C-H2-64 generic palm turnover/live-wrist snap was
+// visibly different in both renderers but did not align the left hand, seat the
+// double-barrel support hand, or put the rendered barrel on the crosshair. Keep
+// the bounded helper as dormant evidence; the accepted C-H2-63 presentation is
+// selected until weapon-authored geometry supplies all three targets.
+inline constexpr bool kHalo2C64GenericLeftPresentationEnabled = false;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -3155,6 +3162,14 @@ inline bool Halo2BuildLeftPresentationWristTarget(
     const Halo2CameraBasis& leftCarrier, float leftScale,
     Halo2FirstPersonTransform& desiredLeft) noexcept
 {
+    if (!kHalo2C64GenericLeftPresentationEnabled)
+    {
+        return twoHandAimActive
+            ? Halo2BuildRigidSupportWristTarget(
+                desiredRight, stockRight, stockLeft, leftScale, desiredLeft)
+            : Halo2BuildControllerRerootedWristTarget(
+                leftCarrier, authoredRoot, stockLeft, leftScale, desiredLeft);
+    }
     Halo2FirstPersonTransform result{};
     if (twoHandAimActive)
     {

@@ -127,15 +127,11 @@ try {
             'kHalo2StableFinalPacketControllerOwnershipEnabled\s*=\s*false' -or
         $halo2LogicSource -notmatch
             'kHalo2VisibleConsumerControllerOwnershipEnabled\s*=\s*true') {
-        throw 'C-H2-64 gate failed: every rejected Halo 2 hand path must stay off and only the renderer-selected callback/persistent-packet transaction may be enabled.'
+        throw 'C-H2-65 gate failed: every rejected Halo 2 hand path must stay off and only the renderer-selected callback/persistent-packet transaction may be enabled.'
     }
     if ($halo2LogicSource -notmatch
-            'Halo2BuildLeftPresentationWristTarget' -or
-        $halo2LogicSource -notmatch
-            'std::memcpy\(result\.translation, leftCarrier\.position' -or
-        $halo2LogicSource -notmatch
-            '2\.0f \* axis\[column\] \* axis\[row\]') {
-        throw 'C-H2-64 gate failed: the Halo 2-only free-palm turnover or live two-hand barrel seat is missing.'
+            'kHalo2C64GenericLeftPresentationEnabled\s*=\s*false') {
+        throw 'C-H2-65 gate failed: the rejected C-H2-64 generic alignment is not disabled.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -204,7 +200,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c64-hand-gun-alignment',
+        'halo2-c65-safety-revert',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -318,12 +314,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-64'
+            id = 'C-H2-65'
             status = 'READY_FOR_BUILD_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'c63-both-renderers-plus-free-left-turnover-and-live-two-hand-barrel-seat'
+                'c63-both-renderers-with-rejected-c64-generic-alignment-disabled'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -353,10 +349,8 @@ try {
             classic_publish_to_renderer = $false
             classic_hand_mesh_ownership =
                 'persistent-packet-post-builder-plus-per-eye-draw-first-person-compensation'
-            free_left_hand_presentation =
-                'pi-turnover-about-live-controller-forward-axis'
-            two_hand_support_presentation =
-                'authored-rigid-grip-rotation-with-live-left-carrier-translation'
+            free_left_hand_presentation = 'restored-c63-controller-reroot'
+            two_hand_support_presentation = 'restored-c63-authored-rigid-grip'
             right_hand_gun_transform = 'unchanged-c63-controller-barrel-alignment'
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
@@ -588,7 +582,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-64 keeps the accepted C-H2-63 Classic and Anniversary renderer ownership unchanged. In the one shared Halo 2 final-packet transform, free-hand mode turns the left palm over by pi about the live controller-forward axis, while two-hand mode retains the authored rigid support-grip rotation and seats its wrist at the live left carrier on the barrel aim line. The already controller/barrel-aligned right hand and gun, native aim, camera, stereo, OpenXR, XInput, right-stick turning, and every other title are unchanged. Offline-verified and unaccepted.'
+        note = 'C-H2-65 is the safety revert after the headset rejected C-H2-64. The generic free-palm turnover and live-wrist support snap remain dormant in source, while the accepted C-H2-63 Classic/Anniversary hand and gun presentation is restored. Native aim, camera, stereo, OpenXR, XInput, right-stick turning, and every other title are unchanged. Offline-verified safety baseline.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

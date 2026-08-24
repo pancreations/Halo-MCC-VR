@@ -3544,3 +3544,14 @@ The right wrist and separate gun still receive the exact existing
 the proven `+0x168/+0x174` members, and Classic per-eye compensation remains
 after this centre-packet presentation solve. Tests pin free turnover, live
 support translation, staged-write isolation and the unchanged gun delta.
+
+The headset result rejects that inference. The exact Steam log from source
+`b41330d61ff9c6be06f85138ef18e2ce98557402` is preserved at
+`out/test-runs/b41330d-halo2-c64-visible-difference-no-alignment-steam-20260823-2119/HaloMCCVR.log`
+(SHA-256 `1426DED54B29ED273286205036D61229171B190DCB613512D9F3EDD0BD2347AF`).
+It proves continuous execution in Anniversary and Classic with zero palette or
+Classic-eye refusals. The player saw a difference but none of the required
+alignment improved: free left hand, double-barrel support location, and visible
+barrel-to-crosshair direction all remain wrong. C-H2-65 disables C-H2-64 and
+restores C-H2-63. A future correction requires weapon-authored geometry; no
+additional constant hand rotation or translation is supported by this result.
