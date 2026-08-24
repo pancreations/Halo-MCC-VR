@@ -91,6 +91,16 @@ struct Halo2VrRenderSnapshot
     float headOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float headPosition[3]{};
     bool headPoseValid = false;
+    // Exact-frame controller ownership, matching the working Reach/Halo 4
+    // contract. The Halo 2 packet hook must never combine a prepared eye/head
+    // sample with independently resampled controller globals.
+    bool rightAimValid = false;
+    float rightAimOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float rightAimPosition[3]{};
+    bool twoHandAimActive = false;
+    bool leftControllerValid = false;
+    float leftControllerOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float leftControllerPosition[3]{};
 };
 #endif
 

@@ -1086,6 +1086,12 @@ inline constexpr bool kHalo2RejectedInterpolatorControllerOwnershipEnabled = fal
 // evidence, but arm neither one while the replacement boundary is developed.
 inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 
+// C-H2-58 is a replacement transaction, not a re-arm of either rejected
+// controller path above. It consumes one exact prepared-frame controller
+// snapshot, builds physical targets from the observer's pre-HMD stock origin
+// and recenter reference, and applies ownership only to the final packets.
+inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = true;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -1160,6 +1166,89 @@ inline bool Halo2BuildControllerCarrier(
              trackedCamera.up[axis] * headLocal[1] -
              trackedCamera.forward[axis] * headLocal[2] +
              candidate.forward[axis] * forwardTrimMeters) * worldScale;
+    }
+    if (!Halo2ValidateCameraBasis(candidate))
+        return false;
+    output = candidate;
+    return true;
+}
+
+// Apply the accepted mirrored presentation trim to the independent left
+// controller in OpenXR local axes. The right aim snapshot already contains the
+// ordinary gun yaw/pitch/roll exactly once; applying it again would rotate only
+// the mesh. This is the same sign contract used by Halo 3, Reach and Halo 4:
+// mirrored yaw and roll, unchanged pitch.
+inline bool Halo2BuildMirroredLeftAimOrientation(
+    const float controllerOrientation[4], float gunYawDeg,
+    float gunPitchDeg, float gunRollDeg, float output[4]) noexcept
+{
+    float controller[4]{};
+    if (!controllerOrientation || !output ||
+        !Halo2NormalizeQuaternion(controllerOrientation, controller) ||
+        !std::isfinite(gunYawDeg) || !std::isfinite(gunPitchDeg) ||
+        !std::isfinite(gunRollDeg))
+    {
+        return false;
+    }
+    constexpr float kDegreesToRadians = 0.01745329251994329577f;
+    const float yaw = -gunYawDeg * kDegreesToRadians;
+    const float pitch = gunPitchDeg * kDegreesToRadians;
+    const float roll = gunRollDeg * kDegreesToRadians;
+    const float yawQ[4] = {
+        0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f)};
+    const float pitchQ[4] = {
+        std::sin(pitch * 0.5f), 0.0f, 0.0f, std::cos(pitch * 0.5f)};
+    // ComputeAimPose uses -roll for the right weapon. Mirroring the configured
+    // roll therefore makes this local Z rotation positive.
+    const float rollQ[4] = {
+        0.0f, 0.0f, std::sin(roll * 0.5f), std::cos(roll * 0.5f)};
+    float yawPitch[4]{}, trim[4]{}, candidate[4]{};
+    Halo2MultiplyQuaternion(yawQ, pitchQ, yawPitch);
+    Halo2MultiplyQuaternion(yawPitch, rollQ, trim);
+    Halo2MultiplyQuaternion(controller, trim, candidate);
+    return Halo2NormalizeQuaternion(candidate, output);
+}
+
+// Halo 2's stable controller target. Unlike the rejected carrier above, this
+// never uses current tracked camera + (controller - current head). The observer
+// publication already owns the exact pre-HMD gameplay camera and recenter pair;
+// feed the controller through that title-native mapping, then apply only the
+// configured controller-local forward standoff.
+inline bool Halo2BuildStableControllerCarrier(
+    const Halo2CameraBasis& stockCamera,
+    const float referenceOrientation[4], const float referencePosition[3],
+    const float controllerOrientation[4], const float controllerPosition[3],
+    float worldScale, float forwardTrimMeters,
+    Halo2CameraBasis& output) noexcept
+{
+    if (!referenceOrientation || !referencePosition ||
+        !controllerOrientation || !controllerPosition ||
+        !std::isfinite(forwardTrimMeters))
+    {
+        return false;
+    }
+    Halo2TrackedHeadInput input{};
+    std::memcpy(input.orientation, controllerOrientation,
+                sizeof(input.orientation));
+    std::memcpy(input.position, controllerPosition, sizeof(input.position));
+    std::memcpy(input.referenceOrientation, referenceOrientation,
+                sizeof(input.referenceOrientation));
+    std::memcpy(input.referencePosition, referencePosition,
+                sizeof(input.referencePosition));
+    input.positional = true;
+    input.worldScale = worldScale;
+    input.headOwnsPitch = true;
+    Halo2CameraBasis candidate{};
+    if (!Halo2BuildTrackedCenterCamera(stockCamera, input, candidate))
+        return false;
+    const float trimWorld = forwardTrimMeters * worldScale;
+    if (!std::isfinite(trimWorld))
+        return false;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        candidate.position[axis] += candidate.forward[axis] * trimWorld;
+        if (!std::isfinite(candidate.position[axis]))
+            return false;
     }
     if (!Halo2ValidateCameraBasis(candidate))
         return false;
@@ -2765,6 +2854,244 @@ inline bool Halo2BuildFinalPaletteWristDelta(
     return true;
 }
 
+// C-H2-58 transform algebra for the final 0x34-byte packet matrices. Scale is
+// part of the affine wrist delta, not a per-node afterthought: this keeps
+// gun_scale / left_hand_scale centred on the owned wrist and scales every
+// child translation with the mesh instead of leaving the weapon's nodes behind.
+struct Halo2FirstPersonTransform
+{
+    float scale = 1.0f;
+    float rotation[9]{1.0f,0.0f,0.0f, 0.0f,1.0f,0.0f, 0.0f,0.0f,1.0f};
+    float translation[3]{};
+};
+
+inline bool Halo2FirstPersonTransformValid(
+    const Halo2FirstPersonTransform& transform) noexcept
+{
+    if (!std::isfinite(transform.scale) ||
+        std::fabs(transform.scale) < 1.0e-6f)
+        return false;
+    for (float value : transform.translation)
+        if (!std::isfinite(value)) return false;
+    float determinant =
+        transform.rotation[0] *
+            (transform.rotation[4] * transform.rotation[8] -
+             transform.rotation[7] * transform.rotation[5]) -
+        transform.rotation[3] *
+            (transform.rotation[1] * transform.rotation[8] -
+             transform.rotation[7] * transform.rotation[2]) +
+        transform.rotation[6] *
+            (transform.rotation[1] * transform.rotation[5] -
+             transform.rotation[4] * transform.rotation[2]);
+    if (!std::isfinite(determinant) || determinant < 0.8f ||
+        determinant > 1.2f)
+        return false;
+    for (int column = 0; column < 3; ++column)
+    {
+        float lengthSquared = 0.0f;
+        for (int row = 0; row < 3; ++row)
+        {
+            const float value = transform.rotation[column * 3 + row];
+            if (!std::isfinite(value)) return false;
+            lengthSquared += value * value;
+        }
+        if (!std::isfinite(lengthSquared) || lengthSquared < 0.8f ||
+            lengthSquared > 1.2f)
+            return false;
+    }
+    return true;
+}
+
+inline bool Halo2ReadFirstPersonTransform(
+    const float* matrix, Halo2FirstPersonTransform& transform) noexcept
+{
+    if (!matrix) return false;
+    Halo2FirstPersonTransform candidate{};
+    candidate.scale = matrix[0];
+    std::memcpy(candidate.rotation, matrix + 1, sizeof(candidate.rotation));
+    std::memcpy(
+        candidate.translation, matrix + 10, sizeof(candidate.translation));
+    if (!Halo2FirstPersonTransformValid(candidate)) return false;
+    transform = candidate;
+    return true;
+}
+
+inline void Halo2WriteFirstPersonTransform(
+    const Halo2FirstPersonTransform& transform, float* matrix) noexcept
+{
+    matrix[0] = transform.scale;
+    std::memcpy(matrix + 1, transform.rotation, sizeof(transform.rotation));
+    std::memcpy(matrix + 10, transform.translation,
+                sizeof(transform.translation));
+}
+
+inline void Halo2MultiplyFirstPersonBases(
+    const float left[9], const float right[9], float output[9]) noexcept
+{
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+        {
+            float value = 0.0f;
+            for (int inner = 0; inner < 3; ++inner)
+                value += left[inner * 3 + row] *
+                    right[column * 3 + inner];
+            output[column * 3 + row] = value;
+        }
+}
+
+inline bool Halo2CameraToFirstPersonBasis(
+    const Halo2CameraBasis& camera, float output[9]) noexcept
+{
+    if (!output || !Halo2ValidateCameraBasis(camera)) return false;
+    const float right[3] = {
+        camera.forward[1] * camera.up[2] -
+            camera.forward[2] * camera.up[1],
+        camera.forward[2] * camera.up[0] -
+            camera.forward[0] * camera.up[2],
+        camera.forward[0] * camera.up[1] -
+            camera.forward[1] * camera.up[0]};
+    std::memcpy(output, right, sizeof(right));
+    std::memcpy(output + 3, camera.forward, sizeof(camera.forward));
+    std::memcpy(output + 6, camera.up, sizeof(camera.up));
+    return true;
+}
+
+inline bool Halo2ComposeFirstPersonTransforms(
+    const Halo2FirstPersonTransform& left,
+    const Halo2FirstPersonTransform& right,
+    Halo2FirstPersonTransform& output) noexcept
+{
+    if (!Halo2FirstPersonTransformValid(left) ||
+        !Halo2FirstPersonTransformValid(right))
+        return false;
+    Halo2FirstPersonTransform result{};
+    result.scale = left.scale * right.scale;
+    Halo2MultiplyFirstPersonBases(
+        left.rotation, right.rotation, result.rotation);
+    for (int row = 0; row < 3; ++row)
+    {
+        float rotated = 0.0f;
+        for (int column = 0; column < 3; ++column)
+            rotated += left.rotation[column * 3 + row] *
+                right.translation[column];
+        result.translation[row] =
+            left.translation[row] + left.scale * rotated;
+    }
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    output = result;
+    return true;
+}
+
+inline bool Halo2BuildFirstPersonWorldDelta(
+    const Halo2FirstPersonTransform& desired,
+    const Halo2FirstPersonTransform& stock,
+    Halo2FirstPersonTransform& delta) noexcept
+{
+    if (!Halo2FirstPersonTransformValid(desired) ||
+        !Halo2FirstPersonTransformValid(stock))
+        return false;
+    Halo2FirstPersonTransform result{};
+    result.scale = desired.scale / stock.scale;
+    float inverseStockRotation[9]{};
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            inverseStockRotation[column * 3 + row] =
+                stock.rotation[row * 3 + column];
+    Halo2MultiplyFirstPersonBases(
+        desired.rotation, inverseStockRotation, result.rotation);
+    for (int row = 0; row < 3; ++row)
+    {
+        float rotated = 0.0f;
+        for (int column = 0; column < 3; ++column)
+            rotated += result.rotation[column * 3 + row] *
+                stock.translation[column];
+        result.translation[row] =
+            desired.translation[row] - result.scale * rotated;
+    }
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    delta = result;
+    return true;
+}
+
+// Halo 4's working mount rule, expressed in Halo 2's proven final-packet
+// layout: retain only the live authored root-to-wrist ROTATION and use the
+// physical controller target for translation. Composing the full authored
+// relation here is the rejected face-gun regression.
+inline bool Halo2BuildControllerRerootedWristTarget(
+    const Halo2CameraBasis& controllerTarget,
+    const Halo2CameraBasis& authoredRoot,
+    const Halo2FirstPersonTransform& stockWrist, float meshScale,
+    Halo2FirstPersonTransform& desiredWrist) noexcept
+{
+    if (!std::isfinite(meshScale) || meshScale <= 0.0f ||
+        !Halo2FirstPersonTransformValid(stockWrist))
+        return false;
+    float controllerRotation[9]{}, rootRotation[9]{}, inverseRoot[9]{};
+    if (!Halo2CameraToFirstPersonBasis(
+            controllerTarget, controllerRotation) ||
+        !Halo2CameraToFirstPersonBasis(authoredRoot, rootRotation))
+        return false;
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            inverseRoot[column * 3 + row] =
+                rootRotation[row * 3 + column];
+    float rootLocalWrist[9]{};
+    Halo2MultiplyFirstPersonBases(
+        inverseRoot, stockWrist.rotation, rootLocalWrist);
+    Halo2FirstPersonTransform result = stockWrist;
+    result.scale = stockWrist.scale * meshScale;
+    Halo2MultiplyFirstPersonBases(
+        controllerRotation, rootLocalWrist, result.rotation);
+    std::memcpy(result.translation, controllerTarget.position,
+                sizeof(result.translation));
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    desiredWrist = result;
+    return true;
+}
+
+// In two-hand mode the support controller owns the shared right-aim line, but
+// the visible left hand keeps Halo 2's authored grip. Carry the right wrist's
+// exact RIGID motion to the stock left wrist, then apply left_hand_scale about
+// that owned wrist independently.
+inline bool Halo2BuildRigidSupportWristTarget(
+    const Halo2FirstPersonTransform& desiredRight,
+    const Halo2FirstPersonTransform& stockRight,
+    const Halo2FirstPersonTransform& stockLeft, float leftScale,
+    Halo2FirstPersonTransform& desiredLeft) noexcept
+{
+    if (!std::isfinite(leftScale) || leftScale <= 0.0f) return false;
+    Halo2FirstPersonTransform rigidRight = desiredRight;
+    rigidRight.scale = stockRight.scale;
+    Halo2FirstPersonTransform rigidDelta{}, result{};
+    if (!Halo2BuildFirstPersonWorldDelta(
+            rigidRight, stockRight, rigidDelta) ||
+        !Halo2ComposeFirstPersonTransforms(rigidDelta, stockLeft, result))
+        return false;
+    result.scale = stockLeft.scale * leftScale;
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    desiredLeft = result;
+    return true;
+}
+
+inline bool Halo2FirstPersonWristDeltaPlausible(
+    const Halo2FirstPersonTransform& stock,
+    const Halo2FirstPersonTransform& desired, float worldScale) noexcept
+{
+    if (!Halo2FirstPersonTransformValid(stock) ||
+        !Halo2FirstPersonTransformValid(desired) ||
+        !std::isfinite(worldScale) || worldScale <= 0.0f)
+        return false;
+    float distanceSquared = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float delta = desired.translation[axis] - stock.translation[axis];
+        distanceSquared += delta * delta;
+    }
+    const float maximum = std::max(2.0f, worldScale * 10.0f);
+    return std::isfinite(distanceSquared) &&
+        distanceSquared <= maximum * maximum;
+}
+
 // E-H2-37 (C-H2-43): H2EK weapons.cpp firing helper RVA 0x47DC20 copies the
 // owning unit's aiming_vector into the shot direction. BSim maps its exact x64
 // homolog to retail +0x8F0F70; the 22-byte entry below occurs once in the
@@ -2906,7 +3233,8 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     const Halo2FirstPersonArmBinding& binding, float* gunMatrices,
     uint32_t gunCount, const Halo2CameraBasis& authoredRoot,
     const Halo2CameraBasis& rightCarrier,
-    const Halo2CameraBasis& leftCarrier, float rightScale, float leftScale,
+    const Halo2CameraBasis& leftCarrier, bool twoHandAimActive,
+    float rightScale, float leftScale, float worldScale,
     Halo2FinalPacketOwnershipResult& out) noexcept
 {
     out = Halo2FinalPacketOwnershipResult{};
@@ -2918,7 +3246,8 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         !Halo2ValidateCameraBasis(authoredRoot) ||
         !Halo2ValidateCameraBasis(rightCarrier) ||
         !Halo2ValidateCameraBasis(leftCarrier) || !std::isfinite(rightScale) ||
-        !std::isfinite(leftScale) || rightScale <= 0.0f || leftScale <= 0.0f)
+        !std::isfinite(leftScale) || !std::isfinite(worldScale) ||
+        rightScale <= 0.0f || leftScale <= 0.0f || worldScale <= 0.0f)
     {
         return false;
     }
@@ -2938,47 +3267,77 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     if (rightWristDestination < 0 || leftWristDestination < 0)
         return false;
 
-    // The packet builder has already composed every destination matrix through
-    // `authoredRoot`. Replacing that root with the controller is the exact
-    // rigid operation that preserves the live authored root-to-wrist and
-    // wrist-to-weapon attachment frames:
-    //
-    //     final = controller * inverse(authoredRoot) * stock
-    //
-    // Aligning the raw wrist bone itself to the controller discarded those
-    // attachment frames. The resulting offsets then orbited with body turns,
-    // which is the C-H2-55 headset failure this transaction corrects.
-    float rightRotation[9]{}, leftRotation[9]{};
-    if (!Halo2BuildWorldDeltaRotation(
-            authoredRoot, rightCarrier, rightRotation) ||
-        !Halo2BuildWorldDeltaRotation(
-            authoredRoot, leftCarrier, leftRotation))
+    // Stage the complete transaction. Any invalid final node leaves the stock
+    // packets byte-identical; a half-moved hand/gun is never published.
+    float stagedHands[
+        kHalo2FirstPersonPaletteCapacity * kHalo2FirstPersonNodeFloats]{};
+    float stagedGun[
+        kHalo2FirstPersonPaletteCapacity * kHalo2FirstPersonNodeFloats]{};
+    std::memcpy(stagedHands, handsMatrices,
+                static_cast<size_t>(handsCount) * kHalo2FirstPersonNodeStride);
+    if (gunCount)
+        std::memcpy(stagedGun, gunMatrices,
+                    static_cast<size_t>(gunCount) *
+                        kHalo2FirstPersonNodeStride);
+
+    const float* const rightWristMatrix = stagedHands +
+        static_cast<uint32_t>(rightWristDestination) *
+            kHalo2FirstPersonNodeFloats;
+    const float* const leftWristMatrix = stagedHands +
+        static_cast<uint32_t>(leftWristDestination) *
+            kHalo2FirstPersonNodeFloats;
+    Halo2FirstPersonTransform stockRight{}, stockLeft{};
+    Halo2FirstPersonTransform desiredRight{}, desiredLeft{};
+    if (!Halo2ReadFirstPersonTransform(rightWristMatrix, stockRight) ||
+        !Halo2ReadFirstPersonTransform(leftWristMatrix, stockLeft) ||
+        !Halo2BuildControllerRerootedWristTarget(
+            rightCarrier, authoredRoot, stockRight, rightScale,
+            desiredRight) ||
+        !(twoHandAimActive
+              ? Halo2BuildRigidSupportWristTarget(
+                    desiredRight, stockRight, stockLeft, leftScale,
+                    desiredLeft)
+              : Halo2BuildControllerRerootedWristTarget(
+                    leftCarrier, authoredRoot, stockLeft, leftScale,
+                    desiredLeft)) ||
+        !Halo2FirstPersonWristDeltaPlausible(
+            stockRight, desiredRight, worldScale) ||
+        !Halo2FirstPersonWristDeltaPlausible(
+            stockLeft, desiredLeft, worldScale))
     {
         return false;
     }
-    const float* const rightStock = authoredRoot.position;
-    const float* const leftStock = authoredRoot.position;
-    const float* const rightDesired = rightCarrier.position;
-    const float* const leftDesired = leftCarrier.position;
+    Halo2FirstPersonTransform rightDelta{}, leftDelta{};
+    if (!Halo2BuildFirstPersonWorldDelta(
+            desiredRight, stockRight, rightDelta) ||
+        !Halo2BuildFirstPersonWorldDelta(
+            desiredLeft, stockLeft, leftDelta))
+        return false;
 
     for (uint32_t destination = 0; destination < handsCount; ++destination)
     {
-        float* const node = handsMatrices +
+        float* const node = stagedHands +
             destination * kHalo2FirstPersonNodeFloats;
         const int32_t source = handsRemap[destination];
         const uint64_t bit = source >= 0 ? uint64_t{1} << source : 0;
         if (bit && (binding.rightSubtree & bit))
         {
-            Halo2ReanchorFirstPersonNode(
-                node, rightRotation, rightStock, rightDesired);
-            node[0] *= rightScale;
+            Halo2FirstPersonTransform stockNode{}, moved{};
+            if (!Halo2ReadFirstPersonTransform(node, stockNode) ||
+                !Halo2ComposeFirstPersonTransforms(
+                    rightDelta, stockNode, moved))
+                return false;
+            Halo2WriteFirstPersonTransform(moved, node);
             ++out.rightNodes;
         }
         else if (bit && (binding.leftSubtree & bit))
         {
-            Halo2ReanchorFirstPersonNode(
-                node, leftRotation, leftStock, leftDesired);
-            node[0] *= leftScale;
+            Halo2FirstPersonTransform stockNode{}, moved{};
+            if (!Halo2ReadFirstPersonTransform(node, stockNode) ||
+                !Halo2ComposeFirstPersonTransforms(
+                    leftDelta, stockNode, moved))
+                return false;
+            Halo2WriteFirstPersonTransform(moved, node);
             ++out.leftNodes;
         }
         else
@@ -2989,14 +3348,22 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     }
     for (uint32_t nodeIndex = 0; nodeIndex < gunCount; ++nodeIndex)
     {
-        float* const node = gunMatrices +
+        float* const node = stagedGun +
             nodeIndex * kHalo2FirstPersonNodeFloats;
-        Halo2ReanchorFirstPersonNode(
-            node, rightRotation, rightStock, rightDesired);
-        node[0] *= rightScale;
+        Halo2FirstPersonTransform stockNode{}, moved{};
+        if (!Halo2ReadFirstPersonTransform(node, stockNode) ||
+            !Halo2ComposeFirstPersonTransforms(
+                rightDelta, stockNode, moved))
+            return false;
+        Halo2WriteFirstPersonTransform(moved, node);
         ++out.gunNodes;
     }
     out.applied = out.rightNodes && out.leftNodes && out.gunNodes;
+    if (!out.applied) return false;
+    std::memcpy(handsMatrices, stagedHands,
+                static_cast<size_t>(handsCount) * kHalo2FirstPersonNodeStride);
+    std::memcpy(gunMatrices, stagedGun,
+                static_cast<size_t>(gunCount) * kHalo2FirstPersonNodeStride);
     return out.applied;
 }
 

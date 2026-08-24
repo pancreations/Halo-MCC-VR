@@ -7992,7 +7992,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO || \
     HALOMCCVR_HALO2_STEREO6DOF
-    bool PublishHalo2RenderSnapshot(uint64_t preparedSerial) noexcept
+    bool PublishHalo2RenderSnapshot(
+        uint64_t preparedSerial, bool padFresh) noexcept
     {
         if (!preparedSerial || !g_headPoseValid || g_views.size() != 2 ||
             TitleAdapter_GetActiveTitle() != GameTitle::Halo2)
@@ -8024,6 +8025,37 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         next.headPosition[1] = g_headPose.position.y;
         next.headPosition[2] = g_headPose.position.z;
         next.headPoseValid = true;
+        // Publish the same immutable aim packet Reach and Halo 4 consume. A
+        // failed action sync cannot leak an older controller pose into a new
+        // Halo 2 prepared serial.
+        const bool rightPoseFresh = padFresh && g_rightAimPoseValid;
+        const bool leftPoseFresh = padFresh && g_leftAimPoseValid;
+        const AimPoseResult aim = ComputeAimPose(CurrentAimPoseInputs(
+            rightPoseFresh, g_rightAimPose,
+            leftPoseFresh, g_leftAimPose));
+        next.rightAimValid = aim.valid;
+        next.twoHandAimActive = aim.valid && aim.twoHandActive;
+        if (aim.valid)
+        {
+            next.rightAimOrientation[0] = aim.pose.orientation.x;
+            next.rightAimOrientation[1] = aim.pose.orientation.y;
+            next.rightAimOrientation[2] = aim.pose.orientation.z;
+            next.rightAimOrientation[3] = aim.pose.orientation.w;
+            next.rightAimPosition[0] = aim.pose.position.x;
+            next.rightAimPosition[1] = aim.pose.position.y;
+            next.rightAimPosition[2] = aim.pose.position.z;
+        }
+        next.leftControllerValid = leftPoseFresh;
+        if (leftPoseFresh)
+        {
+            next.leftControllerOrientation[0] = g_leftAimPose.orientation.x;
+            next.leftControllerOrientation[1] = g_leftAimPose.orientation.y;
+            next.leftControllerOrientation[2] = g_leftAimPose.orientation.z;
+            next.leftControllerOrientation[3] = g_leftAimPose.orientation.w;
+            next.leftControllerPosition[0] = g_leftAimPose.position.x;
+            next.leftControllerPosition[1] = g_leftAimPose.position.y;
+            next.leftControllerPosition[2] = g_leftAimPose.position.z;
+        }
         for (int eye = 0; eye < 2; ++eye)
         {
             if (!VR_GetEyeViewOffset(
@@ -8712,7 +8744,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         if (upcomingViewsValid && upcomingHeadValid &&
             TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         {
-            PublishHalo2RenderSnapshot(g_preparedFrame.serial);
+            PublishHalo2RenderSnapshot(
+                g_preparedFrame.serial, upcomingPadFresh);
         }
 #endif
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA

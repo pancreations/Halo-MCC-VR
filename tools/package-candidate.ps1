@@ -119,6 +119,14 @@ try {
         $halo2ColdSource -notmatch 'cached image proof rebound the') {
         throw 'C-H2-55 gate failed: the same-generation Halo 2 derived-binding rearm is missing.'
     }
+    if ($halo2LogicSource -notmatch
+            'kHalo2RejectedInterpolatorControllerOwnershipEnabled\s*=\s*false' -or
+        $halo2LogicSource -notmatch
+            'kHalo2FinalPaletteControllerOwnershipEnabled\s*=\s*false' -or
+        $halo2LogicSource -notmatch
+            'kHalo2StableFinalPacketControllerOwnershipEnabled\s*=\s*true') {
+        throw 'C-H2-58 gate failed: rejected hand paths must stay off and only the stable final-packet replacement may be enabled.'
+    }
 
     Invoke-Tool { & cmake --preset $packagePreset }
     if ($LASTEXITCODE -ne 0) {
@@ -186,7 +194,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c56-authored-hand-weapon-mounts',
+        'halo2-c58-stable-two-hand-packets',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -300,12 +308,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-56'
+            id = 'C-H2-58'
             status = 'READY_FOR_BUILD_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'h2ek-final-render-packet-authored-root-mounted-two-controller-hands-right-gun-all-local-presented-crosshair-shots-plus-c55-rehook'
+                'h2ek-final-packet-stable-recenter-controller-wrists-rigid-two-hand-support-affine-mesh-scale-right-gun-and-presented-crosshair-shots-plus-c55-rehook'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -437,15 +445,16 @@ try {
                 'h2ek-first-person-final-render-packet-builder-retail-rva-0x008181f0'
             hand_binding_source =
                 'animation-graph-hand-flags-mapped-through-weapon-data-authored-hands-remap'
-            left_controller_nodes = 'exact-remapped-left-wrist-descendant-subtree'
+            left_controller_nodes =
+                'exact-remapped-left-wrist-descendant-subtree-free-left-controller-or-two-hand-right-wrist-rigid-support-lock'
             right_controller_nodes =
                 'exact-remapped-right-wrist-descendant-subtree-plus-separate-primary-held-gun-packet'
             collapsed_nodes =
                 'every-final-hands-packet-node-outside-left-and-right-hand-subtrees'
             controller_rotation_space =
-                'final-world-rigid-root-replacement-controller-times-inverse-authored-camera-root-preserves-live-wrist-and-gun-mounts'
+                'final-world-wrist-target-retains-authored-root-to-wrist-rotation-with-physical-controller-translation-and-affine-scale-about-wrist'
             projectile_aim_source =
-                'all-guarded-local-helper-results-stock-muzzle-to-exact-fresh-compositor-presented-crosshair-point-independent-of-use-unit-aim-flag'
+                'h2ek-firing-helper-completed-direction-stock-muzzle-to-stable-recenter-mapped-fresh-presented-crosshair-point-with-material-deflection-telemetry'
             projectile_presented_reticle_freshness_ms = 250
             interpolation_reset_policy =
                 'stock-reset-preserved-rejected-interpolator-controller-path-remains-disabled'
@@ -551,7 +560,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-56 keeps the headset-accepted C-H2-55 same-generation level rehook and corrects only the optional Halo 2 hands/gun/shot transaction rejected by the next headset report. Final packets replace the authored camera root with each controller root, preserving the live authored root-to-wrist and wrist-to-gun attachment frames instead of aligning raw wrist bones to controller origins. The guarded local firing helper converges both useUnitAim modes on the exact fresh compositor-presented crosshair; AI and remote units stay stock. Camera, stereo, OpenXR, XInput, observer ownership and physical right-stick turning are unchanged. This candidate is offline-verified and unaccepted.'
+        note = 'C-H2-58 keeps the headset-accepted C-H2-55 level rehook and leaves both rejected Halo 2 hand transactions disabled. Its replacement consumes one immutable prepared-frame aim snapshot, maps both controllers from the observer recenter point onto the pre-HMD body camera, targets physical wrist translations while retaining only authored root-to-wrist rotation, locks the visible support hand to the authored weapon grip during two-hand aim, and applies gun_scale and left_hand_scale as affine subtree transforms about their wrists. The separate gun receives the right-wrist delta once. The H2EK firing helper converges the stock muzzle on the same stable presented-crosshair ray and logs material angular deflection. Camera, stereo, OpenXR, XInput and physical right-stick turning are unchanged. This candidate is offline-verified and unaccepted.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

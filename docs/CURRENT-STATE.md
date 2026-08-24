@@ -1,5 +1,33 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-58 STABLE TWO-HAND PACKET REPLACEMENT IN SOURCE -
+> 2026-08-23.** C-H2-58 does not restore either rejected hand path. Both old
+> switches remain false; one new switch enables a replacement at the proven
+> final packet boundary. Halo 2 now publishes right aim, raw left controller and
+> two-hand state in the same immutable prepared-frame snapshot as its eyes/head.
+> Both wrist targets are mapped from the observer recenter point onto the
+> pre-HMD body camera. Translation is the physical target; only the authored
+> camera-root-to-wrist rotation is retained, so the rejected face-relative
+> translation is not composed back onto the controller.
+>
+> Free mode maps each wrist to its own controller. Two-hand mode applies the
+> right wrist's rigid world delta to the stock left wrist, matching Halo 4's
+> accepted authored-support-grip lock. `gun_scale` and `left_hand_scale` are now
+> affine transforms about the owned wrists, so child positions scale with the
+> meshes; the separate gun receives the right-wrist delta exactly once.
+> `gun_forward_m`, `left_hand_forward_m`, gun yaw/pitch/roll and
+> `two_handed_aim` are consumed once from that frame.
+>
+> A new H2EK firing trace corrects E-H2-50's runtime inference: kit firing RVA
+> `0x49C960` passes origin at `&local_1c4c` and direction at `&local_1c40` to
+> helper RVA `0x47DC20`, then copies that returned direction into the projectile
+> path before error and normalization. C-H2-58 therefore retains the proven
+> retail homolog, feeds it the same stable presented-crosshair ray as the mesh,
+> and records how many writes differ by at least 0.25 degrees plus maximum
+> deflection. Offline Release compilation, core tests and the Reach consistency
+> gate pass. Headset acceptance is still required; the accepted pointer remains
+> C-H2-55.
+
 > **HALO 2 C-H2-56 REJECTED; C-H2-57 SAFETY REVERT IN SOURCE -
 > 2026-08-23.** The player's Steam headset result reports that C-H2-56 moved
 > the gun onto the face, left projectile behavior unchanged, and regressed the

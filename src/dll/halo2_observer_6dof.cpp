@@ -223,6 +223,8 @@ namespace
     std::atomic<uint64_t> g_weaponAimNonOwned{0};
     std::atomic<uint64_t> g_weaponAimNoOwnedUnit{0};
     std::atomic<uint64_t> g_weaponAimExceptions{0};
+    std::atomic<uint64_t> g_weaponAimChanged{0};
+    std::atomic<uint32_t> g_weaponAimMaxDeflectionMilliDegrees{0};
     uint64_t g_lastWitnessedReported = 0;
 
     // E-H2-6 publication: seqlock (even = stable), plain payload.
@@ -711,6 +713,41 @@ namespace
                 std::clamp(g_config.gun_forward_m, -0.3f, 0.5f), carrier);
     }
 
+    bool BuildStableFirstPersonCarriers(
+        const Halo2ObserverPosePublication& publication,
+        const Halo2SynchronousVrRenderSnapshot& tracking,
+        Halo2CameraBasis& rightCarrier,
+        Halo2CameraBasis& leftCarrier) noexcept
+    {
+        if (!tracking.preparedSerial ||
+            publication.serial != tracking.preparedSerial ||
+            publication.generation != tracking.generation ||
+            !tracking.headPoseValid || !tracking.rightAimValid ||
+            !tracking.leftControllerValid)
+            return false;
+        float leftOrientation[4]{};
+        if (!Halo2BuildMirroredLeftAimOrientation(
+                tracking.leftControllerOrientation,
+                g_config.gun_yaw_deg, g_config.gun_pitch_deg,
+                g_config.gun_roll_deg, leftOrientation))
+            return false;
+        const float worldScale = Game_GetWorldScale();
+        return Halo2BuildStableControllerCarrier(
+                   publication.stock, publication.referenceOrientation,
+                   publication.referencePosition,
+                   tracking.rightAimOrientation,
+                   tracking.rightAimPosition, worldScale,
+                   std::clamp(g_config.gun_forward_m, -0.3f, 0.5f),
+                   rightCarrier) &&
+            Halo2BuildStableControllerCarrier(
+                   publication.stock, publication.referenceOrientation,
+                   publication.referencePosition, leftOrientation,
+                   tracking.leftControllerPosition, worldScale,
+                   std::clamp(
+                       g_config.left_hand_forward_m, -0.15f, 0.30f),
+                   leftCarrier);
+    }
+
     bool PrepareFinalPaletteContext(
         const Halo2CameraBasis& renderCamera, int graphId,
         const float* source, uint32_t count) noexcept
@@ -955,27 +992,26 @@ namespace
                 }
                 Halo2CameraBasis rightCarrier{};
                 Halo2CameraBasis leftCarrier{};
-                float leftOrientation[4]{}, leftPosition[3]{};
-                float headOrientation[4]{}, headPosition[3]{};
+                Halo2ObserverPosePublication publication{};
+                Halo2SynchronousVrRenderSnapshot tracking{};
                 Halo2FinalPacketOwnershipResult result{};
                 if ((flags & 0x07u) == 0x07u &&
                     weaponObject != UINT32_MAX &&
                     ResolveArmBinding(graphId, animationCount, binding) &&
                     Halo2ValidateCameraBasis(renderCamera) &&
-                    BuildFirstPersonCarrier(renderCamera, rightCarrier) &&
-                    VR_GetHeadPose(headOrientation, headPosition) &&
-                    VR_GetLeftControllerPose(leftOrientation, leftPosition) &&
-                    Halo2BuildControllerCarrier(
-                        renderCamera, headOrientation, headPosition,
-                        leftOrientation, leftPosition, Game_GetWorldScale(),
-                        std::clamp(g_config.left_hand_forward_m, -0.3f, 0.5f),
-                        leftCarrier) &&
+                    VR_Halo2GetSynchronousRenderSnapshot(tracking) &&
+                    Halo2Observer6Dof_ReadPublishedPose(publication) &&
+                    publication.generation ==
+                        g_generation.load(std::memory_order_acquire) &&
+                    BuildStableFirstPersonCarriers(
+                        publication, tracking, rightCarrier, leftCarrier) &&
                     Halo2OwnFinalFirstPersonPackets(
                         handsMatrices, handsCount, handsRemap, binding,
                         gunMatrices, gunCount, renderCamera, rightCarrier,
-                        leftCarrier,
+                        leftCarrier, tracking.twoHandAimActive,
                         std::clamp(g_config.gun_scale, 0.3f, 3.0f),
                         std::clamp(g_config.left_hand_scale, 0.3f, 3.0f),
+                        Game_GetWorldScale(),
                         result))
                 {
                     g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
@@ -1426,9 +1462,11 @@ namespace
                         presentedOrientation, presentedPosition,
                         presentedAtMs) &&
                     presentedAtMs <= nowMs && nowMs - presentedAtMs <= 250 &&
-                    BuildFirstPersonCarrierFromAimPose(
-                        publication.tracked, presentedOrientation,
-                        presentedPosition, 0.0f, carrier))
+                    Halo2BuildStableControllerCarrier(
+                        publication.stock, publication.referenceOrientation,
+                        publication.referencePosition, presentedOrientation,
+                        presentedPosition, Game_GetWorldScale(), 0.0f,
+                        carrier))
                 {
                     const float range = std::clamp(
                         g_config.crosshair_distance_m, 2.0f, 50.0f) *
@@ -1437,6 +1475,44 @@ namespace
                     if (Halo2BuildControllerShotDirection(
                             origin, carrier, range, candidate))
                     {
+                        float stockLengthSquared = 0.0f;
+                        float candidateLengthSquared = 0.0f;
+                        float dot = 0.0f;
+                        for (int axis = 0; axis < 3; ++axis)
+                        {
+                            stockLengthSquared += direction[axis] * direction[axis];
+                            candidateLengthSquared +=
+                                candidate[axis] * candidate[axis];
+                            dot += direction[axis] * candidate[axis];
+                        }
+                        const float denominator = std::sqrt(
+                            stockLengthSquared * candidateLengthSquared);
+                        if (std::isfinite(denominator) && denominator > 1.0e-6f)
+                        {
+                            dot = std::clamp(dot / denominator, -1.0f, 1.0f);
+                            const float degrees =
+                                std::acos(dot) * 57.29577951308232f;
+                            if (std::isfinite(degrees))
+                            {
+                                const uint32_t milliDegrees =
+                                    static_cast<uint32_t>(std::min(
+                                        degrees * 1000.0f, 180000.0f));
+                                if (milliDegrees >= 250)
+                                    g_weaponAimChanged.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                uint32_t previous =
+                                    g_weaponAimMaxDeflectionMilliDegrees.load(
+                                        std::memory_order_relaxed);
+                                while (previous < milliDegrees &&
+                                       !g_weaponAimMaxDeflectionMilliDegrees.
+                                           compare_exchange_weak(
+                                               previous, milliDegrees,
+                                               std::memory_order_relaxed,
+                                               std::memory_order_relaxed))
+                                {
+                                }
+                            }
+                        }
                         std::memcpy(direction, candidate, sizeof(candidate));
                         applied = true;
                     }
@@ -2161,7 +2237,7 @@ namespace
         // hooked or patched. All three must match exactly once and sit at their
         // pinned RVAs, or the complete optional floating-hand presentation stays
         // stock for that frame.
-        if (kHalo2FinalPaletteControllerOwnershipEnabled)
+        if (kHalo2StableFinalPacketControllerOwnershipEnabled)
         {
             // The 8 leading padding bytes disambiguate the standalone function
             // from the two copies the optimizer inlined elsewhere.
@@ -2211,7 +2287,7 @@ namespace
                         base + kHalo2AnimationGraphFindNodeByFlagsRva,
                         std::memory_order_release);
                 }
-                LOG("Halo 2 hand binding readers ARMED (C-H2-52): the left and right "
+                LOG("Halo 2 hand binding readers ARMED (C-H2-58): the left and right "
                     "wrist descendants are identified from the "
                     "engine's own animation-graph model flags (node +0x%X, "
                     "left-hand bit 0x%02X, right-hand bit 0x%02X, stride "
@@ -2250,7 +2326,7 @@ namespace
         constexpr char kPacketBuilderPattern[] =
             "48 89 5C 24 18 4C 89 4C 24 20 89 54 24 10 89 4C 24 08 "
             "55 56 57 41 54 41 55 41 56 41 57";
-        if (!kHalo2FinalPaletteControllerOwnershipEnabled)
+        if (!kHalo2StableFinalPacketControllerOwnershipEnabled)
         {
             LOG("Halo 2 final-palette hands NOT installed: build switch off");
         }
@@ -2283,10 +2359,12 @@ namespace
             {
                 g_packetBuilderTarget = packetTarget;
                 g_finalPaletteReady.store(true, std::memory_order_release);
-                LOG("Halo 2 final-packet hands ARMED (C-H2-52): H2EK packet "
-                    "builder +0x%X; its authored hands remap selects the exact "
-                    "left/right wrist subtrees, all non-hand nodes collapse, "
-                    "and the separate held-gun packet follows the right hand",
+                LOG("Halo 2 final-packet hands ARMED (C-H2-58): H2EK packet "
+                    "builder +0x%X; one prepared-frame snapshot maps physical "
+                    "wrists from the stable body/recenter frame, two-hand mode "
+                    "locks the authored support grip, subtree scale is affine "
+                    "about each wrist, and the separate gun follows the right "
+                    "wrist once",
                     static_cast<unsigned>(kHalo2FirstPersonPacketBuilderRva));
             }
             else
@@ -2307,7 +2385,7 @@ namespace
         // H2EK-matched output-user iterator and player-update identities that
         // prove the local-player guard's two global pointers and datum layout.
         //
-        // C-H2-52 installs it only with the final-packet hand transaction,
+        // C-H2-58 installs it only with the stable final-packet transaction,
         // because "the bullets follow the crosshair" is exactly what this
         // detour delivers. It is still the ONLY thing the
         // controller is allowed to steer besides the visible mesh: no XInput,
@@ -2329,7 +2407,7 @@ namespace
             "41 54 41 55 41 56 41 57 48 8D AC 24 30 FF FF FF "
             "48 81 EC D0 01 00 00 4C 8B E9 E8 D1 2A 00 00 45 "
             "33 FF 84 C0 0F 85 D9 00 00 00 48 8B 15 D7 D0 7D 00";
-        if (!kHalo2FinalPaletteControllerOwnershipEnabled ||
+        if (!kHalo2StableFinalPacketControllerOwnershipEnabled ||
             !g_finalPaletteReady.load(std::memory_order_acquire))
         {
             LOG("Halo 2 direct weapon aim NOT installed: the controller-owned "
@@ -2392,9 +2470,11 @@ namespace
                 }
                 else
                 {
-                    LOG("Halo 2 direct weapon aim installed at firing helper "
+                    LOG("Halo 2 direct weapon aim installed (C-H2-58) at firing helper "
                         "+0x%X with output-user-0 unit guard: controller "
-                        "replaces only the local player's shot direction; "
+                        "replaces only the local player's shot direction from "
+                        "the stable presented-crosshair ray and records actual "
+                        "angular deflection; "
                         "AI, XInput, observer and camera are untouched",
                         static_cast<unsigned>(kHalo2WeaponAimHelperRva));
                 }
@@ -2473,9 +2553,10 @@ namespace
             "%llu on its own controller, %llu stock fallback, %llu binding "
             "rebuilds, last binding reason %d; final packet: %llu builder calls, "
             "%llu owned, %llu stock, %llu gun nodes; palette result: %llu changed, "
-            "%llu right, %llu left, %llu collapsed, %llu refused; direct shot "
-            "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
-            "%llu no-owned-unit, %llu exceptions",
+             "%llu right, %llu left, %llu collapsed, %llu refused; direct shot "
+             "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
+             "%llu no-owned-unit, %llu exceptions, %llu materially changed, "
+             "max deflection %.3f deg",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -2583,7 +2664,12 @@ namespace
             static_cast<unsigned long long>(
                 g_weaponAimNoOwnedUnit.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_weaponAimExceptions.load(std::memory_order_relaxed)));
+                g_weaponAimExceptions.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_weaponAimChanged.load(std::memory_order_relaxed)),
+            static_cast<double>(
+                g_weaponAimMaxDeflectionMilliDegrees.load(
+                    std::memory_order_relaxed)) / 1000.0);
     }
 }
 

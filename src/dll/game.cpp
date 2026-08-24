@@ -38025,11 +38025,11 @@ static bool ReachControllerAimActive() { return false; }
 bool Game_Halo2ControllerAimActive()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // C-H2-52 grants ownership only after the H2EK-derived final render-packet
+    // C-H2-58 grants ownership only after the H2EK-derived final render-packet
     // transaction has succeeded recently. The rejected interpolator-space
     // placement has its own permanently-false switch and cannot be re-armed
     // through this predicate.
-    return kHalo2FinalPaletteControllerOwnershipEnabled &&
+    return kHalo2StableFinalPacketControllerOwnershipEnabled &&
         TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
         Game_HasTitleCapability(TitleCapability_ControllerAim) &&
         Halo2Observer6Dof_Armed() &&

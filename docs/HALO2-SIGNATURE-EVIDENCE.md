@@ -3332,3 +3332,46 @@ and leaves camera, stereo, observer 6DOF, OpenXR and lifecycle rehook untouched.
 The next implementation must compare Halo 4's accepted controller mount,
 two-hand/config consumption and final projectile owner, then find Halo 2's own
 homologous consumer from H2EK before any new runtime write.
+
+## E-H2-51 (C-H2-58): stable physical wrists, rigid support grip and traced projectile direction - 2026-08-23
+
+The replacement starts from the accepted Halo 4 behavior in source, not from
+C-H2-56's failed equation. Halo 4 freezes right aim, raw left controller and
+two-hand state in one prepared-frame snapshot; builds controller positions from
+the pre-HMD body origin and recenter displacement; gives each final wrist the
+physical controller translation while retaining only the live eye-root-to-wrist
+rotation; applies the right wrist's exact rigid delta to the visible left wrist
+during two-hand aim; and carries that same right delta once into the adjacent
+held model. Its scale is part of the wrist/subtree affine transform.
+
+Halo 2 already has the corresponding proven inputs and consumer: E-H2-45's
+final world packet and E-H2-41's authored wrist subtrees. C-H2-58 publishes the
+exact-frame controller data beside `Halo2VrRenderSnapshot`, maps it through the
+observer publication's stock camera and recenter reference, and stages the
+complete hands/gun transaction before writing. For each wrist it builds
+`controller_rotation * inverse(authored_root_rotation) * stock_wrist_rotation`,
+but copies the physical controller position directly. It never composes the
+authored root-to-wrist translation that put C-H2-56 on the player's face. Free
+left uses the raw left controller with mirrored configured yaw/roll and ordinary
+pitch. Support left instead receives the right wrist's rigid delta, retaining
+the weapon's authored grip. Right and left scales are applied about their own
+wrist pivots, including descendant translations; the separate gun receives the
+right affine delta once. Invalid input leaves the stock packets byte-identical.
+
+The official H2EK firing function at kit RVA `0x49C960` was traced past the call
+to helper kit RVA `0x47DC20`. It passes `&local_1c4c` as the three-float origin
+and `&local_1c40` as the three-float direction. After the helper returns, that
+direction is copied to the firing locals (`local_1dd8` / `local_1dd0`), receives
+the weapon's random error, is normalized and enters projectile creation. The
+separate `local_1c94` data is impact/action state, not projectile direction.
+This corrects E-H2-50's inference from the prior headset result: the helper is a
+real direction consumer; C-H2-56's 69 writes did not prove those writes were
+materially different from its head-derived carrier. C-H2-58 retains the already
+verified retail helper binding, builds its target from the stable recenter/body
+mapping used by the mesh, and adds angular telemetry against the stock result.
+
+Offline verification before packaging: Release DLL compilation PASS,
+`halomccvr_core_tests` PASS (stable recenter mapping, mirrored trim, independent
+affine wrist/gun placement, rigid two-hand support lock, invalid-remap
+write isolation), Reach consistency gate PASS, and diff check PASS. Headset
+acceptance remains required and this entry does not advance the accepted build.

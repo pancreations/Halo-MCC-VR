@@ -7713,9 +7713,11 @@ int main()
             }
 
             Check(!kHalo2RejectedInterpolatorControllerOwnershipEnabled &&
-                      !kHalo2FinalPaletteControllerOwnershipEnabled,
-                "C-H2-57 leaves both headset-rejected Halo 2 controller "
-                "transactions dormant while stereo and 6DOF stay enabled");
+                      !kHalo2FinalPaletteControllerOwnershipEnabled &&
+                      kHalo2StableFinalPacketControllerOwnershipEnabled,
+                "C-H2-58 leaves both headset-rejected Halo 2 controller "
+                "transactions dormant and enables only the stable final-packet "
+                "replacement");
             Check(kHalo2MatrixComposeRva == 0x0072A150 &&
                       kHalo2FirstPersonPrimaryComposeReturnRva == 0x00818623 &&
                       kHalo2FirstPersonSecondaryComposeReturnRva == 0x00818773 &&
@@ -7768,21 +7770,21 @@ int main()
                 Halo2FinalPacketOwnershipResult result{};
                 const bool ownedPackets = Halo2OwnFinalFirstPersonPackets(
                     hands, kPacketNodes, remap, packetBinding, gun, 1,
-                    authoredRoot, right, left, 2.0f, 0.5f, result);
+                    authoredRoot, right, left, false, 2.0f, 0.5f, 1.0f,
+                    result);
                 Check(ownedPackets && result.applied && result.rightNodes == 1 &&
                           result.leftNodes == 2 && result.collapsedNodes == 1 &&
                           result.gunNodes == 1 &&
                           nearlyEqual(hands[0], 0.0001f) &&
                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
-                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -12.0f) &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
                           nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
-                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 12.0f) &&
-                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -13.0f) &&
+                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -10.5f) &&
                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f),
-                    "C-H2-52 final packets leave only independent controller "
-                    "hands, preserve their authored root offsets, carry the "
-                    "separate gun with the right wrist, and collapse every "
-                    "arm/body node");
+                    "C-H2-58 final packets place each independent wrist at its "
+                    "physical target, scale each complete subtree about that "
+                    "wrist, carry the separate gun once, and collapse body nodes");
 
                 float unchanged[kPacketNodes * kHalo2FirstPersonNodeFloats]{};
                 std::memcpy(unchanged, hands, sizeof(unchanged));
@@ -7790,11 +7792,30 @@ int main()
                 Halo2FinalPacketOwnershipResult refusedPacket{};
                 Check(!Halo2OwnFinalFirstPersonPackets(
                           hands, kPacketNodes, badRemap, packetBinding, gun, 1,
-                          authoredRoot, right, left, 1.0f, 1.0f,
+                          authoredRoot, right, left, false, 1.0f, 1.0f, 1.0f,
                           refusedPacket) &&
                           std::memcmp(unchanged, hands, sizeof(unchanged)) == 0,
-                    "C-H2-52 refuses an invalid authored remap before mutating "
+                    "C-H2-58 refuses an invalid authored remap before mutating "
                     "any final hand packet node");
+
+                identityNode(hands + 0 * kHalo2FirstPersonNodeFloats, 0.0f);
+                identityNode(hands + 1 * kHalo2FirstPersonNodeFloats, -2.0f);
+                identityNode(hands + 2 * kHalo2FirstPersonNodeFloats, 2.0f);
+                identityNode(hands + 3 * kHalo2FirstPersonNodeFloats, -3.0f);
+                identityNode(gun, 4.0f);
+                Halo2FinalPacketOwnershipResult supported{};
+                const bool ownedSupport = Halo2OwnFinalFirstPersonPackets(
+                    hands, kPacketNodes, remap, packetBinding, gun, 1,
+                    authoredRoot, right, left, true, 1.0f, 1.0f, 1.0f,
+                    supported);
+                Check(ownedSupport && supported.applied &&
+                          nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 6.0f) &&
+                          nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                          nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 5.0f) &&
+                          nearlyEqual(gun[10], 12.0f),
+                    "C-H2-58 two-hand aim carries the authored support grip by "
+                    "the right-wrist rigid delta instead of snapping it to the "
+                    "left controller");
             }
             {
                 float wrist[kHalo2FirstPersonNodeFloats]{};
@@ -7868,6 +7889,48 @@ int main()
                 Check(invariant,
                     "Halo 2 controller tracking stays camera-local after a "
                     "common body/camera turn instead of only facing forward");
+            }
+
+            {
+                Halo2CameraBasis body{};
+                body.position[0] = 10.0f;
+                body.position[1] = 20.0f;
+                body.position[2] = 30.0f;
+                body.forward[0] = 1.0f;
+                body.up[2] = 1.0f;
+                const float identityQ[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                const float recenterPosition[3] = {0.2f, 0.1f, -0.1f};
+                const float controllerPosition[3] = {0.6f, 0.3f, -0.7f};
+                Halo2CameraBasis stable{};
+                Check(Halo2BuildStableControllerCarrier(
+                          body, identityQ, recenterPosition, identityQ,
+                          controllerPosition, 0.5f, 0.2f, stable) &&
+                          nearlyEqual(stable.position[0], 10.4f) &&
+                          nearlyEqual(stable.position[1], 19.8f) &&
+                          nearlyEqual(stable.position[2], 30.1f) &&
+                          nearlyEqual(stable.forward[0], 1.0f) &&
+                          nearlyEqual(stable.up[2], 1.0f),
+                    "C-H2-58 maps controller displacement from the recenter "
+                    "point onto the pre-HMD body camera and applies forward "
+                    "trim once");
+
+                float mirroredYaw[4]{};
+                float mirroredRoll[4]{};
+                Check(Halo2BuildMirroredLeftAimOrientation(
+                          identityQ, 30.0f, 0.0f, 0.0f, mirroredYaw) &&
+                          Halo2BuildMirroredLeftAimOrientation(
+                              identityQ, 0.0f, 0.0f, 20.0f,
+                              mirroredRoll) &&
+                          nearlyEqual(mirroredYaw[1],
+                              -std::sin(15.0f * 0.01745329251994329577f)) &&
+                          nearlyEqual(mirroredYaw[3],
+                              std::cos(15.0f * 0.01745329251994329577f)) &&
+                          nearlyEqual(mirroredRoll[2],
+                              std::sin(10.0f * 0.01745329251994329577f)) &&
+                          nearlyEqual(mirroredRoll[3],
+                              std::cos(10.0f * 0.01745329251994329577f)),
+                    "C-H2-58 mirrors configured yaw and roll on the independent "
+                    "left hand while leaving right aim's trim single-applied");
             }
 
             // C-H2-46's whole point: mesh, VR crosshair and bullet share ONE
