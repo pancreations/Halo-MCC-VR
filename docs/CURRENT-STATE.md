@@ -1,8 +1,9 @@
 # Current state
 
-> **HALO 2 C-H2-62 PARTIAL HEADSET SUCCESS: ANNIVERSARY HANDS/GUN WORK;
-> CLASSIC UNCHANGED AND MONOSCOPIC. C-H2-63 CLASSIC PERSISTENT-PACKET STEREO
-> REWORK IN SOURCE - 2026-08-23.** The exact Steam C-H2-62 run is preserved at
+> **CURRENT ACCEPTED HALO 2 DEVELOPMENT BASELINE: C-H2-63 CLASSIC
+> PERSISTENT-PACKET STEREO + ANNIVERSARY CALLBACK HANDS/GUN - 2026-08-23.**
+> C-H2-62 was a partial headset success: Anniversary hands/gun worked, but
+> Classic was unchanged and monoscopic. Its exact Steam run is preserved at
 > `out/test-runs/d72ebf7-halo2-c62-anniversary-working-classic-flat-no-hands-20260823-1955/HaloMCCVR.log`
 > (SHA-256
 > `2A2A4ECE9FD448404E7FA80E3A1641113EACE65E8E497DADC1D1F1607EC2C3D0`).
@@ -31,8 +32,25 @@
 > owned centre form before the other eye. There is no second guessed ownership
 > path: the renderer's explicit publish flag selects Anniversary callback or
 > Classic persistent packet. Native desired/current unit aim remains shared.
-> Release build and core tests pass locally; the accepted pointer remains
-> C-H2-55 until the packaged bytes pass the headset.
+> The exact C-H2-63 package is
+> `14a7c46-halo2-c63-classic-persistent-packet-stereo-20260824-011605004Z`,
+> source `14a7c466593766f0a27aaf9642a8207768bb9fda`, manifest SHA-256
+> `DDD7CA427D55C3E90BA8BA99F3EA3DB29DB0E74A274D4E4B136B9467F788BD40`,
+> and DLL SHA-256
+> `AC7522093B489D9A4BE8580A82C28D5D48FF9B2C5F6F2B0684858866BBEEA0AD`.
+> It was installed and independently hash-verified in both Steam and Store.
+> The accepted Steam headset log is preserved at
+> `out/test-runs/14a7c46-halo2-c63-accepted-good-baseline-steam-20260823-2052/HaloMCCVR.log`,
+> SHA-256 `FCF552242413ADB87E037F0F0B7DF2464C53391132AA2159C3949C60BAAAC707`.
+> It identifies SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz, records live
+> switches through Anniversary -> Classic -> Anniversary -> Classic, and ends
+> with 13,965/13,965 Classic persistent packets owned, 13,896 per-eye packet
+> compensations, and zero Classic eye refusals. The player explicitly accepts
+> this as a good baseline for continued bug fixing: "at least we got it."
+> The automated lower-right weapon-box heuristic still reported `+0 px` in the
+> final Classic scene, so that heuristic is not promoted as stereo proof; the
+> headset result is the acceptance test. C-H2-63 advances the accepted pointer
+> from C-H2-55 without claiming the remaining hand/gun tuning is complete.
 
 > **HALO 2 C-H2-60 REJECTED; C-H2-61 SAFETY REVERT COMMITTED; UNACCEPTED
 > C-H2-62 VISIBLE-CONSUMER HANDS/GUN + NATIVE AIM IN SOURCE - 2026-08-23.**
@@ -192,7 +210,7 @@
 > record edition, runtime, headset and refresh. The accepted pointer below does
 > not advance before that result.
 
-> **CURRENT ACCEPTED DEVELOPMENT BASELINE: C-H2-55 CONSECUTIVE-LEVEL REHOOK -
+> **PREVIOUS ACCEPTED DEVELOPMENT BASELINE: C-H2-55 CONSECUTIVE-LEVEL REHOOK -
 > 2026-08-23.** The player's headset result confirms the consecutive-level fix
 > and explicitly declares C-H2-55 the new baseline. C-H2-54 fixed the fatal
 > consecutive-load crash, but its Steam

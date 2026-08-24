@@ -3502,3 +3502,19 @@ changing a view matrix or creating a separate compositor gun layer. Bounds,
 finite values, packet freshness, exact pass-camera publication and transactional
 restore are required. The rejected interpolator, composer, post-return generic
 packet and firing-helper switches remain false.
+
+The packaged C-H2-63 source is
+`14a7c466593766f0a27aaf9642a8207768bb9fda`; its DLL SHA-256 is
+`AC7522093B489D9A4BE8580A82C28D5D48FF9B2C5F6F2B0684858866BBEEA0AD`.
+The player's accepted Steam headset run is preserved at
+`out/test-runs/14a7c46-halo2-c63-accepted-good-baseline-steam-20260823-2052/HaloMCCVR.log`,
+SHA-256 `FCF552242413ADB87E037F0F0B7DF2464C53391132AA2159C3949C60BAAAC707`.
+It identifies SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz and exercises
+both renderer directions. Final telemetry records 13,965 Classic packet calls,
+13,965 owned, 13,927 Classic eye calls, 13,896 compensated, 16 without a fresh
+packet, 15 without a named pass and zero refusals. The player explicitly calls
+the result a good baseline for the next development session while retaining
+future bug fixing/tuning. This advances the accepted Halo 2 pointer from
+C-H2-55 to C-H2-63. The pixel-box heuristic remained `+0 px` in its sampled
+lower-right region and is retained as an inconclusive diagnostic, not allowed
+to override the headset acceptance.
