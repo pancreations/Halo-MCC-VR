@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "release": "MCC_VR_ALPHA_0.3.5",
+  "release_url": "https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.3.5",
+  "prerelease": true,
+  "supersedes": "MCC_VR_ALPHA_0.3.3",
+  "runtime_source_commit": "1939eabc21c1607ef93ccaec97de004271d70091",
+  "handoff_documentation_commit": "9395f21e7fb655ea24ee95437930c2b0b2ddf095",
+  "candidate_package": "out/candidates/1939eab-runtime-c1-supported-title-level-handoff-20260824-130722605Z",
+  "titles": [
+    "Halo 3",
+    "Halo 3: ODST",
+    "Halo: Reach",
+    "Halo 4",
+    "Halo 2 Anniversary"
+  ],
+  "unsupported_titles": [
+    "Halo: Combat Evolved Anniversary"
+  ],
+  "published_artifacts": {
+    "zip": {
+      "name": "MCC_VR_ALPHA_0.3.5.zip",
+      "download_url": "https://github.com/pancreations/Halo-MCC-VR/releases/download/MCC_VR_ALPHA_0.3.5/MCC_VR_ALPHA_0.3.5.zip",
+      "sha256": "BAD8D05852A22C8F00A378A0F1B02EB5A290E8FB1A4FCA7D90A4AEB012CA6B5D",
+      "bytes": 1245953,
+      "contents": [
+        "HaloMCCVR.dll",
+        "HaloMCCVRLauncher.exe",
+        "halomccvr.cfg",
+        "LICENSE",
+        "MANUAL-README.txt"
+      ]
+    },
+    "HaloMCCVR.dll": {
+      "sha256": "D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4",
+      "bytes": 2862592
+    },
+    "HaloMCCVRLauncher.exe": {
+      "sha256": "87F1DF6202BE26065BAEB769BC19E06B526F25DDC5FCBF6FE75FAE779C54A902",
+      "bytes": 230400
+    },
+    "halomccvr.cfg": {
+      "sha256": "6CC28740564AAE1117A385F1B9FCCB7790212317335150E1E1ECBFE2D440A2A1",
+      "bytes": 32697,
+      "source": "maintainer's live Steam configuration after the accepted 1939eab run"
+    },
+    "MANUAL-README.txt": {
+      "sha256": "9436FF6193637B7C4B263F40168ABCA87CAA19D18070DCA6A8A5FBB4ED3CF7C6",
+      "bytes": 4593
+    },
+    "LICENSE": {
+      "sha256": "F88ACC6048F7D24F9281FAE45F140C1E706C4059A3BB35D7E20A9F8FFB512825",
+      "bytes": 1693
+    }
+  },
+  "acceptance": {
+    "status": "accepted cumulative development baseline",
+    "source_pointer": "docs/CURRENT-STATE.md",
+    "installed_editions": [
+      "Steam",
+      "Microsoft Store / Xbox app"
+    ],
+    "installed_dll_sha256": "D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4"
+  },
+  "rebuild_note": "The release preserves the exact headset-accepted DLL. It was not rebuilt during release preparation."
+}
