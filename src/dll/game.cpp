@@ -2016,6 +2016,9 @@ namespace
     // parallel of g_halo3RuntimeGeneration / g_odstRuntimeGeneration.
     uint32_t ReachRetainedRuntimeGeneration();
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    uint32_t Halo4RetainedRuntimeGeneration();
+#endif
 
     GameTitle RetainedRuntimeTitle()
     {
@@ -2030,6 +2033,10 @@ namespace
         generations[TitleRuntimeSlotIndex(GameTitle::HaloReach)] =
             ReachRetainedRuntimeGeneration();
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+        generations[TitleRuntimeSlotIndex(GameTitle::Halo4)] =
+            Halo4RetainedRuntimeGeneration();
+#endif
 #if HALOMCCVR_HALO2_STEREO6DOF
         generations[TitleRuntimeSlotIndex(GameTitle::Halo2)] =
             Halo2Stereo_Generation();
@@ -2037,8 +2044,6 @@ namespace
         generations[TitleRuntimeSlotIndex(GameTitle::Halo2)] =
             Halo2TemporalStereo_Generation();
 #endif
-        // Halo 4's slot joins here in the candidate that installs its camera
-        // core (C-H4-3); until then its generation is structurally zero.
         return RetainedRuntimeTitleFromGenerations(generations);
     }
 
@@ -29589,6 +29594,16 @@ namespace
         std::atomic<float> lastElementVerticalFov{0.0f};
         std::atomic<float> lastConverterScale{0.0f};
     } g_halo4Camera;
+
+    uint32_t Halo4RetainedRuntimeGeneration()
+    {
+        // Cross-title pending ownership is keyed to the installed camera-core
+        // generation, never raw DLL residency. This slot was accidentally
+        // omitted when the C-H4-3 camera core became permanent, leaving H4 as
+        // the only supported VR title that the shared handoff manager could
+        // not retain or retire by generation.
+        return g_halo4Camera.generation.load(std::memory_order_acquire);
+    }
 
     // ~1 second at 120 Hz, two eyes per frame. Long enough that a few frames
     // of start-up discovery are never mistaken for a failure.

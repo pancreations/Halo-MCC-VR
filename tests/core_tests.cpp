@@ -8760,6 +8760,10 @@ int main()
     Check(Halo4Adapter_GetStage() ==
               Halo4AdapterStage::ControllerInputAndStereoCamera,
         "C-H4-3 stages Halo 4 at controller transport plus the camera core");
+    Check(TitleRegistry_HookPlan(GameTitle::Halo4) ==
+              TitleHookPlan::Halo4CameraCore,
+        "the shared title manager registers Halo 4's compiled camera core for "
+        "generation-owned cross-title handoff");
     Check(Halo4Adapter_RuntimeHooksPermitted(),
         "C-H4-3 permits the camera core's hooks; the install proof, not this "
         "flag, is what actually admits them");
@@ -8769,6 +8773,9 @@ int main()
         "C-H4-2 stages Halo 4 at controller transport plus cold observation");
     Check(!Halo4Adapter_RuntimeHooksPermitted(),
         "No Halo 4 runtime hook is permitted before a proven camera core");
+    Check(TitleRegistry_HookPlan(GameTitle::Halo4) == TitleHookPlan::None,
+        "without the camera build Halo 4 remains outside runtime hook "
+        "ownership");
 #endif
 
     // C-H4-2 anchor table: every entry must be well-formed offline, because
@@ -11624,10 +11631,11 @@ int main()
     halo4Proof.h4ekSemantics = false;
     Check(!Halo4Adapter_HookProofComplete(halo4Proof),
         "Missing H4EK semantics fail the Halo 4 proof closed");
-    // Halo 4 stays here until C-H4-3 installs its camera core: the
-    // controller-only stage grants admission, never a hook plan.
     const GameTitle unsupportedTitles[] = {
-        GameTitle::Halo4, GameTitle::HaloCE,
+#if !HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+        GameTitle::Halo4,
+#endif
+        GameTitle::HaloCE,
 #if !HALOMCCVR_HALO2_STEREO6DOF && \
     !HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
         GameTitle::Halo2, GameTitle::Unknown, GameTitle::None,

@@ -22,6 +22,7 @@ enum class TitleHookPlan : uint8_t
     Halo3Full,
     OdstExperimentalCameraCore,
     ReachCameraCore,
+    Halo4CameraCore,
     Halo2TemporalStereo,
     Halo2StereoCore,
 };

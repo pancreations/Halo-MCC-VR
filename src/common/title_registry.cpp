@@ -14,6 +14,9 @@
 #ifndef HALOMCCVR_HALO2_STEREO6DOF
 #define HALOMCCVR_HALO2_STEREO6DOF 0
 #endif
+#ifndef HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+#define HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA 0
+#endif
 
 static_assert(HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 0 ||
               HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP == 1);
@@ -180,6 +183,12 @@ TitleHookPlan TitleRegistry_HookPlan(GameTitle title)
 #endif
     case GameTitle::HaloReach:
         return TitleHookPlan::ReachCameraCore;
+    case GameTitle::Halo4:
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+        return TitleHookPlan::Halo4CameraCore;
+#else
+        return TitleHookPlan::None;
+#endif
     case GameTitle::Halo2:
 #if HALOMCCVR_HALO2_STEREO6DOF
         return TitleHookPlan::Halo2StereoCore;

@@ -1,5 +1,25 @@
 # Current state
 
+> **UNACCEPTED C-H2-72 CROSS-TITLE HALO 4 HANDOFF IN SOURCE - 2026-08-24.**
+> C-H2-71's Halo 2 visibility-cover behavior remains enabled; this candidate
+> does not revert or alter it. The first C-H2-71 Steam run left Halo 2 normally:
+> its observer, renderer guard, Classic stereo and Anniversary stereo all
+> retired before MCC selected Halo 4. The process then logged Halo 4 as
+> `adapter not implemented`, published `gameplay -> unsupported`, remained in
+> its frozen level-load gate, and terminated in `nvwgf2umx.dll` with access
+> violation `0xC0000005` at offset `0x15467D5`.
+>
+> The shared title manager had two stale omissions left behind when Halo 4's
+> camera core became permanent: `TitleRegistry_HookPlan(Halo4)` still returned
+> `None`, and `RetainedRuntimeTitle()` did not publish the installed Halo 4
+> core's generation. C-H2-72 registers the compiled Halo 4 camera core and adds
+> its exact install generation to the same unique-generation handoff table as
+> Halo 3, ODST, Reach and Halo 2. A build without the Halo 4 camera core still
+> returns `None`. This changes only shared supported-title lifecycle ownership;
+> C-H2-71 culling, title camera/render transactions, hooks, and engine bindings
+> are unchanged. Headset validation must switch Halo 2 -> Halo 4 and then among
+> the other supported titles before this candidate can be accepted.
+
 > **UNACCEPTED HALO 2 C-H2-71 UPSTREAM HEADSET VISIBILITY COVER IN SOURCE -
 > 2026-08-24.** C-H2-70 remains the accepted Halo 2 baseline. The accepted
 > hand/gun code is unchanged. The new screenshot and exact accepted run show

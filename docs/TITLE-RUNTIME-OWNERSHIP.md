@@ -1,5 +1,31 @@
 # Shared title-runtime ownership and Reach controller-input candidate
 
+## 2026-08-24: C-H2-72 restores Halo 4 to the shared handoff contract
+
+The first C-H2-71 Steam transition from Halo 2 to Halo 4 provides a precise
+negative result. Halo 2's observer and both renderer cores retired cleanly, but
+the shared manager then described the selected Halo 4 module as `adapter not
+implemented` and changed the runtime mode from gameplay to unsupported. While
+the Halo 4 level-load gate correctly remained closed on frozen initialization
+state, MCC terminated in NVIDIA's user-mode D3D driver (`nvwgf2umx.dll`, access
+violation `0xC0000005`, offset `0x15467D5`).
+
+Source inspection identifies the lifecycle mismatch rather than a Halo 2
+culling callback: the permanent Halo 4 camera core was absent from both
+`TitleRegistry_HookPlan` and `RetainedRuntimeTitle`. Every other supported VR
+title already occupied both tables. C-H2-72 adds `Halo4CameraCore` only when
+that core is compiled and publishes `g_halo4Camera.generation` into the common
+unique-generation retention decision. Raw resident-module generations remain
+ineligible; zero or multiple installed camera-core generations still fail
+closed. This preserves the established rule that module presence means only
+availability while making Halo 4 participate in teardown/pending ownership on
+the same terms as Halo 3, ODST, Reach and Halo 2.
+
+This is an unaccepted cross-title lifecycle candidate. Required headset proof
+starts with the observed Halo 2 -> Halo 4 transition and then exercises entry
+to the other supported titles without restarting MCC. The Halo 2 C-H2-71
+visibility cover remains enabled and unchanged.
+
 Status: **desk-tested, headset-untested, unaccepted**.
 
 The accepted baseline remains public release `MCC_VR_ALPHA_0.2.2`, runtime

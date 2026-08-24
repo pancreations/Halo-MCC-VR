@@ -603,6 +603,15 @@ const TitleDescriptor* TitleAdapter_PollLoaded(uint64_t observedAtMs)
         }
         else if (detected->title == GameTitle::Halo4 &&
             Halo4Adapter_GetStage() ==
+                Halo4AdapterStage::ControllerInputAndStereoCamera)
+        {
+            LOG("Title adapter: detected %s (%ls); the generation-owned Halo 4 "
+                "camera core is build-enabled behind its level-load and "
+                "loaded-image proofs",
+                detected->displayName, detected->moduleName);
+        }
+        else if (detected->title == GameTitle::Halo4 &&
+            Halo4Adapter_GetStage() ==
                 Halo4AdapterStage::ControllerInputAndColdObservation)
         {
             // Exact-stage check on purpose: this branch's log text promises
