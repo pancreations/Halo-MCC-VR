@@ -1,5 +1,34 @@
 # Shared title-runtime ownership and Reach controller-input candidate
 
+## 2026-08-24: C-RUNTIME-1 unifies active-load evidence retention
+
+The C-H2-72 Steam run proves its Halo 2 -> Halo 4 repair: Halo 4 installed,
+armed, and submitted complete pairs. On the next Halo 4 -> Reach transition,
+the adapter selected Reach uniquely at 08:00:44.387, but for the remaining 24
+seconds no Reach level-gate progress, cold preflight, or camera-core install was
+logged. Presentation therefore stayed stock with stereo off.
+
+This was not another module-registration omission. `ReachCameraCore_Poll`
+called `g_reachLevelLoadGate.Rearm()` whenever the core was uninstalled and the
+gate had not yet proven `levelRunning`. Since the worker polls every 50 ms, the
+active Reach title's frozen/ticking samples were erased immediately after each
+sample. The gate could never open on first entry, after another title, or after
+a same-title level teardown. Halo 3, ODST, Halo 4 and Halo 2 already preserve
+their active loading evidence and rearm on title exit/core retirement.
+
+C-RUNTIME-1 makes the lifecycle rule explicit in
+`ResolveTitleLevelGateAction`: an installed core retires when its title or level
+closes; an inactive uninstalled title rearms for a future entry; every active
+uninstalled title holds its accumulated gate evidence while loading. Reach now
+uses this shared decision. Core tests enumerate all eight combinations of
+active/installed/running so another title cannot silently invert the rule.
+Camera/render implementations and all per-title engine bindings are unchanged.
+
+Acceptance requires one continuous MCC session that enters Halo 3, ODST,
+Reach, Halo 4 and Halo 2, switches among them, and loads two consecutive levels
+inside each title. Logs must show each old core retiring and each new/same-title
+core re-earning its own level gate and installing.
+
 ## 2026-08-24: C-H2-72 restores Halo 4 to the shared handoff contract
 
 The first C-H2-71 Steam transition from Halo 2 to Halo 4 provides a precise

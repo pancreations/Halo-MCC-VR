@@ -1,5 +1,30 @@
 # Current state
 
+> **UNACCEPTED C-RUNTIME-1 SUPPORTED-TITLE / CONSECUTIVE-LEVEL HANDOFF IN
+> SOURCE - 2026-08-24.** C-H2-71's culling behavior and C-H2-72's Halo 4
+> registration remain enabled. The first C-H2-72 Steam run proves Halo 2 ->
+> Halo 4 now completes: Halo 4 installed, armed, and continuously submitted
+> stereo pairs. The following Halo 4 -> Reach transition then detected Reach as
+> the sole title at 08:00:44.387 but produced no Reach level-gate, preflight, or
+> camera-core install before exit 24 seconds later.
+>
+> The cause is Reach's uninstalled-core branch rearming its level gate on every
+> 50 ms worker poll whenever `levelRunning` was not proven. That erased the
+> exact frozen-then-ticking history the gate was trying to accumulate, making
+> initial Reach entry, cross-title entry, and consecutive Reach levels unable
+> to hook. The other supported titles already rearm only after title exit or
+> core retirement. C-RUNTIME-1 moves this rule into one pure shared decision:
+> an active title without an installed core holds its loading evidence; an
+> installed core retires when its title/level closes; only an inactive,
+> uninstalled title rearms for a future entry. Reach consumes that decision and
+> the full eight-state truth table is pinned in core tests. No camera, render,
+> hand, culling, input, or engine binding changes.
+>
+> Required headset validation is a single MCC session covering every supported
+> VR title (Halo 3, ODST, Reach, Halo 4, Halo 2), cross-title switches, and two
+> consecutive levels in each title. This remains unaccepted until that matrix
+> passes; the accepted per-title gameplay baselines remain rollback evidence.
+
 > **UNACCEPTED C-H2-72 CROSS-TITLE HALO 4 HANDOFF IN SOURCE - 2026-08-24.**
 > C-H2-71's Halo 2 visibility-cover behavior remains enabled; this candidate
 > does not revert or alter it. The first C-H2-71 Steam run left Halo 2 normally:

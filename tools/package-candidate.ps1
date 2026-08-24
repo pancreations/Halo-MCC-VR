@@ -96,10 +96,22 @@ try {
     }
     $gameSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\game.cpp'))
+    $titleRuntimeSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\title_runtime_state.h'))
+    $coreTestsSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'tests\core_tests.cpp'))
     $guardSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_render_mode_guard.cpp'))
-    if ($gameSource -notmatch
-            '!soleReachTitle\s*\|\|\s*!levelRunning' -or
+    if ($titleRuntimeSource -notmatch
+            'ResolveTitleLevelGateAction' -or
+        $titleRuntimeSource -notmatch
+            'TitleLevelGateAction::HoldEvidence' -or
+        $gameSource -notmatch
+            'ResolveTitleLevelGateAction\s*\(\s*soleReachTitle\s*,\s*installed\s*,\s*levelRunning\s*\)' -or
+        $coreTestsSource -notmatch
+            'for\s*\(\s*uint32_t bits\s*=\s*0\s*;\s*bits\s*<\s*8\s*;' -or
+        $coreTestsSource -notmatch
+            'ResolveTitleLevelGateAction\(true, false, false\)\s*==\s*\r?\n\s*TitleLevelGateAction::HoldEvidence' -or
         $gameSource -notmatch
             '!soleHalo4Title\s*\|\|\s*!levelRunning' -or
         $gameSource -notmatch
@@ -200,7 +212,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c72-cross-title-halo4-handoff',
+        'runtime-c1-supported-title-level-handoff',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {

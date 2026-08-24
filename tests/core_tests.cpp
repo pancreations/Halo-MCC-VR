@@ -4291,6 +4291,31 @@ int main()
         }
         Check(retainedTruthTable,
             "over all 64 generation combinations the retained runtime title is the unique nonzero-generation title, else None (H3-only stays Halo3, H3+ODST stays None)");
+
+        bool levelGateTruthTable = true;
+        for (uint32_t bits = 0; bits < 8; ++bits)
+        {
+            const bool active = (bits & 1u) != 0;
+            const bool installed = (bits & 2u) != 0;
+            const bool running = (bits & 4u) != 0;
+            const TitleLevelGateAction expected = installed &&
+                    (!active || !running)
+                ? TitleLevelGateAction::RemoveInstalledCore
+                : (!active && !installed
+                    ? TitleLevelGateAction::RearmForFutureEntry
+                    : TitleLevelGateAction::HoldEvidence);
+            levelGateTruthTable = levelGateTruthTable &&
+                ResolveTitleLevelGateAction(active, installed, running) ==
+                    expected;
+        }
+        Check(levelGateTruthTable &&
+              ResolveTitleLevelGateAction(true, false, false) ==
+                  TitleLevelGateAction::HoldEvidence &&
+              ResolveTitleLevelGateAction(false, false, false) ==
+                  TitleLevelGateAction::RearmForFutureEntry,
+            "all eight shared level-gate states preserve loading evidence only "
+            "for the active title, retire installed cores at a boundary, and "
+            "rearm inactive uninstalled titles for future entry");
     }
 
     {

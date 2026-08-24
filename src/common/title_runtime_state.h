@@ -213,6 +213,29 @@ constexpr GameTitle RetainedRuntimeTitleFromGenerations(
     return retained;
 }
 
+// Shared level-gate lifecycle. An active title whose core is not installed
+// must retain the gate's frozen/ticking history while its level loads; resetting
+// that evidence every poll makes first entry and consecutive-level reentry
+// impossible. Installed cores retire when their title or level stops being
+// active. Only an inactive title with no installed core rearms for a future
+// title entry.
+enum class TitleLevelGateAction : uint8_t
+{
+    HoldEvidence = 0,
+    RemoveInstalledCore,
+    RearmForFutureEntry,
+};
+
+constexpr TitleLevelGateAction ResolveTitleLevelGateAction(
+    bool titleActive, bool coreInstalled, bool levelRunning) noexcept
+{
+    if (coreInstalled && (!titleActive || !levelRunning))
+        return TitleLevelGateAction::RemoveInstalledCore;
+    if (!titleActive && !coreInstalled)
+        return TitleLevelGateAction::RearmForFutureEntry;
+    return TitleLevelGateAction::HoldEvidence;
+}
+
 // Fixed storage only. Publications are generation tagged, and snapshots use
 // double-generation reads so data from a departed/reloaded title cannot become
 // another title's state. PublishHeartbeat is suitable for a hot camera hook:

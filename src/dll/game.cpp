@@ -29127,18 +29127,27 @@ namespace
             RemoveReachCameraCore();
             return;
         }
-        if (!soleReachTitle || !levelRunning || !base ||
-            size != kReachRetailImageSize)
+        const TitleLevelGateAction gateAction = ResolveTitleLevelGateAction(
+            soleReachTitle, installed, levelRunning);
+        if (gateAction == TitleLevelGateAction::RemoveInstalledCore)
         {
-            if (installed)
-                RemoveReachCameraCore();
-            else
-            {
-                // Title-exit re-arm, matching Halo 3 and ODST: stillness seen
-                // while Reach is not the active title must not satisfy the
-                // frozen half of the next level's proof.
-                g_reachLevelLoadGate.Rearm();
-            }
+            RemoveReachCameraCore();
+            return;
+        }
+        if (gateAction == TitleLevelGateAction::RearmForFutureEntry)
+        {
+            // Title-exit re-arm, matching Halo 3, ODST, Halo 4 and Halo 2:
+            // stillness seen while Reach is inactive must not satisfy the
+            // frozen half of its next level's proof.
+            g_reachLevelLoadGate.Rearm();
+            return;
+        }
+        if (!levelRunning || !base || size != kReachRetailImageSize)
+        {
+            // Critical shared rule: while Reach is the active title but has no
+            // installed core, HOLD the liveness evidence. Rearming here every
+            // 50 ms prevented the gate from ever reaching its running state on
+            // first entry, a cross-title switch, or a consecutive level.
             return;
         }
         if (installed &&
