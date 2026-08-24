@@ -1,5 +1,39 @@
 # Current state
 
+> **HALO 2 C-H2-62 PARTIAL HEADSET SUCCESS: ANNIVERSARY HANDS/GUN WORK;
+> CLASSIC UNCHANGED AND MONOSCOPIC. C-H2-63 CLASSIC PERSISTENT-PACKET STEREO
+> REWORK IN SOURCE - 2026-08-23.** The exact Steam C-H2-62 run is preserved at
+> `out/test-runs/d72ebf7-halo2-c62-anniversary-working-classic-flat-no-hands-20260823-1955/HaloMCCVR.log`
+> (SHA-256
+> `2A2A4ECE9FD448404E7FA80E3A1641113EACE65E8E497DADC1D1F1607EC2C3D0`).
+> It identifies source `d72ebf79214a89bc7d81c6dee9504687eb0f65f6`,
+> Steam, SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz. The player confirms
+> Anniversary finally moves the hands/gun. Classic still moves neither and its
+> gun is trapped in a separate flat layer with no stereo depth. During the
+> Classic interval 19:53:11.874-19:53:16.604 the world was stereo, while the
+> weapon box measured best horizontal shift `+0 px`.
+>
+> Official H2EK corrects the C-H2-62 assumption that one callback serves both
+> renderers. Outer builder kit `+0x306E04` calls the registered renderer callback
+> only when its final `publish_to_renderer` argument is nonzero. Anniversary's
+> retail caller `+0x81BFB0` passes 1 and therefore uses the now-working callback.
+> Classic's exact H2EK caller kit `+0x2B6DE0`, retail `+0x7E5430`, passes 0,
+> retains the builder's persistent packet array, and its render-object consumer
+> reads the matrices at packet `+0x0C` directly. This is why the C-H2-62 code
+> executed heavily but could affect only the background Anniversary packets
+> while Classic was visible.
+>
+> C-H2-63 keeps Anniversary's working callback unchanged. For Classic only, the
+> same builder hook applies the proven split hands/gun transform to the returned
+> persistent packets. The exact Classic `draw_first_person` hook temporarily
+> compensates those final packets from the correct eye camera to Classic's stale
+> viewing camera, calls the native renderer once, then restores the controller-
+> owned centre form before the other eye. There is no second guessed ownership
+> path: the renderer's explicit publish flag selects Anniversary callback or
+> Classic persistent packet. Native desired/current unit aim remains shared.
+> Release build and core tests pass locally; the accepted pointer remains
+> C-H2-55 until the packaged bytes pass the headset.
+
 > **HALO 2 C-H2-60 REJECTED; C-H2-61 SAFETY REVERT COMMITTED; UNACCEPTED
 > C-H2-62 VISIBLE-CONSUMER HANDS/GUN + NATIVE AIM IN SOURCE - 2026-08-23.**
 > The exact C-H2-60 Steam run is preserved at

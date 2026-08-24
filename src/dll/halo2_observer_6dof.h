@@ -64,6 +64,13 @@ struct Halo2FirstPersonPassCameras;
 void Halo2Observer6Dof_SetFirstPersonPassCameras(
     const Halo2FirstPersonPassCameras* cameras) noexcept;
 
+// C-H2-63: draw_first_person brackets the exact Classic-only visible palette
+// consumer with these calls. Begin temporarily compensates the controller-owned
+// persistent packet for the current eye; End restores its controller-owned
+// centre form before the other eye or the next game update can consume it.
+bool Halo2Observer6Dof_BeginClassicFirstPersonEye() noexcept;
+void Halo2Observer6Dof_EndClassicFirstPersonEye() noexcept;
+
 // Atomic-only. The next valid sample becomes the new orientation/translation
 // reference; safe to call from the universal recenter path.
 void Halo2Observer6Dof_RequestRecenter() noexcept;

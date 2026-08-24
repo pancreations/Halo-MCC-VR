@@ -1222,12 +1222,16 @@ namespace
             if (centred)
                 g_firstPersonCentred.fetch_add(1, std::memory_order_relaxed);
         }
+        const bool classicPaletteOwned =
+            Halo2Observer6Dof_BeginClassicFirstPersonEye();
         __try { original(); }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             g_telemetry.transactionExceptions.fetch_add(
                 1, std::memory_order_relaxed);
         }
+        if (classicPaletteOwned)
+            Halo2Observer6Dof_EndClassicFirstPersonEye();
         for (const Centred& entry : owned)
         {
             if (!entry.active)

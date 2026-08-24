@@ -127,7 +127,7 @@ try {
             'kHalo2StableFinalPacketControllerOwnershipEnabled\s*=\s*false' -or
         $halo2LogicSource -notmatch
             'kHalo2VisibleConsumerControllerOwnershipEnabled\s*=\s*true') {
-        throw 'C-H2-62 gate failed: every rejected Halo 2 hand path must stay off and only the registered pre-copy visible consumer may be enabled.'
+        throw 'C-H2-63 gate failed: every rejected Halo 2 hand path must stay off and only the renderer-selected callback/persistent-packet transaction may be enabled.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -196,7 +196,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c62-visible-consumer-native-aim',
+        'halo2-c63-classic-persistent-packet-stereo',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -310,12 +310,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-62'
+            id = 'C-H2-63'
             status = 'READY_FOR_BUILD_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'h2ek-registered-pre-copy-visible-consumer-stable-two-hand-mesh-native-unit-aim-plus-c55-rehook'
+                'h2ek-split-anniversary-callback-classic-persistent-packet-per-eye-native-aim-plus-c55-rehook'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -338,7 +338,13 @@ try {
             observer_6dof_reaches_both_renderers = $true
             hand_mesh_context_builder_rva = '0x008181F0'
             hand_mesh_visible_consumer_rva = '0x0006BB40'
-            hand_mesh_ownership = 'registered-render-model-callback-before-internal-copy'
+            hand_mesh_ownership = 'renderer-selected-single-transaction'
+            anniversary_hand_mesh_ownership =
+                'registered-render-model-callback-before-internal-copy'
+            classic_packet_caller_rva = '0x007E5430'
+            classic_publish_to_renderer = $false
+            classic_hand_mesh_ownership =
+                'persistent-packet-post-builder-plus-per-eye-draw-first-person-compensation'
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
             rejected_post_return_packet_enabled = $false
@@ -569,7 +575,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-62 replaces the rejected invisible C-H2-60 consumers. Its Steam log proved the old code continuously changed packet matrices by up to 0.63 m and firing-helper directions by up to 32.6 degrees without any headset-visible result. Retail verification explains both failures: +0x8181F0 calls the registered +0x6BB40 render-model consumer and copies matrices before the builder returns, while H2EK units.cpp identifies desired/current unit aim as the native crosshair and firing state. C-H2-62 uses the outer builder only for exact same-thread identity, changes hands and held-model matrices inside +0x6BB40 before its copy, and writes local user 0 desired/current aim at the H2EK-matched +0x8FDF50 updater. All rejected packet/interpolator/composer/firing-helper paths remain disabled. Camera, stereo, OpenXR, XInput and right-stick turning are unchanged. Offline-verified and unaccepted.'
+        note = 'The Steam C-H2-62 headset result accepts Anniversary hand/gun ownership but reports Classic unchanged and its gun monoscopic in a separate flat layer. Official H2EK and retail verification explain the renderer split: Anniversary calls the registered +0x6BB40 consumer because +0x81BFB0 passes publish_to_renderer=1; Classic caller +0x7E5430 passes 0, retains +0x8181F0 persistent packets, and consumes them directly. C-H2-63 keeps the accepted Anniversary callback, owns the returned Classic hands/gun packets after the stock builder, then temporarily compensates those exact packets around each Classic draw_first_person eye and restores the controller-owned centre form. Native +0x8FDF50 unit aim remains shared. All rejected interpolator/composer/firing-helper paths remain disabled. Camera, stereo, OpenXR, XInput and right-stick turning are unchanged. Offline-verified and unaccepted.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

@@ -7716,9 +7716,9 @@ int main()
                       !kHalo2FinalPaletteControllerOwnershipEnabled &&
                       !kHalo2StableFinalPacketControllerOwnershipEnabled &&
                       kHalo2VisibleConsumerControllerOwnershipEnabled,
-                "C-H2-62 leaves every headset-rejected Halo 2 controller "
-                "transaction dormant and enables only the pre-copy visible "
-                "consumer replacement");
+                "C-H2-63 leaves every headset-rejected Halo 2 controller "
+                "transaction dormant and enables one renderer-selected packet "
+                "ownership path");
             Check(kHalo2MatrixComposeRva == 0x0072A150 &&
                       kHalo2FirstPersonPrimaryComposeReturnRva == 0x00818623 &&
                       kHalo2FirstPersonSecondaryComposeReturnRva == 0x00818773 &&
@@ -7726,6 +7726,7 @@ int main()
                 "E-H2-43 pins the final root composer and only its two "
                 "first-person palette return sites");
             Check(kHalo2FirstPersonPacketBuilderRva == 0x008181F0 &&
+                      kHalo2ClassicFirstPersonPacketCallerRva == 0x007E5430 &&
                       sizeof(kHalo2FirstPersonPacketBuilderEntryBytes) == 29 &&
                       kHalo2FirstPersonVisibleConsumerRva == 0x0006BB40 &&
                       sizeof(kHalo2FirstPersonVisibleConsumerEntryBytes) == 29 &&
@@ -7737,8 +7738,9 @@ int main()
                       kHalo2FirstPersonAnimationNodeCountOffset == 0x31C &&
                       kHalo2FirstPersonRenderPacketHeaderBytes == 0x0C &&
                       kHalo2FirstPersonRenderPacketStride == 0x0D0C,
-                "E-H2-45/E-H2-53 pin H2EK's first-person packet builder, its "
-                "registered pre-copy visible consumer, and weapon-data layout");
+                "E-H2-45/E-H2-53/E-H2-55 pin H2EK's first-person packet "
+                "builder, Classic persistent-packet caller, Anniversary "
+                "pre-copy consumer, and weapon-data layout");
             Check(kHalo2NativeAimUpdateRva == 0x008FDF50 &&
                       sizeof(kHalo2NativeAimUpdateEntryBytes) == 22 &&
                       kHalo2ObjectDatumAccessorRva == 0x008D7000 &&
@@ -7825,6 +7827,47 @@ int main()
                     "C-H2-62's sequential registered-consumer calls apply the "
                     "same wrist ownership before copy and carry the held model "
                     "with the exact right-wrist delta");
+
+                float classicEye[kHalo2FirstPersonNodeFloats]{};
+                identityNode(classicEye, 1.0f);
+                Halo2FirstPersonPassCameras classicPass{};
+                classicPass.frameValid = true;
+                classicPass.compensate = true;
+                classicPass.correct.position[0] = -0.03f;
+                classicPass.correct.forward[1] = 1.0f;
+                classicPass.correct.up[2] = 1.0f;
+                classicPass.viewing = classicPass.correct;
+                classicPass.viewing.position[0] = 0.03f;
+                const bool classicCompensated =
+                    Halo2CompensateClassicFirstPersonEye(
+                        classicEye, 1, classicPass);
+                Check(classicCompensated && nearlyEqual(classicEye[0], 1.0f) &&
+                          nearlyEqual(classicEye[1], 1.0f) &&
+                          nearlyEqual(classicEye[5], 1.0f) &&
+                          nearlyEqual(classicEye[9], 1.0f) &&
+                          nearlyEqual(classicEye[10], 1.06f) &&
+                          nearlyEqual(
+                              classicEye[10] -
+                                  classicPass.viewing.position[0],
+                              1.0f - classicPass.correct.position[0]),
+                    "C-H2-63 moves a Classic persistent packet so its stale "
+                    "viewing camera produces the correct eye-space geometry");
+
+                float invalidClassic[kHalo2FirstPersonNodeFloats]{};
+                identityNode(invalidClassic, 2.0f);
+                invalidClassic[6] =
+                    std::numeric_limits<float>::quiet_NaN();
+                float invalidClassicBefore[kHalo2FirstPersonNodeFloats]{};
+                std::memcpy(
+                    invalidClassicBefore, invalidClassic,
+                    sizeof(invalidClassic));
+                Check(!Halo2CompensateClassicFirstPersonEye(
+                          invalidClassic, 1, classicPass) &&
+                          std::memcmp(
+                              invalidClassic, invalidClassicBefore,
+                              sizeof(invalidClassic)) == 0,
+                    "C-H2-63 refuses a non-finite Classic eye packet without "
+                    "partially changing it");
 
                 float unchanged[kPacketNodes * kHalo2FirstPersonNodeFloats]{};
                 std::memcpy(unchanged, hands, sizeof(unchanged));

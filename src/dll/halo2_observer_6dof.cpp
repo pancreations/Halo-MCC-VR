@@ -14,6 +14,7 @@
 #include "../common/config.h"
 #include "../common/log.h"
 #include "game.h"
+#include "halo2_stereo_core.h"
 #include "vr.h"
 
 #ifndef HALOMCCVR_HALO2_OBSERVER_6DOF
@@ -231,6 +232,31 @@ namespace
         Halo2FirstPersonTransform rightDelta{};
     };
     thread_local Halo2VisibleConsumerContext g_visibleConsumerContext{};
+
+    struct Halo2ClassicPacketContext
+    {
+        bool valid = false;
+        bool eyeActive = false;
+        float* hands = nullptr;
+        float* gun = nullptr;
+        uint32_t handsCount = 0;
+        uint32_t gunCount = 0;
+        uint64_t appliedAtMs = 0;
+        float handsBackup[
+            kHalo2FirstPersonPaletteCapacity *
+            kHalo2FirstPersonNodeFloats]{};
+        float gunBackup[
+            kHalo2FirstPersonPaletteCapacity *
+            kHalo2FirstPersonNodeFloats]{};
+    };
+    thread_local Halo2ClassicPacketContext g_classicPacketContext{};
+    std::atomic<uint64_t> g_classicPacketCalls{0};
+    std::atomic<uint64_t> g_classicPacketApplied{0};
+    std::atomic<uint64_t> g_classicEyeCalls{0};
+    std::atomic<uint64_t> g_classicEyeCompensated{0};
+    std::atomic<uint64_t> g_classicEyeNoPacket{0};
+    std::atomic<uint64_t> g_classicEyeNoPass{0};
+    std::atomic<uint64_t> g_classicEyeRefused{0};
 
     using Halo2NativeAimUpdateFn = uint64_t(__fastcall*)(uint32_t);
     using Halo2ObjectDatumAccessorFn = void*(__fastcall*)(const void*);
@@ -1057,7 +1083,17 @@ namespace
         const auto original = reinterpret_cast<Halo2FirstPersonPacketBuilderFn>(
             g_packetBuilderOriginal.load(std::memory_order_acquire));
         g_visibleConsumerContext = Halo2VisibleConsumerContext{};
-        if (original && user == kOwnedUser && publishToRenderer && packets &&
+        const bool anniversaryConsumer = publishToRenderer != 0;
+        const bool classicConsumer = !anniversaryConsumer &&
+            Halo2Stereo_Armed() && !g_classicPacketContext.eyeActive;
+        Halo2VisibleConsumerContext candidate{};
+        if (classicConsumer)
+        {
+            g_classicPacketCalls.fetch_add(1, std::memory_order_relaxed);
+            g_classicPacketContext.valid = false;
+        }
+        if (original && user == kOwnedUser &&
+            (anniversaryConsumer || classicConsumer) && packets &&
             packetCapacity > 0 && g_armed.load(std::memory_order_acquire) &&
             g_levelLive.load(std::memory_order_acquire) &&
             !g_teardownRequested.load(std::memory_order_acquire) &&
@@ -1145,7 +1181,7 @@ namespace
                 }
                 else
                 {
-                    auto& context = g_visibleConsumerContext;
+                    auto& context = candidate;
                     context.valid = true;
                     context.user = user;
                     context.unitObject = unitObject;
@@ -1164,6 +1200,8 @@ namespace
                     context.leftScale =
                         std::clamp(g_config.left_hand_scale, 0.3f, 3.0f);
                     context.worldScale = Game_GetWorldScale();
+                    if (anniversaryConsumer)
+                        g_visibleConsumerContext = context;
                 }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
@@ -1186,11 +1224,113 @@ namespace
                 g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        const bool applied = g_visibleConsumerContext.handsApplied &&
+        bool applied = anniversaryConsumer &&
+            g_visibleConsumerContext.handsApplied &&
             g_visibleConsumerContext.gunApplied;
-        if (g_visibleConsumerContext.valid && !applied)
+        if (classicConsumer && candidate.valid && packetCount > 0 &&
+            packetCount <= packetCapacity &&
+            packetCount <= kHalo2FrameInterpolatorFirstPersonSlots + 1)
+        {
+            __try
+            {
+                float* handsMatrices = nullptr;
+                float* gunMatrices = nullptr;
+                for (int packetIndex = 0; packetIndex < packetCount;
+                     ++packetIndex)
+                {
+                    uint8_t* const packet =
+                        reinterpret_cast<uint8_t*>(packets) +
+                        static_cast<uintptr_t>(packetIndex) *
+                            kHalo2FirstPersonRenderPacketStride;
+                    const uint32_t packetObject =
+                        *reinterpret_cast<const uint32_t*>(packet + 4);
+                    if (!handsMatrices && packetObject == candidate.unitObject)
+                    {
+                        handsMatrices = reinterpret_cast<float*>(
+                            packet + kHalo2FirstPersonRenderPacketHeaderBytes);
+                    }
+                    else if (!gunMatrices &&
+                             packetObject == candidate.weaponObject)
+                    {
+                        gunMatrices = reinterpret_cast<float*>(
+                            packet + kHalo2FirstPersonRenderPacketHeaderBytes);
+                    }
+                }
+                Halo2FirstPersonTransform rightDelta{};
+                Halo2FinalPacketOwnershipResult handsResult{};
+                Halo2FinalPacketOwnershipResult gunResult{};
+                float stockHands[
+                    kHalo2FirstPersonPaletteCapacity *
+                    kHalo2FirstPersonNodeFloats]{};
+                float stockGun[
+                    kHalo2FirstPersonPaletteCapacity *
+                    kHalo2FirstPersonNodeFloats]{};
+                const size_t handsBytes =
+                    static_cast<size_t>(candidate.handsCount) *
+                    kHalo2FirstPersonNodeStride;
+                const size_t gunBytes =
+                    static_cast<size_t>(candidate.gunCount) *
+                    kHalo2FirstPersonNodeStride;
+                const bool packetBoundsValid = handsMatrices && gunMatrices &&
+                    candidate.handsCount > 0 &&
+                    candidate.handsCount <= kHalo2FirstPersonPaletteCapacity &&
+                    candidate.gunCount > 0 &&
+                    candidate.gunCount <= kHalo2FirstPersonPaletteCapacity;
+                if (packetBoundsValid)
+                {
+                    std::memcpy(stockHands, handsMatrices, handsBytes);
+                    std::memcpy(stockGun, gunMatrices, gunBytes);
+                }
+                if (packetBoundsValid && Halo2OwnVisibleFirstPersonHands(
+                        handsMatrices, candidate.handsCount,
+                        candidate.handsRemap, candidate.binding,
+                        candidate.renderCamera, candidate.rightCarrier,
+                        candidate.leftCarrier, candidate.twoHandAimActive,
+                        candidate.rightScale, candidate.leftScale,
+                        candidate.worldScale, rightDelta, handsResult) &&
+                    Halo2OwnVisibleFirstPersonGun(
+                        gunMatrices, candidate.gunCount, rightDelta,
+                        gunResult))
+                {
+                    auto& classic = g_classicPacketContext;
+                    classic.hands = handsMatrices;
+                    classic.gun = gunMatrices;
+                    classic.handsCount = candidate.handsCount;
+                    classic.gunCount = candidate.gunCount;
+                    classic.appliedAtMs = GetTickCount64();
+                    classic.eyeActive = false;
+                    classic.valid = true;
+                    applied = true;
+                    g_classicPacketApplied.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
+                    g_finalPaletteMovedRight.fetch_add(
+                        handsResult.rightNodes, std::memory_order_relaxed);
+                    g_finalPaletteMovedLeft.fetch_add(
+                        handsResult.leftNodes, std::memory_order_relaxed);
+                    g_finalPaletteCollapsed.fetch_add(
+                        handsResult.collapsedNodes, std::memory_order_relaxed);
+                    g_packetBuilderGunNodes.fetch_add(
+                        gunResult.gunNodes, std::memory_order_relaxed);
+                    g_packetBuilderLastAppliedMs.store(
+                        classic.appliedAtMs, std::memory_order_release);
+                }
+                else if (packetBoundsValid)
+                {
+                    std::memcpy(handsMatrices, stockHands, handsBytes);
+                    std::memcpy(gunMatrices, stockGun, gunBytes);
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (((anniversaryConsumer && g_visibleConsumerContext.valid) ||
+             (classicConsumer && candidate.valid)) && !applied)
             g_packetBuilderOwnershipMiss.fetch_add(1, std::memory_order_relaxed);
-        g_visibleConsumerContext = Halo2VisibleConsumerContext{};
+        if (anniversaryConsumer)
+            g_visibleConsumerContext = Halo2VisibleConsumerContext{};
         (applied ? g_packetBuilderApplied : g_packetBuilderStock)
             .fetch_add(1, std::memory_order_relaxed);
         g_packetBuilderActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
@@ -2718,10 +2858,10 @@ namespace
                 g_visibleConsumerTarget = consumerTarget;
                 g_packetBuilderTarget = packetTarget;
                 g_finalPaletteReady.store(true, std::memory_order_release);
-                LOG("Halo 2 visible-consumer hands ARMED (C-H2-62): builder "
-                    "+0x%X establishes the exact packet context and registered "
-                    "renderer consumer +0x%X receives controller-owned hands "
-                    "and held-model matrices before its internal copy",
+                LOG("Halo 2 renderer-selected hands ARMED (C-H2-63): builder "
+                    "+0x%X establishes exact packet context; Anniversary "
+                    "consumer +0x%X owns matrices before copy, while Classic "
+                    "owns its returned persistent packets at each eye draw",
                     static_cast<unsigned>(kHalo2FirstPersonPacketBuilderRva),
                     static_cast<unsigned>(
                         kHalo2FirstPersonVisibleConsumerRva));
@@ -2906,6 +3046,8 @@ namespace
             "right %u/%u mm last/max, left %u/%u mm last/max; palette result: "
             "%llu changed, %llu right, %llu left, %llu collapsed, %llu refused; "
             "visible consumer: %llu calls, %llu hands owned, %llu guns owned; "
+            "classic packet: %llu calls, %llu owned; classic eyes: %llu calls, "
+            "%llu compensated, %llu no-packet, %llu no-pass, %llu refused; "
             "native aim: %llu calls, %llu applied, %llu non-owned, %llu refused",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
@@ -3030,6 +3172,20 @@ namespace
                 g_visibleConsumerHandsApplied.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_visibleConsumerGunsApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicPacketCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicPacketApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicEyeCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicEyeCompensated.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicEyeNoPacket.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicEyeNoPass.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicEyeRefused.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_nativeAimCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
@@ -3216,6 +3372,128 @@ void Halo2Observer6Dof_SetFirstPersonPassCameras(
     g_passCamerasSet.store(true, std::memory_order_release);
 }
 
+bool Halo2Observer6Dof_BeginClassicFirstPersonEye() noexcept
+{
+    g_classicEyeCalls.fetch_add(1, std::memory_order_relaxed);
+    auto& classic = g_classicPacketContext;
+    const uint64_t now = GetTickCount64();
+    if (!g_armed.load(std::memory_order_acquire) ||
+        !g_levelLive.load(std::memory_order_acquire) ||
+        g_teardownRequested.load(std::memory_order_acquire) ||
+        !classic.valid || classic.eyeActive || !classic.hands || !classic.gun ||
+        classic.handsCount == 0 ||
+        classic.handsCount > kHalo2FirstPersonPaletteCapacity ||
+        classic.gunCount == 0 ||
+        classic.gunCount > kHalo2FirstPersonPaletteCapacity ||
+        !classic.appliedAtMs || classic.appliedAtMs > now ||
+        now - classic.appliedAtMs > 250)
+    {
+        g_classicEyeNoPacket.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    Halo2FirstPersonPassCameras pass{};
+    bool passValid = false;
+    if (g_passCamerasSet.load(std::memory_order_acquire))
+    {
+        for (int attempt = 0; attempt < 4 && !passValid; ++attempt)
+        {
+            const uint32_t before =
+                g_passCamerasVersion.load(std::memory_order_acquire);
+            if (before & 1u) continue;
+            const Halo2FirstPersonPassCameras candidate = g_passCameras;
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (g_passCamerasVersion.load(std::memory_order_acquire) == before)
+            {
+                pass = candidate;
+                passValid = candidate.frameValid && candidate.compensate &&
+                    Halo2ValidateCameraBasis(candidate.correct) &&
+                    Halo2ValidateCameraBasis(candidate.viewing);
+            }
+        }
+    }
+    if (!passValid)
+    {
+        g_classicEyeNoPass.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    bool compensated = false;
+    bool backupsCaptured = false;
+    __try
+    {
+        const size_t handsBytes =
+            static_cast<size_t>(classic.handsCount) *
+            kHalo2FirstPersonNodeStride;
+        const size_t gunBytes =
+            static_cast<size_t>(classic.gunCount) *
+            kHalo2FirstPersonNodeStride;
+        std::memcpy(classic.handsBackup, classic.hands, handsBytes);
+        std::memcpy(classic.gunBackup, classic.gun, gunBytes);
+        backupsCaptured = true;
+        compensated = Halo2CompensateClassicFirstPersonEye(
+                classic.hands, classic.handsCount, pass) &&
+            Halo2CompensateClassicFirstPersonEye(
+                classic.gun, classic.gunCount, pass);
+        if (!compensated)
+        {
+            std::memcpy(classic.hands, classic.handsBackup, handsBytes);
+            std::memcpy(classic.gun, classic.gunBackup, gunBytes);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        compensated = false;
+        if (backupsCaptured)
+        {
+            __try
+            {
+                std::memcpy(
+                    classic.hands, classic.handsBackup,
+                    static_cast<size_t>(classic.handsCount) *
+                        kHalo2FirstPersonNodeStride);
+                std::memcpy(
+                    classic.gun, classic.gunBackup,
+                    static_cast<size_t>(classic.gunCount) *
+                        kHalo2FirstPersonNodeStride);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        classic.valid = false;
+    }
+    if (!compensated)
+    {
+        g_classicEyeRefused.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    classic.eyeActive = true;
+    g_classicEyeCompensated.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+void Halo2Observer6Dof_EndClassicFirstPersonEye() noexcept
+{
+    auto& classic = g_classicPacketContext;
+    if (!classic.eyeActive) return;
+    __try
+    {
+        std::memcpy(
+            classic.hands, classic.handsBackup,
+            static_cast<size_t>(classic.handsCount) *
+                kHalo2FirstPersonNodeStride);
+        std::memcpy(
+            classic.gun, classic.gunBackup,
+            static_cast<size_t>(classic.gunCount) *
+                kHalo2FirstPersonNodeStride);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        classic.valid = false;
+        g_classicEyeRefused.fetch_add(1, std::memory_order_relaxed);
+    }
+    classic.eyeActive = false;
+}
+
 void Halo2Observer6Dof_RequestRecenter() noexcept
 {
     g_recenterRequested.store(true, std::memory_order_release);
@@ -3255,6 +3533,8 @@ bool Halo2Observer6Dof_WeaponTickPublication(
 }
 void Halo2Observer6Dof_SetFirstPersonPassCameras(
     const Halo2FirstPersonPassCameras*) noexcept {}
+bool Halo2Observer6Dof_BeginClassicFirstPersonEye() noexcept { return false; }
+void Halo2Observer6Dof_EndClassicFirstPersonEye() noexcept {}
 void Halo2Observer6Dof_RequestRecenter() noexcept {}
 void Halo2Observer6Dof_ShutdownForVrFailure() noexcept {}
 

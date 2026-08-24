@@ -3456,3 +3456,49 @@ and its entry pattern also occur once. C-H2-62 runs stock aim update first, then
 for output user 0's exact unit writes both native vectors from the same immutable
 observer/controller publication used by the visible mesh. The rejected
 firing-helper detour is not installed.
+
+## E-H2-55 (C-H2-62 partial result / C-H2-63): Classic bypasses the registered callback and consumes persistent packets directly - 2026-08-23
+
+The exact C-H2-62 Steam headset run is preserved at
+`out/test-runs/d72ebf7-halo2-c62-anniversary-working-classic-flat-no-hands-20260823-1955/HaloMCCVR.log`,
+SHA-256 `2A2A4ECE9FD448404E7FA80E3A1641113EACE65E8E497DADC1D1F1607EC2C3D0`.
+It identifies source `d72ebf79214a89bc7d81c6dee9504687eb0f65f6`, Steam,
+SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz. The player confirms the
+hands/gun finally move in Anniversary, but Classic remains unchanged and the
+Classic gun appears in a separate plane without stereo depth. During the exact
+Classic interval 19:53:11.874-19:53:16.604, per-eye world rendering remained
+live while the weapon box's best horizontal shift was `+0 px`. The C-H2-62 log
+still counted 8,914 Anniversary visible-consumer hand applications and 8,914
+gun applications, including background remastered packets while Classic was
+visible. Those counts do not establish Classic ownership.
+
+Read-only official H2EK analysis identifies the missing renderer split. Outer
+builder kit RVA `0x306E04` invokes its registered callback only under the exact
+condition `callback != 0 && publish_to_renderer != 0`. H2EK Classic caller kit
+RVA `0x2B6DE0` passes final argument 0 and writes the result to persistent
+globals `DAT_01230000` / `DAT_0122FFFC`. H2EK render-object consumer kit RVA
+`0x2B6140` reads those packets directly and returns model, matrices at packet
+`+0x0C`, and the render-model node count. Thus a callback-only implementation
+cannot affect Classic.
+
+Pinned-retail verification preserves both explicit consumers. Builder
+`halo2.dll+0x8181F0` has two direct callers. Classic homolog `+0x7E5430` calls it
+with final argument 0 into retail persistent packet globals. Anniversary caller
+`+0x81BFB0` passes 1 into stack packets, which triggers registered consumer
+`+0x6BB40`. This corrects E-H2-53's overbroad statement: post-return edits are
+too late for the publish/callback path, but are exactly the available ownership
+boundary for Classic's retained persistent packets.
+
+C-H2-63 preserves the headset-working Anniversary callback. On only the
+builder's explicit `publish_to_renderer == 0` call while the Classic stereo core
+is armed, it recognizes unit and weapon packets by the same proven object IDs,
+applies the same staged split hands/gun transform after stock returns, and
+retains their exact pointers and counts. The existing exact Classic
+`draw_first_person` detour then brackets the native draw. Before each eye it
+stages both palettes and applies `viewing * inverse(correct)` to every final
+world node; after the draw it restores the controller-owned centre packets.
+This compensates the already-measured stale Classic first-person camera without
+changing a view matrix or creating a separate compositor gun layer. Bounds,
+finite values, packet freshness, exact pass-camera publication and transactional
+restore are required. The rejected interpolator, composer, post-return generic
+packet and firing-helper switches remain false.

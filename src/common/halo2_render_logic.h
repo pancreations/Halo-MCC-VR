@@ -1092,11 +1092,11 @@ inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 // and recenter reference, and applies ownership only to the final packets.
 inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = false;
 
-// C-H2-62: the packet builder invokes the registered render-model consumer
-// before it returns.  This is the sole live controller-ownership transaction:
-// the outer builder establishes exact same-thread object/binding context, the
-// registered consumer receives and modifies the matrices before copying them,
-// and the native unit aiming-vector updater owns the corresponding engine aim.
+// C-H2-62/C-H2-63: this is the sole live controller-ownership transaction.
+// Anniversary publishes through the builder's registered render-model callback;
+// Classic retains the builder's persistent packets and consumes them directly.
+// Both use the same exact object/binding context and split hands/gun ownership;
+// the native unit aiming-vector updater owns the corresponding engine aim.
 inline constexpr bool kHalo2VisibleConsumerControllerOwnershipEnabled = true;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
@@ -2668,9 +2668,11 @@ inline constexpr uint8_t kHalo2FirstPersonPacketBuilderEntryBytes[] = {
     0x48, 0x89, 0x5C, 0x24, 0x18, 0x4C, 0x89, 0x4C, 0x24, 0x20,
     0x89, 0x54, 0x24, 0x10, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x56,
     0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57};
-// E-H2-53: +0x8181F0 calls this registered renderer callback for every packet
-// while still inside the builder.  It consumes the supplied final matrices
-// immediately; edits made after the builder returns are necessarily invisible.
+// E-H2-53/E-H2-55: +0x8181F0 calls this registered renderer callback only when
+// publish_to_renderer is true (Anniversary). Its supplied matrices are copied
+// before the builder returns. Classic caller +0x7E5430 passes false and retains
+// the returned persistent packet array for its own direct renderer consumer.
+inline constexpr uint32_t kHalo2ClassicFirstPersonPacketCallerRva = 0x007E5430;
 inline constexpr uint32_t kHalo2FirstPersonVisibleConsumerRva = 0x0006BB40;
 inline constexpr uint8_t kHalo2FirstPersonVisibleConsumerEntryBytes[] = {
     0x48, 0x8B, 0xC4, 0x89, 0x48, 0x08, 0x55, 0x41, 0x54, 0x41,
@@ -3729,6 +3731,51 @@ struct Halo2FirstPersonPassCameras
     bool frameValid = false;
     bool compensate = false;
 };
+
+// C-H2-63 Classic eye ownership. The Classic renderer consumes the persistent
+// packet built with publish_to_renderer=false, then draw_first_person renders
+// that same packet once for each eye. Its pushed first-person camera is the
+// previous render_view camera (E-H2-34), so move the final world palette by
+// viewing * inverse(correct). The stale viewing camera then produces exactly
+// the image the correct eye camera would have produced. Work is staged so a
+// bad matrix cannot leave half of an eye palette transformed.
+inline bool Halo2CompensateClassicFirstPersonEye(
+    float* matrices, uint32_t count,
+    const Halo2FirstPersonPassCameras& pass) noexcept
+{
+    if (!matrices || count == 0 ||
+        count > kHalo2FirstPersonPaletteCapacity || !pass.frameValid ||
+        !pass.compensate || !Halo2ValidateCameraBasis(pass.correct) ||
+        !Halo2ValidateCameraBasis(pass.viewing))
+    {
+        return false;
+    }
+    float staged[
+        kHalo2FirstPersonPaletteCapacity * kHalo2FirstPersonNodeFloats]{};
+    const size_t floats =
+        static_cast<size_t>(count) * kHalo2FirstPersonNodeFloats;
+    const size_t bytes = floats * sizeof(float);
+    std::memcpy(staged, matrices, bytes);
+    for (size_t index = 0; index < floats; ++index)
+        if (!std::isfinite(staged[index])) return false;
+
+    float compensation[9]{};
+    if (!Halo2BuildWorldDeltaRotation(
+            pass.correct, pass.viewing, compensation))
+    {
+        return false;
+    }
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        Halo2ReanchorFirstPersonNode(
+            staged + index * kHalo2FirstPersonNodeFloats, compensation,
+            pass.correct.position, pass.viewing.position);
+    }
+    for (size_t index = 0; index < floats; ++index)
+        if (!std::isfinite(staged[index])) return false;
+    std::memcpy(matrices, staged, bytes);
+    return true;
+}
 
 enum class Halo2FirstPersonNodeSpace : uint8_t
 {
