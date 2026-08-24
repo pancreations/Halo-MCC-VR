@@ -1116,7 +1116,7 @@ inline constexpr bool kHalo2C66AuthoredAlignmentEnabled = false;
 // C-H2-68 replaces the rejected generic/thumb-axis turnover with Halo 2's own
 // semantic hand attachment frames. Chief and Elite author different marker
 // transforms, so the final wrist solve must select the matching rig profile.
-inline constexpr bool kHalo2C68RigMarkerAlignmentEnabled = true;
+inline constexpr bool kHalo2C68RigMarkerAlignmentEnabled = false;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in

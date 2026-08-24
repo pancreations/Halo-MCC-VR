@@ -3605,6 +3605,25 @@ the C-H2-66 thumb-ray pi rotation and rejects claiming one undifferentiated
 Chief/Elite presentation from aggregate packet ownership. C-H2-67 disables the
 C-H2-66 selection and restores the prior safety path before further work.
 
+## E-H2-60 (C-H2-69): C-H2-68 axis and collapsed-pivot rejection - 2026-08-24
+
+The Steam / SteamVR / Oculus log preserved under
+`out/test-runs/4b860bf-halo2-c68-arbiter-wrist-stretch-left-axis-permutation-steam-20260824-0708/`
+records 15,871 Arbiter contexts and 15,871 owned packets, including Classic and
+Anniversary, with zero ownership misses. Arbiter admission is therefore proven.
+The user's screenshot rejects its presentation: a long wrist/forearm wedge runs
+from the controller-owned hand toward the stock arm pivots, and both Chief and
+Arbiter left-hand rotations remain wrong.
+
+The rotation defect is exact. Halo 3's accepted semantic controller basis is
+`[forward,left,up]`; C-H2-68 passed Halo 2's camera basis conversion
+`[right,forward,up]` into the hand-marker solve. That pre-marker 90-degree axis
+permutation invalidates both rig results. The stretched Elite mesh is the same
+linear-skinning class already proven in Reach: hidden arm influences collapsed
+at distinct translations while the cross-weighted wrist moves elsewhere draw a
+ribbon between those pivots. C-H2-69 disables the marker presentation while
+retaining the independently proven Arbiter admission.
+
 ## E-H2-59 (C-H2-68): rig marker solve and Arbiter packet admission - 2026-08-24
 
 The user clarified that Arbiter was never hooked: his stock arms remained at

@@ -7794,43 +7794,20 @@ int main()
                     hands, kPacketNodes, remap, packetBinding, gun, 1,
                     authoredRoot, right, left, false, 2.0f, 0.5f, 1.0f,
                     result);
-                Halo2FirstPersonTransform movedLeft{}, chiefMarker{},
-                    composedMarker{};
-                const float chiefMarkerQuaternion[4] = {
-                    0.016078f, 0.073613f, 0.085080f, -0.993521f};
-                const bool markerSolved =
-                    Halo2ReadFirstPersonTransform(
-                        hands + 1 * kHalo2FirstPersonNodeFloats, movedLeft) &&
-                    Halo2QuaternionToFirstPersonBasis(
-                        chiefMarkerQuaternion, chiefMarker.rotation);
-                chiefMarker.scale = 1.0f;
-                chiefMarker.translation[0] = 0.022750f;
-                chiefMarker.translation[1] = -0.008561f;
-                chiefMarker.translation[2] = 0.000398f;
-                const bool markerComposed = markerSolved &&
-                    Halo2ComposeFirstPersonTransforms(
-                        movedLeft, chiefMarker, composedMarker);
                 Check(ownedPackets && result.applied && result.rightNodes == 1 &&
                           result.leftNodes == 2 && result.collapsedNodes == 1 &&
-                          result.gunNodes == 1 &&
-                          nearlyEqual(hands[0], 0.0001f) &&
+                           result.gunNodes == 1 &&
+                           nearlyEqual(hands[0], 0.0001f) &&
                            nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           markerComposed &&
-                           nearlyEqual(composedMarker.translation[0], -10.0f) &&
-                           nearlyEqual(composedMarker.translation[1], 0.0f) &&
-                           nearlyEqual(composedMarker.translation[2], 0.0f) &&
-                           nearlyEqual(composedMarker.rotation[0], 1.0f) &&
-                           nearlyEqual(composedMarker.rotation[4], 1.0f) &&
-                           nearlyEqual(composedMarker.rotation[8], 1.0f) &&
-                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 10.0f) &&
-                           nearlyEqual(gun[11], 4.0f) &&
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -10.5f) &&
+                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f) &&
                            nearlyEqual(result.rightWristDeltaWorld, 8.0f) &&
-                           result.leftWristDeltaWorld > 7.9f &&
-                           result.leftWristDeltaWorld < 8.1f,
-                    "C-H2-68 maps the barrel to the crosshair and solves Chief's "
-                    "authored left_hand marker exactly onto the left controller");
+                           nearlyEqual(result.leftWristDeltaWorld, 8.0f),
+                    "C-H2-69 disables the rejected C-H2-68 marker presentation "
+                    "and restores the prior safe wrist transaction");
 
                 Halo2FirstPersonTransform stockEliteWrist{};
                 stockEliteWrist.scale = 1.0f;
@@ -7953,14 +7930,11 @@ int main()
                     authoredRoot, right, left, true, 1.0f, 1.0f, 2.0f,
                     supported);
                 Check(ownedSupport && supported.applied &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 11], -4.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 6.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 11], -5.0f) &&
-                           nearlyEqual(gun[10], 10.0f) && nearlyEqual(gun[11], 2.0f),
-                    "C-H2-68 keeps the complete authored support grip rigidly "
-                    "attached while the barrel turns onto the crosshair");
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 5.0f) &&
+                           nearlyEqual(gun[10], 12.0f),
+                    "C-H2-69 restores the prior safe rigid support transaction");
             }
             {
                 float wrist[kHalo2FirstPersonNodeFloats]{};

@@ -1,5 +1,16 @@
 # Current state
 
+> **HALO 2 C-H2-68 REJECTED; C-H2-69 SAFETY REVERT IN SOURCE -
+> 2026-08-24.** The exact Steam / SteamVR / Oculus run is preserved at
+> `out/test-runs/4b860bf-halo2-c68-arbiter-wrist-stretch-left-axis-permutation-steam-20260824-0708/HaloMCCVR.log`
+> (SHA-256 `F0743824CC4E48C71BE914FAFAF74F88348ABD6946EAD2658547B807DB1302AE`).
+> The screenshot proves Arbiter's continuously skinned wrists stretch into long
+> wedges when his arm ancestors collapse at their separate stock pivots. It also
+> rejects both rig marker orientations. C-H2-68 targeted the markers with camera
+> columns `[right,forward,up]`, while the accepted controller hand frame is
+> `[forward,left,up]`. C-H2-69 disables that presentation before replacement.
+> Arbiter's now-proven packet admission remains isolated and enabled.
+
 > **UNACCEPTED HALO 2 C-H2-68 CHIEF/ARBITER MARKER ALIGNMENT IN SOURCE -
 > 2026-08-24.** C-H2-67 is the required safety revert of rejected C-H2-66;
 > C-H2-65 remains the safety baseline. C-H2-68 keeps the authored gun-root
