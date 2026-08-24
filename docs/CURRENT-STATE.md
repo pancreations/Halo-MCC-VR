@@ -1,5 +1,25 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-71 UPSTREAM HEADSET VISIBILITY COVER IN SOURCE -
+> 2026-08-24.** C-H2-70 remains the accepted Halo 2 baseline. The accepted
+> hand/gun code is unchanged. The new screenshot and exact accepted run show
+> Anniversary rasterising the proven `126.5 x 110.1` degree headset cover while
+> floor geometry disappears in its lower band when head pitch reaches about 46
+> degrees. The missing band is consistent with the engine's logged stock 91.9
+> degree vertical camera still owning the earlier visibility build.
+>
+> C-H2-71 expands only `observer_result+0x4C` (vertical FOV) to the same
+> symmetric headset cover already used by both eye renderers, and never narrows
+> an authored wider value. This is Halo 2's shared native upstream field:
+> Classic copies it to camera `+0x28`; bridge `+0x5F510` passes it through
+> Saber's own `+0xBC560`; and view builder `+0x1C7740` copies that refreshed
+> camera before scene visibility is consumed. The write occurs after the
+> engine's final observer transform but before its camera hand-offs. Invalid XR
+> FOV, an invalid stock value, or an unreadable write refuses only this optional
+> feature while the accepted pose, stereo, hands/gun and OpenXR session continue.
+> No non-Halo-2 adapter calls this path. Headset confirmation is required in
+> Anniversary and Classic; C-H2-70 remains the rollback baseline.
+
 > **CURRENT ACCEPTED HALO 2 DEVELOPMENT BASELINE: C-H2-70 CORRECTED
 > LEFT-HAND FRAME / ELITE WRISTS - 2026-08-24.** C-H2-70 retains the proven
 > Arbiter packet admission

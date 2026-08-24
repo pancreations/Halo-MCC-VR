@@ -145,6 +145,14 @@ namespace
     std::atomic<uint64_t> g_reanchorBusy{0};
     std::atomic<uint64_t> g_reanchorBadSlot{0};
     std::atomic<uint64_t> g_publicationIndex{0};
+    // C-H2-71: independent fail-open visibility-cover telemetry. The observer
+    // pose remains owned even when this optional one-float write is refused.
+    std::atomic<uint64_t> g_visibilityCoverApplied{0};
+    std::atomic<uint64_t> g_visibilityCoverAlreadyWide{0};
+    std::atomic<uint64_t> g_visibilityCoverRefused{0};
+    std::atomic<uint32_t> g_visibilityCoverStockBits{0};
+    std::atomic<uint32_t> g_visibilityCoverRequiredBits{0};
+    std::atomic<uint32_t> g_visibilityCoverWrittenBits{0};
     std::atomic<uint64_t> g_weaponsSlotResets{0};
     std::atomic<uint64_t> g_weaponsResetsBypassedForFloaty{0};
     std::atomic<uint64_t> g_floatyApplied{0};
@@ -542,6 +550,58 @@ namespace
         return true;
     }
 
+    void ApplyUpstreamVisibilityCover(
+        uintptr_t result,
+        const Halo2SynchronousVrRenderSnapshot& snapshot) noexcept
+    {
+        if (!kHalo2C71UpstreamVisibilityCoverEnabled)
+            return;
+        if (!snapshot.eyes[0].fovValid || !snapshot.eyes[1].fovValid ||
+            !Halo2ObserverVisibilityFovWriteAllowed(
+                kHalo2ObserverResultVerticalFovOffset, sizeof(float)))
+        {
+            g_visibilityCoverRefused.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        float stock = 0.0f;
+        float cover = 0.0f;
+        if (!ReadFloats(
+                result + kHalo2ObserverResultVerticalFovOffset, &stock, 1) ||
+            !Halo2DeriveObserverVisibilityVerticalFov(
+                snapshot.eyes[0].fov, snapshot.eyes[1].fov, stock, cover))
+        {
+            g_visibilityCoverRefused.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        Halo2SaberEyeCover required{};
+        if (!Halo2DeriveSaberEyeCover(
+                snapshot.eyes[0].fov, snapshot.eyes[1].fov, required))
+        {
+            g_visibilityCoverRefused.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        const float requiredRadians = required.halfVerticalRadians * 2.0f;
+        uint32_t bits = 0;
+        std::memcpy(&bits, &stock, sizeof(bits));
+        g_visibilityCoverStockBits.store(bits, std::memory_order_relaxed);
+        std::memcpy(&bits, &requiredRadians, sizeof(bits));
+        g_visibilityCoverRequiredBits.store(bits, std::memory_order_relaxed);
+        std::memcpy(&bits, &cover, sizeof(bits));
+        g_visibilityCoverWrittenBits.store(bits, std::memory_order_relaxed);
+        if (cover <= stock + 1.0e-6f)
+        {
+            g_visibilityCoverAlreadyWide.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (!WriteFloats(
+                result + kHalo2ObserverResultVerticalFovOffset, &cover, 1))
+        {
+            g_visibilityCoverRefused.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        g_visibilityCoverApplied.fetch_add(1, std::memory_order_relaxed);
+    }
+
     uintptr_t OriginalAddress() noexcept
     {
         return g_originalAddress.load(std::memory_order_acquire);
@@ -611,6 +671,9 @@ namespace
             g_unreadableSamples.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        // Optional and fail-open: the pose publication never depends on the
+        // visibility-cover write succeeding.
+        ApplyUpstreamVisibilityCover(result, snapshot);
         PublishPose(
             g_generation.load(std::memory_order_acquire),
             snapshot.preparedSerial, stock, tracked, g_reference, snapshot);
@@ -3055,14 +3118,17 @@ namespace
         LOG("Halo 2 observer 6DOF installed: observer final transform "
             "+0x%X, observer results +0x%X stride 0x%X, user %u. Three "
             "12-byte spans (position +0x%X, forward +0x%X, up +0x%X) are "
-            "written after the engine's own transform; field of view, "
-            "aspect and every other observer field stay engine-owned",
+            "written after the engine's own transform; C-H2-71 may additionally "
+            "expand only vertical FOV +0x%X to the headset visibility cover "
+            "(never narrows it); aspect and every other observer field stay "
+            "engine-owned",
             static_cast<unsigned>(kHalo2ObserverFinalTransformRva),
             static_cast<unsigned>(kHalo2ObserverResultArrayRva),
             static_cast<unsigned>(kHalo2ObserverStride), kOwnedUser,
             static_cast<unsigned>(kHalo2ObserverResultPositionOffset),
             static_cast<unsigned>(kHalo2ObserverResultForwardOffset),
-            static_cast<unsigned>(kHalo2ObserverResultUpOffset));
+            static_cast<unsigned>(kHalo2ObserverResultUpOffset),
+            static_cast<unsigned>(kHalo2ObserverResultVerticalFovOffset));
         return true;
     }
 
@@ -3291,6 +3357,26 @@ namespace
                 g_nativeAimNonOwned.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_nativeAimRefused.load(std::memory_order_relaxed)));
+        uint32_t coverBits[3] = {
+            g_visibilityCoverStockBits.load(std::memory_order_relaxed),
+            g_visibilityCoverRequiredBits.load(std::memory_order_relaxed),
+            g_visibilityCoverWrittenBits.load(std::memory_order_relaxed)};
+        float coverRadians[3]{};
+        std::memcpy(coverRadians, coverBits, sizeof(coverRadians));
+        constexpr float kDegrees = 57.29577951308232f;
+        LOG("Halo 2 C-H2-71 upstream visibility cover: %llu expanded, %llu "
+            "already wide, %llu refused; last stock %.1f deg, headset %.1f "
+            "deg, selected %.1f deg at observer_result+0x%X (pose/stereo stay "
+            "owned if this optional feature refuses)",
+            static_cast<unsigned long long>(
+                g_visibilityCoverApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_visibilityCoverAlreadyWide.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_visibilityCoverRefused.load(std::memory_order_relaxed)),
+            coverRadians[0] * kDegrees, coverRadians[1] * kDegrees,
+            coverRadians[2] * kDegrees,
+            static_cast<unsigned>(kHalo2ObserverResultVerticalFovOffset));
     }
 }
 

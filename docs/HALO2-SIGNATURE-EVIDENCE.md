@@ -3605,6 +3605,38 @@ the C-H2-66 thumb-ray pi rotation and rejects claiming one undifferentiated
 Chief/Elite presentation from aggregate packet ownership. C-H2-67 disables the
 C-H2-66 selection and restores the prior safety path before further work.
 
+## E-H2-62 (C-H2-71): the shared observer FOV is the pre-visibility headset cover - 2026-08-24
+
+The accepted C-H2-70 Steam run and screenshot are preserved under
+`out/test-runs/4ea2035-halo2-c70-accepted-chief-arbiter-both-renderers-steam-20260824-0729/`.
+At head pitch about 46 degrees, Anniversary retains nearby walls but removes a
+broad lower band of floor/world geometry. The same run proves the late scene
+camera rasterises `126.5 x 110.1` degrees exactly with zero projection
+mismatches, while its logged stock camera is only `110.2 x 91.9` degrees. The
+missing lower band therefore cannot be repaired by widening the late raster
+projection again.
+
+Existing H2EK/retail evidence identifies one earlier title-native input shared
+by both renderers: `observer_result+0x4C` is the vertical FOV. Retail Classic
+builder `+0x7DF5A0` copies it to camera `+0x28`. Retail bridge `+0x5F510` reads
+the same field and calls Saber's `+0xBC560`, which derives the matching
+horizontal FOV and refreshes the camera. Read-only decompilation for this result
+adds the final ordering fact: Saber view builder `+0x1C7740` copies its supplied
+camera into the new `0x758`-byte view record, calls matrix builder `+0x1C6D80`,
+and only then publishes that record to the collection consumed by scene render
+`+0x2DF190`. The observer final-transform hook is upstream of both the Classic
+builder and the Saber bridge.
+
+C-H2-71 therefore expands only `observer_result+0x4C` from the engine's stock
+value to the proven symmetric headset vertical cover. It takes the maximum, so
+an authored wider FOV is preserved exactly. A one-float allow-list prevents the
+feature from writing horizontal FOV, aspect, FOV ratio, clusters, leaves or any
+other observer field. Invalid OpenXR FOV, invalid stock FOV or an unreadable
+write is counted and leaves this feature stock without withdrawing pose/stereo
+ownership. The late eye raster cover remains unchanged. This is an
+evidence-backed candidate awaiting headset confirmation, not yet a proven
+culling fix.
+
 ## E-H2-61 (C-H2-70): semantic hand axes and Elite wrist-pivot collapse - 2026-08-24
 
 The corrected semantic mount is title-independent player behavior but is built

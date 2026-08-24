@@ -1123,6 +1123,11 @@ inline constexpr bool kHalo2C68RigMarkerAlignmentEnabled = false;
 // pivots. Arbiter packet admission remains the independently proven C-H2-68
 // transaction in the DLL boundary.
 inline constexpr bool kHalo2C70CorrectedHandFrameEnabled = true;
+// C-H2-71: the eye raster already covers the headset, but both renderers build
+// world visibility earlier from observer_result.  Lift only that upstream
+// vertical FOV to the same proven headset cover; all non-Halo-2 paths are
+// structurally unable to call this helper.
+inline constexpr bool kHalo2C71UpstreamVisibilityCoverEnabled = true;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
@@ -1985,6 +1990,13 @@ inline constexpr uint32_t kHalo2ObserverResultVerticalFovOffset = 0x4C;
 inline constexpr uint32_t kHalo2ObserverResultFovRatioOffset = 0x50;
 inline constexpr uint32_t kHalo2ObserverResultOwnedBytes = 0x54;
 
+constexpr bool Halo2ObserverVisibilityFovWriteAllowed(
+    uint32_t resultRelativeOffset, uint32_t bytes) noexcept
+{
+    return resultRelativeOffset == kHalo2ObserverResultVerticalFovOffset &&
+        bytes == sizeof(float);
+}
+
 // The last per-frame writer of position/forward/up. Injecting after this
 // function returns is the only point where no engine code overwrites the pose
 // again before either renderer consumes it.
@@ -2319,6 +2331,35 @@ inline bool Halo2DeriveSaberAspectLockedEyeCover(
     }
     out = candidate;
     return true;
+}
+
+// E-H2-62 / C-H2-71. observer_result +0x4C is the shared upstream visibility
+// FOV: Classic copies it to camera +0x28, while the Blam->Saber bridge passes it
+// through 0xBC560 before 0x1C7740 copies that camera into a view record.  The
+// late eye transaction already rasterises the cover returned here.  Preserve
+// an authored engine FOV when it is wider; this helper can only expand culling.
+inline bool Halo2DeriveObserverVisibilityVerticalFov(
+    const float leftFov[4], const float rightFov[4],
+    float stockVerticalRadians, float& outVerticalRadians) noexcept
+{
+    constexpr float kPi = 3.14159265f;
+    if (!std::isfinite(stockVerticalRadians) ||
+        stockVerticalRadians <= 1.0e-4f ||
+        stockVerticalRadians >= kPi - 1.0e-4f)
+    {
+        return false;
+    }
+    Halo2SaberEyeCover cover{};
+    if (!Halo2DeriveSaberEyeCover(leftFov, rightFov, cover))
+        return false;
+    const float required = cover.verticalDegrees * kPi / 180.0f;
+    if (!std::isfinite(required) || required <= 1.0e-4f ||
+        required >= kPi - 1.0e-4f)
+    {
+        return false;
+    }
+    outVerticalRadians = (std::max)(stockVerticalRadians, required);
+    return std::isfinite(outVerticalRadians);
 }
 
 // ---------------------------------------------------------------------------

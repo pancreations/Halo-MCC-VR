@@ -7158,6 +7158,38 @@ int main()
                       untouched.verticalDegrees == 9.0f,
                 "E-H2-13 a zero or NaN aspect is refused without touching the "
                 "caller's cover");
+
+            float visibility = 0.0f;
+            const float stock = 91.9f * deg;
+            Check(Halo2DeriveObserverVisibilityVerticalFov(
+                      leftEye, rightEye, stock, visibility) &&
+                      visibility > 110.0f * deg &&
+                      visibility < 111.0f * deg &&
+                      Halo2ObserverVisibilityFovWriteAllowed(
+                          kHalo2ObserverResultVerticalFovOffset, sizeof(float)) &&
+                      !Halo2ObserverVisibilityFovWriteAllowed(
+                          kHalo2ObserverResultHorizontalFovOffset, sizeof(float)) &&
+                      !Halo2ObserverVisibilityFovWriteAllowed(
+                          kHalo2ObserverResultVerticalFovOffset, 12),
+                "E-H2-62 the shared observer visibility FOV expands from Saber's "
+                "91.9 degree stock cover to the 110.1 degree headset cover, and "
+                "the write allow-list admits only that one float");
+            const float authoredWide = 120.0f * deg;
+            Check(Halo2DeriveObserverVisibilityVerticalFov(
+                      leftEye, rightEye, authoredWide, visibility) &&
+                      std::fabs(visibility - authoredWide) < 1.0e-6f,
+                "E-H2-62 an authored engine FOV wider than the headset cover is "
+                "preserved exactly");
+            const float badVisibilityEye[4] = {
+                0.1f, 40.0f * deg, 44.0f * deg, -55.0f * deg};
+            visibility = 7.0f;
+            Check(!Halo2DeriveObserverVisibilityVerticalFov(
+                       badVisibilityEye, rightEye, stock, visibility) &&
+                      !Halo2DeriveObserverVisibilityVerticalFov(
+                          leftEye, rightEye, 0.0f, visibility) &&
+                      visibility == 7.0f,
+                "E-H2-62 invalid XR or stock FOV evidence refuses the optional "
+                "visibility feature without changing the caller's value");
         }
 
         // E-H2-16 (C-H2-23): the headset owns pitch. A stock camera pitched
