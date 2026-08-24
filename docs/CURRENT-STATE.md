@@ -1,5 +1,22 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-70 CORRECTED LEFT-HAND FRAME / ELITE WRISTS IN
+> SOURCE - 2026-08-24.** C-H2-69 is the required safety revert; C-H2-65 remains
+> the safety baseline. C-H2-70 retains the now-proven Arbiter packet admission
+> and the authored barrel solve. Its free left-hand target uses the accepted
+> semantic controller frame `[forward,left,up]`, then solves Chief's `left_hand`
+> or Arbiter's `left_hand_elite` local marker exactly. This removes C-H2-68's
+> pre-marker `[right,forward,up]` 90-degree axis permutation in both Classic and
+> Anniversary.
+>
+> For Elite packets only, the two hidden left and two hidden right arm-ancestor
+> records are copied to their corresponding solved wrist transforms before
+> their scales collapse. Cross-weighted wrist vertices therefore cannot span
+> from controller space back to four separate face-space pivots. Chief's
+> existing visibility partition is unchanged. Telemetry separately counts the
+> Elite arm records co-located. Headset acceptance is required for both rigs and
+> renderers, followed by a Halo 3 regression result.
+
 > **HALO 2 C-H2-68 REJECTED; C-H2-69 SAFETY REVERT IN SOURCE -
 > 2026-08-24.** The exact Steam / SteamVR / Oculus run is preserved at
 > `out/test-runs/4b860bf-halo2-c68-arbiter-wrist-stretch-left-axis-permutation-steam-20260824-0708/HaloMCCVR.log`

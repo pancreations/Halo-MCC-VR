@@ -7594,6 +7594,10 @@ int main()
                           binding.rightWrist == 6 &&
                           binding.rigKind ==
                               Halo2FirstPersonRigKind::MasterChief &&
+                          binding.leftArmAncestors ==
+                              ((1ull << 1) | (1ull << 3)) &&
+                          binding.rightArmAncestors ==
+                              ((1ull << 2) | (1ull << 4)) &&
                           binding.leftSubtree == expectedLeft &&
                           binding.rightSubtree == expectedRight &&
                           binding.armAncestors ==
@@ -7794,20 +7798,44 @@ int main()
                     hands, kPacketNodes, remap, packetBinding, gun, 1,
                     authoredRoot, right, left, false, 2.0f, 0.5f, 1.0f,
                     result);
+                Halo2FirstPersonTransform movedLeft{}, chiefMarker{},
+                    composedMarker{};
+                const float chiefMarkerQuaternion[4] = {
+                    0.016078f, 0.073613f, 0.085080f, -0.993521f};
+                chiefMarker.scale = 1.0f;
+                chiefMarker.translation[0] = 0.022750f;
+                chiefMarker.translation[1] = -0.008561f;
+                chiefMarker.translation[2] = 0.000398f;
+                const bool markerComposed =
+                    Halo2ReadFirstPersonTransform(
+                        hands + 1 * kHalo2FirstPersonNodeFloats, movedLeft) &&
+                    Halo2QuaternionToFirstPersonBasis(
+                        chiefMarkerQuaternion, chiefMarker.rotation) &&
+                    Halo2ComposeFirstPersonTransforms(
+                        movedLeft, chiefMarker, composedMarker);
                 Check(ownedPackets && result.applied && result.rightNodes == 1 &&
                           result.leftNodes == 2 && result.collapsedNodes == 1 &&
                            result.gunNodes == 1 &&
                            nearlyEqual(hands[0], 0.0001f) &&
                            nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats], 0.5f) &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], -10.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats], 2.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], -10.5f) &&
-                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 14.0f) &&
+                           markerComposed &&
+                           nearlyEqual(composedMarker.translation[0], -10.0f) &&
+                           nearlyEqual(composedMarker.translation[1], 0.0f) &&
+                           nearlyEqual(composedMarker.translation[2], 0.0f) &&
+                           nearlyEqual(composedMarker.rotation[0], 0.0f) &&
+                           nearlyEqual(composedMarker.rotation[1], 1.0f) &&
+                           nearlyEqual(composedMarker.rotation[3], -1.0f) &&
+                           nearlyEqual(composedMarker.rotation[4], 0.0f) &&
+                           nearlyEqual(composedMarker.rotation[8], 1.0f) &&
+                           nearlyEqual(gun[0], 2.0f) && nearlyEqual(gun[10], 10.0f) &&
+                           nearlyEqual(gun[11], 4.0f) &&
                            nearlyEqual(result.rightWristDeltaWorld, 8.0f) &&
-                           nearlyEqual(result.leftWristDeltaWorld, 8.0f),
-                    "C-H2-69 disables the rejected C-H2-68 marker presentation "
-                    "and restores the prior safe wrist transaction");
+                           result.leftWristDeltaWorld > 7.9f &&
+                           result.leftWristDeltaWorld < 8.1f,
+                    "C-H2-70 solves Chief's marker onto the accepted "
+                    "forward-left-up controller hand frame");
 
                 Halo2FirstPersonTransform stockEliteWrist{};
                 stockEliteWrist.scale = 1.0f;
@@ -7822,7 +7850,7 @@ int main()
                 eliteMarker.translation[1] = -0.009315f;
                 eliteMarker.translation[2] = 0.000442f;
                 const bool eliteMarkerSolved =
-                    Halo2BuildRigMarkerFreeLeftTarget(
+                    Halo2BuildCorrectedRigMarkerFreeLeftTarget(
                         Halo2FirstPersonRigKind::Elite, left,
                         stockEliteWrist, 1.0f, desiredEliteWrist) &&
                     Halo2QuaternionToFirstPersonBasis(
@@ -7834,11 +7862,71 @@ int main()
                           nearlyEqual(composedEliteMarker.translation[0], -10.0f) &&
                           nearlyEqual(composedEliteMarker.translation[1], 0.0f) &&
                           nearlyEqual(composedEliteMarker.translation[2], 0.0f) &&
-                          nearlyEqual(composedEliteMarker.rotation[0], 1.0f) &&
-                          nearlyEqual(composedEliteMarker.rotation[4], 1.0f) &&
+                          nearlyEqual(composedEliteMarker.rotation[0], 0.0f) &&
+                          nearlyEqual(composedEliteMarker.rotation[1], 1.0f) &&
+                          nearlyEqual(composedEliteMarker.rotation[3], -1.0f) &&
+                          nearlyEqual(composedEliteMarker.rotation[4], 0.0f) &&
                           nearlyEqual(composedEliteMarker.rotation[8], 1.0f),
-                    "C-H2-68 solves Arbiter's distinct left_hand_elite marker "
-                    "onto the same controller mount without using Chief's wrist frame");
+                    "C-H2-70 solves Arbiter's left_hand_elite marker onto the "
+                    "same forward-left-up semantic controller hand frame");
+
+                constexpr uint32_t kElitePacketNodes = 7;
+                float eliteHands[kElitePacketNodes *
+                    kHalo2FirstPersonNodeFloats]{};
+                for (uint32_t node = 0; node < kElitePacketNodes; ++node)
+                    identityNode(
+                        eliteHands + node * kHalo2FirstPersonNodeFloats,
+                        static_cast<float>(node));
+                eliteHands[1 * kHalo2FirstPersonNodeFloats + 10] = 100.0f;
+                eliteHands[2 * kHalo2FirstPersonNodeFloats + 10] = 200.0f;
+                eliteHands[3 * kHalo2FirstPersonNodeFloats + 10] = -2.0f;
+                eliteHands[4 * kHalo2FirstPersonNodeFloats + 10] = 2.0f;
+                eliteHands[5 * kHalo2FirstPersonNodeFloats + 10] = -3.0f;
+                eliteHands[6 * kHalo2FirstPersonNodeFloats + 10] = 3.0f;
+                float eliteGun[kHalo2FirstPersonNodeFloats]{};
+                identityNode(eliteGun, 4.0f);
+                const int32_t eliteRemap[kElitePacketNodes] = {
+                    0, 1, 2, 3, 4, 5, 6};
+                Halo2FirstPersonArmBinding elitePacketBinding{};
+                elitePacketBinding.valid = true;
+                elitePacketBinding.leftWrist = 3;
+                elitePacketBinding.rightWrist = 4;
+                elitePacketBinding.count = kElitePacketNodes;
+                elitePacketBinding.leftSubtree = (1ull << 3) | (1ull << 5);
+                elitePacketBinding.rightSubtree = (1ull << 4) | (1ull << 6);
+                elitePacketBinding.leftDirectChildren = 1ull << 5;
+                elitePacketBinding.leftArmAncestors = 1ull << 1;
+                elitePacketBinding.rightArmAncestors = 1ull << 2;
+                elitePacketBinding.armAncestors = (1ull << 1) | (1ull << 2);
+                elitePacketBinding.rigKind = Halo2FirstPersonRigKind::Elite;
+                Halo2FinalPacketOwnershipResult elitePacketResult{};
+                const bool elitePacketOwned = Halo2OwnFinalFirstPersonPackets(
+                    eliteHands, kElitePacketNodes, eliteRemap,
+                    elitePacketBinding, eliteGun, 1, authoredRoot, right, left,
+                    false, 1.0f, 1.0f, 2.0f, elitePacketResult);
+                const float* const hiddenLeft = eliteHands +
+                    1 * kHalo2FirstPersonNodeFloats;
+                const float* const hiddenRight = eliteHands +
+                    2 * kHalo2FirstPersonNodeFloats;
+                const float* const visibleLeft = eliteHands +
+                    3 * kHalo2FirstPersonNodeFloats;
+                const float* const visibleRight = eliteHands +
+                    4 * kHalo2FirstPersonNodeFloats;
+                Check(elitePacketOwned && elitePacketResult.applied &&
+                          elitePacketResult.leftNodes == 2 &&
+                          elitePacketResult.rightNodes == 2 &&
+                          elitePacketResult.collapsedNodes == 3 &&
+                          elitePacketResult.coLocatedArmNodes == 2 &&
+                          nearlyEqual(hiddenLeft[0], visibleLeft[0] * 0.0001f) &&
+                          nearlyEqual(hiddenRight[0], visibleRight[0] * 0.0001f) &&
+                          nearlyEqual(hiddenLeft[10], visibleLeft[10]) &&
+                          nearlyEqual(hiddenLeft[11], visibleLeft[11]) &&
+                          nearlyEqual(hiddenLeft[12], visibleLeft[12]) &&
+                          nearlyEqual(hiddenRight[10], visibleRight[10]) &&
+                          nearlyEqual(hiddenRight[11], visibleRight[11]) &&
+                          nearlyEqual(hiddenRight[12], visibleRight[12]),
+                    "C-H2-70 co-locates Elite's hidden arm influences at their "
+                    "solved wrists before collapse, preventing skinning ribbons");
 
                 identityNode(hands + 0 * kHalo2FirstPersonNodeFloats, 0.0f);
                 identityNode(hands + 1 * kHalo2FirstPersonNodeFloats, -2.0f);
@@ -7930,11 +8018,14 @@ int main()
                     authoredRoot, right, left, true, 1.0f, 1.0f, 2.0f,
                     supported);
                 Check(ownedSupport && supported.applied &&
-                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 6.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                           nearlyEqual(hands[1 * kHalo2FirstPersonNodeFloats + 11], -4.0f) &&
                            nearlyEqual(hands[2 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
-                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 5.0f) &&
-                           nearlyEqual(gun[10], 12.0f),
-                    "C-H2-69 restores the prior safe rigid support transaction");
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 10], 10.0f) &&
+                           nearlyEqual(hands[3 * kHalo2FirstPersonNodeFloats + 11], -5.0f) &&
+                           nearlyEqual(gun[10], 10.0f) && nearlyEqual(gun[11], 2.0f),
+                    "C-H2-70 preserves the authored support grip under the "
+                    "barrel-to-crosshair rigid delta");
             }
             {
                 float wrist[kHalo2FirstPersonNodeFloats]{};

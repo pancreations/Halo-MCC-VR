@@ -3605,6 +3605,27 @@ the C-H2-66 thumb-ray pi rotation and rejects claiming one undifferentiated
 Chief/Elite presentation from aggregate packet ownership. C-H2-67 disables the
 C-H2-66 selection and restores the prior safety path before further work.
 
+## E-H2-61 (C-H2-70): semantic hand axes and Elite wrist-pivot collapse - 2026-08-24
+
+The corrected semantic mount is title-independent player behavior but is built
+through Halo 2's own data: controller carrier forward, computed left, and up
+form `[forward,left,up]`; the active H2 rig marker local transform is then
+inverted from that mount. This is the accepted Halo 3/ODST/Reach hand-frame
+contract and differs exactly from rejected C-H2-68's camera-column order
+`[right,forward,up]`. Chief and Elite keep their distinct official marker
+rotations and translations.
+
+The official graph parent chains split the four non-root arm ancestors into
+left `5 -> 3 -> 1` and right `6 -> 4 -> 2`. For Elite only, C-H2-70 copies each
+hidden ancestor record to the corresponding final solved wrist, then applies
+the existing `0.0001` visibility collapse. Thus all cross-weighted hidden
+influences on one wrist share one pivot and cannot draw a strip back toward the
+stock face anchor. Root and unrelated records retain the existing collapse;
+Chief retains its existing partition. The full hands/gun transaction remains
+staged and fail-open. Tests pin both rig marker compositions, the exact
+left/right ancestor split, and co-location of hidden Elite records at each
+solved wrist.
+
 ## E-H2-60 (C-H2-69): C-H2-68 axis and collapsed-pivot rejection - 2026-08-24
 
 The Steam / SteamVR / Oculus log preserved under

@@ -1118,6 +1118,12 @@ inline constexpr bool kHalo2C66AuthoredAlignmentEnabled = false;
 // transforms, so the final wrist solve must select the matching rig profile.
 inline constexpr bool kHalo2C68RigMarkerAlignmentEnabled = false;
 
+// C-H2-70 corrects C-H2-68's camera/hand axis permutation and prevents the
+// Elite's continuously skinned wrist from spanning separately collapsed arm
+// pivots. Arbiter packet admission remains the independently proven C-H2-68
+// transaction in the DLL boundary.
+inline constexpr bool kHalo2C70CorrectedHandFrameEnabled = true;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -2789,6 +2795,8 @@ struct Halo2FirstPersonArmBinding
     uint64_t leftSubtree = 0;
     uint64_t rightSubtree = 0;
     uint64_t leftDirectChildren = 0;
+    uint64_t leftArmAncestors = 0;
+    uint64_t rightArmAncestors = 0;
     uint64_t armAncestors = 0;
     Halo2FirstPersonRigKind rigKind = Halo2FirstPersonRigKind::Unknown;
 };
@@ -2875,16 +2883,19 @@ inline bool Halo2BuildFirstPersonArmBinding(
     // tracked wrists is the ancestry between each wrist and the root. Exclude
     // both wrists and exclude the root itself: camera_control and unrelated
     // control nodes are neither transformed nor collapsed at this boundary.
-    uint64_t armMask = 0;
+    uint64_t leftArmMask = 0;
+    uint64_t rightArmMask = 0;
     for (int wrist : {left, right})
     {
+        uint64_t& wristArmMask = wrist == left ? leftArmMask : rightArmMask;
         int node = parents[wrist];
         while (node >= 0 && parents[node] >= 0)
         {
-            armMask |= 1ull << node;
+            wristArmMask |= 1ull << node;
             node = parents[node];
         }
     }
+    const uint64_t armMask = leftArmMask | rightArmMask;
     if ((armMask & (leftMask | rightMask)) != 0)
         return false;
 
@@ -2911,6 +2922,8 @@ inline bool Halo2BuildFirstPersonArmBinding(
         out.rigKind = Halo2FirstPersonRigKind::MasterChief;
     else if (directChildCount == 4)
         out.rigKind = Halo2FirstPersonRigKind::Elite;
+    out.leftArmAncestors = leftArmMask;
+    out.rightArmAncestors = rightArmMask;
     out.armAncestors = armMask;
     return true;
 }
@@ -3369,6 +3382,85 @@ inline bool Halo2BuildRigMarkerFreeLeftTarget(
     return true;
 }
 
+inline bool Halo2BuildControllerHandMountBasis(
+    const Halo2CameraBasis& carrier, float output[9]) noexcept
+{
+    if (!output || !Halo2ValidateCameraBasis(carrier)) return false;
+    const float right[3] = {
+        carrier.forward[1] * carrier.up[2] -
+            carrier.forward[2] * carrier.up[1],
+        carrier.forward[2] * carrier.up[0] -
+            carrier.forward[0] * carrier.up[2],
+        carrier.forward[0] * carrier.up[1] -
+            carrier.forward[1] * carrier.up[0]};
+    // Halo 3/ODST/Reach's accepted semantic hand frame: forward, left, up.
+    std::memcpy(output, carrier.forward, sizeof(carrier.forward));
+    for (int axis = 0; axis < 3; ++axis)
+        output[3 + axis] = -right[axis];
+    std::memcpy(output + 6, carrier.up, sizeof(carrier.up));
+    return true;
+}
+
+inline bool Halo2BuildCorrectedRigMarkerFreeLeftTarget(
+    Halo2FirstPersonRigKind rigKind,
+    const Halo2CameraBasis& leftCarrier,
+    const Halo2FirstPersonTransform& stockWrist, float leftScale,
+    Halo2FirstPersonTransform& desiredWrist) noexcept
+{
+    if (!Halo2ValidateCameraBasis(leftCarrier) ||
+        !Halo2FirstPersonTransformValid(stockWrist) ||
+        !std::isfinite(leftScale) || leftScale <= 0.0f)
+        return false;
+    const float* markerTranslation = nullptr;
+    const float* markerQuaternion = nullptr;
+    static constexpr float kChiefTranslation[3] = {
+        0.022750f, -0.008561f, 0.000398f};
+    static constexpr float kChiefQuaternion[4] = {
+        0.016078f, 0.073613f, 0.085080f, -0.993521f};
+    static constexpr float kEliteTranslation[3] = {
+        0.033088f, -0.009315f, 0.000442f};
+    static constexpr float kEliteQuaternion[4] = {
+        -0.001854f, 0.001501f, -0.001833f, -0.999995f};
+    if (rigKind == Halo2FirstPersonRigKind::MasterChief)
+    {
+        markerTranslation = kChiefTranslation;
+        markerQuaternion = kChiefQuaternion;
+    }
+    else if (rigKind == Halo2FirstPersonRigKind::Elite)
+    {
+        markerTranslation = kEliteTranslation;
+        markerQuaternion = kEliteQuaternion;
+    }
+    else
+    {
+        return false;
+    }
+    float mountRotation[9]{}, markerRotation[9]{}, inverseMarker[9]{};
+    if (!Halo2BuildControllerHandMountBasis(leftCarrier, mountRotation) ||
+        !Halo2QuaternionToFirstPersonBasis(markerQuaternion, markerRotation))
+        return false;
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            inverseMarker[column * 3 + row] =
+                markerRotation[row * 3 + column];
+    Halo2FirstPersonTransform result{};
+    result.scale = stockWrist.scale * leftScale;
+    Halo2MultiplyFirstPersonBases(
+        mountRotation, inverseMarker, result.rotation);
+    for (int row = 0; row < 3; ++row)
+    {
+        float markerOffset = 0.0f;
+        for (int column = 0; column < 3; ++column)
+            markerOffset += result.rotation[column * 3 + row] *
+                markerTranslation[column];
+        result.translation[row] = leftCarrier.position[row] -
+            result.scale * markerOffset;
+    }
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    desiredWrist = result;
+    return true;
+}
+
 // C-H2-64 keeps Halo 2's two presentation states separate, matching the
 // headset-confirmed policy in the other titles instead of treating an idle
 // left hand as though it were already gripping a weapon.
@@ -3588,6 +3680,7 @@ struct Halo2FinalPacketOwnershipResult
     uint32_t rightNodes = 0;
     uint32_t leftNodes = 0;
     uint32_t collapsedNodes = 0;
+    uint32_t coLocatedArmNodes = 0;
     uint32_t gunNodes = 0;
     float rightWristDeltaWorld = 0.0f;
     float leftWristDeltaWorld = 0.0f;
@@ -3847,7 +3940,27 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         }
     }
     Halo2FirstPersonTransform rightDelta{};
-    if (kHalo2C68RigMarkerAlignmentEnabled)
+    if (kHalo2C70CorrectedHandFrameEnabled)
+    {
+        if (!Halo2BuildAuthoredBarrelDelta(
+                stockRight, stockGunRoot, rightCarrier, rightScale,
+                rightDelta, desiredRight))
+            return false;
+        if (twoHandAimActive)
+        {
+            if (!Halo2ComposeFirstPersonTransforms(
+                    rightDelta, stockLeft, desiredLeft))
+                return false;
+            desiredLeft.scale = stockLeft.scale * leftScale;
+        }
+        else if (!Halo2BuildCorrectedRigMarkerFreeLeftTarget(
+                     binding.rigKind, leftCarrier, stockLeft, leftScale,
+                     desiredLeft))
+        {
+            return false;
+        }
+    }
+    else if (kHalo2C68RigMarkerAlignmentEnabled)
     {
         if (!Halo2BuildAuthoredBarrelDelta(
                 stockRight, stockGunRoot, rightCarrier, rightScale,
@@ -3959,7 +4072,20 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         }
         else
         {
-            node[0] *= 0.0001f;
+            if (binding.rigKind == Halo2FirstPersonRigKind::Elite && bit &&
+                (binding.armAncestors & bit))
+            {
+                const Halo2FirstPersonTransform& wrist =
+                    (binding.leftArmAncestors & bit) ? desiredLeft : desiredRight;
+                Halo2FirstPersonTransform hidden = wrist;
+                hidden.scale *= 0.0001f;
+                Halo2WriteFirstPersonTransform(hidden, node);
+                ++out.coLocatedArmNodes;
+            }
+            else
+            {
+                node[0] *= 0.0001f;
+            }
             ++out.collapsedNodes;
         }
     }

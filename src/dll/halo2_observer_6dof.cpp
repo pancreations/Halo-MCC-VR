@@ -179,6 +179,7 @@ namespace
     std::atomic<uint64_t> g_finalPaletteMovedRight{0};
     std::atomic<uint64_t> g_finalPaletteMovedLeft{0};
     std::atomic<uint64_t> g_finalPaletteCollapsed{0};
+    std::atomic<uint64_t> g_finalPaletteCoLocatedArms{0};
     std::atomic<uint64_t> g_finalPaletteRefused{0};
     using Halo2FirstPersonPacketBuilderFn = int(__fastcall*)(
         uint32_t, uint32_t, const float*, const float*, const float*, int,
@@ -1035,6 +1036,8 @@ namespace
                             result.leftNodes, std::memory_order_relaxed);
                         g_finalPaletteCollapsed.fetch_add(
                             result.collapsedNodes, std::memory_order_relaxed);
+                        g_finalPaletteCoLocatedArms.fetch_add(
+                            result.coLocatedArmNodes, std::memory_order_relaxed);
                         g_packetBuilderGunNodes.fetch_add(
                             result.gunNodes, std::memory_order_relaxed);
                         const auto millimeters = [&context](float world) {
@@ -1373,6 +1376,9 @@ namespace
                         packetResult.leftNodes, std::memory_order_relaxed);
                     g_finalPaletteCollapsed.fetch_add(
                         packetResult.collapsedNodes, std::memory_order_relaxed);
+                    g_finalPaletteCoLocatedArms.fetch_add(
+                        packetResult.coLocatedArmNodes,
+                        std::memory_order_relaxed);
                     g_packetBuilderGunNodes.fetch_add(
                         packetResult.gunNodes, std::memory_order_relaxed);
                     g_packetBuilderLastAppliedMs.store(
@@ -3122,7 +3128,8 @@ namespace
             "Chief %llu contexts/%llu owned flags 0x%02X, Arbiter %llu contexts/"
             "%llu owned flags 0x%02X; wrist motion "
             "right %u/%u mm last/max, left %u/%u mm last/max; palette result: "
-            "%llu changed, %llu right, %llu left, %llu collapsed, %llu refused; "
+            "%llu changed, %llu right, %llu left, %llu collapsed (%llu Elite "
+            "arm records co-located), %llu refused; "
             "visible consumer: %llu calls, %llu hands owned, %llu guns owned; "
             "classic packet: %llu calls, %llu owned; classic eyes: %llu calls, "
             "%llu compensated, %llu no-packet, %llu no-pass, %llu refused; "
@@ -3252,6 +3259,8 @@ namespace
                 g_finalPaletteMovedLeft.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_finalPaletteCollapsed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_finalPaletteCoLocatedArms.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_finalPaletteRefused.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
