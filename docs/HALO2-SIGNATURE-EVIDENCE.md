@@ -3626,6 +3626,24 @@ staged and fail-open. Tests pin both rig marker compositions, the exact
 left/right ancestor split, and co-location of hidden Elite records at each
 solved wrist.
 
+The player explicitly accepted C-H2-70: "ok hands are great now." Preserved
+Steam / SteamVR 2.17.7 / Oculus / 120 Hz evidence is under
+`out/test-runs/4ea2035-halo2-c70-accepted-chief-arbiter-both-renderers-steam-20260824-0729/`.
+The Arbiter log SHA-256 is
+`399C68D996D48EBC8ADF0C9461094DD7D5ED0FDAD9806E4172B92C5170DDE55D`;
+it exercises Anniversary and Classic, owns 8,233 Elite packets, co-locates
+32,932 hidden Elite arm records, and records zero palette refusals. The Chief
+log SHA-256 is
+`5B4FBD2C1EB9496D56638043404A33E12E01281760EAA748A0A7E4EA58AB5867`;
+it exercises both renderers, owns 18,121/18,121 Chief packets, and records zero
+palette or Classic-eye refusals. Source is
+`4ea203566054cdb11b953af330f129fa2f0cdeed`; the independently verified
+installed DLL SHA-256 is
+`763048E03CE2918197D5DF372CFFF16E4F9FEA6972B3618E0D2AC5A252742A16`.
+C-H2-70 therefore advances the accepted Halo 2 development pointer from
+C-H2-63. The newly reported high-look world-culling defect is independent and
+does not qualify this hand/wrist acceptance.
+
 ## E-H2-60 (C-H2-69): C-H2-68 axis and collapsed-pivot rejection - 2026-08-24
 
 The Steam / SteamVR / Oculus log preserved under

@@ -1,8 +1,8 @@
 # Current state
 
-> **UNACCEPTED HALO 2 C-H2-70 CORRECTED LEFT-HAND FRAME / ELITE WRISTS IN
-> SOURCE - 2026-08-24.** C-H2-69 is the required safety revert; C-H2-65 remains
-> the safety baseline. C-H2-70 retains the now-proven Arbiter packet admission
+> **CURRENT ACCEPTED HALO 2 DEVELOPMENT BASELINE: C-H2-70 CORRECTED
+> LEFT-HAND FRAME / ELITE WRISTS - 2026-08-24.** C-H2-70 retains the proven
+> Arbiter packet admission
 > and the authored barrel solve. Its free left-hand target uses the accepted
 > semantic controller frame `[forward,left,up]`, then solves Chief's `left_hand`
 > or Arbiter's `left_hand_elite` local marker exactly. This removes C-H2-68's
@@ -14,8 +14,25 @@
 > their scales collapse. Cross-weighted wrist vertices therefore cannot span
 > from controller space back to four separate face-space pivots. Chief's
 > existing visibility partition is unchanged. Telemetry separately counts the
-> Elite arm records co-located. Headset acceptance is required for both rigs and
-> renderers, followed by a Halo 3 regression result.
+> Elite arm records co-located.
+>
+> The player explicitly accepted the result: "ok hands are great now." The two
+> Steam / SteamVR 2.17.7 / Oculus / 120 Hz runs are preserved together under
+> `out/test-runs/4ea2035-halo2-c70-accepted-chief-arbiter-both-renderers-steam-20260824-0729/`.
+> The Arbiter log (SHA-256
+> `399C68D996D48EBC8ADF0C9461094DD7D5ED0FDAD9806E4172B92C5170DDE55D`)
+> exercises Anniversary and Classic, reaches 8,233 owned Elite packets and
+> co-locates 32,932 hidden Elite arm records with zero palette refusals. The
+> Chief/culling log (SHA-256
+> `5B4FBD2C1EB9496D56638043404A33E12E01281760EAA748A0A7E4EA58AB5867`)
+> exercises both renderers and reaches 18,121/18,121 owned Chief packets with
+> zero palette or Classic-eye refusals. Source is
+> `4ea203566054cdb11b953af330f129fa2f0cdeed`; installed DLL SHA-256 is
+> `763048E03CE2918197D5DF372CFFF16E4F9FEA6972B3618E0D2AC5A252742A16`.
+> The same report opens the next independent defect: Anniversary world geometry
+> below the player is culled when looking high. That culling issue is not part
+> of the accepted hand result. A Halo 3 regression remains required before a
+> cumulative public release.
 
 > **HALO 2 C-H2-68 REJECTED; C-H2-69 SAFETY REVERT IN SOURCE -
 > 2026-08-24.** The exact Steam / SteamVR / Oculus run is preserved at
