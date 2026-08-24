@@ -38025,7 +38025,7 @@ static bool ReachControllerAimActive() { return false; }
 bool Game_Halo2ControllerAimActive()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // C-H2-58 grants ownership only after the H2EK-derived final render-packet
+    // C-H2-60 grants ownership only after the H2EK-derived final render-packet
     // transaction has succeeded recently. The rejected interpolator-space
     // placement has its own permanently-false switch and cannot be re-armed
     // through this predicate.

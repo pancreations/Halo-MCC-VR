@@ -1,5 +1,29 @@
 # Current state
 
+> **HALO 2 C-H2-58 REJECTED; C-H2-59 SAFETY REVERT COMMITTED; UNACCEPTED
+> C-H2-60 ASYNCHRONOUS PACKET FIX IN SOURCE - 2026-08-23.** The exact Steam
+> headset run from source `7ffcf2b` is preserved at
+> `out/test-runs/7ffcf2b-halo2-c58-hooks-admitted-then-serial-gated-20260823-1916/HaloMCCVR.log`
+> (SHA-256
+> `A213F65FB88759C415996BED283C42F1BF68B4D75219A67A6EF793CAAF20E610`).
+> C-H2-58 installed every hook, but after a brief gameplay/loading/gameplay
+> transition the final-packet owned count froze permanently at 689 while total
+> builder calls continued to 6,998. Shot ownership consequently froze at 26
+> material writes while total firing-helper calls reached 65. This is an
+> admission failure, not evidence against the retained wrist/gun algebra.
+>
+> The source cause is the packet hook's requirement that the latest independent
+> VR snapshot serial equal the latest observer publication serial. Halo 2's
+> existing Anniversary stereo implementation already proves those threads
+> frequently consume different serials and carries the observer's exact sample
+> inside its publication for that reason. C-H2-59 disables C-H2-58 in isolated
+> commit `5b497c3`. C-H2-60 retains its transform and firing work, but publishes
+> right aim, raw left controller and two-hand state inside that same immutable
+> observer publication and consumes it directly. It also reports each packet
+> admission gate and last/maximum physical wrist displacement. Offline Release
+> build and core tests pass; headset acceptance remains required and C-H2-55 is
+> still the accepted baseline.
+
 > **UNACCEPTED HALO 2 C-H2-58 STABLE TWO-HAND PACKET REPLACEMENT IN SOURCE -
 > 2026-08-23.** C-H2-58 does not restore either rejected hand path. Both old
 > switches remain false; one new switch enables a replacement at the proven

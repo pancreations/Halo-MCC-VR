@@ -190,6 +190,16 @@ namespace
     std::atomic<uint64_t> g_packetBuilderStock{0};
     std::atomic<uint64_t> g_packetBuilderGunNodes{0};
     std::atomic<uint64_t> g_packetBuilderLastAppliedMs{0};
+    std::atomic<uint64_t> g_packetBuilderEligible{0};
+    std::atomic<uint64_t> g_packetBuilderWeaponStateMiss{0};
+    std::atomic<uint64_t> g_packetBuilderPublicationMiss{0};
+    std::atomic<uint64_t> g_packetBuilderControllerSnapshotMiss{0};
+    std::atomic<uint64_t> g_packetBuilderCarrierMiss{0};
+    std::atomic<uint64_t> g_packetBuilderOwnershipMiss{0};
+    std::atomic<uint32_t> g_packetBuilderRightDeltaMillimeters{0};
+    std::atomic<uint32_t> g_packetBuilderLeftDeltaMillimeters{0};
+    std::atomic<uint32_t> g_packetBuilderMaxRightDeltaMillimeters{0};
+    std::atomic<uint32_t> g_packetBuilderMaxLeftDeltaMillimeters{0};
 
     struct Halo2FinalPaletteContext
     {
@@ -278,6 +288,20 @@ namespace
                         sample.eyes[eye].absoluteOrientation,
                         sizeof(snapshot.eyeOrientation[eye]));
         }
+        snapshot.rightAimValid = sample.rightAimValid;
+        std::memcpy(snapshot.rightAimOrientation,
+                    sample.rightAimOrientation,
+                    sizeof(snapshot.rightAimOrientation));
+        std::memcpy(snapshot.rightAimPosition, sample.rightAimPosition,
+                    sizeof(snapshot.rightAimPosition));
+        snapshot.twoHandAimActive = sample.twoHandAimActive;
+        snapshot.leftControllerValid = sample.leftControllerValid;
+        std::memcpy(snapshot.leftControllerOrientation,
+                    sample.leftControllerOrientation,
+                    sizeof(snapshot.leftControllerOrientation));
+        std::memcpy(snapshot.leftControllerPosition,
+                    sample.leftControllerPosition,
+                    sizeof(snapshot.leftControllerPosition));
         g_publicationVersion.fetch_add(1, std::memory_order_acq_rel);
         // The ring keeps one entry per DISTINCT tracked camera (the observer
         // runs many times per frame with the same sample).
@@ -715,16 +739,14 @@ namespace
 
     bool BuildStableFirstPersonCarriers(
         const Halo2ObserverPosePublication& publication,
-        const Halo2SynchronousVrRenderSnapshot& tracking,
+        uint32_t generation,
         Halo2CameraBasis& rightCarrier,
         Halo2CameraBasis& leftCarrier) noexcept
     {
-        if (!tracking.preparedSerial ||
-            publication.serial != tracking.preparedSerial ||
-            publication.generation != tracking.generation ||
-            !tracking.headPoseValid || !tracking.rightAimValid ||
-            !tracking.leftControllerValid)
+        if (!Halo2ObserverControllerSnapshotUsable(
+                publication, generation))
             return false;
+        const Halo2ObserverPoseSnapshot& tracking = publication.snapshot;
         float leftOrientation[4]{};
         if (!Halo2BuildMirroredLeftAimOrientation(
                 tracking.leftControllerOrientation,
@@ -993,26 +1015,47 @@ namespace
                 Halo2CameraBasis rightCarrier{};
                 Halo2CameraBasis leftCarrier{};
                 Halo2ObserverPosePublication publication{};
-                Halo2SynchronousVrRenderSnapshot tracking{};
                 Halo2FinalPacketOwnershipResult result{};
-                if ((flags & 0x07u) == 0x07u &&
+                const uint32_t generation =
+                    g_generation.load(std::memory_order_acquire);
+                g_packetBuilderEligible.fetch_add(1, std::memory_order_relaxed);
+                const bool weaponStateReady =
+                    (flags & 0x07u) == 0x07u &&
                     weaponObject != UINT32_MAX &&
                     ResolveArmBinding(graphId, animationCount, binding) &&
-                    Halo2ValidateCameraBasis(renderCamera) &&
-                    VR_Halo2GetSynchronousRenderSnapshot(tracking) &&
-                    Halo2Observer6Dof_ReadPublishedPose(publication) &&
-                    publication.generation ==
-                        g_generation.load(std::memory_order_acquire) &&
-                    BuildStableFirstPersonCarriers(
-                        publication, tracking, rightCarrier, leftCarrier) &&
-                    Halo2OwnFinalFirstPersonPackets(
-                        handsMatrices, handsCount, handsRemap, binding,
-                        gunMatrices, gunCount, renderCamera, rightCarrier,
-                        leftCarrier, tracking.twoHandAimActive,
-                        std::clamp(g_config.gun_scale, 0.3f, 3.0f),
-                        std::clamp(g_config.left_hand_scale, 0.3f, 3.0f),
-                        Game_GetWorldScale(),
-                        result))
+                    Halo2ValidateCameraBasis(renderCamera);
+                if (!weaponStateReady)
+                {
+                    g_packetBuilderWeaponStateMiss.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                else if (!Halo2Observer6Dof_ReadPublishedPose(publication))
+                {
+                    g_packetBuilderPublicationMiss.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                else if (!Halo2ObserverControllerSnapshotUsable(
+                             publication, generation))
+                {
+                    g_packetBuilderControllerSnapshotMiss.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                else if (!BuildStableFirstPersonCarriers(
+                             publication, generation,
+                             rightCarrier, leftCarrier))
+                {
+                    g_packetBuilderCarrierMiss.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                else if (Halo2OwnFinalFirstPersonPackets(
+                             handsMatrices, handsCount, handsRemap, binding,
+                             gunMatrices, gunCount, renderCamera, rightCarrier,
+                             leftCarrier,
+                             publication.snapshot.twoHandAimActive,
+                             std::clamp(g_config.gun_scale, 0.3f, 3.0f),
+                             std::clamp(
+                                 g_config.left_hand_scale, 0.3f, 3.0f),
+                             Game_GetWorldScale(), result))
                 {
                     g_finalPaletteCalls.fetch_add(1, std::memory_order_relaxed);
                     g_finalPaletteMovedRight.fetch_add(
@@ -1025,7 +1068,44 @@ namespace
                         result.gunNodes, std::memory_order_relaxed);
                     g_packetBuilderLastAppliedMs.store(
                         GetTickCount64(), std::memory_order_release);
+                    const float worldScale = Game_GetWorldScale();
+                    const auto millimeters = [worldScale](float world) {
+                        if (!std::isfinite(world) ||
+                            !std::isfinite(worldScale) || worldScale <= 0.0f)
+                            return uint32_t{0};
+                        return static_cast<uint32_t>(std::min(
+                            world / worldScale * 1000.0f, 100000.0f));
+                    };
+                    const uint32_t rightMm =
+                        millimeters(result.rightWristDeltaWorld);
+                    const uint32_t leftMm =
+                        millimeters(result.leftWristDeltaWorld);
+                    g_packetBuilderRightDeltaMillimeters.store(
+                        rightMm, std::memory_order_relaxed);
+                    g_packetBuilderLeftDeltaMillimeters.store(
+                        leftMm, std::memory_order_relaxed);
+                    auto publishMaximum = [](std::atomic<uint32_t>& destination,
+                                             uint32_t value) {
+                        uint32_t previous = destination.load(
+                            std::memory_order_relaxed);
+                        while (previous < value &&
+                               !destination.compare_exchange_weak(
+                                   previous, value,
+                                   std::memory_order_relaxed,
+                                   std::memory_order_relaxed))
+                        {
+                        }
+                    };
+                    publishMaximum(
+                        g_packetBuilderMaxRightDeltaMillimeters, rightMm);
+                    publishMaximum(
+                        g_packetBuilderMaxLeftDeltaMillimeters, leftMm);
                     applied = true;
+                }
+                else
+                {
+                    g_packetBuilderOwnershipMiss.fetch_add(
+                        1, std::memory_order_relaxed);
                 }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
@@ -2287,7 +2367,7 @@ namespace
                         base + kHalo2AnimationGraphFindNodeByFlagsRva,
                         std::memory_order_release);
                 }
-                LOG("Halo 2 hand binding readers ARMED (C-H2-58): the left and right "
+                LOG("Halo 2 hand binding readers ARMED (C-H2-60): the left and right "
                     "wrist descendants are identified from the "
                     "engine's own animation-graph model flags (node +0x%X, "
                     "left-hand bit 0x%02X, right-hand bit 0x%02X, stride "
@@ -2359,7 +2439,7 @@ namespace
             {
                 g_packetBuilderTarget = packetTarget;
                 g_finalPaletteReady.store(true, std::memory_order_release);
-                LOG("Halo 2 final-packet hands ARMED (C-H2-58): H2EK packet "
+                LOG("Halo 2 final-packet hands ARMED (C-H2-60): H2EK packet "
                     "builder +0x%X; one prepared-frame snapshot maps physical "
                     "wrists from the stable body/recenter frame, two-hand mode "
                     "locks the authored support grip, subtree scale is affine "
@@ -2385,7 +2465,7 @@ namespace
         // H2EK-matched output-user iterator and player-update identities that
         // prove the local-player guard's two global pointers and datum layout.
         //
-        // C-H2-58 installs it only with the stable final-packet transaction,
+        // C-H2-60 installs it only with the stable final-packet transaction,
         // because "the bullets follow the crosshair" is exactly what this
         // detour delivers. It is still the ONLY thing the
         // controller is allowed to steer besides the visible mesh: no XInput,
@@ -2470,7 +2550,7 @@ namespace
                 }
                 else
                 {
-                    LOG("Halo 2 direct weapon aim installed (C-H2-58) at firing helper "
+                    LOG("Halo 2 direct weapon aim installed (C-H2-60) at firing helper "
                         "+0x%X with output-user-0 unit guard: controller "
                         "replaces only the local player's shot direction from "
                         "the stable presented-crosshair ray and records actual "
@@ -2552,11 +2632,14 @@ namespace
             "%llu failed, %llu interpolation resets bypassed; left hand: "
             "%llu on its own controller, %llu stock fallback, %llu binding "
             "rebuilds, last binding reason %d; final packet: %llu builder calls, "
-            "%llu owned, %llu stock, %llu gun nodes; palette result: %llu changed, "
-             "%llu right, %llu left, %llu collapsed, %llu refused; direct shot "
-             "aim: %llu calls, %llu applied, %llu stock, %llu non-owned, "
-             "%llu no-owned-unit, %llu exceptions, %llu materially changed, "
-             "max deflection %.3f deg",
+            "%llu owned, %llu stock, %llu gun nodes; packet gates: %llu eligible, "
+            "%llu weapon-state miss, %llu publication miss, %llu controller "
+            "snapshot miss, %llu carrier miss, %llu ownership miss; wrist motion "
+            "right %u/%u mm last/max, left %u/%u mm last/max; palette result: "
+            "%llu changed, %llu right, %llu left, %llu collapsed, %llu refused; "
+            "direct shot aim: %llu calls, %llu applied, %llu stock, %llu "
+            "non-owned, %llu no-owned-unit, %llu exceptions, %llu materially "
+            "changed, max deflection %.3f deg",
             static_cast<unsigned long long>(
                 g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(applied),
@@ -2643,6 +2726,27 @@ namespace
                 g_packetBuilderStock.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_packetBuilderGunNodes.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderEligible.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderWeaponStateMiss.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderPublicationMiss.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderControllerSnapshotMiss.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderCarrierMiss.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderOwnershipMiss.load(std::memory_order_relaxed)),
+            g_packetBuilderRightDeltaMillimeters.load(
+                std::memory_order_relaxed),
+            g_packetBuilderMaxRightDeltaMillimeters.load(
+                std::memory_order_relaxed),
+            g_packetBuilderLeftDeltaMillimeters.load(
+                std::memory_order_relaxed),
+            g_packetBuilderMaxLeftDeltaMillimeters.load(
+                std::memory_order_relaxed),
             static_cast<unsigned long long>(
                 g_finalPaletteCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(

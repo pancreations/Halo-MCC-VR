@@ -125,7 +125,7 @@ try {
             'kHalo2FinalPaletteControllerOwnershipEnabled\s*=\s*false' -or
         $halo2LogicSource -notmatch
             'kHalo2StableFinalPacketControllerOwnershipEnabled\s*=\s*true') {
-        throw 'C-H2-58 gate failed: rejected hand paths must stay off and only the stable final-packet replacement may be enabled.'
+        throw 'C-H2-60 gate failed: rejected hand paths must stay off and only the observer-published final-packet replacement may be enabled.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -194,7 +194,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'halo2-c58-stable-two-hand-packets',
+        'halo2-c60-observer-published-controller-packets',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -308,12 +308,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-58'
+            id = 'C-H2-60'
             status = 'READY_FOR_BUILD_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'h2ek-final-packet-stable-recenter-controller-wrists-rigid-two-hand-support-affine-mesh-scale-right-gun-and-presented-crosshair-shots-plus-c55-rehook'
+                'h2ek-final-packet-observer-published-controller-snapshot-stable-wrists-rigid-two-hand-support-affine-scale-right-gun-presented-crosshair-shots-plus-c55-rehook'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -560,7 +560,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-58 keeps the headset-accepted C-H2-55 level rehook and leaves both rejected Halo 2 hand transactions disabled. Its replacement consumes one immutable prepared-frame aim snapshot, maps both controllers from the observer recenter point onto the pre-HMD body camera, targets physical wrist translations while retaining only authored root-to-wrist rotation, locks the visible support hand to the authored weapon grip during two-hand aim, and applies gun_scale and left_hand_scale as affine subtree transforms about their wrists. The separate gun receives the right-wrist delta once. The H2EK firing helper converges the stock muzzle on the same stable presented-crosshair ray and logs material angular deflection. Camera, stereo, OpenXR, XInput and physical right-stick turning are unchanged. This candidate is offline-verified and unaccepted.'
+        note = 'C-H2-60 preserves C-H2-58 transform work but removes its invalid cross-thread latest-serial equality. The C-H2-58 Steam log proved ownership stopped permanently after a brief gameplay transition: packets kept building while owned packets froze at 689 and shot ownership then expired. Halo 2 Anniversary already establishes that its scene/packet thread frequently consumes an observer publication after a newer VR serial exists. C-H2-60 stores right aim, raw left controller and two-hand state inside the same immutable observer publication as the stock body camera and recenter reference, and the packet hook consumes that publication directly. It also logs every admission gate plus last/maximum physical wrist displacement. Stable physical wrist targeting, rigid authored two-hand support, affine subtree scaling, separate right-gun carry and presented-crosshair shot direction are retained. Camera, stereo, OpenXR, XInput and right-stick turning are unchanged. This candidate is offline-verified and unaccepted.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

@@ -3375,3 +3375,41 @@ Offline verification before packaging: Release DLL compilation PASS,
 affine wrist/gun placement, rigid two-hand support lock, invalid-remap
 write isolation), Reach consistency gate PASS, and diff check PASS. Headset
 acceptance remains required and this entry does not advance the accepted build.
+
+## E-H2-52 (C-H2-58 rejection / C-H2-59 / C-H2-60): packet ownership must consume the observer publication, not the independently latest VR serial - 2026-08-23
+
+The player's exact C-H2-58 Steam run is preserved at
+`out/test-runs/7ffcf2b-halo2-c58-hooks-admitted-then-serial-gated-20260823-1916/HaloMCCVR.log`,
+SHA-256 `A213F65FB88759C415996BED283C42F1BF68B4D75219A67A6EF793CAAF20E610`.
+It identifies source `7ffcf2b44ea42b5543d7b2191ec2ca984e676a2e`, Steam,
+SteamVR/OpenXR 2.17.7, an Oculus headset at 120 Hz. All C-H2-58 hooks installed.
+
+At 19:16:21 the packet boundary reported 2,203 calls / 507 owned and all 13
+firing-helper calls materially changed direction. A brief
+gameplay/loading/gameplay transition occurred at 19:16:23. By 19:16:26 packet
+ownership reached 689 and shot ownership 26. From then until exit the packet
+builder continued from 3,955 to 6,998 calls, but ownership remained exactly 689;
+the firing helper continued from 48 to 65 calls, but ownership remained exactly
+26. No binding, matrix, remap or exception refusal occurred. Thus the feature's
+recent-packet witness expired and both visible ownership and shot ownership fell
+stock while their hooks continued executing.
+
+The source has one ordering-dependent gate that exactly explains the freeze:
+`BuildStableFirstPersonCarriers` required the separately read latest
+`Halo2SynchronousVrRenderSnapshot.preparedSerial` to equal the latest
+`Halo2ObserverPosePublication.serial`. E-H2-21 already proves Anniversary's
+scene thread frequently consumes an observer publication after a newer VR
+serial exists; its accepted eye path embeds the exact head/eye sample in each
+observer publication rather than imposing latest/latest equality. C-H2-58
+violated that established title-local threading contract.
+
+C-H2-59 disables C-H2-58 without deleting it. C-H2-60 extends the existing
+observer publication snapshot with right aim, raw left controller and two-hand
+state copied from the same prepared sample used to construct `stock`, `tracked`
+and the recenter reference. The packet hook consumes that single publication
+and no longer reads or compares an independent latest VR serial. Generation,
+pose validity, controller validity, graph/remap, matrix, range and full staged
+write guards remain. Runtime telemetry now separates weapon-state, publication,
+controller-snapshot, carrier and ownership failures and reports last/maximum
+right and left wrist displacement in millimetres. Release compilation and core
+tests pass; headset acceptance remains required.

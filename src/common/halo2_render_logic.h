@@ -1086,11 +1086,11 @@ inline constexpr bool kHalo2RejectedInterpolatorControllerOwnershipEnabled = fal
 // evidence, but arm neither one while the replacement boundary is developed.
 inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 
-// C-H2-58 is a replacement transaction, not a re-arm of either rejected
+// C-H2-60 is a replacement transaction, not a re-arm of either rejected
 // controller path above. It consumes one exact prepared-frame controller
 // snapshot, builds physical targets from the observer's pre-HMD stock origin
 // and recenter reference, and applies ownership only to the final packets.
-inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = false;
+inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = true;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
@@ -1330,6 +1330,18 @@ struct Halo2ObserverPoseSnapshot
     float eyePosition[2][3]{};
     float eyeOrientation[2][4]{{0.0f, 0.0f, 0.0f, 1.0f},
                                {0.0f, 0.0f, 0.0f, 1.0f}};
+    // C-H2-60: controller data belongs to the observer publication that was
+    // built from the same prepared sample. Anniversary's scene/packet thread
+    // frequently consumes that publication after a newer VR serial exists, so
+    // consulting only the latest VR snapshot creates an ordering-dependent
+    // permanent stock fallback after transitions.
+    bool rightAimValid = false;
+    float rightAimOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float rightAimPosition[3]{};
+    bool twoHandAimActive = false;
+    bool leftControllerValid = false;
+    float leftControllerOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    float leftControllerPosition[3]{};
 };
 
 struct Halo2ObserverPosePublication
@@ -1347,6 +1359,19 @@ struct Halo2ObserverPosePublication
     float referencePosition[3]{};
     Halo2ObserverPoseSnapshot snapshot{};
 };
+
+inline bool Halo2ObserverControllerSnapshotUsable(
+    const Halo2ObserverPosePublication& publication,
+    uint32_t generation) noexcept
+{
+    // Deliberately no comparison with a separately sampled/latest VR serial.
+    // The controller and stock body camera are already one immutable observer
+    // publication; that is the coherence boundary Halo 2 actually consumes.
+    return generation != 0 && publication.generation == generation &&
+        publication.serial != 0 && publication.snapshot.valid &&
+        publication.snapshot.rightAimValid &&
+        publication.snapshot.leftControllerValid;
+}
 
 inline bool Halo2CameraBasisMatches(
     const Halo2CameraBasis& left, const Halo2CameraBasis& right) noexcept
@@ -2854,7 +2879,7 @@ inline bool Halo2BuildFinalPaletteWristDelta(
     return true;
 }
 
-// C-H2-58 transform algebra for the final 0x34-byte packet matrices. Scale is
+// C-H2-60 transform algebra for the final 0x34-byte packet matrices. Scale is
 // part of the affine wrist delta, not a per-node afterthought: this keeps
 // gun_scale / left_hand_scale centred on the owned wrist and scales every
 // child translation with the mesh instead of leaving the weapon's nodes behind.
@@ -3221,6 +3246,8 @@ struct Halo2FinalPacketOwnershipResult
     uint32_t leftNodes = 0;
     uint32_t collapsedNodes = 0;
     uint32_t gunNodes = 0;
+    float rightWristDeltaWorld = 0.0f;
+    float leftWristDeltaWorld = 0.0f;
 };
 
 // E-H2-45: transform the already root-composed render packets, using the
@@ -3307,6 +3334,20 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     {
         return false;
     }
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float rightDelta =
+            desiredRight.translation[axis] - stockRight.translation[axis];
+        const float leftDelta =
+            desiredLeft.translation[axis] - stockLeft.translation[axis];
+        out.rightWristDeltaWorld += rightDelta * rightDelta;
+        out.leftWristDeltaWorld += leftDelta * leftDelta;
+    }
+    out.rightWristDeltaWorld = std::sqrt(out.rightWristDeltaWorld);
+    out.leftWristDeltaWorld = std::sqrt(out.leftWristDeltaWorld);
+    if (!std::isfinite(out.rightWristDeltaWorld) ||
+        !std::isfinite(out.leftWristDeltaWorld))
+        return false;
     Halo2FirstPersonTransform rightDelta{}, leftDelta{};
     if (!Halo2BuildFirstPersonWorldDelta(
             desiredRight, stockRight, rightDelta) ||
