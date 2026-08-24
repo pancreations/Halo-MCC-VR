@@ -1090,7 +1090,7 @@ inline constexpr bool kHalo2FinalPaletteControllerOwnershipEnabled = false;
 // controller path above. It consumes one exact prepared-frame controller
 // snapshot, builds physical targets from the observer's pre-HMD stock origin
 // and recenter reference, and applies ownership only to the final packets.
-inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = true;
+inline constexpr bool kHalo2StableFinalPacketControllerOwnershipEnabled = false;
 
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
