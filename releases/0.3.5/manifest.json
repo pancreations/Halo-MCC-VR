@@ -4,6 +4,7 @@
   "release_url": "https://github.com/pancreations/Halo-MCC-VR/releases/tag/MCC_VR_ALPHA_0.3.5",
   "prerelease": true,
   "supersedes": "MCC_VR_ALPHA_0.3.3",
+  "tag_commit": "7daf5d0ff0222fd32fcb4b59197f9534e3cbc383",
   "runtime_source_commit": "1939eabc21c1607ef93ccaec97de004271d70091",
   "handoff_documentation_commit": "9395f21e7fb655ea24ee95437930c2b0b2ddf095",
   "candidate_package": "out/candidates/1939eab-runtime-c1-supported-title-level-handoff-20260824-130722605Z",

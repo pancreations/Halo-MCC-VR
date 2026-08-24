@@ -1,5 +1,19 @@
 # Current state
 
+> **CURRENT PUBLISHED PRE-RELEASE: MCC VR ALPHA 0.3.5 - 2026-08-24.**
+> GitHub tag `MCC_VR_ALPHA_0.3.5` points to
+> `7daf5d0ff0222fd32fcb4b59197f9534e3cbc383` and publishes the accepted
+> cumulative runtime source `1939eabc21c1607ef93ccaec97de004271d70091`.
+> The published `HaloMCCVR.dll` is the exact accepted, unrecompiled artifact,
+> SHA-256 `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
+> The uploaded `MCC_VR_ALPHA_0.3.5.zip` is 1,245,953 bytes, SHA-256
+> `BAD8D05852A22C8F00A378A0F1B02EB5A290E8FB1A4FCA7D90A4AEB012CA6B5D`;
+> a post-publication download matched that hash. GitHub reports the release as
+> a non-draft pre-release. It supports Halo 3, ODST, Reach, Halo 4 and Halo 2
+> Anniversary on both Steam and Microsoft Store / Xbox app. Halo CE remains
+> stock. Historical statements below saying 0.3.3 is still the published
+> release are retained as dated evidence and are superseded by this block.
+
 > **CURRENT ACCEPTED CUMULATIVE DEVELOPMENT BASELINE: C-RUNTIME-1
 > SUPPORTED-TITLE / CONSECUTIVE-LEVEL HANDOFF - 2026-08-24.** C-H2-71's
 > culling behavior and C-H2-72's Halo 4
