@@ -3604,3 +3604,29 @@ refusals, so this is not evidence of a renderer callback failure. It rejects
 the C-H2-66 thumb-ray pi rotation and rejects claiming one undifferentiated
 Chief/Elite presentation from aggregate packet ownership. C-H2-67 disables the
 C-H2-66 selection and restores the prior safety path before further work.
+
+## E-H2-59 (C-H2-68): rig marker solve and Arbiter packet admission - 2026-08-24
+
+The user clarified that Arbiter was never hooked: his stock arms remained at
+the face, while Chief alone showed the attempted controller ownership. The old
+context gate required `(weapon_data[0] & 7) == 7` before resolving a graph or
+examining a final packet. H2EK proves the outer builder call, graph/count,
+authored remap, hands packet object (`unit_object`) and gun packet object
+(`weapon_data+0x04`) as the final packet contract; it does not establish that
+three-bit byte predicate as character-independent. C-H2-68 therefore removes
+only that prefilter. All of the exact graph, remap, object, count, finite-value,
+controller-publication and staged transaction gates remain. New per-rig context
+and owned-packet counters record Chief and Arbiter separately.
+
+Official H2EK render models provide the rig-specific semantic hand frames.
+Master Chief's `left_hand` is on node 5 with translation
+`(0.022750,-0.008561,0.000398)` and quaternion
+`(0.016078,0.073613,0.085080,-0.993521)`. Arbiter's `left_hand_elite` is on
+node 5 with translation `(0.033088,-0.009315,0.000442)` and quaternion
+`(-0.001854,0.001501,-0.001833,-0.999995)`. Their official graph anatomy also
+distinguishes five direct digit bases for Chief from four for Elite. C-H2-68
+selects by that live topology and solves `wrist * markerLocal = left controller
+mount`; it does not copy Chief's wrist frame into Arbiter or add another guessed
+pi rotation. Two-hand mode instead keeps the authored support grip rigid inside
+the gun-root delta, while the gun's proven +X barrel axis maps to the crosshair
+ray. The identical helper is consumed by Classic and Anniversary packets.

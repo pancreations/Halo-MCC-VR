@@ -192,6 +192,12 @@ namespace
     std::atomic<uint64_t> g_packetBuilderGunNodes{0};
     std::atomic<uint64_t> g_packetBuilderLastAppliedMs{0};
     std::atomic<uint64_t> g_packetBuilderEligible{0};
+    std::atomic<uint64_t> g_packetBuilderChiefContexts{0};
+    std::atomic<uint64_t> g_packetBuilderEliteContexts{0};
+    std::atomic<uint64_t> g_packetBuilderChiefApplied{0};
+    std::atomic<uint64_t> g_packetBuilderEliteApplied{0};
+    std::atomic<uint32_t> g_packetBuilderLastChiefFlags{0};
+    std::atomic<uint32_t> g_packetBuilderLastEliteFlags{0};
     std::atomic<uint64_t> g_packetBuilderWeaponStateMiss{0};
     std::atomic<uint64_t> g_packetBuilderPublicationMiss{0};
     std::atomic<uint64_t> g_packetBuilderControllerSnapshotMiss{0};
@@ -1169,8 +1175,13 @@ namespace
                 const uint32_t generation =
                     g_generation.load(std::memory_order_acquire);
                 g_packetBuilderEligible.fetch_add(1, std::memory_order_relaxed);
-                if ((flags & 0x07u) != 0x07u ||
-                    weaponObject == UINT32_MAX || !gunCount || !handsCount ||
+                // The packet builder call plus its exact unit/weapon packet
+                // identities are the ownership proof. The old 0x07 byte gate
+                // described Chief's weapon_data state, but H2EK does not make
+                // that byte a character-independent packet contract; applying
+                // it here silently excluded Arbiter before his authored graph
+                // and packets could be validated.
+                if (weaponObject == UINT32_MAX || !gunCount || !handsCount ||
                     !handsRemap ||
                     !ResolveArmBinding(graphId, animationCount, binding) ||
                     !Halo2ValidateCameraBasis(renderCamera))
@@ -1216,6 +1227,22 @@ namespace
                     context.leftScale =
                         std::clamp(g_config.left_hand_scale, 0.3f, 3.0f);
                     context.worldScale = Game_GetWorldScale();
+                    if (binding.rigKind ==
+                        Halo2FirstPersonRigKind::MasterChief)
+                    {
+                        g_packetBuilderChiefContexts.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_packetBuilderLastChiefFlags.store(
+                            flags, std::memory_order_relaxed);
+                    }
+                    else if (binding.rigKind ==
+                             Halo2FirstPersonRigKind::Elite)
+                    {
+                        g_packetBuilderEliteContexts.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_packetBuilderLastEliteFlags.store(
+                            flags, std::memory_order_relaxed);
+                    }
                     if (anniversaryConsumer)
                         g_visibleConsumerContext = context;
                 }
@@ -1365,6 +1392,17 @@ namespace
         if (((anniversaryConsumer && g_visibleConsumerContext.valid) ||
              (classicConsumer && candidate.valid)) && !applied)
             g_packetBuilderOwnershipMiss.fetch_add(1, std::memory_order_relaxed);
+        if (applied && candidate.valid)
+        {
+            if (candidate.binding.rigKind ==
+                Halo2FirstPersonRigKind::MasterChief)
+                g_packetBuilderChiefApplied.fetch_add(
+                    1, std::memory_order_relaxed);
+            else if (candidate.binding.rigKind ==
+                     Halo2FirstPersonRigKind::Elite)
+                g_packetBuilderEliteApplied.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
         if (anniversaryConsumer)
             g_visibleConsumerContext = Halo2VisibleConsumerContext{};
         (applied ? g_packetBuilderApplied : g_packetBuilderStock)
@@ -3080,7 +3118,9 @@ namespace
             "rebuilds, last binding reason %d; final packet: %llu builder calls, "
             "%llu owned, %llu stock, %llu gun nodes; packet gates: %llu eligible, "
             "%llu weapon-state miss, %llu publication miss, %llu controller "
-            "snapshot miss, %llu carrier miss, %llu ownership miss; wrist motion "
+            "snapshot miss, %llu carrier miss, %llu ownership miss; rig packets: "
+            "Chief %llu contexts/%llu owned flags 0x%02X, Arbiter %llu contexts/"
+            "%llu owned flags 0x%02X; wrist motion "
             "right %u/%u mm last/max, left %u/%u mm last/max; palette result: "
             "%llu changed, %llu right, %llu left, %llu collapsed, %llu refused; "
             "visible consumer: %llu calls, %llu hands owned, %llu guns owned; "
@@ -3186,6 +3226,16 @@ namespace
                 g_packetBuilderCarrierMiss.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_packetBuilderOwnershipMiss.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderChiefContexts.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderChiefApplied.load(std::memory_order_relaxed)),
+            g_packetBuilderLastChiefFlags.load(std::memory_order_relaxed),
+            static_cast<unsigned long long>(
+                g_packetBuilderEliteContexts.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_packetBuilderEliteApplied.load(std::memory_order_relaxed)),
+            g_packetBuilderLastEliteFlags.load(std::memory_order_relaxed),
             g_packetBuilderRightDeltaMillimeters.load(
                 std::memory_order_relaxed),
             g_packetBuilderMaxRightDeltaMillimeters.load(

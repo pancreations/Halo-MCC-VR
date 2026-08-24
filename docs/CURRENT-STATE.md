@@ -1,5 +1,27 @@
 # Current state
 
+> **UNACCEPTED HALO 2 C-H2-68 CHIEF/ARBITER MARKER ALIGNMENT IN SOURCE -
+> 2026-08-24.** C-H2-67 is the required safety revert of rejected C-H2-66;
+> C-H2-65 remains the safety baseline. C-H2-68 keeps the authored gun-root
+> barrel solve, but replaces the rejected thumb-ray flip with the official
+> first-person render-model attachment frame for the active rig. Chief solves
+> `wrist * left_hand = controller mount`; Arbiter independently solves
+> `wrist * left_hand_elite = controller mount`, including each marker's own
+> rotation and translation. The graph's authored digit-base topology selects
+> the profile (five direct bases for Chief, four for Elite); unknown shapes fail
+> only this packet transaction to stock.
+>
+> Arbiter is also admitted explicitly at the final-packet boundary. The previous
+> pre-build `(weapon_data flags & 7) == 7` check had no character-independent
+> H2EK contract and could reject Arbiter before his verified graph/remap and
+> exact unit/weapon packets were inspected. C-H2-68 removes that unsupported
+> prefilter while retaining the graph count, native hand flags, authored remap,
+> object identity, packet bounds, finite transform, controller snapshot and
+> full staged-write gates. Separate Chief/Arbiter context and ownership counters
+> now make an unhooked Arbiter path visible in the log. Classic and Anniversary
+> use the same transaction. Headset acceptance is required for both characters
+> in both renderers, followed by a Halo 3 regression result.
+
 > **HALO 2 C-H2-66 REJECTED; C-H2-67 SAFETY REVERT IN SOURCE -
 > 2026-08-24.** The exact Steam / SteamVR / Oculus / 120 Hz run is preserved at
 > `out/test-runs/161dd68-halo2-c66-left-hand-whack-arbiter-face-arms-steam-20260824-0650/HaloMCCVR.log`

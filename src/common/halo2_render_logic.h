@@ -1113,6 +1113,11 @@ inline constexpr bool kHalo2C64GenericLeftPresentationEnabled = false;
 // until the rig-specific marker solve below is enabled by a later candidate.
 inline constexpr bool kHalo2C66AuthoredAlignmentEnabled = false;
 
+// C-H2-68 replaces the rejected generic/thumb-axis turnover with Halo 2's own
+// semantic hand attachment frames. Chief and Elite author different marker
+// transforms, so the final wrist solve must select the matching rig profile.
+inline constexpr bool kHalo2C68RigMarkerAlignmentEnabled = true;
+
 // C-H2-41: the controller carrier in Halo 2's own camera frame. H2EK's
 // first_person_weapons.cpp builds absolute first-person node matrices in
 // camera-relative space; its render path supplies the camera as the assembly
@@ -2768,6 +2773,13 @@ inline constexpr uint32_t kHalo2FirstPersonPaletteCapacity = 64;
 // Which first-person nodes ride which controller. `leftSubtree` bit i means
 // node i belongs to the left wrist and its descendants; every other node keeps
 // the right-controller transform, which is where the gun already hangs.
+enum class Halo2FirstPersonRigKind : uint8_t
+{
+    Unknown = 0,
+    MasterChief,
+    Elite,
+};
+
 struct Halo2FirstPersonArmBinding
 {
     bool valid = false;
@@ -2778,6 +2790,7 @@ struct Halo2FirstPersonArmBinding
     uint64_t rightSubtree = 0;
     uint64_t leftDirectChildren = 0;
     uint64_t armAncestors = 0;
+    Halo2FirstPersonRigKind rigKind = Halo2FirstPersonRigKind::Unknown;
 };
 
 // Pure, allocation-free, and deliberately unforgiving: anything that is not the
@@ -2886,6 +2899,18 @@ inline bool Halo2BuildFirstPersonArmBinding(
             out.leftDirectChildren |= 1ull << index;
     if (!out.leftDirectChildren)
         return false;
+    uint32_t directChildCount = 0;
+    for (uint64_t children = out.leftDirectChildren; children;
+         children &= children - 1)
+        ++directChildCount;
+    // The official H2EK first-person graphs distinguish the shipped rigs by
+    // their authored left-hand anatomy: Chief has five direct digit bases;
+    // Elite has four. Unknown shapes remain bindable for the safety path but
+    // are never admitted to the optional marker-specific transaction.
+    if (directChildCount == 5)
+        out.rigKind = Halo2FirstPersonRigKind::MasterChief;
+    else if (directChildCount == 4)
+        out.rigKind = Halo2FirstPersonRigKind::Elite;
     out.armAncestors = armMask;
     return true;
 }
@@ -3246,6 +3271,99 @@ inline bool Halo2BuildAnatomicalFreeLeftTarget(
     Halo2FirstPersonTransform result = controllerTarget;
     Halo2MultiplyFirstPersonBases(
         controllerTarget.rotation, palmFlip, result.rotation);
+    if (!Halo2FirstPersonTransformValid(result)) return false;
+    desiredWrist = result;
+    return true;
+}
+
+inline bool Halo2QuaternionToFirstPersonBasis(
+    const float input[4], float output[9]) noexcept
+{
+    float quaternion[4]{};
+    if (!input || !output ||
+        !Halo2NormalizeQuaternion(input, quaternion))
+        return false;
+    const float x = quaternion[0], y = quaternion[1];
+    const float z = quaternion[2], w = quaternion[3];
+    const float rows[9] = {
+        1.0f - 2.0f * (y * y + z * z),
+        2.0f * (x * y - z * w), 2.0f * (x * z + y * w),
+        2.0f * (x * y + z * w),
+        1.0f - 2.0f * (x * x + z * z),
+        2.0f * (y * z - x * w), 2.0f * (x * z - y * w),
+        2.0f * (y * z + x * w),
+        1.0f - 2.0f * (x * x + y * y)};
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column)
+            output[column * 3 + row] = rows[row * 3 + column];
+    return true;
+}
+
+// H2EK-authored semantic mount solve:
+//
+//     desiredWrist * markerLocal = controllerMount
+//     desiredWrist = controllerMount * inverse(markerLocal)
+//
+// Chief's `left_hand` marker and Arbiter's `left_hand_elite` marker have
+// different rotations and offsets. Solving the complete marker transform seats
+// the visible palm on the physical controller without copying a wrist axis or
+// a constant flip from another title.
+inline bool Halo2BuildRigMarkerFreeLeftTarget(
+    Halo2FirstPersonRigKind rigKind,
+    const Halo2CameraBasis& leftCarrier,
+    const Halo2FirstPersonTransform& stockWrist, float leftScale,
+    Halo2FirstPersonTransform& desiredWrist) noexcept
+{
+    if (!Halo2ValidateCameraBasis(leftCarrier) ||
+        !Halo2FirstPersonTransformValid(stockWrist) ||
+        !std::isfinite(leftScale) || leftScale <= 0.0f)
+        return false;
+    const float* markerTranslation = nullptr;
+    const float* markerQuaternion = nullptr;
+    static constexpr float kChiefTranslation[3] = {
+        0.022750f, -0.008561f, 0.000398f};
+    static constexpr float kChiefQuaternion[4] = {
+        0.016078f, 0.073613f, 0.085080f, -0.993521f};
+    static constexpr float kEliteTranslation[3] = {
+        0.033088f, -0.009315f, 0.000442f};
+    static constexpr float kEliteQuaternion[4] = {
+        -0.001854f, 0.001501f, -0.001833f, -0.999995f};
+    if (rigKind == Halo2FirstPersonRigKind::MasterChief)
+    {
+        markerTranslation = kChiefTranslation;
+        markerQuaternion = kChiefQuaternion;
+    }
+    else if (rigKind == Halo2FirstPersonRigKind::Elite)
+    {
+        markerTranslation = kEliteTranslation;
+        markerQuaternion = kEliteQuaternion;
+    }
+    else
+    {
+        return false;
+    }
+    float carrierRotation[9]{}, markerRotation[9]{}, inverseMarker[9]{};
+    if (!Halo2CameraToFirstPersonBasis(leftCarrier, carrierRotation) ||
+        !Halo2QuaternionToFirstPersonBasis(
+            markerQuaternion, markerRotation))
+        return false;
+    for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < 3; ++row)
+            inverseMarker[column * 3 + row] =
+                markerRotation[row * 3 + column];
+    Halo2FirstPersonTransform result{};
+    result.scale = stockWrist.scale * leftScale;
+    Halo2MultiplyFirstPersonBases(
+        carrierRotation, inverseMarker, result.rotation);
+    for (int row = 0; row < 3; ++row)
+    {
+        float markerOffset = 0.0f;
+        for (int column = 0; column < 3; ++column)
+            markerOffset += result.rotation[column * 3 + row] *
+                markerTranslation[column];
+        result.translation[row] = leftCarrier.position[row] -
+            result.scale * markerOffset;
+    }
     if (!Halo2FirstPersonTransformValid(result)) return false;
     desiredWrist = result;
     return true;
@@ -3729,7 +3847,27 @@ inline bool Halo2OwnFinalFirstPersonPackets(
         }
     }
     Halo2FirstPersonTransform rightDelta{};
-    if (!kHalo2C66AuthoredAlignmentEnabled)
+    if (kHalo2C68RigMarkerAlignmentEnabled)
+    {
+        if (!Halo2BuildAuthoredBarrelDelta(
+                stockRight, stockGunRoot, rightCarrier, rightScale,
+                rightDelta, desiredRight))
+            return false;
+        if (twoHandAimActive)
+        {
+            if (!Halo2ComposeFirstPersonTransforms(
+                    rightDelta, stockLeft, desiredLeft))
+                return false;
+            desiredLeft.scale = stockLeft.scale * leftScale;
+        }
+        else if (!Halo2BuildRigMarkerFreeLeftTarget(
+                     binding.rigKind, leftCarrier, stockLeft, leftScale,
+                     desiredLeft))
+        {
+            return false;
+        }
+    }
+    else if (!kHalo2C66AuthoredAlignmentEnabled)
     {
         if (!Halo2BuildControllerRerootedWristTarget(
                 rightCarrier, authoredRoot, stockRight, rightScale,
