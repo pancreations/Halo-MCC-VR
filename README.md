@@ -17,7 +17,7 @@ mod in matchmaking.
 | Halo: Reach | Stereo rendering, 6DOF head tracking, motion controls, hands and weapons, HUD, cutscenes, and first-person vehicles |
 | Halo 4 | Stereo rendering, 6DOF head tracking, motion controls, floating hands and weapons, HUD, cutscenes, and haptics |
 | Halo 2 Anniversary | Anniversary and Classic stereo rendering, 6DOF head tracking, motion controls, hands and weapons, and haptics |
-| Halo: Combat Evolved Anniversary | Not supported; remains in the normal flat-screen mode |
+| Halo: Combat Evolved Anniversary | Not included in Alpha 0.3.5; planned for a later release |
 
 ## Major features
 
@@ -117,7 +117,7 @@ saved separately.
 
 ## Known limitations
 
-- Halo CE is not supported.
+- Halo CE is not included yet and will be added in a later release.
 - Halo 2 Anniversary does not yet have a VR HUD.
 - Halo 4 uses floating hands rather than full arm IK.
 - Reach passenger seats do not draw floating hands, although aiming and firing
