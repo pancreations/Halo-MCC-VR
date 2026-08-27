@@ -147,6 +147,8 @@ try {
         (Join-Path $repoRoot 'src\common\halo2_hud_shader_logic.h'))
     $d3dSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
+    $vrSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\vr.cpp'))
     if ($halo2HudShaderSource -notmatch
             'kCrosshairHash\s*=\s*0x0a9b60d8f40268f6ULL' -or
         $halo2HudShaderSource -notmatch
@@ -155,7 +157,7 @@ try {
             'MigotoFnv1' -or
         $d3dSource -notmatch 'Halo2CreatePixelShaderHook' -or
         $d3dSource -notmatch 'Halo2NativeHud_GetRasterLayout' -or
-        $d3dSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
+        $vrSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
         $halo2StereoSource -notmatch
             'VR_PrepareAuthoredReticleResources' -or
         $halo2StereoSource -match '&NativeHudAnchorBasisDetour' -or
