@@ -1,0 +1,66 @@
+HaloMCCVR Stage 3N static audit
+================================
+
+Purpose: Halo 2 Classic-only visual barrel alignment calibration.
+Base: exact Stage 3M all-title gun-stock calibration DLL.
+Base SHA-256: e56e29524a2c4e778536a437b7c00b9505ea58e3e468eb148c24f60598c9fbf9
+Stage 3N SHA-256: 9646afa98cacab7b688aff10ac93fd529ba084ebb7f81be79cc2a1f1d308ed6b
+Stage 3N size: 2883584 bytes
+
+New controls:
+  h2_classic_gun_yaw_deg   -30.00 .. +30.00, default 0.00
+  h2_classic_gun_pitch_deg -30.00 .. +30.00, default 0.00
+The wrapper runs only when packet-builder publishToRenderer == 0 (Classic).
+Anniversary publishToRenderer != 0 returns the original Stage 3M carrier unchanged.
+The wrapper changes rightCarrier.forward/up only; rightCarrier.position is never written.
+The independent H2 native-aim call at RVA 0x9781D remains a direct call to the original
+BuildStableFirstPersonCarriers RVA 0x92DD0, so shot/reticle aim bypasses Stage 3N.
+
+Determinism:
+  3 independently generated DLLs compared byte-for-byte: PASS
+
+Preservation checks:
+  .h2sf full raw bytes: PASS
+  .s3hc full raw bytes: PASS
+  .s3hd Stage3M prefix through 0xF0: PASS
+  .s3ic Stage3M original 0x600-byte raw body: PASS
+  H2 Classic cleanup pin call #1 at RVA 0x90AC4: PASS
+  H2 Classic cleanup pin call #2 at RVA 0x90CE2: PASS
+  Stage3M H2 right/up visual translation hook at RVA 0x92F06: PASS
+  Stage3M H3/ODST visual translation hook at RVA 0x40A52: PASS
+  Stage3M Reach visual translation hook at RVA 0x6B321: PASS
+  Stage3M H4 visual translation hook at RVA 0x51289: PASS
+  Stage3L H4 rollback span #1 at RVA 0x48086: PASS
+  Stage3L H4 rollback span #2 at RVA 0x48110: PASS
+  Stage3L H4 rollback span #3 at RVA 0x5360B: PASS
+  Stage3L H4 rollback span #4 at RVA 0x53D41: PASS
+  Stage3L H4 rollback span #5 at RVA 0x53E37: PASS
+
+Intentional executable redirects:
+  RVA 0x5443: config parser chain
+  RVA 0x71EC: config save chain
+  RVA 0x3585E: F1 menu chain
+  RVA 0x95B16: H2 packet-builder visible carrier only
+No other pre-existing executable hook is intentionally redirected.
+
+Direct-call ownership proof:
+  Stage3M direct calls to BuildStableFirstPersonCarriers 0x92DD0: 0x95B16, 0x9781D
+  Stage3N direct calls to BuildStableFirstPersonCarriers 0x92DD0: 0x9781D
+  Expected: Stage3M = 0x95B16 + 0x9781D; Stage3N = 0x9781D only;
+  Stage3N 0x95B16 instead calls the Classic-only wrapper, which itself first calls 0x92DD0.
+
+Math audit:
+  tan approximation = x + x^3/3 + 2*x^5/15, x radians, clamped input +/-30 deg.
+  +10 deg effective 9.99999 deg, angular error -0.00001 deg
+  +13 deg effective 12.99991 deg, angular error -0.00009 deg
+  +20 deg effective 19.99819 deg, angular error -0.00181 deg
+  +30 deg effective 29.97184 deg, angular error -0.02816 deg
+  Rotation construction preserves an orthonormal forward/up frame after normalization.
+  At exact 0.00/0.00 the wrapper exits before any carrier write.
+
+PE geometry:
+  .s3hd: VA 0x2F0000, virtual 0x1E0, raw 0x200
+  .s3ic: VA 0x2F1000, virtual 0xA87, raw 0xC00
+  No new PE section header added; Stage3N reuses Stage3M reserved .s3hd tail and grows .s3ic.
+
+Headset acceptance: NOT YET RUN. This is a test candidate.

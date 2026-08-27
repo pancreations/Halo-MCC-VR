@@ -59,18 +59,16 @@ try {
         throw 'Could not resolve the candidate source commit.'
     }
 
-    $acceptedSources = [ordered]@{
-        'cumulative Halo 3/ODST/Reach' =
-            'a5524d3fe58e4ed5507c27429ccca52a3d4fdf7d'
-        'accepted Halo 4 C-H4-43' =
-            'dd9946595511d65c9859b536e2727201c107da45'
-    }
-    foreach ($acceptedLine in $acceptedSources.GetEnumerator()) {
-        & git -C $repoRoot merge-base --is-ancestor `
-            $acceptedLine.Value $commit
-        if ($LASTEXITCODE -ne 0) {
-            throw "Refusing to package: HEAD does not descend from $($acceptedLine.Name) source $($acceptedLine.Value)."
-        }
+    # This development repository was reconstructed from the complete C50
+    # source ZIP, so the older upstream commit objects named in its evidence
+    # documents are deliberately absent from the local Git object database.
+    # Pin the immutable imported snapshot that contains those cumulative
+    # sources; all behavior-specific gates below still validate the live tree.
+    $importedC50Baseline =
+        'ac6b0a9bcfca8f09f06e32013aed2c64d9b36ae1'
+    & git -C $repoRoot merge-base --is-ancestor $importedC50Baseline $commit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Refusing to package: HEAD does not descend from the imported C50 source snapshot $importedC50Baseline."
     }
 
     # C-H2-55 shared loader-lifecycle and same-generation rehook gate. Game DLL mappings are identities,
@@ -145,6 +143,34 @@ try {
             'kHalo2C64GenericLeftPresentationEnabled\s*=\s*false') {
         throw 'C-H2-65 gate failed: the rejected C-H2-64 generic alignment is not disabled.'
     }
+    $halo2StereoSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
+    $halo2HudLogicSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo2_hud_logic.h'))
+    $halo2HudShaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo2_hud_shader_logic.h'))
+    $d3dSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
+    if ($halo2HudShaderSource -notmatch
+            'kCrosshairHash\s*=\s*0x0a9b60d8f40268f6ULL' -or
+        $halo2HudShaderSource -notmatch
+            'kGameplayHudHashes' -or
+        $halo2HudShaderSource -notmatch
+            'MigotoFnv1' -or
+        $d3dSource -notmatch 'Halo2CreatePixelShaderHook' -or
+        $d3dSource -notmatch 'Halo2NativeHud_GetRasterLayout' -or
+        $d3dSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
+        $halo2StereoSource -notmatch
+            'VR_PrepareAuthoredReticleResources' -or
+        $halo2StereoSource -match '&NativeHudAnchorBasisDetour' -or
+        $halo2StereoSource -notmatch
+            'Halo2NativeHud_DrawPlayer\s*\(' -or
+        $coreTestsSource -notmatch
+            'Halo 2 field-proven HUD/crosshair shader identities' -or
+        $coreTestsSource -notmatch
+            'Halo 2 HUD size/aspect/vertical sliders materially alter') {
+        throw 'C-H2-77 gate failed: the proven shader identities, D3D raster transform, native-crosshair capture, shared replay, or zero-callback anchor rejection is missing.'
+    }
 
     Invoke-Tool { & cmake --preset $packagePreset }
     if ($LASTEXITCODE -ne 0) {
@@ -212,7 +238,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'runtime-c1-supported-title-level-handoff',
+        'c-h2-77-stage3e-proven-hud-native-crosshair',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -244,7 +270,7 @@ try {
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 25
+        schema_version = 26
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -326,12 +352,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-65'
-            status = 'READY_FOR_BUILD_UNACCEPTED'
+            id = 'C-H2-77'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'c63-both-renderers-with-rejected-c64-generic-alignment-disabled'
+                'proven-hud-pixel-shader-raster-transform-plus-native-crosshair-capture-shared-both-renderers'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -499,7 +525,21 @@ try {
                 'non-owning-exact-base-validation-no-game-dll-refcount-increments'
             physical_hook_teardown_policy =
                 'retire-at-level-liveness-boundary-while-title-mapping-is-current'
-            hud = $false
+            hud = $true
+            hud_layout = 'exact-field-proven-pixel-shader-viewport-scissor-affine'
+            native_chud_draw_rva = '0x007FFD70'
+            hud_shader_hash_contract = '3dmigoto-unseeded-fnv1'
+            hud_gameplay_shader_count = 15
+            hud_controls = @(
+                'hud_size', 'hud_aspect', 'hud_vertical_offset')
+            hud_crosshair_shader_hash = '0x0a9b60d8f40268f6'
+            native_crosshair = $true
+            hud_crosshair_layout = 'native-authored-controller-aim-quad'
+            native_crosshair_fallback = 'procedural-until-first-current-generation-capture'
+            hud_curvature = $false
+            hud_shared_across_renderer_switch = $true
+            hud_failure_policy =
+                'unknown-or-unavailable-shader-draws-stock-procedural-crosshair-fallback-stereo-remains-armed'
             haptics = $true
             scene_target_redirect = $false
             native_symmetric_fov_cover = $true
@@ -594,7 +634,7 @@ try {
                 sha256 = $launcherHash
             }
         }
-        note = 'C-H2-65 is the safety revert after the headset rejected C-H2-64. The generic free-palm turnover and live-wrist support snap remain dormant in source, while the accepted C-H2-63 Classic/Anniversary hand and gun presentation is restored. Native aim, camera, stereo, OpenXR, XInput, right-stick turning, and every other title are unchanged. Offline-verified safety baseline.'
+        note = 'C-H2-77 rejects Stage 3D after zero anchor callbacks and transforms only the exact Halo 2 HUD pixel shaders proven by a working v1.2 HUD mod, inside the live native CHUD scope. The separately identified native crosshair shader is captured into the existing controller-aim quad; the procedural marker remains until that capture succeeds. Headset validation required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

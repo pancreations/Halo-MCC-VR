@@ -1,0 +1,1685 @@
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/BINARY-DIFF.json /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/BINARY-DIFF.json
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/BINARY-DIFF.json	2026-08-27 04:45:10.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/BINARY-DIFF.json	2026-08-27 14:11:51.640202453 +0000
+@@ -1,138 +1,161 @@
+-[
+-  {
+-    "file_offset": "0x2fc95",
+-    "rva": "0x30895",
+-    "section": ".text",
+-    "length": 3,
+-    "before": "277105",
+-    "after": "8b082c"
+-  },
+-  {
+-    "file_offset": "0x58bfc",
+-    "rva": "0x597fc",
+-    "section": ".text",
+-    "length": 1,
+-    "before": "06",
+-    "after": "04"
+-  },
+-  {
+-    "file_offset": "0x58e3f",
+-    "rva": "0x59a3f",
+-    "section": ".text",
+-    "length": 7,
+-    "before": "448935bad72400",
+-    "after": "e8777629009090"
+-  },
+-  {
+-    "file_offset": "0x58e9b",
+-    "rva": "0x59a9b",
+-    "section": ".text",
+-    "length": 4,
+-    "before": "f182faff",
+-    "after": "fb752900"
+-  },
+-  {
+-    "file_offset": "0x58ea9",
+-    "rva": "0x59aa9",
+-    "section": ".text",
+-    "length": 4,
+-    "before": "e382faff",
+-    "after": "ed752900"
+-  },
+-  {
+-    "file_offset": "0x7be57",
+-    "rva": "0x7ca57",
+-    "section": ".text",
+-    "length": 8,
+-    "before": "8b1da3a7220033ff",
+-    "after": "e982462700909090"
+-  },
+-  {
+-    "file_offset": "0x7bf70",
+-    "rva": "0x7cb70",
+-    "section": ".text",
+-    "length": 4,
+-    "before": "1c52f8ff",
+-    "after": "85452700"
+-  },
+-  {
+-    "file_offset": "0x2bf13e",
+-    "rva": "0x2ef73e",
+-    "section": ".s3hc",
+-    "length": 1,
+-    "before": "c7",
+-    "after": "e8"
+-  },
+-  {
+-    "file_offset": "0x2bf140",
+-    "rva": "0x2ef740",
+-    "section": ".s3hc",
+-    "length": 1,
+-    "before": "00",
+-    "after": "1a"
+-  },
+-  {
+-    "file_offset": "0x2bf143",
+-    "rva": "0x2ef743",
+-    "section": ".s3hc",
+-    "length": 1,
+-    "before": "00",
+-    "after": "90"
+-  },
+-  {
+-    "file_offset": "0x2bf49a",
+-    "rva": "0x2f109a",
+-    "section": ".s3ic",
+-    "length": 14,
+-    "before": "0000000000000000000000000000",
+-    "after": "4883ec28e8ed0cd1ff488b8c2480"
+-  },
+-  {
+-    "file_offset": "0x2bf4ab",
+-    "rva": "0x2f10ab",
+-    "section": ".s3ic",
+-    "length": 22,
+-    "before": "00000000000000000000000000000000000000000000",
+-    "after": "4885c97406ff157af1e8ff4883c428c3c7053b61fbff"
+-  },
+-  {
+-    "file_offset": "0x2bf4c5",
+-    "rva": "0x2f10c5",
+-    "section": ".s3ic",
+-    "length": 43,
+-    "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+-    "after": "488b4c24584885c9740e4883ec28ff1557f1e8ff4883c428c38b1d1c61fbff488b051d61fbff488905fe20"
+-  },
+-  {
+-    "file_offset": "0x2bf4f2",
+-    "rva": "0x2f10f2",
+-    "section": ".s3ic",
+-    "length": 21,
+-    "before": "000000000000000000000000000000000000000000",
+-    "after": "31ffe966b9d8ff4883ec28e88e0cd1ff488b0de720"
+-  },
+-  {
+-    "file_offset": "0x2bf509",
+-    "rva": "0x2f1109",
+-    "section": ".s3ic",
+-    "length": 10,
+-    "before": "00000000000000000000",
+-    "after": "4885c9741148c705d720"
+-  },
+-  {
+-    "file_offset": "0x2bf519",
+-    "rva": "0x2f1119",
+-    "section": ".s3ic",
+-    "length": 45,
+-    "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+-    "after": "ff1511f1e8ff4883c428c34883ec28e89368d9ff884424203c047509e85be4ffff8a4424204883c428c3c74030"
+-  },
+-  {
+-    "file_offset": "0x2bf547",
+-    "rva": "0x2f1147",
+-    "section": ".s3ic",
+-    "length": 4,
+-    "before": "00000000",
+-    "after": "401c46c3"
+-  }
+-]
+\ No newline at end of file
++{
++  "base_sha256": "4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e",
++  "candidate_sha256": "486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6",
++  "base_size": 2887168,
++  "candidate_size": 2890752,
++  "changed_runs_within_base": [
++    {
++      "file_offset": "0x3D1",
++      "length": 1,
++      "label": "PE .s3qd VirtualSize",
++      "base": "02",
++      "candidate": "10"
++    },
++    {
++      "file_offset": "0x3D9",
++      "length": 1,
++      "label": "PE .s3qd SizeOfRawData",
++      "base": "02",
++      "candidate": "10"
++    },
++    {
++      "file_offset": "0x3EF",
++      "length": 1,
++      "label": "PE .s3qd R/W/X characteristics",
++      "base": "c0",
++      "candidate": "e0"
++    },
++    {
++      "file_offset": "0x142FB",
++      "length": 4,
++      "label": "H4 B-edge pause restore",
++      "base": "91cefeff",
++      "candidate": "23e82d00"
++    },
++    {
++      "file_offset": "0x2FC95",
++      "length": 2,
++      "label": "H4 title/install wrapper",
++      "base": "8b08",
++      "candidate": "3c2e"
++    },
++    {
++      "file_offset": "0x560A7",
++      "length": 12,
++      "label": "H4 real-camera heartbeat",
++      "base": "41c6030149895b0841895310",
++      "candidate": "e9c8ca290090909090909090"
++    },
++    {
++      "file_offset": "0x7BF70",
++      "length": 2,
++      "label": "H4 teardown wrapper",
++      "base": "8545",
++      "candidate": "aa6f"
++    },
++    {
++      "file_offset": "0x8371C",
++      "length": 7,
++      "label": "H4 heartbeat ownership gate",
++      "base": "0fb61dc52e2200",
++      "candidate": "e8a6f426009090"
++    },
++    {
++      "file_offset": "0x2BF11C",
++      "length": 8,
++      "label": "H4 effect location scope",
++      "base": "41837cb614007520",
++      "candidate": "9090909090909090"
++    },
++    {
++      "file_offset": "0x2BF133",
++      "length": 2,
++      "label": "H4 effect camera scope",
++      "base": "0175",
++      "candidate": "0274"
++    },
++    {
++      "file_offset": "0x2BF13F",
++      "length": 2,
++      "label": "H4 effect hide action",
++      "base": "001a",
++      "candidate": "0341"
++    }
++  ],
++  "appended_bytes": 3584,
++  "appended_region": "expanded .s3qd raw tail at RVA 0x2F3200",
++  "protected_sites": [
++    {
++      "rva": "0x90AC4",
++      "length": 5,
++      "label": "H2 cleanup acquire",
++      "identical": true
++    },
++    {
++      "rva": "0x90CE2",
++      "length": 5,
++      "label": "H2 cleanup release",
++      "identical": true
++    },
++    {
++      "rva": "0x92F06",
++      "length": 5,
++      "label": "H2 gun-stock translation",
++      "identical": true
++    },
++    {
++      "rva": "0x95B16",
++      "length": 5,
++      "label": "H2 Classic carrier/alignment",
++      "identical": true
++    },
++    {
++      "rva": "0x40A52",
++      "length": 5,
++      "label": "H3/ODST gun-stock translation",
++      "identical": true
++    },
++    {
++      "rva": "0x6B321",
++      "length": 5,
++      "label": "Reach gun-stock translation",
++      "identical": true
++    },
++    {
++      "rva": "0x81036",
++      "length": 5,
++      "label": "Reach HUD site 1",
++      "identical": true
++    },
++    {
++      "rva": "0x8112D",
++      "length": 5,
++      "label": "Reach HUD site 2",
++      "identical": true
++    },
++    {
++      "rva": "0x813A8",
++      "length": 5,
++      "label": "Reach HUD site 3",
++      "identical": true
++    },
++    {
++      "rva": "0x47396",
++      "length": 5,
++      "label": "H2/H3 pause scope 1",
++      "identical": true
++    },
++    {
++      "rva": "0x4414D",
++      "length": 5,
++      "label": "H2/H3 pause scope 2",
++      "identical": true
++    },
++    {
++      "rva": "0x44203",
++      "length": 5,
++      "label": "H2/H3 pause scope 3",
++      "identical": true
++    }
++  ]
++}
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/BUILDING.md /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/BUILDING.md
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/BUILDING.md	2026-08-27 03:45:00.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/BUILDING.md	2026-08-27 14:11:52.224747969 +0000
+@@ -339,3 +339,17 @@
+ `.s3hc`/`.s3hd` Halo 4 helper sections. It does not modify or install MCC files.
+ The expected Stage 3H DLL is 2,880,512 bytes with SHA-256
+ `0d0338b7c0b749ce8c7f956914eace9812bcc2d5d26bda14c4024043416f6249`.
++
++## Reproduce Stage 3X Halo 4 full restoration candidate
++
++Stage 3X is a deterministic post-link candidate based on the exact Stage 3V working-H4 DLL with SHA-256
++`4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e`.
++
++With Python 3 and GNU x86-64 binutils (`as`, `ld`, `objcopy`, `nm`) on PATH:
++
++```text
++python tools/build_stage3x_h4_full_restore.py \
++  built/Stage3V-HaloMCCVR.dll HaloMCCVR.dll
++```
++
++The builder keeps the 12-section Q-R1/Stage3V PE layout and `SizeOfImage=0x2F4000`; helper code is placed in the previously zero tail of the existing final `.s3qd` image page. See `STAGE3X-H4-FULL-RESTORE-NOTES.md` and `STAGE3X-STATIC-AUDIT.txt`.
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/PE-AUDIT.json /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/PE-AUDIT.json
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/PE-AUDIT.json	2026-08-27 04:45:10.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/PE-AUDIT.json	2026-08-27 14:11:51.640035141 +0000
+@@ -1,263 +1,114 @@
+ {
+-  "base_sha256": "ca2a939e24594292ee543f6498c780b1609c3dba53aabe07f65cfa720fd6a549",
+-  "output_sha256": "4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e",
+-  "base_size": 2887168,
+-  "output_size": 2887168,
+-  "headers_identical": true,
+-  "pe_base": {
+-    "pe_offset": 264,
+-    "number_of_sections": 12,
+-    "optional": 288,
+-    "size_of_image": 3096576,
+-    "sections": [
+-      {
+-        "name": ".text",
+-        "virtual_size": 1566336,
+-        "virtual_address": 4096,
+-        "raw_size": 1566720,
+-        "raw_pointer": 1024,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "720d40168b89d3e67bade9556c80429e6fc841a4e1fa7e9c5d1c4a26c5e3ab73"
+-      },
+-      {
+-        "name": ".rdata",
+-        "virtual_size": 793748,
+-        "virtual_address": 1572864,
+-        "raw_size": 794112,
+-        "raw_pointer": 1567744,
+-        "characteristics": 1073741888,
+-        "base_raw_sha256": "04056e0b0cef80567c524c4c0e0227d6b7111406c02085d895f4e191c1a2b29e"
+-      },
+-      {
+-        "name": ".data",
+-        "virtual_size": 610220,
+-        "virtual_address": 2367488,
+-        "raw_size": 430592,
+-        "raw_pointer": 2361856,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "24263e06399e75423be272b252a34c4ae85d294d7ed557f9a89c7d2937c3c14f"
+-      },
+-      {
+-        "name": ".pdata",
+-        "virtual_size": 60408,
+-        "virtual_address": 2977792,
+-        "raw_size": 60416,
+-        "raw_pointer": 2792448,
+-        "characteristics": 1073741888,
+-        "base_raw_sha256": "a21403d6a74eb774fafcb574d76a8f62861a48955ad7a88a20b36d2f22ec3e45"
+-      },
+-      {
+-        "name": ".fptable",
+-        "virtual_size": 256,
+-        "virtual_address": 3039232,
+-        "raw_size": 512,
+-        "raw_pointer": 2852864,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560"
+-      },
+-      {
+-        "name": ".rsrc",
+-        "virtual_size": 19296,
+-        "virtual_address": 3043328,
+-        "raw_size": 19456,
+-        "raw_pointer": 2853376,
+-        "characteristics": 1073741888,
+-        "base_raw_sha256": "158a53582c0b6842c1fe18752d0b34dbc29f2a06128c3a65fb04fb7a495e2d02"
+-      },
+-      {
+-        "name": ".reloc",
+-        "virtual_size": 4324,
+-        "virtual_address": 3063808,
+-        "raw_size": 4608,
+-        "raw_pointer": 2872832,
+-        "characteristics": 1107296320,
+-        "base_raw_sha256": "7b2a23a963bd264a6a8def091f1ea203fe56c35c59bfee9c0853670cc38e75e2"
+-      },
+-      {
+-        "name": ".h2sf",
+-        "virtual_size": 352,
+-        "virtual_address": 3072000,
+-        "raw_size": 512,
+-        "raw_pointer": 2877440,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "156e93d19b7e5468bd30a2e3bb0eb86001f572768115527b550eb031f187b385"
+-      },
+-      {
+-        "name": ".s3hc",
+-        "virtual_size": 1984,
+-        "virtual_address": 3076096,
+-        "raw_size": 2048,
+-        "raw_pointer": 2877952,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "e95c247706b460ac87a98d518d885bcfc035d160e0d88f3afbb6b585c570d1ab"
+-      },
+-      {
+-        "name": ".s3hd",
+-        "virtual_size": 484,
+-        "virtual_address": 3080192,
+-        "raw_size": 512,
+-        "raw_pointer": 2880000,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "49df8a9c934deb066c7db08f7c11291f2f6be7d28f5a817c8c608e1771164081"
+-      },
+-      {
+-        "name": ".s3ic",
+-        "virtual_size": 5872,
+-        "virtual_address": 3084288,
+-        "raw_size": 6144,
+-        "raw_pointer": 2880512,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "8db9a2769a7e5b9235765bcef1f49da59b8f691deba48cb3d864eea9f924ff48"
+-      },
+-      {
+-        "name": ".s3qd",
+-        "virtual_size": 512,
+-        "virtual_address": 3092480,
+-        "raw_size": 512,
+-        "raw_pointer": 2886656,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560"
+-      }
+-    ]
+-  },
+-  "pe_output": {
+-    "pe_offset": 264,
+-    "number_of_sections": 12,
+-    "optional": 288,
+-    "size_of_image": 3096576,
+-    "sections": [
+-      {
+-        "name": ".text",
+-        "virtual_size": 1566336,
+-        "virtual_address": 4096,
+-        "raw_size": 1566720,
+-        "raw_pointer": 1024,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "4c6d8f36e833997a9e69fadade414660be0da1e686c388473283633e39d8e35e",
+-        "output_raw_sha256": "4c6d8f36e833997a9e69fadade414660be0da1e686c388473283633e39d8e35e",
+-        "raw_identical": false
+-      },
+-      {
+-        "name": ".rdata",
+-        "virtual_size": 793748,
+-        "virtual_address": 1572864,
+-        "raw_size": 794112,
+-        "raw_pointer": 1567744,
+-        "characteristics": 1073741888,
+-        "base_raw_sha256": "04056e0b0cef80567c524c4c0e0227d6b7111406c02085d895f4e191c1a2b29e",
+-        "output_raw_sha256": "04056e0b0cef80567c524c4c0e0227d6b7111406c02085d895f4e191c1a2b29e",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".data",
+-        "virtual_size": 610220,
+-        "virtual_address": 2367488,
+-        "raw_size": 430592,
+-        "raw_pointer": 2361856,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "24263e06399e75423be272b252a34c4ae85d294d7ed557f9a89c7d2937c3c14f",
+-        "output_raw_sha256": "24263e06399e75423be272b252a34c4ae85d294d7ed557f9a89c7d2937c3c14f",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".pdata",
+-        "virtual_size": 60408,
+-        "virtual_address": 2977792,
+-        "raw_size": 60416,
+-        "raw_pointer": 2792448,
+-        "characteristics": 1073741888,
+-        "base_raw_sha256": "a21403d6a74eb774fafcb574d76a8f62861a48955ad7a88a20b36d2f22ec3e45",
+-        "output_raw_sha256": "a21403d6a74eb774fafcb574d76a8f62861a48955ad7a88a20b36d2f22ec3e45",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".fptable",
+-        "virtual_size": 256,
+-        "virtual_address": 3039232,
+-        "raw_size": 512,
+-        "raw_pointer": 2852864,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+-        "output_raw_sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".rsrc",
+-        "virtual_size": 19296,
+-        "virtual_address": 3043328,
+-        "raw_size": 19456,
+-        "raw_pointer": 2853376,
+-        "characteristics": 1073741888,
+-        "base_raw_sha256": "158a53582c0b6842c1fe18752d0b34dbc29f2a06128c3a65fb04fb7a495e2d02",
+-        "output_raw_sha256": "158a53582c0b6842c1fe18752d0b34dbc29f2a06128c3a65fb04fb7a495e2d02",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".reloc",
+-        "virtual_size": 4324,
+-        "virtual_address": 3063808,
+-        "raw_size": 4608,
+-        "raw_pointer": 2872832,
+-        "characteristics": 1107296320,
+-        "base_raw_sha256": "7b2a23a963bd264a6a8def091f1ea203fe56c35c59bfee9c0853670cc38e75e2",
+-        "output_raw_sha256": "7b2a23a963bd264a6a8def091f1ea203fe56c35c59bfee9c0853670cc38e75e2",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".h2sf",
+-        "virtual_size": 352,
+-        "virtual_address": 3072000,
+-        "raw_size": 512,
+-        "raw_pointer": 2877440,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "156e93d19b7e5468bd30a2e3bb0eb86001f572768115527b550eb031f187b385",
+-        "output_raw_sha256": "156e93d19b7e5468bd30a2e3bb0eb86001f572768115527b550eb031f187b385",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".s3hc",
+-        "virtual_size": 1984,
+-        "virtual_address": 3076096,
+-        "raw_size": 2048,
+-        "raw_pointer": 2877952,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "2d2e3371e31bc6dcca1b6f5af6cb32f7da589e07565e2ce14df56269494df83a",
+-        "output_raw_sha256": "2d2e3371e31bc6dcca1b6f5af6cb32f7da589e07565e2ce14df56269494df83a",
+-        "raw_identical": false
+-      },
+-      {
+-        "name": ".s3hd",
+-        "virtual_size": 484,
+-        "virtual_address": 3080192,
+-        "raw_size": 512,
+-        "raw_pointer": 2880000,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "49df8a9c934deb066c7db08f7c11291f2f6be7d28f5a817c8c608e1771164081",
+-        "output_raw_sha256": "49df8a9c934deb066c7db08f7c11291f2f6be7d28f5a817c8c608e1771164081",
+-        "raw_identical": true
+-      },
+-      {
+-        "name": ".s3ic",
+-        "virtual_size": 5872,
+-        "virtual_address": 3084288,
+-        "raw_size": 6144,
+-        "raw_pointer": 2880512,
+-        "characteristics": 1610612768,
+-        "base_raw_sha256": "628692608c526ac0271dcd68de2f697c50db3c618e146fc56c539943e31d3713",
+-        "output_raw_sha256": "628692608c526ac0271dcd68de2f697c50db3c618e146fc56c539943e31d3713",
+-        "raw_identical": false
+-      },
+-      {
+-        "name": ".s3qd",
+-        "virtual_size": 512,
+-        "virtual_address": 3092480,
+-        "raw_size": 512,
+-        "raw_pointer": 2886656,
+-        "characteristics": 3221225536,
+-        "base_raw_sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+-        "output_raw_sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+-        "raw_identical": true
+-      }
+-    ]
++  "format": "PE32+ x86-64 DLL",
++  "base_sha256": "4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e",
++  "candidate_sha256": "486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6",
++  "section_count": 12,
++  "size_of_image": "0x2F4000",
++  "section_alignment": "0x1000",
++  "file_alignment": "0x200",
++  "sections": [
++    {
++      "name": ".text",
++      "virtual_size": "0x17E680",
++      "virtual_address": "0x1000",
++      "raw_size": "0x17E800",
++      "raw_pointer": "0x400",
++      "characteristics": "0x60000020"
++    },
++    {
++      "name": ".rdata",
++      "virtual_size": "0xC1C94",
++      "virtual_address": "0x180000",
++      "raw_size": "0xC1E00",
++      "raw_pointer": "0x17EC00",
++      "characteristics": "0x40000040"
++    },
++    {
++      "name": ".data",
++      "virtual_size": "0x94FAC",
++      "virtual_address": "0x242000",
++      "raw_size": "0x69200",
++      "raw_pointer": "0x240A00",
++      "characteristics": "0xC0000040"
++    },
++    {
++      "name": ".pdata",
++      "virtual_size": "0xEBF8",
++      "virtual_address": "0x2D7000",
++      "raw_size": "0xEC00",
++      "raw_pointer": "0x2A9C00",
++      "characteristics": "0x40000040"
++    },
++    {
++      "name": ".fptable",
++      "virtual_size": "0x100",
++      "virtual_address": "0x2E6000",
++      "raw_size": "0x200",
++      "raw_pointer": "0x2B8800",
++      "characteristics": "0xC0000040"
++    },
++    {
++      "name": ".rsrc",
++      "virtual_size": "0x4B60",
++      "virtual_address": "0x2E7000",
++      "raw_size": "0x4C00",
++      "raw_pointer": "0x2B8A00",
++      "characteristics": "0x40000040"
++    },
++    {
++      "name": ".reloc",
++      "virtual_size": "0x10E4",
++      "virtual_address": "0x2EC000",
++      "raw_size": "0x1200",
++      "raw_pointer": "0x2BD600",
++      "characteristics": "0x42000040"
++    },
++    {
++      "name": ".h2sf",
++      "virtual_size": "0x160",
++      "virtual_address": "0x2EE000",
++      "raw_size": "0x200",
++      "raw_pointer": "0x2BE800",
++      "characteristics": "0x60000020"
++    },
++    {
++      "name": ".s3hc",
++      "virtual_size": "0x7C0",
++      "virtual_address": "0x2EF000",
++      "raw_size": "0x800",
++      "raw_pointer": "0x2BEA00",
++      "characteristics": "0x60000020"
++    },
++    {
++      "name": ".s3hd",
++      "virtual_size": "0x1E4",
++      "virtual_address": "0x2F0000",
++      "raw_size": "0x200",
++      "raw_pointer": "0x2BF200",
++      "characteristics": "0xC0000040"
++    },
++    {
++      "name": ".s3ic",
++      "virtual_size": "0x16F0",
++      "virtual_address": "0x2F1000",
++      "raw_size": "0x1800",
++      "raw_pointer": "0x2BF400",
++      "characteristics": "0x60000020"
++    },
++    {
++      "name": ".s3qd",
++      "virtual_size": "0x1000",
++      "virtual_address": "0x2F3000",
++      "raw_size": "0x1000",
++      "raw_pointer": "0x2C0C00",
++      "characteristics": "0xE0000040"
++    }
++  ],
++  "loader_geometry": "PASS: exact 12-section Q-R1/Stage3V layout retained; final .s3qd grows within its existing 0x2F3000-0x2F3FFF page; SizeOfImage remains 0x2F4000",
++  "imports": "PASS: objdump import-table description byte-for-byte identical to Stage3V",
++  "reticle_branch": {
++    "rva": "0x30899",
++    "bytes": "3c040f84a2000000",
++    "status": "PASS C-H4-50 procedural fallback branch unchanged"
+   }
+-}
+\ No newline at end of file
++}
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3X-H4-FULL-RESTORE-NOTES.md /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/STAGE3X-H4-FULL-RESTORE-NOTES.md
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3X-H4-FULL-RESTORE-NOTES.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/STAGE3X-H4-FULL-RESTORE-NOTES.md	2026-08-27 14:11:52.224747969 +0000
+@@ -0,0 +1,26 @@
++# Stage 3X — Halo 4 full compatibility restoration
++
++Status: **headset test candidate** built directly from the Stage 3V DLL that the user confirmed restores Halo 4 gameplay. Stage 3W is rejected and is not the runtime base.
++
++## Restored Halo 4 stack
++
++1. **C-H4-50 procedural bullet-ray reticle remains the only H4 reticle presentation.** The exact fail-closed branch is not changed.
++2. **Recovered H4-specific pause exit.** A raw B edge while the H4 head-locked pause target is active requests stereo before H4 leaves its pause screen. A short resume grace prevents the lifecycle worker from racing the first resumed camera callback.
++3. **Real-camera lifecycle.** Ownership heartbeat comes only from the admitted H4 camera SetupDetour, not the MCC Present loop. An installed core with no real H4 camera heartbeat is routed through the existing normal teardown.
++4. **Complete H4 teardown.** The Stage 3V HMODULE pin remains until MinHook teardown is complete and the direct effect/HUD/curvature splices have been restored to exact retail bytes. A mismatch fails closed and retains the loader reference.
++5. **Recovered H4 HUD.** The working V6 affine root (`halo4.dll+0x3F313C`) is ported to the current binary. `hud_size`, `hud_aspect`, and `hud_vertical_offset` affect the gameplay CUI root. The old V6 TLS gameplay-CUI admission is mapped to the current TLS callback-depth field at `+0x38C`. Native H4 curvature is restored through the proven `prop_curvature_theta` consumer at `halo4.dll+0x420D7E`.
++6. **Muzzle / Promethean first-person effect suppression.** The existing guarded effect splice remains the boundary. Stage 3X admits all authored locations only when the descriptor is on the local first-person attachment path, rejects third-person-only camera mode, and finite-translates the selected effect matrix out of play space. This is suppression, not another reroot experiment.
++
++## Frozen/protected titles
++
++Stage 3X deliberately does not redesign Halo 2, Halo 3, ODST, or Reach. All H2 Classic alignment/gun-stock work, H2/H2A stereo/HUD/crosshair behavior, H3/ODST behavior, and the accepted Stage 3U Reach shell/re-entry/HUD behavior are inherited from Stage 3V without changes outside the audited H4 sites.
++
++## Reproduction
++
++The exact shipped DLL is deterministically reproduced from `built/Stage3V-HaloMCCVR.dll` with:
++
++```text
++python tools/build_stage3x_h4_full_restore.py built/Stage3V-HaloMCCVR.dll HaloMCCVR.dll
++```
++
++The builder refuses any input other than the exact Stage 3V SHA-256 and guards every patched instruction sequence before mutation.
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3X-STATIC-AUDIT.txt /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/STAGE3X-STATIC-AUDIT.txt
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3X-STATIC-AUDIT.txt	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/STAGE3X-STATIC-AUDIT.txt	2026-08-27 14:11:51.639180795 +0000
+@@ -0,0 +1,49 @@
++HaloMCCVR Stage 3X static audit
++================================
++
++Base: Stage 3V working Halo 4 gameplay anchor
++Base SHA-256: 4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e
++Candidate SHA-256: 486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6
++Candidate size: 2,890,752 bytes
++
++Determinism
++-----------
++PASS: three independent builds from the exact Stage 3V DLL are byte-for-byte identical.
++PASS: helper assembly is deterministic and every binary edit is exact-byte guarded.
++
++Loader / PE preservation
++------------------------
++PASS: PE32+ x86-64 DLL; 12 sections (same section count as Stage 3V/Q-R1).
++PASS: SizeOfImage remains 0x2F4000.
++PASS: SectionAlignment remains 0x1000; FileAlignment remains 0x200.
++PASS: no new section header and no Stage3Q-style virtual gap were introduced.
++PASS: the existing final .s3qd section is expanded only inside its already-reserved 0x2F3000-0x2F3FFF image page.
++PASS: .s3qd first 0x200 raw bytes are byte-identical to Stage 3V, preserving Stage 3V's retained-HMODULE scratch at RVA 0x2F31F0.
++PASS: import table description is identical to Stage 3V.
++
++Halo 4 restoration scope
++------------------------
++- RVA 0x14EFA: recovered H4-specific B-edge pause exit requests stereo before leaving the head-locked pause menu; 2-second camera-resume grace prevents false teardown.
++- RVA 0x56CA7: heartbeat is stamped only after the exact H4 SetupDetour caller/view/observer checks pass.
++- RVA 0x8431C: normal Poll admission remains intact; an installed H4 core loses ownership only after 1.5 s without a real H4 camera heartbeat, except while H4 pause presentation is active / resume grace is live.
++- RVA 0x7CB6F: successful MinHook teardown now restores every direct halo4.dll splice (effect, HUD affine, native curvature) before logging stock ownership and releasing Stage 3V's loader pin. Unknown bytes fail closed and retain the pin.
++- RVA 0x30894: Stage 3X wrapper preserves the title result and leaves C-H4-50's exact procedural-reticle branch at RVA 0x30899 unchanged.
++- H4 HUD: recovered V6 affine root at halo4.dll+0x3F313C; current gameplay-CUI TLS admission uses current TLS +0x38C; size/aspect operate on the exact old transform basis; height uses hud_vertical_offset; curvature is the recovered native prop_curvature_theta consumer at halo4.dll+0x420D7E.
++- H4 effects: broadens only the existing local first-person descriptor path: removes authored-location restriction, preserves local-coordinate admission and nonnegative FP attachment/designator, rejects camera mode 2 (third-person-only), and finite-translates selected matrices XYZ to +10000. World/enemy/environment paths outside this local-FP boundary remain stock.
++
++Protected behavior
++------------------
++PASS: no Stage 3V bytes outside the listed H4 patch sites and the .s3qd header changed before the original EOF.
++PASS: H2 cleanup pins, H2 gun-stock translation, H2 Classic carrier/alignment, H3/ODST gun-stock translation, Reach gun-stock translation, Reach HUD sites, and H2/H3 pause-scope sites are byte-identical to Stage 3V.
++PASS: Stage 3U Reach shell/re-entry work is inherited unchanged through Stage 3V.
++PASS: C-H4-50 procedural bullet-ray reticle policy remains exact.
++
++Historical parity checks
++------------------------
++PASS: H4 HUD affine offsets/matrix fields match the recovered V6 .h4hs implementation.
++PASS: HUD height and native curvature behavior match the recovered V6 .h4pb full-layout extension; old TLS +0x318 was intentionally remapped to the current H4 gameplay-CUI TLS depth +0x38C.
++PASS: pause semantics match the earlier headset-proven H4 B-edge stereo-restore sequence.
++
++Headset status
++--------------
++STATIC/REPRODUCTION PASS. HEADSET-PENDING. The binary is packaged for the user's Shadow PC / Quest headset test; no headset success is claimed until that run.
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/build_stage3x_h4_full_restore.py /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/tools/build_stage3x_h4_full_restore.py
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/build_stage3x_h4_full_restore.py	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/tools/build_stage3x_h4_full_restore.py	2026-08-27 14:07:31.393618598 +0000
+@@ -0,0 +1,118 @@
++from pathlib import Path
++import hashlib, shutil, struct, subprocess, sys, tempfile, json
++
++EXPECTED='4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e'
++NEW_RVA=0x2F3200
++IMAGE_BASE=0x180000000
++DEFS={
++'ORIGINAL_LOG_RVA':0x1D90,'TITLE_ACTIVE_RVA':0x879C0,'PAUSE_TARGET_RVA':0x2EEB0,'REQUEST_PAUSE_RVA':0x30480,
++'H4_EFFECT_INSTALLER_RVA':0x2EF595,'H4_EFFECT_WRAPPER_RVA':0x2EF6ED,'H4_MODULE_REF_RVA':0x2A7208,
++'H4_INSTALLED_RVA':0x2A71E8,'H4_INSTALLED_AT_RVA':0x2A74A0,'H4_CLEANUP_SCRATCH_RVA':0x2F31F0,
++'EFFECT_INSTALL_LOCK_RVA':0x2F0008,'EFFECT_MODULE_BASE_RVA':0x2F0010,
++'CONFIG_HUD_SIZE_RVA':0x2ADC28,'CONFIG_HUD_ASPECT_RVA':0x2ADC2C,'CONFIG_HUD_CURVATURE_RVA':0x2ADC30,'CONFIG_HUD_VERTICAL_RVA':0x2ADC34,
++'STAGE3X_STATE_RVA':0x2F31C0,'PAUSE_GRACE_RVA':0x2F31C8,'HUD_CONTINUE_RVA':0x2F31D0,'CURV_CONTINUE_RVA':0x2F31D8,'HEARTBEAT_RVA':0x2F31E0,
++'IAT_GET_TICK_COUNT64_RVA':0x180150,'IAT_VIRTUAL_PROTECT_RVA':0x180200,'IAT_GET_CURRENT_PROCESS_RVA':0x180140,'IAT_FLUSH_INSTRUCTION_CACHE_RVA':0x1801E8,'IAT_FREE_LIBRARY_RVA':0x180230,
++'H4_SETUP_HEARTBEAT_CONTINUE_RVA':0x56CB3,'H4_POLL_CONTINUE_RVA':0,'H4_POLL_REMOVE_RVA':0,'TLS_INDEX_RVA':0x2D5E48,
++}
++PATCHES={
++ 'title_query':(0x30894,bytes.fromhex('e88b082c00')),
++ 'pause_b_log':(0x14EFA,bytes.fromhex('e891cefeff')),
++ 'setup_heartbeat':(0x56CA7,bytes.fromhex('41c6030149895b0841895310')),
++ 'poll_installed':(0x8431C,bytes.fromhex('0fb61dc52e2200')),
++ 'cleanup_call':(0x7CB6F,bytes.fromhex('e885452700')),
++ 'effect_loc':(0x2EF71C,bytes.fromhex('41837cb614007520')),
++ 'effect_camera':(0x2EF72D,bytes.fromhex('6641837cb61e01750e')),
++ 'effect_action':(0x2EF73E,bytes.fromhex('e8001a000090')),
++}
++
++def align(v,a): return (v+a-1)//a*a
++
++def parse(b):
++ pe=struct.unpack_from('<I',b,0x3c)[0]
++ if b[:2]!=b'MZ' or b[pe:pe+4]!=b'PE\0\0': raise SystemExit('bad PE')
++ coff=pe+4; n=struct.unpack_from('<H',b,coff+2)[0]; osz=struct.unpack_from('<H',b,coff+16)[0]; opt=coff+20; tab=opt+osz
++ if struct.unpack_from('<H',b,opt)[0]!=0x20b or struct.unpack_from('<Q',b,opt+24)[0]!=IMAGE_BASE: raise SystemExit('unexpected PE32+')
++ secs=[]
++ for i in range(n):
++  o=tab+i*40; name=bytes(b[o:o+8]).split(b'\0',1)[0].decode('ascii'); vs,va,rs,rp=struct.unpack_from('<IIII',b,o+8)
++  secs.append(dict(name=name,vs=vs,va=va,rs=rs,rp=rp,h=o,chars=struct.unpack_from('<I',b,o+36)[0]))
++ return dict(pe=pe,coff=coff,opt=opt,tab=tab,n=n,osz=osz,secs=secs,fa=struct.unpack_from('<I',b,opt+0x24)[0],sa=struct.unpack_from('<I',b,opt+0x20)[0],headers=struct.unpack_from('<I',b,opt+0x3c)[0])
++
++def roff(pe,r):
++ for s in pe['secs']:
++  if s['va']<=r<s['va']+max(s['vs'],s['rs']): return s['rp']+(r-s['va'])
++ raise KeyError(hex(r))
++
++def write(b,pe,r,old,new,label):
++ if len(old)!=len(new): raise SystemExit(label+' length mismatch')
++ o=roff(pe,r); actual=bytes(b[o:o+len(old)])
++ if actual!=old: raise SystemExit(f'{label} guard fail RVA 0x{r:X}: {actual.hex()} != {old.hex()}')
++ b[o:o+len(new)]=new; print(f'{label}: 0x{r:X} {old.hex()} -> {new.hex()}')
++
++def relop(op,src,dst): return bytes([op])+struct.pack('<i',dst-(src+5))
++
++def assemble(tooldir):
++ for x in ('as','ld','objcopy','nm'):
++  if not shutil.which(x): raise SystemExit('missing '+x)
++ with tempfile.TemporaryDirectory(prefix='s3x-') as td:
++  td=Path(td); obj=td/'x.o'; elf=td/'x.elf'; raw=td/'x.bin'
++  subprocess.run(['as','--64','-o',str(obj),str(tooldir/'stage3x_h4_full_restore.S')],check=True)
++  cmd=['ld','-m','elf_x86_64',f'-Ttext=0x{NEW_RVA:x}','-e','stage3x_h4_title_install_wrapper']
++  for k,v in DEFS.items(): cmd += ['--defsym',f'{k}=0x{v:x}']
++  cmd += ['-o',str(elf),str(obj)]
++  subprocess.run(cmd,check=True)
++  subprocess.run(['objcopy','-O','binary','-j','.text',str(elf),str(raw)],check=True)
++  syms={}
++  out=subprocess.check_output(['nm','-n',str(elf)],text=True)
++  for line in out.splitlines():
++   f=line.split()
++   if len(f)==3 and f[2].startswith('stage3x_'): syms[f[2]]=int(f[0],16)
++  return raw.read_bytes(),syms,out
++
++def main():
++ if len(sys.argv)!=3: raise SystemExit('usage: build_stage3x_h4_full_restore.py <Stage3V.dll> <out.dll>')
++ src,out=Path(sys.argv[1]),Path(sys.argv[2]); ib=src.read_bytes(); sha=hashlib.sha256(ib).hexdigest()
++ if sha!=EXPECTED: raise SystemExit('wrong Stage3V '+sha)
++ helper,syms,nm=assemble(Path(__file__).resolve().parent)
++ required_syms={'stage3x_h4_title_install_wrapper','stage3x_h4_pause_b_edge_wrapper','stage3x_h4_setup_heartbeat_bridge','stage3x_h4_poll_heartbeat_gate','stage3x_h4_cleanup_restore_release','stage3x_h4_hide_local_fp_effect'}
++ if not required_syms<=set(syms): raise SystemExit('missing helper symbols '+repr(required_syms-set(syms)))
++ b=bytearray(ib); pe=parse(b)
++ if pe['n']!=12 or pe['secs'][-1]['name']!='.s3qd' or pe['secs'][-1]['va']!=0x2F3000: raise SystemExit('Stage3V section baseline mismatch')
++ # Scratch slots must be zero in exact base.
++ for r,n in [(0x2F31C0,4),(0x2F31C8,8),(0x2F31D0,8),(0x2F31D8,8),(0x2F31E0,8)]:
++  if bytes(b[roff(pe,r):roff(pe,r)+n])!=b'\0'*n: raise SystemExit(f'scratch not zero 0x{r:X}')
++ # Extend the existing adjacent .s3qd section in-place. Q-R1 already made
++ # .s3qd the final loader-safe 0x2F3000 section; there is no header room for a
++ # 13th section. Keep the exact section count/SizeOfImage and use the previously
++ # zero 0x2F3200..0x2F3FFF tail. The first 0x200 bytes (including Stage3V's
++ # retained H4 HMODULE scratch at 0x2F31F0) are preserved byte-for-byte.
++ qd=pe['secs'][-1]
++ if qd['rs']!=0x200 or qd['vs']!=0x200 or qd['rp']+qd['rs']!=len(b):
++  raise SystemExit('unexpected .s3qd raw geometry')
++ if NEW_RVA!=qd['va']+0x200: raise SystemExit('helper must start immediately after preserved qd data')
++ needed=0x200+len(helper)
++ new_rs=align(needed,pe['fa'])
++ if new_rs>0x1000: raise SystemExit(f'helper does not fit qd page: {len(helper)}')
++ b.extend(b'\0'*(new_rs-qd['rs']))
++ helper_off=qd['rp']+0x200
++ b[helper_off:helper_off+len(helper)]=helper
++ struct.pack_into('<I',b,qd['h']+8,new_rs)      # VirtualSize covers data+code tail
++ struct.pack_into('<I',b,qd['h']+16,new_rs)     # SizeOfRawData
++ struct.pack_into('<I',b,qd['h']+36,0xE0000040) # initialized data + R/W/X
++ # SizeOfImage deliberately remains 0x2F4000, identical to loader-proven Q-R1/3V.
++ if struct.unpack_from('<I',b,pe['opt']+0x38)[0]!=0x2F4000:
++  raise SystemExit('unexpected Stage3V SizeOfImage')
++ # patches
++ write(b,pe,*PATCHES['title_query'],relop(0xE8,0x30894,syms['stage3x_h4_title_install_wrapper']),'H4 title/install wrapper')
++ write(b,pe,*PATCHES['pause_b_log'],relop(0xE8,0x14EFA,syms['stage3x_h4_pause_b_edge_wrapper']),'H4 B-edge pause restore')
++ write(b,pe,*PATCHES['setup_heartbeat'],relop(0xE9,0x56CA7,syms['stage3x_h4_setup_heartbeat_bridge'])+b'\x90'*7,'H4 real camera heartbeat')
++ write(b,pe,*PATCHES['poll_installed'],relop(0xE8,0x8431C,syms['stage3x_h4_poll_heartbeat_gate'])+b'\x90\x90','H4 heartbeat teardown gate')
++ write(b,pe,*PATCHES['cleanup_call'],relop(0xE8,0x7CB6F,syms['stage3x_h4_cleanup_restore_release']),'H4 full direct-patch teardown')
++ write(b,pe,*PATCHES['effect_loc'],b'\x90'*8,'H4 local-FP effects all authored locations')
++ write(b,pe,*PATCHES['effect_camera'],bytes.fromhex('6641837cb61e02740e'),'H4 effects reject 3P-only')
++ write(b,pe,*PATCHES['effect_action'],relop(0xE8,0x2EF73E,syms['stage3x_h4_hide_local_fp_effect'])+b'\x90','H4 effects finite XYZ hide')
++ # checksum clear
++ struct.pack_into('<I',b,pe['opt']+0x40,0)
++ out.parent.mkdir(parents=True,exist_ok=True); out.write_bytes(b)
++ print('input',sha); print('helper',hashlib.sha256(helper).hexdigest(),len(helper)); print('output',hashlib.sha256(b).hexdigest(),len(b)); print('section .s3qd expanded raw',hex(new_rs),'helper_rva',hex(NEW_RVA)); print('symbols',json.dumps({k:hex(v) for k,v in syms.items() if k in required_syms},sort_keys=True))
++if __name__=='__main__': main()
+diff -ruN '--exclude=__pycache__' '--exclude=STAGE3X-SOURCE-DIFF.patch' /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/stage3x_h4_full_restore.S /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/tools/stage3x_h4_full_restore.S
+--- /mnt/data/stage3x_work/base3v_src/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/stage3x_h4_full_restore.S	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3x_work/HaloMCCVR-518aebe-C50-Stage3X-H4-Full-Restore-Source/tools/stage3x_h4_full_restore.S	2026-08-27 14:09:21.232811021 +0000
+@@ -0,0 +1,771 @@
++.intel_syntax noprefix
++.section .text
++
++.global stage3x_h4_title_install_wrapper
++.global stage3x_h4_pause_b_edge_wrapper
++.global stage3x_h4_setup_heartbeat_bridge
++.global stage3x_h4_poll_heartbeat_gate
++.global stage3x_h4_cleanup_restore_release
++.global stage3x_h4_hud_install
++.global stage3x_h4_hud_wrapper
++.global stage3x_h4_hud_trampoline
++.global stage3x_h4_curvature_install
++.global stage3x_h4_curvature_wrapper
++.global stage3x_h4_hide_local_fp_effect
++
++.extern ORIGINAL_LOG_RVA
++.extern TITLE_ACTIVE_RVA
++.extern PAUSE_TARGET_RVA
++.extern REQUEST_PAUSE_RVA
++.extern H4_EFFECT_INSTALLER_RVA
++.extern H4_EFFECT_WRAPPER_RVA
++.extern H4_MODULE_REF_RVA
++.extern H4_INSTALLED_AT_RVA
++.extern H4_CLEANUP_SCRATCH_RVA
++.extern EFFECT_INSTALL_LOCK_RVA
++.extern EFFECT_MODULE_BASE_RVA
++.extern CONFIG_HUD_SIZE_RVA
++.extern CONFIG_HUD_ASPECT_RVA
++.extern CONFIG_HUD_CURVATURE_RVA
++.extern CONFIG_HUD_VERTICAL_RVA
++.extern HEARTBEAT_RVA
++.extern HUD_CONTINUE_RVA
++.extern CURV_CONTINUE_RVA
++.extern STAGE3X_STATE_RVA
++.extern PAUSE_GRACE_RVA
++.extern IAT_GET_TICK_COUNT64_RVA
++.extern IAT_VIRTUAL_PROTECT_RVA
++.extern IAT_GET_CURRENT_PROCESS_RVA
++.extern IAT_FLUSH_INSTRUCTION_CACHE_RVA
++.extern IAT_FREE_LIBRARY_RVA
++.extern H4_POLL_CONTINUE_RVA
++.extern H4_POLL_REMOVE_RVA
++.extern H4_SETUP_HEARTBEAT_CONTINUE_RVA
++.extern H4_INSTALLED_RVA
++.extern TLS_INDEX_RVA
++
++.equ H4_EFFECT_SITE,       0x001012D5
++.equ H4_HUD_SITE,          0x003F313C
++.equ H4_HUD_CONTINUE,      0x003F314A
++.equ H4_CURV_SITE,         0x00420D7E
++.equ H4_CURV_CONTINUE,     0x00420D98
++.equ PAGE_EXECUTE_READWRITE, 0x40
++.equ HEARTBEAT_TIMEOUT_MS, 1500
++.equ PAUSE_RESUME_GRACE_MS, 2000
++
++.equ STATE_HUD_INSTALLED,  0x01
++.equ STATE_CURV_INSTALLED, 0x02
++.equ STATE_HUD_LIVE_LOGGED,0x04
++
++// --------------------------------------------------------------------------
++// Utility: restore protection and flush instruction cache after a code write.
++// rcx=site, edx=len, r8d=oldProtect. Volatile-only helper.
++// --------------------------------------------------------------------------
++stage3x_restore_protect_flush:
++    sub rsp, 0x38
++    mov QWORD PTR [rsp+0x20], rcx
++    mov DWORD PTR [rsp+0x28], edx
++    mov DWORD PTR [rsp+0x2c], r8d
++    lea r9, [rsp+0x30]
++    call QWORD PTR [rip + IAT_VIRTUAL_PROTECT_RVA]
++    call QWORD PTR [rip + IAT_GET_CURRENT_PROCESS_RVA]
++    mov rcx, rax
++    mov rdx, QWORD PTR [rsp+0x20]
++    mov r8d, DWORD PTR [rsp+0x28]
++    call QWORD PTR [rip + IAT_FLUSH_INSTRUCTION_CACHE_RVA]
++    add rsp, 0x38
++    ret
++
++// --------------------------------------------------------------------------
++// H4 HUD affine installer. rcx=retained halo4.dll HMODULE/base.
++// Returns eax=1 if exact stock or exact Stage3X patch is present and usable.
++// --------------------------------------------------------------------------
++stage3x_h4_hud_install:
++    push rbx
++    push rsi
++    sub rsp, 0x48
++    mov rbx, rcx
++    xor esi, esi
++    test rbx, rbx
++    jz .hud_install_done
++    lea rdx, [rbx + H4_HUD_SITE]
++    mov QWORD PTR [rsp+0x20], rdx
++
++    // Already our exact 14-byte patch?
++    cmp WORD PTR [rdx], 0xB848
++    jne .hud_check_stock
++    cmp WORD PTR [rdx+0x0a], 0xE0FF
++    jne .hud_install_done
++    lea rax, [rip + stage3x_h4_hud_wrapper]
++    cmp QWORD PTR [rdx+2], rax
++    jne .hud_install_done
++    cmp WORD PTR [rdx+0x0c], 0x9090
++    jne .hud_install_done
++    mov esi, 1
++    or DWORD PTR [rip + STAGE3X_STATE_RVA], STATE_HUD_INSTALLED
++    jmp .hud_install_done
++
++.hud_check_stock:
++    // 40 55 48 8D 6C 24 A9 48 81 EC 90 00 00 00
++    mov rax, 0x48A9246C8D485540
++    cmp QWORD PTR [rdx], rax
++    jne .hud_install_done
++    cmp DWORD PTR [rdx+8], 0x0090EC81
++    jne .hud_install_done
++    cmp WORD PTR [rdx+12], 0x0000
++    jne .hud_install_done
++
++    lea rax, [rbx + H4_HUD_CONTINUE]
++    mov QWORD PTR [rip + HUD_CONTINUE_RVA], rax
++
++    mov rcx, QWORD PTR [rsp+0x20]
++    mov edx, 14
++    mov r8d, PAGE_EXECUTE_READWRITE
++    lea r9, [rsp+0x30]
++    call QWORD PTR [rip + IAT_VIRTUAL_PROTECT_RVA]
++    test eax, eax
++    jz .hud_install_done
++
++    mov rdx, QWORD PTR [rsp+0x20]
++    lea rax, [rip + stage3x_h4_hud_wrapper]
++    mov WORD PTR [rdx], 0xB848
++    mov QWORD PTR [rdx+2], rax
++    mov WORD PTR [rdx+0x0a], 0xE0FF
++    mov WORD PTR [rdx+0x0c], 0x9090
++
++    mov rcx, rdx
++    mov edx, 14
++    mov r8d, DWORD PTR [rsp+0x30]
++    call stage3x_restore_protect_flush
++    mov esi, 1
++    or DWORD PTR [rip + STAGE3X_STATE_RVA], STATE_HUD_INSTALLED
++    lea rcx, [rip + msg_hud_active]
++    call ORIGINAL_LOG_RVA
++
++.hud_install_done:
++    mov eax, esi
++    add rsp, 0x48
++    pop rsi
++    pop rbx
++    ret
++
++// Replays the exact displaced retail H4 prologue then enters the original body.
++stage3x_h4_hud_trampoline:
++    push rbp
++    lea rbp, [rsp-0x57]
++    sub rsp, 0x90
++    mov rax, QWORD PTR [rip + HUD_CONTINUE_RVA]
++    jmp rax
++
++// Drop-in absolute-jump target at halo4.dll+0x3F313C. It lets retail finish
++// first, then applies the exact V11 affine/height transform to the returned
++// gameplay CUI root. H4 pause presentation is excluded.
++stage3x_h4_hud_wrapper:
++    push rbx
++    sub rsp, 0x30
++    mov rbx, rcx
++    call stage3x_h4_hud_trampoline
++
++    cmp QWORD PTR [rip + H4_MODULE_REF_RVA], 0
++    je .hud_wrapper_done
++    call PAUSE_TARGET_RVA
++    test al, al
++    jne .hud_wrapper_done
++    // Exact current H4 gameplay-CUI TLS admission. The renderer increments
++    // TLS +0x38C around the gameplay CUI root; shell/pause/menu calls stay stock.
++    mov r10d, DWORD PTR [rip + TLS_INDEX_RVA]
++    mov rax, QWORD PTR gs:0x58
++    test rax, rax
++    jz .hud_wrapper_done
++    mov rax, QWORD PTR [rax+r10*8]
++    test rax, rax
++    jz .hud_wrapper_done
++    cmp DWORD PTR [rax+0x38c], 0
++    jle .hud_wrapper_done
++    test rbx, rbx
++    jz .hud_wrapper_done
++
++    mov eax, DWORD PTR [rbx+0x870]
++    test eax, eax
++    jle .hud_wrapper_done
++    dec eax
++    cmp eax, 0x60
++    jae .hud_wrapper_done
++    imul rax, rax, 0x34
++    lea rdx, [rbx+rax+0x878]
++
++    // size = clamp(hud_size, .30, 1.0)
++    movss xmm0, DWORD PTR [rip + CONFIG_HUD_SIZE_RVA]
++    ucomiss xmm0, xmm0
++    jp .hud_wrapper_done
++    maxss xmm0, DWORD PTR [rip + k_hud_size_min]
++    minss xmm0, DWORD PTR [rip + k_one]
++
++    // horizontal = clamp(size * hud_aspect, .15, 1.0)
++    movaps xmm1, xmm0
++    mulss xmm1, DWORD PTR [rip + CONFIG_HUD_ASPECT_RVA]
++    ucomiss xmm1, xmm1
++    jp .hud_wrapper_done
++    maxss xmm1, DWORD PTR [rip + k_hud_horizontal_min]
++    minss xmm1, DWORD PTR [rip + k_one]
++
++    movss xmm2, DWORD PTR [rdx+0x04]
++    mulss xmm2, xmm1
++    movss DWORD PTR [rdx+0x04], xmm2
++    movss xmm2, DWORD PTR [rdx+0x10]
++    mulss xmm2, xmm1
++    movss DWORD PTR [rdx+0x10], xmm2
++    movss xmm2, DWORD PTR [rdx+0x1c]
++    mulss xmm2, xmm1
++    movss DWORD PTR [rdx+0x1c], xmm2
++    movss xmm2, DWORD PTR [rdx+0x28]
++    mulss xmm2, xmm1
++    movss DWORD PTR [rdx+0x28], xmm2
++
++    movss xmm2, DWORD PTR [rdx+0x08]
++    mulss xmm2, xmm0
++    movss DWORD PTR [rdx+0x08], xmm2
++    movss xmm2, DWORD PTR [rdx+0x14]
++    mulss xmm2, xmm0
++    movss DWORD PTR [rdx+0x14], xmm2
++    movss xmm2, DWORD PTR [rdx+0x20]
++    mulss xmm2, xmm0
++    movss DWORD PTR [rdx+0x20], xmm2
++    movss xmm2, DWORD PTR [rdx+0x2c]
++    mulss xmm2, xmm0
++    movss DWORD PTR [rdx+0x2c], xmm2
++
++    // Positive user offset raises H4 virtual-screen Y.
++    movss xmm3, DWORD PTR [rip + CONFIG_HUD_VERTICAL_RVA]
++    ucomiss xmm3, xmm3
++    jp .hud_log_once
++    maxss xmm3, DWORD PTR [rip + k_hud_vertical_min]
++    minss xmm3, DWORD PTR [rip + k_hud_vertical_max]
++    movss xmm4, DWORD PTR [rdx+0x2c]
++    subss xmm4, xmm3
++    movss DWORD PTR [rdx+0x2c], xmm4
++
++.hud_log_once:
++    test DWORD PTR [rip + STAGE3X_STATE_RVA], STATE_HUD_LIVE_LOGGED
++    jnz .hud_wrapper_done
++    or DWORD PTR [rip + STAGE3X_STATE_RVA], STATE_HUD_LIVE_LOGGED
++    lea rcx, [rip + msg_hud_live]
++    call ORIGINAL_LOG_RVA
++
++.hud_wrapper_done:
++    add rsp, 0x30
++    pop rbx
++    ret
++
++// --------------------------------------------------------------------------
++// Native H4 curvature installer + consumer bridge, exact V6 full-layout path.
++// --------------------------------------------------------------------------
++stage3x_h4_curvature_install:
++    push rbx
++    push rsi
++    sub rsp, 0x48
++    mov rbx, rcx
++    xor esi, esi
++    test rbx, rbx
++    jz .curv_done
++    lea rdx, [rbx + H4_CURV_SITE]
++    mov QWORD PTR [rsp+0x20], rdx
++
++    cmp WORD PTR [rdx], 0xB848
++    jne .curv_check_stock
++    lea rax, [rip + stage3x_h4_curvature_wrapper]
++    cmp QWORD PTR [rdx+2], rax
++    jne .curv_done
++    cmp WORD PTR [rdx+0x0a], 0xE0FF
++    jne .curv_done
++    // Remaining bytes must be NOPs.
++    mov rax, 0x9090909090909090
++    cmp QWORD PTR [rdx+0x0c], rax
++    jne .curv_done
++    cmp DWORD PTR [rdx+0x14], 0x90909090
++    jne .curv_done
++    cmp WORD PTR [rdx+0x18], 0x9090
++    jne .curv_done
++    mov esi, 1
++    or DWORD PTR [rip + STAGE3X_STATE_RVA], STATE_CURV_INSTALLED
++    jmp .curv_done
++
++.curv_check_stock:
++    // f3 0f 10 8f e8 01 00 00 f3 0f 11 4d a4 f3 0f 10
++    mov rax, 0x000001E88F100FF3
++    cmp QWORD PTR [rdx], rax
++    jne .curv_fail_log
++    mov rax, 0x100FF3A44D110FF3
++    cmp QWORD PTR [rdx+8], rax
++    jne .curv_fail_log
++    mov rax, 0x110FF3000001EC8F
++    cmp QWORD PTR [rdx+16], rax
++    jne .curv_fail_log
++    cmp WORD PTR [rdx+24], 0xAC4D
++    jne .curv_fail_log
++
++    lea rax, [rbx + H4_CURV_CONTINUE]
++    mov QWORD PTR [rip + CURV_CONTINUE_RVA], rax
++    mov rcx, QWORD PTR [rsp+0x20]
++    mov edx, 26
++    mov r8d, PAGE_EXECUTE_READWRITE
++    lea r9, [rsp+0x30]
++    call QWORD PTR [rip + IAT_VIRTUAL_PROTECT_RVA]
++    test eax, eax
++    jz .curv_fail_log
++
++    mov rdx, QWORD PTR [rsp+0x20]
++    lea rax, [rip + stage3x_h4_curvature_wrapper]
++    mov WORD PTR [rdx], 0xB848
++    mov QWORD PTR [rdx+2], rax
++    mov WORD PTR [rdx+0x0a], 0xE0FF
++    mov rax, 0x9090909090909090
++    mov QWORD PTR [rdx+0x0c], rax
++    mov DWORD PTR [rdx+0x14], 0x90909090
++    mov WORD PTR [rdx+0x18], 0x9090
++
++    mov rcx, rdx
++    mov edx, 26
++    mov r8d, DWORD PTR [rsp+0x30]
++    call stage3x_restore_protect_flush
++    mov esi, 1
++    or DWORD PTR [rip + STAGE3X_STATE_RVA], STATE_CURV_INSTALLED
++    lea rcx, [rip + msg_hud_full_active]
++    call ORIGINAL_LOG_RVA
++    jmp .curv_done
++
++.curv_fail_log:
++    lea rcx, [rip + msg_curv_refused]
++    call ORIGINAL_LOG_RVA
++.curv_done:
++    mov eax, esi
++    add rsp, 0x48
++    pop rsi
++    pop rbx
++    ret
++
++stage3x_h4_curvature_wrapper:
++    pushfq
++    push rax
++    push r10
++    cmp QWORD PTR [rip + H4_MODULE_REF_RVA], 0
++    je .curv_stock
++    mov r10d, DWORD PTR [rip + TLS_INDEX_RVA]
++    mov rax, QWORD PTR gs:0x58
++    test rax, rax
++    jz .curv_stock
++    mov rax, QWORD PTR [rax+r10*8]
++    test rax, rax
++    jz .curv_stock
++    cmp DWORD PTR [rax+0x38c], 0
++    jle .curv_stock
++    movss xmm1, DWORD PTR [rip + CONFIG_HUD_CURVATURE_RVA]
++    ucomiss xmm1, xmm1
++    jp .curv_stock
++    maxss xmm1, DWORD PTR [rip + k_zero]
++    minss xmm1, DWORD PTR [rip + k_one]
++    mulss xmm1, DWORD PTR [rip + k_two]
++    jmp .curv_write
++.curv_stock:
++    movss xmm1, DWORD PTR [rdi+0x1e8]
++.curv_write:
++    movss DWORD PTR [rbp-0x5c], xmm1
++    movss xmm1, DWORD PTR [rdi+0x1ec]
++    movss DWORD PTR [rbp-0x54], xmm1
++    pop r10
++    pop rax
++    popfq
++    mov r10, QWORD PTR [rip + CURV_CONTINUE_RVA]
++    jmp r10
++
++// --------------------------------------------------------------------------
++// C-H4-50 title query wrapper. Preserve the exact procedural-reticle policy,
++// but while the real H4 camera core owns a loader reference, install the old
++// proven local-FP effect splice plus H4 HUD affine/full-layout bridges.
++// --------------------------------------------------------------------------
++stage3x_h4_title_install_wrapper:
++    push rbx
++    sub rsp, 0x30
++    call TITLE_ACTIVE_RVA
++    movzx ebx, al
++    cmp bl, 4
++    jne .title_done
++    mov rcx, QWORD PTR [rip + H4_MODULE_REF_RVA]
++    test rcx, rcx
++    jz .title_done
++    // Existing exact, guarded Stage3H/3V local-FP effect installer.
++    call H4_EFFECT_INSTALLER_RVA
++    mov rcx, QWORD PTR [rip + H4_MODULE_REF_RVA]
++    test rcx, rcx
++    jz .title_done
++    call stage3x_h4_hud_install
++    mov rcx, QWORD PTR [rip + H4_MODULE_REF_RVA]
++    test rcx, rcx
++    jz .title_done
++    call stage3x_h4_curvature_install
++.title_done:
++    mov eax, ebx
++    add rsp, 0x30
++    pop rbx
++    ret
++
++// --------------------------------------------------------------------------
++// Exact old H4 pause repair, ported to the current Stage3V ABI. The wrapper is
++// called instead of the normal B-edge logger: it logs the edge, then restores
++// stereo before H4 leaves its head-locked pause menu. It also starts a short
++// heartbeat grace window so teardown cannot race the first resumed camera.
++// --------------------------------------------------------------------------
++stage3x_h4_pause_b_edge_wrapper:
++    push rbx
++    sub rsp, 0x30
++    mov rbx, rcx
++    call ORIGINAL_LOG_RVA
++    call TITLE_ACTIVE_RVA
++    cmp al, 4
++    jne .pause_done
++    cmp QWORD PTR [rip + H4_MODULE_REF_RVA], 0
++    je .pause_done
++    call PAUSE_TARGET_RVA
++    test al, al
++    je .pause_done
++    xor ecx, ecx
++    call REQUEST_PAUSE_RVA
++    call QWORD PTR [rip + IAT_GET_TICK_COUNT64_RVA]
++    mov QWORD PTR [rip + PAUSE_GRACE_RVA], rax
++    lea rcx, [rip + msg_pause_restore]
++    call ORIGINAL_LOG_RVA
++.pause_done:
++    mov rcx, rbx
++    add rsp, 0x30
++    pop rbx
++    ret
++
++// --------------------------------------------------------------------------
++// Real H4 camera heartbeat. The 12-byte bridge at SetupDetour+0x47 replaces
++// three TLS publication stores after all exact caller/observer checks passed.
++// We time-stamp only this validated camera callback, then replay those stores.
++// --------------------------------------------------------------------------
++stage3x_h4_setup_heartbeat_bridge:
++    sub rsp, 0x50
++    mov QWORD PTR [rsp+0x20], rdx
++    mov QWORD PTR [rsp+0x28], r8
++    mov QWORD PTR [rsp+0x30], r9
++    mov QWORD PTR [rsp+0x38], r11
++    call QWORD PTR [rip + IAT_GET_TICK_COUNT64_RVA]
++    mov QWORD PTR [rip + HEARTBEAT_RVA], rax
++    mov rdx, QWORD PTR [rsp+0x20]
++    mov r8, QWORD PTR [rsp+0x28]
++    mov r9, QWORD PTR [rsp+0x30]
++    mov r11, QWORD PTR [rsp+0x38]
++    add rsp, 0x50
++    // RAX was the parent [rsp+0x68] pointer before the bridge. Reload it.
++    mov rax, QWORD PTR [rsp+0x68]
++    mov BYTE PTR [r11], 1
++    mov QWORD PTR [r11+8], rbx
++    mov DWORD PTR [r11+0x10], edx
++    jmp H4_SETUP_HEARTBEAT_CONTINUE_RVA
++
++// --------------------------------------------------------------------------
++// Poll gate. Replays the exact Stage3V admission checks; for an installed H4
++// core only, lack of a *validated H4 camera callback* retires ownership after
++// a short grace. Pause target and the dedicated B-edge resume grace are exempt.
++// --------------------------------------------------------------------------
++stage3x_h4_poll_heartbeat_gate:
++    // Drop-in replacement for the Stage3V installed-byte load at RVA 0x8431C.
++    // CL arrives holding the original H4 admission decision and must remain the
++    // sole control byte consumed by the untouched Poll logic below this call.
++    movzx ebx, BYTE PTR [rip + H4_INSTALLED_RVA]
++    test bl, bl
++    jz .poll_gate_done
++    test cl, cl
++    jz .poll_gate_done
++
++    push rbx
++    sub rsp, 0x30
++    mov BYTE PTR [rsp+0x20], cl
++    call PAUSE_TARGET_RVA
++    test al, al
++    jne .poll_gate_keep
++    call QWORD PTR [rip + IAT_GET_TICK_COUNT64_RVA]
++    mov rdx, QWORD PTR [rip + PAUSE_GRACE_RVA]
++    test rdx, rdx
++    jz .poll_gate_heartbeat
++    mov r8, rax
++    sub r8, rdx
++    cmp r8, PAUSE_RESUME_GRACE_MS
++    jb .poll_gate_keep
++    mov QWORD PTR [rip + PAUSE_GRACE_RVA], 0
++.poll_gate_heartbeat:
++    mov rdx, QWORD PTR [rip + HEARTBEAT_RVA]
++    test rdx, rdx
++    jnz .poll_gate_origin
++    mov rdx, QWORD PTR [rip + H4_INSTALLED_AT_RVA]
++.poll_gate_origin:
++    test rdx, rdx
++    jz .poll_gate_keep
++    sub rax, rdx
++    cmp rax, HEARTBEAT_TIMEOUT_MS
++    jb .poll_gate_keep
++    mov BYTE PTR [rsp+0x20], 0
++.poll_gate_keep:
++    mov cl, BYTE PTR [rsp+0x20]
++    add rsp, 0x30
++    pop rbx
++.poll_gate_done:
++    ret
++
++// Existing Stage3V narrow effect action was finite-Z only. Stage3X keeps the
++// validated local/first-person admission boundary but displaces the selected
++// matrix completely out of play space on all three axes.
++stage3x_h4_hide_local_fp_effect:
++    mov DWORD PTR [rax+0x28], 0x461c4000
++    mov DWORD PTR [rax+0x2c], 0x461c4000
++    mov DWORD PTR [rax+0x30], 0x461c4000
++    ret
++
++// --------------------------------------------------------------------------
++// Exact inline-code restoration used at successful H4 teardown.
++// Each helper returns eax=1 for exact stock or exact Stage3X/current expected
++// patch; eax=0 for unknown bytes or VirtualProtect failure. Unknown bytes are
++// never overwritten.
++// --------------------------------------------------------------------------
++stage3x_restore_effect:
++    push rbx
++    sub rsp, 0x40
++    mov rbx, rcx
++    lea rdx, [rbx + H4_EFFECT_SITE]
++    mov QWORD PTR [rsp+0x20], rdx
++    // Already stock?
++    mov rax, 0x8B4918B644394166
++    cmp QWORD PTR [rdx], rax
++    jne .restore_effect_check_patch
++    mov rax, 0xFBD5E8C1950F41D7
++    cmp QWORD PTR [rdx+8], rax
++    jne .restore_effect_fail
++    cmp WORD PTR [rdx+16], 0xFFFF
++    jne .restore_effect_fail
++    jmp .restore_effect_success
++.restore_effect_check_patch:
++    cmp WORD PTR [rdx], 0x25FF
++    jne .restore_effect_fail
++    cmp DWORD PTR [rdx+2], 0
++    jne .restore_effect_fail
++    lea rax, [rip + H4_EFFECT_WRAPPER_RVA]
++    cmp QWORD PTR [rdx+6], rax
++    jne .restore_effect_fail
++    cmp DWORD PTR [rdx+14], 0x90909090
++    jne .restore_effect_fail
++
++    mov rcx, rdx
++    mov edx, 18
++    mov r8d, PAGE_EXECUTE_READWRITE
++    lea r9, [rsp+0x30]
++    call QWORD PTR [rip + IAT_VIRTUAL_PROTECT_RVA]
++    test eax, eax
++    jz .restore_effect_fail
++    mov rdx, QWORD PTR [rsp+0x20]
++    mov rax, 0x8B4918B644394166
++    mov QWORD PTR [rdx], rax
++    mov rax, 0xFBD5E8C1950F41D7
++    mov QWORD PTR [rdx+8], rax
++    mov WORD PTR [rdx+16], 0xFFFF
++    mov rcx, rdx
++    mov edx, 18
++    mov r8d, DWORD PTR [rsp+0x30]
++    call stage3x_restore_protect_flush
++    jmp .restore_effect_success
++.restore_effect_success:
++    mov DWORD PTR [rip + EFFECT_INSTALL_LOCK_RVA], 0
++    mov QWORD PTR [rip + EFFECT_MODULE_BASE_RVA], 0
++    mov eax, 1
++    jmp .restore_effect_done
++.restore_effect_fail:
++    xor eax, eax
++.restore_effect_done:
++    add rsp, 0x40
++    pop rbx
++    ret
++
++stage3x_restore_hud:
++    sub rsp, 0x48
++    lea rdx, [rcx + H4_HUD_SITE]
++    mov QWORD PTR [rsp+0x20], rdx
++    mov rax, 0x48A9246C8D485540
++    cmp QWORD PTR [rdx], rax
++    jne .restore_hud_check_patch
++    cmp DWORD PTR [rdx+8], 0x0090EC81
++    jne .restore_hud_fail
++    cmp WORD PTR [rdx+12], 0
++    jne .restore_hud_fail
++    mov eax, 1
++    jmp .restore_hud_done
++.restore_hud_check_patch:
++    cmp WORD PTR [rdx], 0xB848
++    jne .restore_hud_fail
++    lea rax, [rip + stage3x_h4_hud_wrapper]
++    cmp QWORD PTR [rdx+2], rax
++    jne .restore_hud_fail
++    cmp WORD PTR [rdx+0x0a], 0xE0FF
++    jne .restore_hud_fail
++    cmp WORD PTR [rdx+0x0c], 0x9090
++    jne .restore_hud_fail
++    mov rcx, rdx
++    mov edx, 14
++    mov r8d, PAGE_EXECUTE_READWRITE
++    lea r9, [rsp+0x30]
++    call QWORD PTR [rip + IAT_VIRTUAL_PROTECT_RVA]
++    test eax, eax
++    jz .restore_hud_fail
++    mov rdx, QWORD PTR [rsp+0x20]
++    mov rax, 0x48A9246C8D485540
++    mov QWORD PTR [rdx], rax
++    mov DWORD PTR [rdx+8], 0x0090EC81
++    mov WORD PTR [rdx+12], 0
++    mov rcx, rdx
++    mov edx, 14
++    mov r8d, DWORD PTR [rsp+0x30]
++    call stage3x_restore_protect_flush
++    mov eax, 1
++    jmp .restore_hud_done
++.restore_hud_fail:
++    xor eax, eax
++.restore_hud_done:
++    add rsp, 0x48
++    ret
++
++stage3x_restore_curvature:
++    sub rsp, 0x48
++    lea rdx, [rcx + H4_CURV_SITE]
++    mov QWORD PTR [rsp+0x20], rdx
++    mov rax, 0x000001E88F100FF3
++    cmp QWORD PTR [rdx], rax
++    jne .restore_curv_check_patch
++    mov rax, 0x100FF3A44D110FF3
++    cmp QWORD PTR [rdx+8], rax
++    jne .restore_curv_fail
++    mov rax, 0x110FF3000001EC8F
++    cmp QWORD PTR [rdx+16], rax
++    jne .restore_curv_fail
++    cmp WORD PTR [rdx+24], 0xAC4D
++    jne .restore_curv_fail
++    mov eax, 1
++    jmp .restore_curv_done
++.restore_curv_check_patch:
++    cmp WORD PTR [rdx], 0xB848
++    jne .restore_curv_fail
++    lea rax, [rip + stage3x_h4_curvature_wrapper]
++    cmp QWORD PTR [rdx+2], rax
++    jne .restore_curv_fail
++    cmp WORD PTR [rdx+0x0a], 0xE0FF
++    jne .restore_curv_fail
++    mov rax, 0x9090909090909090
++    cmp QWORD PTR [rdx+0x0c], rax
++    jne .restore_curv_fail
++    cmp DWORD PTR [rdx+0x14], 0x90909090
++    jne .restore_curv_fail
++    cmp WORD PTR [rdx+0x18], 0x9090
++    jne .restore_curv_fail
++    mov rcx, rdx
++    mov edx, 26
++    mov r8d, PAGE_EXECUTE_READWRITE
++    lea r9, [rsp+0x30]
++    call QWORD PTR [rip + IAT_VIRTUAL_PROTECT_RVA]
++    test eax, eax
++    jz .restore_curv_fail
++    mov rdx, QWORD PTR [rsp+0x20]
++    mov rax, 0x000001E88F100FF3
++    mov QWORD PTR [rdx], rax
++    mov rax, 0x100FF3A44D110FF3
++    mov QWORD PTR [rdx+8], rax
++    mov rax, 0x110FF3000001EC8F
++    mov QWORD PTR [rdx+16], rax
++    mov WORD PTR [rdx+24], 0xAC4D
++    mov rcx, rdx
++    mov edx, 26
++    mov r8d, DWORD PTR [rsp+0x30]
++    call stage3x_restore_protect_flush
++    mov eax, 1
++    jmp .restore_curv_done
++.restore_curv_fail:
++    xor eax, eax
++.restore_curv_done:
++    add rsp, 0x48
++    ret
++
++// Final successful camera-core teardown lands here instead of Stage3V's old
++// log+FreeLibrary helper. Restore every direct halo4.dll splice first; only
++// then log "stock again" and release the retained HMODULE. On any unknown
++// byte state, keep the pin and fail closed rather than touching unknown code.
++stage3x_h4_cleanup_restore_release:
++    push rbx
++    push rsi
++    sub rsp, 0x38
++    mov rbx, rcx
++    mov DWORD PTR [rsp+0x20], edx
++    mov rsi, QWORD PTR [rip + H4_CLEANUP_SCRATCH_RVA]
++    test rsi, rsi
++    jz .cleanup_log_only
++
++    mov rcx, rsi
++    call stage3x_restore_effect
++    test eax, eax
++    jz .cleanup_restore_failed
++    mov rcx, rsi
++    call stage3x_restore_hud
++    test eax, eax
++    jz .cleanup_restore_failed
++    mov rcx, rsi
++    call stage3x_restore_curvature
++    test eax, eax
++    jz .cleanup_restore_failed
++
++    mov QWORD PTR [rip + HEARTBEAT_RVA], 0
++    mov QWORD PTR [rip + HUD_CONTINUE_RVA], 0
++    mov QWORD PTR [rip + CURV_CONTINUE_RVA], 0
++    mov DWORD PTR [rip + STAGE3X_STATE_RVA], 0
++    mov QWORD PTR [rip + PAUSE_GRACE_RVA], 0
++    mov rcx, rbx
++    mov edx, DWORD PTR [rsp+0x20]
++    call ORIGINAL_LOG_RVA
++    mov QWORD PTR [rip + H4_CLEANUP_SCRATCH_RVA], 0
++    mov rcx, rsi
++    call QWORD PTR [rip + IAT_FREE_LIBRARY_RVA]
++    jmp .cleanup_done
++
++.cleanup_log_only:
++    mov rcx, rbx
++    mov edx, DWORD PTR [rsp+0x20]
++    call ORIGINAL_LOG_RVA
++    jmp .cleanup_done
++
++.cleanup_restore_failed:
++    lea rcx, [rip + msg_cleanup_failed]
++    call ORIGINAL_LOG_RVA
++    // Keep H4_CLEANUP_SCRATCH_RVA nonzero: this is our retained safety pin.
++.cleanup_done:
++    add rsp, 0x38
++    pop rsi
++    pop rbx
++    ret
++
++.align 4
++k_zero:               .long 0x00000000
++k_one:                .long 0x3f800000
++k_two:                .long 0x40000000
++k_hud_size_min:       .long 0x3e99999a
++k_hud_horizontal_min: .long 0x3e19999a
++k_hud_vertical_min:   .long 0xc3960000
++k_hud_vertical_max:   .long 0x43960000
++
++msg_hud_active:
++    .asciz "Halo 4 HUD affine-scale bridge ACTIVE: HUD size/aspect scale gameplay CUI basis + centre-relative origin"
++msg_hud_live:
++    .asciz "Halo 4 HUD affine-scale LIVE: gameplay CUI root basis and origin scaled; legacy scalar left untouched"
++msg_hud_full_active:
++    .asciz "Halo 4 HUD full-layout extension ACTIVE: HUD height translates gameplay CUI Y; HUD curvature drives H4 native prop_curvature_theta; size/aspect affine path unchanged"
++msg_curv_refused:
++    .asciz "Halo 4 HUD curvature NOT INSTALLED: exact +0x420D7E consumer bytes or protection check failed; size/aspect/height remain active"
++msg_pause_restore:
++    .asciz "Halo 4 pause exit: B edge while head-locked pause target active -> stereo restore requested before Halo 4 leaves its pause menu"
++msg_cleanup_failed:
++    .asciz "Halo 4 Stage3X teardown: direct inline-code restore refused; retaining halo4.dll pin and leaving unknown bytes untouched"

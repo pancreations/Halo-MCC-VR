@@ -1,0 +1,49 @@
+HaloMCCVR Stage 3X static audit
+================================
+
+Base: Stage 3V working Halo 4 gameplay anchor
+Base SHA-256: 4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e
+Candidate SHA-256: 486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6
+Candidate size: 2,890,752 bytes
+
+Determinism
+-----------
+PASS: three independent builds from the exact Stage 3V DLL are byte-for-byte identical.
+PASS: helper assembly is deterministic and every binary edit is exact-byte guarded.
+
+Loader / PE preservation
+------------------------
+PASS: PE32+ x86-64 DLL; 12 sections (same section count as Stage 3V/Q-R1).
+PASS: SizeOfImage remains 0x2F4000.
+PASS: SectionAlignment remains 0x1000; FileAlignment remains 0x200.
+PASS: no new section header and no Stage3Q-style virtual gap were introduced.
+PASS: the existing final .s3qd section is expanded only inside its already-reserved 0x2F3000-0x2F3FFF image page.
+PASS: .s3qd first 0x200 raw bytes are byte-identical to Stage 3V, preserving Stage 3V's retained-HMODULE scratch at RVA 0x2F31F0.
+PASS: import table description is identical to Stage 3V.
+
+Halo 4 restoration scope
+------------------------
+- RVA 0x14EFA: recovered H4-specific B-edge pause exit requests stereo before leaving the head-locked pause menu; 2-second camera-resume grace prevents false teardown.
+- RVA 0x56CA7: heartbeat is stamped only after the exact H4 SetupDetour caller/view/observer checks pass.
+- RVA 0x8431C: normal Poll admission remains intact; an installed H4 core loses ownership only after 1.5 s without a real H4 camera heartbeat, except while H4 pause presentation is active / resume grace is live.
+- RVA 0x7CB6F: successful MinHook teardown now restores every direct halo4.dll splice (effect, HUD affine, native curvature) before logging stock ownership and releasing Stage 3V's loader pin. Unknown bytes fail closed and retain the pin.
+- RVA 0x30894: Stage 3X wrapper preserves the title result and leaves C-H4-50's exact procedural-reticle branch at RVA 0x30899 unchanged.
+- H4 HUD: recovered V6 affine root at halo4.dll+0x3F313C; current gameplay-CUI TLS admission uses current TLS +0x38C; size/aspect operate on the exact old transform basis; height uses hud_vertical_offset; curvature is the recovered native prop_curvature_theta consumer at halo4.dll+0x420D7E.
+- H4 effects: broadens only the existing local first-person descriptor path: removes authored-location restriction, preserves local-coordinate admission and nonnegative FP attachment/designator, rejects camera mode 2 (third-person-only), and finite-translates selected matrices XYZ to +10000. World/enemy/environment paths outside this local-FP boundary remain stock.
+
+Protected behavior
+------------------
+PASS: no Stage 3V bytes outside the listed H4 patch sites and the .s3qd header changed before the original EOF.
+PASS: H2 cleanup pins, H2 gun-stock translation, H2 Classic carrier/alignment, H3/ODST gun-stock translation, Reach gun-stock translation, Reach HUD sites, and H2/H3 pause-scope sites are byte-identical to Stage 3V.
+PASS: Stage 3U Reach shell/re-entry work is inherited unchanged through Stage 3V.
+PASS: C-H4-50 procedural bullet-ray reticle policy remains exact.
+
+Historical parity checks
+------------------------
+PASS: H4 HUD affine offsets/matrix fields match the recovered V6 .h4hs implementation.
+PASS: HUD height and native curvature behavior match the recovered V6 .h4pb full-layout extension; old TLS +0x318 was intentionally remapped to the current H4 gameplay-CUI TLS depth +0x38C.
+PASS: pause semantics match the earlier headset-proven H4 B-edge stereo-restore sequence.
+
+Headset status
+--------------
+STATIC/REPRODUCTION PASS. HEADSET-PENDING. The binary is packaged for the user's Shadow PC / Quest headset test; no headset success is claimed until that run.

@@ -27,26 +27,125 @@ inline constexpr char kHalo2KitBuildTag[] =
 inline constexpr char kHalo2KitTagTestSha256[] =
     "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36";
 
-// Halo 2 does not yet own a title-native pause signal. A pause/head-lock
-// transition requested by another MCC engine must therefore be cleared while
-// H2 owns the title context, and the synchronous render hooks must remain stock
-// until both the requested and currently displayed presentation have returned
-// to immersive stereo. Keeping this policy pure makes the no-claim boundary
-// independently testable without touching OpenXR state.
+// Halo 2 does not yet own a title-native pause signal. A stale head-locked
+// presentation can be inherited while switching in from another MCC engine,
+// so clear that FOREIGN state exactly when H2 first enters its stereo claim
+// context. Do not keep clearing while H2 remains active: Y+B uses the shared
+// edge fallback to inject Start and intentionally requests the same head-locked
+// presentation for Halo 2's own pause menu. The old continuous clear treated
+// H2's own request as foreign and immediately kicked the headset back to stereo,
+// leaving the pause menu visible only on the desktop.
 inline bool Halo2MustClearForeignPause(
-    bool stereoContext, bool pauseTarget, bool pausePresentation)
+    bool stereoContext, bool enteringStereoContext, bool pauseTarget,
+    bool pausePresentation)
 {
-    return stereoContext && (pauseTarget || pausePresentation);
+    return stereoContext && enteringStereoContext &&
+        (pauseTarget || pausePresentation);
 }
 
 inline bool Halo2ShouldRequestForeignPauseClear(
-    bool stereoContext, bool pauseTarget, bool pausePresentation,
-    bool clearAlreadyRequested)
+    bool stereoContext, bool enteringStereoContext, bool pauseTarget,
+    bool pausePresentation, bool clearAlreadyRequested)
 {
     return Halo2MustClearForeignPause(
-               stereoContext, pauseTarget, pausePresentation) &&
+               stereoContext, enteringStereoContext, pauseTarget,
+               pausePresentation) &&
         !clearAlreadyRequested;
 }
+
+// C-H2-72: once the comfort fade has actually switched to Halo 2's
+// head-locked pause presentation, the desktop/backbuffer is the intended
+// source because it contains the native pause menu. The synchronous eye-pair
+// safety policy may still carry a Claim/Drop from the fade edge; that must not
+// suppress the deliberately requested flat pause screen. Pending pause targets
+// do not qualify -- the opaque fade still protects that transition.
+inline constexpr bool Halo2PausePresentationOwnsStockScreen(
+    bool activeHalo2, bool pausePresentation) noexcept
+{
+    return activeHalo2 && pausePresentation;
+}
+
+// C-H2-73: Halo 2 still lacks a proven native pause boolean, but its official
+// H2EK game_time_globals clock is already identity-proven and read coherently
+// by the level-load gate. The Y+B fallback therefore treats a *frozen* native
+// game-time clock as evidence that the displayed head-locked screen really is
+// a paused simulation, then restores stereo only after that same native clock
+// advances through two distinct ticks again. This deliberately does NOT key
+// from A/B/menu buttons: those inputs can navigate Settings and other pause
+// submenus without resuming gameplay.
+inline constexpr uint8_t kHalo2PauseFreezeConfirmSamples = 4;
+inline constexpr uint8_t kHalo2PauseResumeTickChanges = 2;
+
+struct Halo2PauseResumeClock
+{
+    uint32_t lastTick = 0;
+    bool haveTick = false;
+    bool frozenObserved = false;
+    uint8_t stableSamples = 0;
+    uint8_t advancingTicks = 0;
+
+    void Reset() noexcept
+    {
+        lastTick = 0;
+        stableSamples = 0;
+        advancingTicks = 0;
+        haveTick = false;
+        frozenObserved = false;
+    }
+
+    bool Update(
+        bool activeHalo2, bool pausePresentation, bool sampleValid,
+        bool initialized, uint32_t tick) noexcept
+    {
+        if (!activeHalo2 || !pausePresentation || !sampleValid || !initialized)
+        {
+            Reset();
+            return false;
+        }
+
+        if (!haveTick)
+        {
+            lastTick = tick;
+            stableSamples = 0;
+            advancingTicks = 0;
+            haveTick = true;
+            frozenObserved = false;
+            return false;
+        }
+
+        if (tick == lastTick)
+        {
+            if (!frozenObserved)
+            {
+                if (stableSamples < UINT8_MAX)
+                    ++stableSamples;
+                if (stableSamples >= kHalo2PauseFreezeConfirmSamples)
+                    frozenObserved = true;
+            }
+            // Once a genuine freeze has been witnessed, repeated samples at
+            // the same newly-advanced tick do not erase progress. At H2's
+            // 30-Hz simulation and a different headset cadence, duplicates
+            // between two distinct resumed ticks are normal.
+            return false;
+        }
+
+        lastTick = tick;
+        stableSamples = 0;
+        if (!frozenObserved)
+        {
+            advancingTicks = 0;
+            return false;
+        }
+
+        if (advancingTicks < UINT8_MAX)
+            ++advancingTicks;
+        if (advancingTicks < kHalo2PauseResumeTickChanges)
+            return false;
+
+        Reset();
+        return true;
+    }
+};
 
 inline constexpr float kHalo2MinimumAppCadenceHz = 72.0f;
 inline constexpr float kHalo2MaximumAppCadenceHz = 144.0f;
@@ -179,6 +278,30 @@ inline constexpr uint32_t kHalo2RetailRenderViewReturnRva = 0x007E2417;
 // the OM hot hook.
 inline constexpr uint32_t kHalo2RetailFinalOutputRtvLoadRva = 0x00975297;
 inline constexpr uint32_t kHalo2RetailFinalOutputRtvSlotRva = 0x0197EE58;
+
+// Official H2EK: chud_draw_screen at +0x2EA955 is called with
+// (player/window selector, draw selector, rectangle*). Retail's homolog has
+// the same three-argument contract at +0x7FFD70. The Stage 3B visibility test
+// incorrectly called it as a one-argument function with a null rectangle;
+// these entry bytes and the complete ABI are the proof required before the
+// native HUD is replayed into an eye.
+inline constexpr uint32_t kHalo2KitNativeChudDrawRva = 0x002EA955;
+inline constexpr uint32_t kHalo2RetailNativeChudDrawRva = 0x007FFD70;
+inline constexpr uint8_t kHalo2RetailNativeChudDrawEntryBytes[] = {
+    0x40, 0x53, 0x56, 0x41, 0x56, 0x48, 0x83, 0xEC,
+    0x50, 0x4D, 0x8B, 0xF0, 0x8B, 0xF2, 0x8B, 0xD9};
+
+// H2EK +0x30C365 and retail +0x829490 are the semantic pair that resolves a
+// new-HUD widget anchor to its screen-space float x/y basis. The official tags
+// name the categories (health/shield, weapon HUD, motion sensor, crosshair).
+// Hooking this returned point is what makes the shared HUD layout controls
+// affect native widgets; chud_draw_screen's rectangle is not that basis.
+inline constexpr uint32_t kHalo2KitHudAnchorBasisRva = 0x0030C365;
+inline constexpr uint32_t kHalo2RetailHudAnchorBasisRva = 0x00829490;
+inline constexpr uint8_t kHalo2RetailHudAnchorBasisEntryBytes[] = {
+    0x48, 0x8B, 0xC4, 0x55, 0x53, 0x48, 0x8D, 0x68,
+    0xA1, 0x48, 0x81, 0xEC, 0xF8, 0x00, 0x00, 0x00,
+    0x48, 0x89, 0x70, 0x08, 0x49, 0x8B, 0xD8};
 
 // Retail camera/window facts. The two cameras occupy adjacent 0x74-byte
 // records inside a 0x120-byte window. C-H2-3 owns only their three 12-byte pose
@@ -1142,11 +1265,13 @@ inline bool Halo2BuildControllerCarrier(
     const Halo2CameraBasis& trackedCamera, const float headOrientation[4],
     const float headPosition[3], const float controllerOrientation[4],
     const float controllerPosition[3], float worldScale, float forwardTrimMeters,
+    float rightTrimMeters, float upTrimMeters,
     Halo2CameraBasis& output) noexcept
 {
     if (!Halo2ValidateCameraBasis(trackedCamera) ||
         !std::isfinite(worldScale) || worldScale <= 0.0f ||
-        !std::isfinite(forwardTrimMeters))
+        !std::isfinite(forwardTrimMeters) ||
+        !std::isfinite(rightTrimMeters) || !std::isfinite(upTrimMeters))
     {
         return false;
     }
@@ -1196,18 +1321,38 @@ inline bool Halo2BuildControllerCarrier(
             trackedCamera.forward[0] * trackedCamera.up[2],
         trackedCamera.forward[0] * trackedCamera.up[1] -
             trackedCamera.forward[1] * trackedCamera.up[0]};
+    const float candidateRight[3] = {
+        candidate.forward[1] * candidate.up[2] -
+            candidate.forward[2] * candidate.up[1],
+        candidate.forward[2] * candidate.up[0] -
+            candidate.forward[0] * candidate.up[2],
+        candidate.forward[0] * candidate.up[1] -
+            candidate.forward[1] * candidate.up[0]};
     for (int axis = 0; axis < 3; ++axis)
     {
         candidate.position[axis] = trackedCamera.position[axis] +
             (right[axis] * headLocal[0] +
              trackedCamera.up[axis] * headLocal[1] -
              trackedCamera.forward[axis] * headLocal[2] +
-             candidate.forward[axis] * forwardTrimMeters) * worldScale;
+             candidate.forward[axis] * forwardTrimMeters +
+             candidateRight[axis] * rightTrimMeters +
+             candidate.up[axis] * upTrimMeters) * worldScale;
     }
     if (!Halo2ValidateCameraBasis(candidate))
         return false;
     output = candidate;
     return true;
+}
+
+inline bool Halo2BuildControllerCarrier(
+    const Halo2CameraBasis& trackedCamera, const float headOrientation[4],
+    const float headPosition[3], const float controllerOrientation[4],
+    const float controllerPosition[3], float worldScale, float forwardTrimMeters,
+    Halo2CameraBasis& output) noexcept
+{
+    return Halo2BuildControllerCarrier(
+        trackedCamera, headOrientation, headPosition, controllerOrientation,
+        controllerPosition, worldScale, forwardTrimMeters, 0.0f, 0.0f, output);
 }
 
 // Apply the accepted mirrored presentation trim to the independent left
@@ -1250,17 +1395,18 @@ inline bool Halo2BuildMirroredLeftAimOrientation(
 // never uses current tracked camera + (controller - current head). The observer
 // publication already owns the exact pre-HMD gameplay camera and recenter pair;
 // feed the controller through that title-native mapping, then apply only the
-// configured controller-local forward standoff.
+// configured controller-local forward/right/up visual standoff.
 inline bool Halo2BuildStableControllerCarrier(
     const Halo2CameraBasis& stockCamera,
     const float referenceOrientation[4], const float referencePosition[3],
     const float controllerOrientation[4], const float controllerPosition[3],
-    float worldScale, float forwardTrimMeters,
-    Halo2CameraBasis& output) noexcept
+    float worldScale, float forwardTrimMeters, float rightTrimMeters,
+    float upTrimMeters, Halo2CameraBasis& output) noexcept
 {
     if (!referenceOrientation || !referencePosition ||
         !controllerOrientation || !controllerPosition ||
-        !std::isfinite(forwardTrimMeters))
+        !std::isfinite(forwardTrimMeters) || !std::isfinite(rightTrimMeters) ||
+        !std::isfinite(upTrimMeters))
     {
         return false;
     }
@@ -1281,9 +1427,17 @@ inline bool Halo2BuildStableControllerCarrier(
     const float trimWorld = forwardTrimMeters * worldScale;
     if (!std::isfinite(trimWorld))
         return false;
+    const float rightWorld = rightTrimMeters * worldScale;
+    const float upWorld = upTrimMeters * worldScale;
+    const float candidateRight[3] = {
+        candidate.forward[1] * candidate.up[2] - candidate.forward[2] * candidate.up[1],
+        candidate.forward[2] * candidate.up[0] - candidate.forward[0] * candidate.up[2],
+        candidate.forward[0] * candidate.up[1] - candidate.forward[1] * candidate.up[0]};
+    if (!std::isfinite(rightWorld) || !std::isfinite(upWorld)) return false;
     for (int axis = 0; axis < 3; ++axis)
     {
-        candidate.position[axis] += candidate.forward[axis] * trimWorld;
+        candidate.position[axis] += candidate.forward[axis] * trimWorld +
+            candidateRight[axis] * rightWorld + candidate.up[axis] * upWorld;
         if (!std::isfinite(candidate.position[axis]))
             return false;
     }
@@ -1291,6 +1445,19 @@ inline bool Halo2BuildStableControllerCarrier(
         return false;
     output = candidate;
     return true;
+}
+
+inline bool Halo2BuildStableControllerCarrier(
+    const Halo2CameraBasis& stockCamera,
+    const float referenceOrientation[4], const float referencePosition[3],
+    const float controllerOrientation[4], const float controllerPosition[3],
+    float worldScale, float forwardTrimMeters,
+    Halo2CameraBasis& output) noexcept
+{
+    return Halo2BuildStableControllerCarrier(
+        stockCamera, referenceOrientation, referencePosition,
+        controllerOrientation, controllerPosition, worldScale,
+        forwardTrimMeters, 0.0f, 0.0f, output);
 }
 
 // C-H2-43: preserve the game's authored projectile origin and converge it on

@@ -1,0 +1,63 @@
+HaloMCCVR Stage 3AD static audit
+=================================
+Base Stage3AC SHA-256: 3a09288b5b8de4420ffc08695ebeb7431456971ccfe59de1f8c43f999caf700d
+Stage3AD DLL SHA-256:  92108c3235e2ef9d3d97ba33b09ae900fa7ce2f46bb67ccf5195d7ef4541b5bd
+Size: 2890752 bytes
+Changed file bytes: 232
+PE headers: IDENTICAL; sections=12; SizeOfImage=0x2f4000
+Q-R1 loader geometry: PRESERVED
+.s3qd RVA 0x2F3000..0x2F31FF live-state prefix: BYTE-IDENTICAL to Stage3AC
+.rdata section (imports/strings): BYTE-IDENTICAL
+.data section: BYTE-IDENTICAL
+
+Diff runs:
+  RVA 0x30895 length 2 file 0x2fc95
+  RVA 0x2f114b length 17 file 0x2bf54b
+  RVA 0x2f115f length 5 file 0x2bf55f
+  RVA 0x2f1165 length 23 file 0x2bf565
+  RVA 0x2f117d length 24 file 0x2bf57d
+  RVA 0x2f1196 length 6 file 0x2bf596
+  RVA 0x2f119e length 1 file 0x2bf59e
+  RVA 0x2f11a0 length 1 file 0x2bf5a0
+  RVA 0x2f11a2 length 1 file 0x2bf5a2
+  RVA 0x2f11a5 length 3 file 0x2bf5a5
+  RVA 0x2f11ab length 23 file 0x2bf5ab
+  RVA 0x2f11c4 length 6 file 0x2bf5c4
+  RVA 0x2f11cb length 5 file 0x2bf5cb
+  RVA 0x2f11d1 length 6 file 0x2bf5d1
+  RVA 0x2f11d8 length 4 file 0x2bf5d8
+  RVA 0x2f11de length 1 file 0x2bf5de
+  RVA 0x2f11e0 length 1 file 0x2bf5e0
+  RVA 0x2f11e2 length 1 file 0x2bf5e2
+  RVA 0x2f11e5 length 8 file 0x2bf5e5
+  RVA 0x2f11ef length 2 file 0x2bf5ef
+  RVA 0x2f11f4 length 11 file 0x2bf5f4
+  RVA 0x2f15bb length 8 file 0x2bf9bb
+  RVA 0x2f15c5 length 21 file 0x2bf9c5
+  RVA 0x2f15dd length 13 file 0x2bf9dd
+  RVA 0x2f1bd7 length 25 file 0x2bffd7
+  RVA 0x2f1bf2 length 10 file 0x2bfff2
+  RVA 0x2f3b3b length 4 file 0x2c173b
+
+Protected title sites: all BYTE-IDENTICAL to Stage3AC
+  H4 B-edge pause: 0x14efa (5 bytes)
+  H4 real heartbeat: 0x56ca7 (12 bytes)
+  H4 heartbeat gate: 0x8431c (7 bytes)
+  H4 procedural rollback A: 0x48086 (16 bytes)
+  H4 procedural rollback B: 0x48110 (16 bytes)
+  H4 procedural rollback C: 0x5360b (16 bytes)
+  H4 procedural rollback D: 0x53d41 (16 bytes)
+  H4 procedural rollback E: 0x53e37 (16 bytes)
+  H2 cleanup pin A: 0x90ac4 (8 bytes)
+  H2 cleanup pin B: 0x90ce2 (8 bytes)
+  H2 stock translation: 0x92f06 (8 bytes)
+  H2 Classic carrier: 0x95b16 (8 bytes)
+  H3/ODST stock translation: 0x40a52 (8 bytes)
+  Reach stock translation: 0x6b321 (8 bytes)
+  Reach HUD A: 0x81036 (8 bytes)
+  Reach HUD B: 0x8112d (8 bytes)
+  Reach HUD C: 0x813a8 (8 bytes)
+
+New call edges:
+  0x30894 -> 0x2f15bb (e8220d2c00)
+  0x2f3b3a -> 0x2f1bd7 (e898e0ffff)

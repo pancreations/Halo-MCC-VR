@@ -552,6 +552,13 @@ struct Config
     // positive moves it out of your face. Never touches aim.
     float gun_forward_m = -0.14f;
 
+    // Gun-stock calibration: lateral/vertical translation along the visible
+    // weapon's own post-mount-rotation right/up axes. Shared by every supported
+    // VR title. Visual only: aim, bullets, and the VR reticle stay on the
+    // controller ray. 0 = previous placement.
+    float gun_right_m = 0.0f;
+    float gun_up_m = 0.0f;
+
     // Raise the muzzle EFFECT origin — the flash and the point bullets appear
     // to leave — along the gun's own up axis, in meters. Reach only; Halo 3 and
     // ODST resolve their muzzle markers on the visible weapon already.

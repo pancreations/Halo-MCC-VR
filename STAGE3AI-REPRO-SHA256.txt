@@ -1,0 +1,9 @@
+Stage3AH-HaloMCCVR.dll
+7ceb1b741f94286c9766e777ec253208301fb97c8e3976b61d4fc6b141a8a402
+
+Stage3AI-HaloMCCVR.dll (repro #1)
+36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8
+Stage3AI-HaloMCCVR.dll (repro #2)
+36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8
+Stage3AI-HaloMCCVR.dll (repro #3)
+36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8

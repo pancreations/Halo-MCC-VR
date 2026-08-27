@@ -10,6 +10,7 @@
 #include <vector>
 #include <MinHook.h>
 #include "game.h"
+#include "d3d11_hook.h"
 #include "sigscan.h"
 #include "vr.h"
 #include "ik.h"
@@ -116,7 +117,7 @@ namespace
         TitleCapability_ControllerInput |
         TitleCapability_Haptics |
         TitleCapability_CutsceneTheater;
-    // C-H2-46: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
+    // C-H2-77: matches kHalo2Capabilities in title_registry.cpp. ControllerAim
     // owns the visible first-person hands/gun mesh and the bullet direction
     // only. The physical right stick still turns the character and camera and
     // the headset still owns pitch, because Game_ComputeAimStick refuses
@@ -124,6 +125,7 @@ namespace
     constexpr uint32_t kHalo2Stereo6DofRuntimeCapabilities =
         TitleCapability_Stereo |
         TitleCapability_ControllerAim |
+        TitleCapability_Hud |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |
@@ -1981,6 +1983,11 @@ namespace
         HudLayoutProfile::None};
     std::atomic<uint32_t> g_safeFramePublishedGeneration{0};
     std::atomic<bool> g_safeFrameScanInFlight{false};
+    // Reach's six headset-proven HUD records have repeatedly lived in the
+    // high 0x00007FF4... private tag allocation. The first scan of each Reach
+    // title generation starts there; if it misses, the normal auto-rescan for
+    // that same generation falls back to the full application range.
+    std::atomic<uint32_t> g_reachHudFastScanGeneration{UINT32_MAX};
     SRWLOCK g_hudLayoutWriteLock = SRWLOCK_INIT;
 
     // Per-title freshness beacons. A resident-but-idle game module cannot
@@ -2596,10 +2603,29 @@ namespace
         bool cancelled = false;
         SYSTEM_INFO si;
         GetSystemInfo(&si);
-        uintptr_t addr =
+        const uintptr_t addrMin =
             reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
         const uintptr_t addrMax =
             reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
+        uintptr_t addr = addrMin;
+        if (profile == HudLayoutProfile::HaloReach)
+        {
+            // The prior full scan proved all six Reach records as private RW
+            // near 0x00007FF4..., after spending ~45 s byte-scanning lower
+            // allocations. Start the first scan of a Reach generation in that
+            // proven high allocation band. If ASLR ever puts the records lower,
+            // a failed scan leaves no slots, so the existing auto-rescan runs
+            // again; the generation marker below then selects addrMin and gives
+            // us the old complete scan as a correctness fallback.
+            constexpr uintptr_t kReachHudFastStart =
+                static_cast<uintptr_t>(0x00007FF400000000ull);
+            const uint32_t priorGeneration =
+                g_reachHudFastScanGeneration.exchange(
+                    generation, std::memory_order_acq_rel);
+            if (priorGeneration != generation &&
+                kReachHudFastStart > addr && kReachHudFastStart < addrMax)
+                addr = kReachHudFastStart;
+        }
         MEMORY_BASIC_INFORMATION mbi{};
         while (addr < addrMax && accepted < kMaxSafeFrameHits &&
                VirtualQuery(
@@ -2636,9 +2662,14 @@ namespace
                   mbi.Protect == PAGE_EXECUTE_READWRITE ||
                   mbi.Protect == PAGE_EXECUTE_WRITECOPY));
             const bool writableProtect = readableProtect;
-            const bool allowedType =
-                mbi.Type == MEM_PRIVATE ||
-                (adapter->scanMappedRegions && mbi.Type == MEM_MAPPED);
+            // The headset-proven Reach anchors are MEM_PRIVATE/PAGE_READWRITE,
+            // while other tag-backed copies can be mapped. Reach therefore
+            // accepts both storage classes; H3/ODST retain their established
+            // private-only rule. Stage 3O accidentally narrowed this to mapped
+            // only, which made every Reach scan return zero raw anchor hits.
+            const bool allowedType = adapter->scanMappedRegions
+                ? (mbi.Type == MEM_PRIVATE || mbi.Type == MEM_MAPPED)
+                : mbi.Type == MEM_PRIVATE;
             const bool candidate =
                 mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                 writableProtect && allowedType;
@@ -2677,6 +2708,14 @@ namespace
                     }
                 }
             }
+            // The accepted Steam proof contains six Reach records clustered
+            // in the same high tag allocation. Once all six are collected, do
+            // not waste tens of seconds scanning unrelated resident modules.
+            // If a future build exposes only the adapter minimum (three), this
+            // condition never fires and the scan naturally retains the complete
+            // fallback behavior.
+            if (profile == HudLayoutProfile::HaloReach && accepted >= 6)
+                break;
             addr = next;
         }
 
@@ -5495,8 +5534,13 @@ namespace
         const float standoff = (left
             ? Clamp(g_config.left_hand_forward_m, -0.15f, 0.30f)
             : Clamp(g_config.gun_forward_m, -0.3f, 0.5f)) * s;
+        const float rightOff = !left
+            ? Clamp(g_config.gun_right_m, -0.3f, 0.3f) * s : 0.0f;
+        const float upOff = !left
+            ? Clamp(g_config.gun_up_m, -0.3f, 0.3f) * s : 0.0f;
         for (int j = 0; j < 3; ++j)
-            pos[j] = cam[j] + off[j] + basis[j] * standoff;
+            pos[j] = cam[j] + off[j] + basis[j] * standoff +
+                basis[3 + j] * rightOff + basis[6 + j] * upOff;
         scale = Clamp(g_config.gun_scale, 0.3f, 3.0f);
         for (int j = 0; j < 9; ++j) if (!isfinite(basis[j])) return false;
         for (int j = 0; j < 3; ++j) if (!isfinite(pos[j])) return false;
@@ -15861,9 +15905,15 @@ namespace
 
     void ReleaseOdstModuleReferenceAndClearPointers()
     {
-        // moduleReference is an exact-base identity only. MCC owns the loader
-        // reference; releasing one here used to race its consecutive load.
+        // Stage 3AL owns exactly one post-preflight loader reference. Keep it
+        // until every hook is quiescent/removed and both direct native patches
+        // have been restored; only then clear module-backed pointers and release
+        // the pin exactly once. A title exit can no longer stale restoration
+        // pointers while verified cleanup is still in progress.
+        HMODULE retiredModuleReference = g_odstCamera.moduleReference;
         ClearOdstCameraPointers();
+        if (retiredModuleReference)
+            FreeLibrary(retiredModuleReference);
     }
 
     bool DiscardCreatedOdstHooks()
@@ -15935,9 +15985,29 @@ namespace
             return OdstInstallResult::Failed;
         }
 
+        // Stage 3AL: the first GetModuleHandleExW above remains an
+        // identity-only probe so failed preflight does not pin a title image.
+        // Only now - after exact ODST preflight and prior-ownership checks have
+        // passed - acquire one real loader reference for the lifetime of our
+        // MinHook targets and native byte patches. Reach already uses this same
+        // post-proof ownership model. Stage 3AK kept only the identity handle,
+        // allowing MCC to unmap halo3odst.dll before title-exit restoration and
+        // causing the repeated stale weapon-IK cleanup storm seen in headset.
+        HMODULE ownedModuleReference = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                reinterpret_cast<LPCWSTR>(base),
+                                &ownedModuleReference) ||
+            reinterpret_cast<uintptr_t>(ownedModuleReference) != base)
+        {
+            if (ownedModuleReference)
+                FreeLibrary(ownedModuleReference);
+            LOG("ODST camera preflight: exact title mapping is no longer current");
+            return OdstInstallResult::Failed;
+        }
+
         g_odstCamera.moduleBase = base;
         g_odstCamera.moduleSize = size;
-        g_odstCamera.moduleReference = moduleReference;
+        g_odstCamera.moduleReference = ownedModuleReference;
         g_odstCamera.prepareView =
             reinterpret_cast<PrepareViewFn>(resolved.prepareView);
         g_odstCamera.buildViewport =
@@ -17377,6 +17447,12 @@ namespace
         uint64_t result = 0;
         g_reachCamera.activeCallbacks.fetch_add(
             1, std::memory_order_acq_rel);
+        // Stage 3U: runtime ownership must follow a REAL Reach camera callback,
+        // not the outer Present loop.  Save & Quit stops this path before the
+        // pinned title DLL can unload, so this timestamp is also the clean
+        // signal that the installed core has become stale.
+        g_reachLastCamCopyMs.store(
+            GetTickCount64(), std::memory_order_release);
         __try
         {
             result = ReachUnitCameraPositionBody(unitIndex, out, caller);
@@ -21822,12 +21898,17 @@ namespace
         const float standoff=(left
             ? Clamp(g_config.left_hand_forward_m,-0.15f,0.30f)
             : Clamp(g_config.gun_forward_m,-0.3f,0.5f))*scale;
+        const float rightOff=!left
+            ? Clamp(g_config.gun_right_m,-0.3f,0.3f)*scale : 0.0f;
+        const float upOff=!left
+            ? Clamp(g_config.gun_up_m,-0.3f,0.3f)*scale : 0.0f;
         out={};
         out.scale=1.0f;
         memcpy(out.rotation,basis,sizeof(basis));
         for (int axis=0;axis<3;++axis)
             out.translation[axis]=gameplayBase[axis]+offset[axis]+
-                basis[axis]*standoff;
+                basis[axis]*standoff + basis[3+axis]*rightOff +
+                basis[6+axis]*upOff;
         meshScale=left
             ? Clamp(g_config.left_hand_scale,0.3f,3.0f)
             : Clamp(g_config.gun_scale,0.3f,3.0f);
@@ -25215,9 +25296,20 @@ namespace
             0, std::memory_order_relaxed);
         g_reachOuterCameraCommitLoggedGeneration.store(
             0, std::memory_order_release);
-        g_aimSeen.store(false, std::memory_order_release);
-        g_camValid.store(false, std::memory_order_release);
-        g_baseCamValid.store(false, std::memory_order_release);
+        // These camera-valid flags are shared with Halo 3/ODST. Reach teardown
+        // can remain retryable after another title has already taken runtime
+        // ownership; clearing the shared flags on every retry made Halo 3's
+        // right-hand solve fall back to the stock 3DOF packet for a frame.
+        // Revoke them only while Reach still owns (or no title owns) the camera.
+        const GameTitle teardownOwner = TitleAdapter_GetActiveTitle();
+        if (teardownOwner == GameTitle::HaloReach ||
+            teardownOwner == GameTitle::None ||
+            teardownOwner == GameTitle::Unknown)
+        {
+            g_aimSeen.store(false, std::memory_order_release);
+            g_camValid.store(false, std::memory_order_release);
+            g_baseCamValid.store(false, std::memory_order_release);
+        }
 
         // The worker has no Reach engine TLS and must never chase tag storage.
         // Active/Pending is restored only by the next proven normal-player
@@ -25307,9 +25399,15 @@ namespace
             g_reachRenderHalfFovX[eye].store(0.0f, std::memory_order_relaxed);
             g_reachRenderHalfFovY[eye].store(0.0f, std::memory_order_relaxed);
         }
-        g_aimSeen.store(false, std::memory_order_release);
-        g_camValid.store(false, std::memory_order_release);
-        g_baseCamValid.store(false, std::memory_order_release);
+        const GameTitle finalTeardownOwner = TitleAdapter_GetActiveTitle();
+        if (finalTeardownOwner == GameTitle::HaloReach ||
+            finalTeardownOwner == GameTitle::None ||
+            finalTeardownOwner == GameTitle::Unknown)
+        {
+            g_aimSeen.store(false, std::memory_order_release);
+            g_camValid.store(false, std::memory_order_release);
+            g_baseCamValid.store(false, std::memory_order_release);
+        }
 
         g_reachCamera.innerTarget = nullptr;
         g_reachCamera.outerTarget = nullptr;
@@ -25352,6 +25450,10 @@ namespace
         g_reachHeadReference = {};
         g_reachSeatYaw = {};
         g_reachYawSeat = {};
+        // Hook removal and all module-backed restoration have succeeded. Keep
+        // the retained HMODULE in a local until the remaining pointer/state clear
+        // finishes, then release it exactly once before returning.
+        HMODULE retiredModuleReference = g_reachCamera.moduleReference;
         g_reachCamera.moduleReference = nullptr;
         g_reachCamera.base = 0;
         g_reachCamera.size = 0;
@@ -25426,6 +25528,8 @@ namespace
         g_reachCamera.installed.store(false, std::memory_order_release);
         // The next install must prove the level is running again.
         g_reachLevelLoadGate.Rearm();
+        if (retiredModuleReference)
+            FreeLibrary(retiredModuleReference);
         LOG("Reach camera core removed; stock Reach owns the title");
         return true;
     }
@@ -26753,16 +26857,32 @@ namespace
                 "setting stays stock and the Reach camera core continues");
         }
 
+        // Stage 3T: once Reach has passed its normal level/liveness proof and
+        // camera-core installation is actually beginning, retain the exact title
+        // mapping for as long as MinHook owns addresses inside haloreach.dll.
+        // Earlier cold/title detection remains identity-only and does not pin the
+        // module.
         HMODULE moduleReference = nullptr;
-        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                                 reinterpret_cast<LPCWSTR>(base),
                                 &moduleReference) ||
             reinterpret_cast<uintptr_t>(moduleReference) != base)
         {
+            if (moduleReference)
+                FreeLibrary(moduleReference);
             LOG("Reach camera install: exact title mapping is no longer current");
             return false;
         }
+        struct ReachInstallModuleReferenceGuard
+        {
+            HMODULE module = nullptr;
+            bool transferred = false;
+            ~ReachInstallModuleReferenceGuard()
+            {
+                if (module && !transferred)
+                    FreeLibrary(module);
+            }
+        } moduleReferenceGuard{moduleReference, false};
         // Optional, not part of core VR ownership: see kReachHudDrawWidgetRva
         // for how this address was found and verified. A failed create/enable
         // here must never affect the five mandatory hooks below.
@@ -27008,6 +27128,7 @@ namespace
                 g_reachCamera.size=size;
                 g_reachCamera.generation=generation;
                 g_reachCamera.moduleReference=moduleReference;
+                moduleReferenceGuard.transferred = true;
                 g_reachCamera.innerTarget=innerRetained?inner:nullptr;
                 g_reachCamera.outerTarget=outerRetained?outer:nullptr;
                 g_reachCamera.fpInterpolateTarget=
@@ -27052,6 +27173,7 @@ namespace
         g_reachCamera.size = size;
         g_reachCamera.generation = generation;
         g_reachCamera.moduleReference = moduleReference;
+        moduleReferenceGuard.transferred = true;
         g_reachCamera.innerTarget = inner;
         g_reachCamera.outerTarget = outer;
         g_reachCamera.fpInterpolateTarget = fpInterpolate;
@@ -31273,9 +31395,25 @@ namespace
         // C-H4-38 starts both carriers from their prepared raw bases. The
         // left hand no longer inherits the gun's mirrored presentation trim;
         // its exact state-specific rotational parent is selected once below.
-        return Halo4BuildFloatingControllerCarrier(
-            controller.basis,targetPosition,false,
-            frame.gunYawDeg,frame.gunPitchDeg,frame.gunRollDeg,target);
+        Halo4FloatingTransform carrier{};
+        if (!Halo4BuildFloatingControllerCarrier(
+                controller.basis,targetPosition,false,
+                frame.gunYawDeg,frame.gunPitchDeg,frame.gunRollDeg,carrier))
+            return false;
+        if (!left)
+        {
+            const float rightOff=
+                Clamp(g_config.gun_right_m,-0.3f,0.3f)*input.worldScale;
+            const float upOff=
+                Clamp(g_config.gun_up_m,-0.3f,0.3f)*input.worldScale;
+            for (int axis=0;axis<3;++axis)
+                carrier.translation[axis]+=
+                    carrier.rotation[3+axis]*rightOff +
+                    carrier.rotation[6+axis]*upOff;
+            if (!Halo4FloatingTransformValid(carrier)) return false;
+        }
+        target=carrier;
+        return true;
     }
 
     bool Halo4FloatingPairMatchesCurrent()
@@ -35620,6 +35758,22 @@ namespace
                     Halo2ColdObservation_Passed(halo2ProbeGeneration));
             }
             {
+                // C-H2-77. Own the proven Blam gameplay-CHUD draw once for the
+                // title, before either renderer-specific stereo core polls.
+                // This exposes one exact TLS scope to the field-proven D3D11
+                // HUD shaders across a Classic/Anniversary switch.
+                const uint32_t halo2HudGeneration =
+                    TitleAdapter_GetGeneration(GameTitle::Halo2);
+                const bool halo2HudVrAvailable =
+                    !g_vrRuntimeFailureLatched.load(
+                        std::memory_order_acquire);
+                (void)Halo2NativeHud_Poll(
+                    halo2GateBase, halo2GateSize, halo2HudGeneration,
+                    halo2Active && halo2GateSampled && halo2HudVrAvailable,
+                    activeLevelRunning,
+                    Halo2ColdObservation_Passed(halo2HudGeneration));
+            }
+            {
                 // C-H2-10. The classic core cannot serve Anniversary: with
                 // those graphics selected render_player_window is never
                 // called at all. This runs the remastered scene render once
@@ -36266,6 +36420,13 @@ bool Game_IsCameraOnlyBringup()
 bool Game_TitleCapturesAuthoredCrosshair()
 {
     const GameTitle activeTitle = TitleAdapter_GetActiveTitle();
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // Do not revoke the generic marker merely because the shader hooks exist.
+    // Ownership changes only after a real native Halo 2 crosshair draw has
+    // completed a capture in this exact module generation.
+    if (activeTitle == GameTitle::Halo2)
+        return D3D_Halo2NativeCrosshairCaptured();
+#endif
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     if (activeTitle == GameTitle::Halo4)
         return Halo4CuiReticleTransformLive();
@@ -36323,6 +36484,16 @@ uint64_t Game_GetReachAuthoredCrosshairKey()
 }
 uint64_t Game_GetAuthoredCrosshairKey()
 {
+#if HALOMCCVR_HALO2_STEREO6DOF
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        D3D_Halo2NativeCrosshairCaptured())
+    {
+        // The native art is texture/state driven behind one proven shader.
+        // A stable nonzero identity selects the bounded-animation refresh path
+        // in VR, which republishes weapon swaps and colour/kick animation.
+        return 0x0a9b60d8f40268f6ULL;
+    }
+#endif
     return g_authoredCrosshairKey.load(std::memory_order_acquire);
 }
 uint32_t Game_GetAuthoredCrosshairDrawCount()
@@ -36757,6 +36928,17 @@ bool Game_HasTitleCapability(uint32_t requiredCapabilities)
         runtime.runtime, kRuntimeCapabilitiesRequiringArm);
     return (enabled & requiredCapabilities) == requiredCapabilities;
 }
+bool Game_UsesHalo2NativeHudLayout()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    return TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        Halo2NativeHud_Armed() &&
+        (Halo2Stereo_Armed() || Halo2AnniversaryStereo_Armed()) &&
+        Game_HasTitleCapability(TitleCapability_Hud);
+#else
+    return false;
+#endif
+}
 CinematicControlState Game_GetCinematicControlState()
 {
     const uint64_t now = GetTickCount64();
@@ -36890,11 +37072,20 @@ void Game_DetachForVrRuntimeFailure()
 }
 bool Game_HasAuthoritativePauseState()
 {
-    if (g_enginePauseValidated.load(std::memory_order_acquire))
-        return true;
     const GameTitle activeTitle = TitleAdapter_GetActiveTitle();
     const TitleAdapterRuntimeSnapshot runtime =
         RuntimeSnapshot(GetTickCount64());
+    // g_enginePauseValidated belongs specifically to Halo 3. MCC keeps title
+    // modules resident, so this proof can remain true after switching away
+    // from Halo 3. Never let that stale proof suppress another title's edge
+    // fallback (notably Halo 2, which intentionally owns pause presentation
+    // without a proven native pause boolean).
+    const bool halo3Owned = activeTitle == GameTitle::Halo3 ||
+        (runtime.runtime.owner == GameTitle::Halo3 &&
+         runtime.runtime.qualifyingOwnerCount == 1);
+    if (halo3Owned &&
+        g_enginePauseValidated.load(std::memory_order_acquire))
+        return true;
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     if ((activeTitle == GameTitle::Halo3ODST ||
          (runtime.runtime.owner == GameTitle::Halo3ODST &&
@@ -37346,22 +37537,28 @@ void Game_AutoVrTick()
             if (!g_reachCamera.teardownRequested.load(
                     std::memory_order_acquire))
             {
-                const uint64_t reachNowMs = GetTickCount64();
-                g_reachLastCamCopyMs.store(
-                    reachNowMs, std::memory_order_release);
-                // Reach's camera-liveness heartbeat, the homolog of Halo 3's
-                // CamCopyHook and ODST's cam-copy publications. Without it the
-                // shared resolver never qualifies Reach as owner (its policy
-                // window used to be zero as well), so the Haptics capability
-                // was permanently denied for Reach - captured rumble requests
-                // were discarded - and the 50 ms worker kept re-publishing the
-                // fallback Loading mode over the present path's Gameplay.
-                // Stopping on teardown/disarm expires ownership within the
-                // 500 ms freshness window, which also drops the arm-gated
-                // capabilities and stops rumble, matching the other titles.
-                if (reachGen)
+                // Stage 3U: publish only the timestamp from the admitted Reach
+                // camera callback.  Present is shared by the MCC shell, so using
+                // GetTickCount64() here fabricated permanent Reach liveness after
+                // Save & Quit once Stage 3T correctly pinned haloreach.dll.
+                const uint64_t reachLastCamMs = g_reachLastCamCopyMs.load(
+                    std::memory_order_acquire);
+                if (reachGen && reachLastCamMs)
                     TitleAdapter_PublishHeartbeat(
-                        GameTitle::HaloReach, reachGen, reachNowMs);
+                        GameTitle::HaloReach, reachGen, reachLastCamMs);
+
+                // A normal pause deliberately keeps the core armed for the
+                // head-locked 2D pause presentation.  Outside that pause, one
+                // full second without the real camera callback means the title
+                // no longer owns the frame (Save & Quit, shell, or an equivalent
+                // bypass). Request verified worker teardown while Stage 3T's
+                // loader pin still makes every MinHook target safely mapped.
+                if (reachLastCamMs && !(reachPauseKnown && reachPaused) &&
+                    GetTickCount64() - reachLastCamMs > 1000)
+                {
+                    g_reachCamera.teardownRequested.store(
+                        true, std::memory_order_release);
+                }
                 HudLayoutAutoTick(HudLayoutProfile::HaloReach);
             }
         }
@@ -37407,6 +37604,7 @@ void Game_AutoVrTick()
 
 #if HALOMCCVR_HALO2_STEREO6DOF
     static bool wasHalo2Stereo6DofContext = false;
+    static Halo2PauseResumeClock halo2PauseResumeClock;
     if (halo2ClaimContext)
     {
         // This atomic gate starts false in the H2 core. Publish false before
@@ -37423,8 +37621,30 @@ void Game_AutoVrTick()
             Halo2Stereo_Armed() || Halo2AnniversaryStereo_Armed();
         const bool pauseTarget = VR_IsPausePresentationTarget();
         const bool pausePresentation = VR_IsPausePresentation();
+
+        // C-H2-73: Y+B is only an edge fallback for H2, so selecting Resume
+        // inside the native pause menu produces no second Start/Y+B edge for
+        // the VR presentation. Do not guess from A/B. Prove that the H2EK
+        // game-time clock first froze while the head-locked pause screen was
+        // actually displayed, then require two distinct native ticks after it
+        // starts advancing again before requesting stereo.
+        bool halo2GameTimeInitialized = false;
+        uint32_t halo2GameTimeTick = 0;
+        const bool halo2GameTimeValid = pausePresentation &&
+            Halo2ColdObservation_ReadGameTime(
+                halo2GameTimeInitialized, halo2GameTimeTick);
+        if (halo2PauseResumeClock.Update(
+                true, pausePresentation, halo2GameTimeValid,
+                halo2GameTimeInitialized, halo2GameTimeTick))
+        {
+            Halo2Stereo_SetPresentationReady(false);
+            VR_RequestPausePresentation(false);
+            LOG("Halo 2 pause presentation: native game-time clock resumed; "
+                "restoring stereo 3D");
+        }
+
         const bool mustClearForeignPause = Halo2MustClearForeignPause(
-            true, pauseTarget, pausePresentation);
+            true, enteringHalo2ClaimContext, pauseTarget, pausePresentation);
         Halo2PreparedCadenceSnapshot halo2Cadence{};
         const bool halo2CadenceCurrent =
             VR_Halo2GetCurrentPreparedCadence(halo2Cadence);
@@ -37445,8 +37665,8 @@ void Game_AutoVrTick()
             // episode; repeating it every Present would restart FadeOut before
             // it could ever finish.
             if (Halo2ShouldRequestForeignPauseClear(
-                    true, pauseTarget, pausePresentation,
-                    halo2PauseClearRequested))
+                    true, enteringHalo2ClaimContext, pauseTarget,
+                    pausePresentation, halo2PauseClearRequested))
             {
                 VR_RequestPausePresentation(false);
                 LOG("Halo 2 presentation: clearing foreign pause/head-lock "
@@ -37555,6 +37775,7 @@ void Game_AutoVrTick()
     {
         Halo2Stereo_SetPresentationReady(false);
         wasHalo2Stereo6DofContext = false;
+        halo2PauseResumeClock.Reset();
         halo2PauseClearRequested = false;
         halo2CadenceStateKnown = false;
         g_enabled.store(false, std::memory_order_release);
@@ -37826,7 +38047,10 @@ void Game_AutoVrTick()
     static bool enginePauseLogged = false;
     static uint64_t pauseMismatchSince = 0;
     static bool pauseMismatchValue = false;
-    if (ReadEnginePaused(enginePaused))
+    // The native flag below is a Halo 3 proof. Keep it completely out of
+    // resident-module transitions so H2/Reach/ODST cannot inherit Halo 3's
+    // pause state merely because halo3.dll is still loaded.
+    if (haloTitleActive && ReadEnginePaused(enginePaused))
     {
         if (!enginePauseLogged || enginePaused != previousEnginePaused)
         {
@@ -37857,7 +38081,7 @@ void Game_AutoVrTick()
             pauseMismatchSince = 0;
     }
     static PauseLevelRecovery pauseLevelRecovery;
-    if (!g_enginePauseValidated.load() &&
+    if (haloTitleActive && !g_enginePauseValidated.load() &&
         pauseLevelRecovery.Update(pausePresentation, cameraStale, inLevelStable))
     {
         // Restart Level leaves Halo's native pause screen without producing a

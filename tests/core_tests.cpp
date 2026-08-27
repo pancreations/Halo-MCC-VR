@@ -26,6 +26,8 @@
 #include "sigscan.h"
 #include "odst_vehicle_logic.h"
 #include "halo2_adapter.h"
+#include "halo2_hud_logic.h"
+#include "halo2_hud_shader_logic.h"
 #include "halo2_render_logic.h"
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
@@ -5276,18 +5278,54 @@ int main()
             "private ODST entry clears either pending or active foreign pause state");
         Check(!OdstMustClearForeignPause(false, true, true),
             "foreign pause cleanup cannot affect non-ODST title ownership");
-        Check(Halo2MustClearForeignPause(true, true, false) &&
-                  Halo2MustClearForeignPause(true, false, true),
-            "H2 ownership clears either pending or active foreign pause state");
-        Check(!Halo2MustClearForeignPause(false, true, true),
-            "H2 foreign pause cleanup is confined to its title context");
+        Check(Halo2MustClearForeignPause(true, true, true, false) &&
+                  Halo2MustClearForeignPause(true, true, false, true),
+            "H2 title entry clears either pending or active inherited pause state");
+        Check(!Halo2MustClearForeignPause(true, false, true, true) &&
+                  !Halo2MustClearForeignPause(false, true, true, true),
+            "H2 preserves its own Y+B pause after entry and leaves foreign titles alone");
         Check(Halo2ShouldRequestForeignPauseClear(
-                  true, false, true, false) &&
+                  true, true, false, true, false) &&
                   !Halo2ShouldRequestForeignPauseClear(
-                      true, false, true, true) &&
+                      true, true, false, true, true) &&
                   !Halo2ShouldRequestForeignPauseClear(
-                      true, false, false, false),
-            "H2 requests one pause clear per episode and does not restart its fade");
+                      true, false, true, true, false),
+            "H2 requests one inherited-pause clear only on title entry");
+        Check(Halo2PausePresentationOwnsStockScreen(true, true) &&
+                  !Halo2PausePresentationOwnsStockScreen(true, false) &&
+                  !Halo2PausePresentationOwnsStockScreen(false, true),
+            "C-H2-72 gives the shared stock-screen path only to an active "
+            "H2 displayed pause presentation");
+        Halo2PauseResumeClock pauseClock;
+        Check(!pauseClock.Update(true, true, true, true, 100) &&
+                  !pauseClock.Update(true, true, true, true, 100) &&
+                  !pauseClock.Update(true, true, true, true, 100) &&
+                  !pauseClock.Update(true, true, true, true, 100) &&
+                  !pauseClock.Update(true, true, true, true, 100),
+            "C-H2-73 requires a proven frozen H2 clock before resume");
+        Check(!pauseClock.Update(true, true, true, true, 101),
+            "C-H2-73 requires two distinct resumed H2 ticks");
+        Check(pauseClock.Update(true, true, true, true, 102),
+            "C-H2-73 restores stereo after two native H2 ticks resume");
+
+        Halo2PauseResumeClock menuClock;
+        menuClock.Update(true, true, true, true, 200);
+        menuClock.Update(true, true, true, true, 200);
+        menuClock.Update(true, true, true, true, 200);
+        Check(!menuClock.Update(true, true, true, true, 201) &&
+                  !menuClock.Update(true, true, true, true, 202),
+            "C-H2-73 cannot infer Resume from a moving clock that never froze");
+
+        Halo2PauseResumeClock invalidClock;
+        invalidClock.Update(true, true, true, true, 300);
+        invalidClock.Update(true, true, true, true, 300);
+        invalidClock.Update(true, true, true, true, 300);
+        invalidClock.Update(true, true, true, true, 300);
+        invalidClock.Update(true, true, true, true, 300);
+        Check(!invalidClock.Update(true, true, false, true, 300) &&
+                  !invalidClock.Update(true, true, true, true, 301) &&
+                  !invalidClock.Update(true, true, true, true, 302),
+            "C-H2-73 invalid H2 game-time samples reset pause evidence");
         Check(!Halo2RefreshCadenceSupported(0.0f) &&
                   !Halo2RefreshCadenceSupported(45.0f) &&
                   !Halo2RefreshCadenceSupported(60.0f) &&
@@ -5924,7 +5962,8 @@ int main()
     constexpr uint32_t halo2ExpectedCapabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics | TitleCapability_ControllerAim;
+        TitleCapability_Haptics | TitleCapability_ControllerAim |
+        TitleCapability_Hud;
     constexpr TitleHookPlan halo2ExpectedHookPlan =
         TitleHookPlan::Halo2StereoCore;
     constexpr uint64_t halo2ExpectedHeartbeatWindowMs = 500;
@@ -6128,11 +6167,10 @@ int main()
         "after its read-only level gate opens");
     // C-H2-46 grants controller aim for the floating hands/gun mesh and the
     // bullet direction only; the right stick keeps ordinary camera turning
-    // because Game_ComputeAimStick refuses Halo 2 unconditionally. HUD, arm IK
-    // and theatre stay denied until each has Halo 2 evidence.
+    // because Game_ComputeAimStick refuses Halo 2 unconditionally. C-H2-75
+    // grants native HUD layout; arm IK and theatre remain denied.
     constexpr uint32_t halo2DeniedCapabilities =
-        TitleCapability_Hud | TitleCapability_ArmIk |
-        TitleCapability_CutsceneTheater;
+        TitleCapability_ArmIk | TitleCapability_CutsceneTheater;
 #if HALOMCCVR_HALO2_STEREO6DOF
     constexpr uint32_t halo2ExpectedAdmission =
         TitleCapability_ControllerInput;
@@ -6151,8 +6189,8 @@ int main()
               std::wstring_view(halo2Identity.moduleName) ==
                   std::wstring_view(halo2Row->moduleName),
         "The Halo 2 registry row exposes the exact staged capabilities, hook "
-        "plan, heartbeat, and adapter module identity while denying aim, HUD, "
-        "arm IK and cutscene-theatre claims");
+        "plan, heartbeat, and adapter module identity while denying arm IK "
+        "and cutscene-theatre claims");
 #if HALOMCCVR_HALO2_STEREO6DOF || \
     HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
     {
@@ -6218,7 +6256,8 @@ int main()
         // kRuntimeCapabilitiesRequiringArm).
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-            TitleCapability_ControllerAim | TitleCapability_Haptics;
+            TitleCapability_ControllerAim | TitleCapability_Haptics |
+            TitleCapability_Hud;
 #else
         constexpr uint32_t halo2ExpectedUnarmedCapabilities =
             TitleCapability_None;
@@ -6265,6 +6304,16 @@ int main()
 
     Check(kHalo2RetailAnchorCount == 6,
         "C-H2-1 pins two liveness and four render/camera anchors");
+    Check(kHalo2KitNativeChudDrawRva == 0x002EA955u &&
+              kHalo2RetailNativeChudDrawRva == 0x007FFD70u &&
+              sizeof(kHalo2RetailNativeChudDrawEntryBytes) == 16u,
+        "C-H2-75 pins the H2EK native-CHUD semantic match, retail RVA, "
+        "and exact entry-byte proof");
+    Check(kHalo2KitHudAnchorBasisRva == 0x0030C365u &&
+              kHalo2RetailHudAnchorBasisRva == 0x00829490u &&
+              sizeof(kHalo2RetailHudAnchorBasisEntryBytes) == 23u,
+        "Stage 3D's rejected H2EK/retail native HUD anchor-basis evidence "
+        "remains pinned for audit even though C-H2-77 no longer hooks it");
     const uint32_t expectedHalo2AnchorRvas[] = {
         0x7067F0u, 0x706910u, 0x7E1600u,
         0x7E2130u, 0x7E30D0u, 0x7DFCD0u,
@@ -9265,6 +9314,16 @@ int main()
                   true, false, false, true),
         "Halo 4 keeps procedural gun-ray pixels only while a live authored "
         "hook is waiting for its first validated image");
+    Check(Halo4CuiReticleUsesProceduralFallback(
+              true, true, true) &&
+              !Halo4CuiReticleUsesProceduralFallback(
+                  false, true, true) &&
+              !Halo4CuiReticleUsesProceduralFallback(
+                  true, false, true) &&
+              !Halo4CuiReticleUsesProceduralFallback(
+                  true, true, false),
+        "Halo 4 fail-closes to the procedural bullet-ray reticle whenever "
+        "the authored hook is live and native-reticle suppression is enabled");
 
     using CuiAction = Halo4CuiReticleAction;
     Check(Halo4DecideCuiReticleAction(
@@ -14947,6 +15006,142 @@ int main()
         Check(evictsLru && abandonClears && rejectsDegenerate,
             "The intermediate pool evicts least-recently-used, clears an "
             "abandoned slot, and refuses a degenerate shape");
+    }
+
+    // Halo 2 native HUD layout: keep authored CHUD inside the native FOV that
+    // the compositor submits from the title's wider symmetric raster cover.
+    {
+        constexpr float radians = 3.14159265f / 180.0f;
+        const Halo2CameraRectangle source{0, 0, 2730, 3786};
+        const Halo2SymmetricHalfFovs cover{
+            63.3f * radians, 55.1f * radians};
+        const float leftEye[4] = {
+            -54.0f * radians, 40.0f * radians,
+            44.0f * radians, -55.0f * radians};
+        const float rightEye[4] = {
+            -40.0f * radians, 54.0f * radians,
+            44.0f * radians, -55.0f * radians};
+
+        Halo2CameraRectangle full{};
+        Halo2CameraRectangle half{};
+        Halo2CameraRectangle narrow{};
+        Halo2CameraRectangle raised{};
+        const bool fullOk = halo2_hud::ComputeVisibleLayoutRectangle(
+            source, cover, leftEye, rightEye, 1.0f, 1.0f, 0.0f, full);
+        const bool halfOk = halo2_hud::ComputeVisibleLayoutRectangle(
+            source, cover, leftEye, rightEye, 0.5f, 1.0f, 0.0f, half);
+        const bool narrowOk = halo2_hud::ComputeVisibleLayoutRectangle(
+            source, cover, leftEye, rightEye, 0.5f, 0.5f, 0.0f, narrow);
+        const bool raisedOk = halo2_hud::ComputeVisibleLayoutRectangle(
+            source, cover, leftEye, rightEye, 0.5f, 1.0f, 100.0f, raised);
+        const int fullWidth = full.x1 - full.x0;
+        const int fullHeight = full.y1 - full.y0;
+        const int halfWidth = half.x1 - half.x0;
+        const int halfHeight = half.y1 - half.y0;
+        const int narrowWidth = narrow.x1 - narrow.x0;
+        Check(fullOk && halfOk && narrowOk && raisedOk &&
+                  full.x0 > source.x0 && full.x1 < source.x1 &&
+                  full.y0 > source.y0 && full.y1 < source.y1 &&
+                  std::abs(halfWidth * 2 - fullWidth) <= 2 &&
+                  std::abs(halfHeight * 2 - fullHeight) <= 2 &&
+                  std::abs(narrowWidth * 2 - halfWidth) <= 2 &&
+                  raised.y0 == half.y0 - 100 &&
+                  raised.y1 == half.y1 - 100,
+            "Halo 2 native HUD layout basis stays inside both submitted eye "
+            "frusta and maps size, aspect, and height sliders");
+
+        float rightX = static_cast<float>(source.x1);
+        float topY = static_cast<float>(source.y0);
+        const bool healthMapped = halo2_hud::MapNativeAnchorPoint(
+            source, half, 0, rightX, topY);
+        float leftX = static_cast<float>(source.x0);
+        float bottomY = static_cast<float>(source.y1);
+        const bool sensorMapped = halo2_hud::MapNativeAnchorPoint(
+            source, half, 2, leftX, bottomY);
+        float crosshairX = (source.x0 + source.x1) * 0.5f;
+        float crosshairY = (source.y0 + source.y1) * 0.5f;
+        const float stockCrosshairX = crosshairX;
+        const float stockCrosshairY = crosshairY;
+        const bool crosshairMapped = halo2_hud::MapNativeAnchorPoint(
+            source, half, halo2_hud::kCrosshairAnchor,
+            crosshairX, crosshairY);
+        Check(healthMapped && sensorMapped &&
+                  std::fabs(rightX - half.x1) < 0.01f &&
+                  std::fabs(topY - half.y0) < 0.01f &&
+                  std::fabs(leftX - half.x0) < 0.01f &&
+                  std::fabs(bottomY - half.y1) < 0.01f &&
+                  !crosshairMapped && crosshairX == stockCrosshairX &&
+                  crosshairY == stockCrosshairY,
+            "Halo 2 native health/weapon/sensor anchors map into the slider "
+            "basis while the aiming crosshair remains stock");
+
+        // C-H2-77 replaces the disproven zero-callback anchor guess with the
+        // actual D3D11 pixel-shader identities used by a working Halo 2 HUD
+        // mod. The crosshair has its own role so it can be captured as native
+        // art instead of being distorted with the information widgets.
+        bool allGameplayShadersClassified = true;
+        for (const uint64_t hash : halo2_hud_shader::kGameplayHudHashes)
+        {
+            allGameplayShadersClassified = allGameplayShadersClassified &&
+                halo2_hud_shader::Classify(hash) ==
+                    halo2_hud_shader::Role::GameplayHud;
+        }
+        const char fnvFixture[] = "abc";
+        Check(allGameplayShadersClassified &&
+                  halo2_hud_shader::kGameplayHudHashes.size() == 15 &&
+                  halo2_hud_shader::Classify(
+                      halo2_hud_shader::kCrosshairHash) ==
+                      halo2_hud_shader::Role::Crosshair &&
+                  halo2_hud_shader::Classify(0x123456789abcdef0ULL) ==
+                      halo2_hud_shader::Role::Other &&
+                  halo2_hud_shader::MigotoFnv1(
+                      fnvFixture, sizeof(fnvFixture) - 1) ==
+                      0x014984000117d8a0ULL,
+            "Halo 2 field-proven HUD/crosshair shader identities use the "
+            "same unseeded FNV-1 contract as 3DMigoto");
+
+        halo2_hud_shader::RasterAffine halfTransform{};
+        halo2_hud_shader::RasterAffine narrowTransform{};
+        halo2_hud_shader::RasterAffine raisedTransform{};
+        const bool halfTransformOk = halo2_hud_shader::BuildRasterAffine(
+            source, half, halfTransform);
+        const bool narrowTransformOk = halo2_hud_shader::BuildRasterAffine(
+            source, narrow, narrowTransform);
+        const bool raisedTransformOk = halo2_hud_shader::BuildRasterAffine(
+            source, raised, raisedTransform);
+        Check(halfTransformOk && narrowTransformOk && raisedTransformOk &&
+                  std::fabs(halo2_hud_shader::MapX(
+                      halfTransform, static_cast<float>(source.x0)) -
+                      half.x0) < 0.01f &&
+                  std::fabs(halo2_hud_shader::MapX(
+                      halfTransform, static_cast<float>(source.x1)) -
+                      half.x1) < 0.01f &&
+                  std::fabs(halo2_hud_shader::MapY(
+                      halfTransform, static_cast<float>(source.y0)) -
+                      half.y0) < 0.01f &&
+                  std::fabs(halo2_hud_shader::MapY(
+                      halfTransform, static_cast<float>(source.y1)) -
+                      half.y1) < 0.01f &&
+                  narrowTransform.scaleX < halfTransform.scaleX * 0.51f &&
+                  std::fabs(narrowTransform.scaleY -
+                      halfTransform.scaleY) < 0.001f &&
+                  std::fabs(raisedTransform.offsetY -
+                      (halfTransform.offsetY - 100.0f)) < 0.01f,
+            "Halo 2 HUD size/aspect/vertical sliders materially alter the "
+            "exact raster transform while preserving its source-to-layout map");
+
+        Halo2CameraRectangle rejected{};
+        float badFov[4] = {
+            leftEye[0], leftEye[1], leftEye[2], leftEye[3]};
+        badFov[0] = 2.0f;
+        Check(!halo2_hud::ComputeVisibleLayoutRectangle(
+                  source, cover, badFov, rightEye,
+                  0.5f, 1.0f, 0.0f, rejected) &&
+                  !halo2_hud::ComputeVisibleLayoutRectangle(
+                      source, cover, leftEye, rightEye,
+                      0.1f, 1.0f, 0.0f, rejected),
+            "Halo 2 native HUD layout rejects an uncovered FOV and "
+            "out-of-range slider values");
     }
 
     if (g_failures == 0)

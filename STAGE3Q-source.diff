@@ -1,0 +1,1248 @@
+--- stage3p_source_baseline/CMakeLists.txt	2026-08-26 17:00:00.000000000 +0000
++++ src/CMakeLists.txt	2026-08-27 01:30:33.126928726 +0000
+@@ -259,6 +259,7 @@
+     src/dll/ik.cpp
+     src/dll/input.cpp
+     src/dll/title_adapter.cpp
++    src/dll/title_reentry_probe.cpp
+     src/dll/reach_adapter.cpp
+     src/dll/halo2_adapter.cpp
+     src/dll/halo2_cold_observation.cpp
+--- stage3p_source_baseline/src/dll/title_adapter.cpp	2026-08-26 17:00:00.000000000 +0000
++++ src/src/dll/title_adapter.cpp	2026-08-27 01:30:33.127289643 +0000
+@@ -12,6 +12,7 @@
+ #include "halo2_adapter.h"
+ #include "halo4_adapter.h"
+ #include "reach_adapter.h"
++#include "title_reentry_probe.h"
+ 
+ namespace
+ {
+@@ -504,11 +505,23 @@
+         return nullptr;
+     }
+ 
+-    const bool ambiguous = detectedCount > 1;
+-    const GameTitle next = ambiguous ? GameTitle::Unknown :
+-        (detected ? detected->title : GameTitle::None);
+     const GameTitle previous =
+         g_activeTitle.load(std::memory_order_acquire);
++    bool ambiguous = detectedCount > 1;
++    if (ambiguous)
++    {
++        const GameTitle reentry =
++            TitleReentryProbe_Resolve(modules, observedAtMs, previous);
++        if (reentry != GameTitle::None && reentry != GameTitle::Unknown)
++        {
++            detected = TitleRegistry_Find(reentry);
++            ambiguous = detected == nullptr;
++            if (!ambiguous)
++                detectedCount = 1;
++        }
++    }
++    const GameTitle next = ambiguous ? GameTitle::Unknown :
++        (detected ? detected->title : GameTitle::None);
+     if (!moduleSetChanged && previous == next)
+         return ambiguous ? nullptr : detected;
+ 
+--- stage3p_source_baseline/src/dll/d3d11_hook.cpp	2026-08-26 17:00:00.000000000 +0000
++++ src/src/dll/d3d11_hook.cpp	2026-08-27 01:30:33.127605661 +0000
+@@ -15,6 +15,7 @@
+ #include "d3d11_hook.h"
+ #include "game.h"
+ #include "vr.h"
++#include "title_reentry_probe.h"
+ #include "title_adapter.h"
+ #if HALOMCCVR_HALO2_STEREO6DOF
+ #include "halo2_stereo_core.h"
+@@ -1305,6 +1306,7 @@
+     LARGE_INTEGER hookStart{};
+     if (runVrFrame)
+     {
++        TitleReentryProbe_PublishPresentCaller(_ReturnAddress(), GetTickCount64());
+         if constexpr (kEnableCoopPresentProbe)
+             QueryPerformanceCounter(&hookStart);
+         LogSwapchainConfigOnce(sc);
+@@ -1336,6 +1338,7 @@
+     LARGE_INTEGER hookStart{};
+     if (runVrFrame)
+     {
++        TitleReentryProbe_PublishPresentCaller(_ReturnAddress(), GetTickCount64());
+         if constexpr (kEnableCoopPresentProbe)
+             QueryPerformanceCounter(&hookStart);
+         LogSwapchainConfigOnce(sc);
+--- /dev/null	2026-08-27 01:10:00.415984664 +0000
++++ src/src/dll/title_reentry_probe.h	2026-08-27 01:29:09.315465141 +0000
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include <cstdint>
++
++#include "../common/runtime_types.h"
++#include "../common/title_runtime_state.h"
++
++// Process-wide, read-only hint used only to choose which title adapter may
++// begin its normal level-liveness/cold-preflight path while MCC keeps several
++// game DLLs resident. This NEVER grants runtime ownership or capabilities.
++void TitleReentryProbe_PublishPresentCaller(const void* caller, uint64_t nowMs) noexcept;
++
++// Returns one uniquely proven active title, or None. `modules` is the exact
++// module-set snapshot from TitleAdapter_PollLoaded. The probe only reads
++// title-owned liveness records; final ownership still requires the existing
++// generation/lifecycle/heartbeat resolver.
++GameTitle TitleReentryProbe_Resolve(
++    const TitleRuntimeModuleSet& modules, uint64_t nowMs,
++    GameTitle retainedTitle) noexcept;
+--- /dev/null	2026-08-27 01:10:00.415984664 +0000
++++ src/src/dll/title_reentry_probe.cpp	2026-08-27 01:31:40.996681557 +0000
+@@ -0,0 +1,256 @@
++#include "title_reentry_probe.h"
++
++#include <array>
++#include <atomic>
++#include <windows.h>
++
++#include "../common/halo2_render_logic.h"
++#include "../common/title_registry.h"
++
++namespace
++{
++    constexpr uint64_t kPresentHintFreshMs = 250;
++    constexpr uint64_t kActivityFreshMs = 250;
++    constexpr uint8_t kAlreadyRunningSamples = 120; // 6 s at 50 ms worker.
++
++    struct ProbeEvidence
++    {
++        GameTitle title;
++        size_t slot;
++        uintptr_t playerViewRva;
++        size_t stride;
++    };
++
++    constexpr ProbeEvidence kEvidence[] = {
++        { GameTitle::Halo3, 0, 0x02D2F680, 0x2820 },
++        { GameTitle::Halo3ODST, 1, 0x02D73590, 0x2810 },
++        { GameTitle::HaloReach, 2, 0x029F2B90, 0x0A40 },
++        { GameTitle::Halo4, 3, 0x030AD1C0, 0x0AD0 },
++        { GameTitle::Halo2, 5, 0, 0 },
++    };
++
++    struct ActivityState
++    {
++        uintptr_t moduleBase = 0;
++        uint64_t fingerprint = 0;
++        uint64_t lastChangeMs = 0;
++        uint8_t sawStill = 0;
++        uint8_t changeRun = 0;
++    };
++
++    std::array<ActivityState, std::size(kEvidence)> g_activity{};
++    std::atomic<GameTitle> g_presentHint{GameTitle::None};
++    std::atomic<uint64_t> g_presentHintMs{0};
++
++    bool ReadableCommittedRange(uintptr_t address, size_t bytes,
++                                uintptr_t expectedAllocationBase) noexcept
++    {
++        MEMORY_BASIC_INFORMATION mbi{};
++        if (!address || !bytes ||
++            VirtualQuery(reinterpret_cast<const void*>(address), &mbi,
++                         sizeof(mbi)) != sizeof(mbi) ||
++            mbi.State != MEM_COMMIT ||
++            mbi.AllocationBase != reinterpret_cast<void*>(expectedAllocationBase) ||
++            (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
++            return false;
++        const uintptr_t begin = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
++        const uintptr_t end = begin + mbi.RegionSize;
++        return address >= begin && address <= end && bytes <= end - address;
++    }
++
++    bool FingerprintPlayerView(uintptr_t moduleBase, uintptr_t rva,
++                               size_t stride, uint64_t& out) noexcept
++    {
++        const uintptr_t address = moduleBase + rva;
++        if (!ReadableCommittedRange(address, stride, moduleBase))
++            return false;
++        uint64_t hash = 1469598103934665603ull;
++        __try
++        {
++            const auto* bytes = reinterpret_cast<const uint8_t*>(address);
++            for (size_t i = 0; i < stride; ++i)
++            {
++                hash ^= bytes[i];
++                hash *= 1099511628211ull;
++            }
++        }
++        __except (EXCEPTION_EXECUTE_HANDLER)
++        {
++            return false;
++        }
++        out = hash ? hash : 1;
++        return true;
++    }
++
++    bool FingerprintHalo2(uintptr_t moduleBase, uint64_t& out,
++                          bool& explicitlyStill) noexcept
++    {
++        explicitlyStill = false;
++        const uintptr_t slot = moduleBase + kHalo2GameTimeSlotRva;
++        if (!ReadableCommittedRange(slot, sizeof(uintptr_t), moduleBase))
++            return false;
++        uintptr_t object = 0;
++        __try { object = *reinterpret_cast<const uintptr_t*>(slot); }
++        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
++        if (!object)
++            return false;
++        MEMORY_BASIC_INFORMATION mbi{};
++        if (VirtualQuery(reinterpret_cast<const void*>(object), &mbi,
++                         sizeof(mbi)) != sizeof(mbi) ||
++            mbi.State != MEM_COMMIT ||
++            (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
++            return false;
++        const uintptr_t begin = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
++        const uintptr_t end = begin + mbi.RegionSize;
++        if (object < begin || object + kHalo2GameTimeCurrentTickOffset + 4 > end)
++            return false;
++        uint8_t initialized = 0;
++        uint32_t tick = 0;
++        __try
++        {
++            initialized = *reinterpret_cast<const uint8_t*>(
++                object + kHalo2GameTimeInitializedOffset);
++            tick = *reinterpret_cast<const uint32_t*>(
++                object + kHalo2GameTimeCurrentTickOffset);
++        }
++        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
++        if (initialized > 1)
++            return false;
++        if (!initialized)
++        {
++            explicitlyStill = true;
++            out = object ? object : 1;
++            return true;
++        }
++        out = (static_cast<uint64_t>(tick) << 32) ^ object;
++        if (!out) out = 1;
++        return true;
++    }
++
++    bool SampleEvidence(size_t index, uintptr_t moduleBase, uint64_t nowMs)
++    {
++        ActivityState& state = g_activity[index];
++        if (!moduleBase)
++        {
++            state = {};
++            return false;
++        }
++        if (state.moduleBase != moduleBase)
++        {
++            state = {};
++            state.moduleBase = moduleBase;
++        }
++
++        uint64_t fingerprint = 0;
++        bool explicitStill = false;
++        const ProbeEvidence& evidence = kEvidence[index];
++        const bool readable = evidence.title == GameTitle::Halo2
++            ? FingerprintHalo2(moduleBase, fingerprint, explicitStill)
++            : FingerprintPlayerView(moduleBase, evidence.playerViewRva,
++                                    evidence.stride, fingerprint);
++        if (!readable)
++        {
++            state.changeRun = 0;
++            return false;
++        }
++        if (!state.fingerprint)
++        {
++            state.fingerprint = fingerprint;
++            if (explicitStill) state.sawStill = 1;
++            return false;
++        }
++
++        const bool changed = fingerprint != state.fingerprint;
++        state.fingerprint = fingerprint;
++        if (explicitStill || !changed)
++        {
++            state.sawStill = 1;
++            state.changeRun = 0;
++            return false;
++        }
++
++        state.lastChangeMs = nowMs;
++        if (state.changeRun < kAlreadyRunningSamples)
++            ++state.changeRun;
++        return state.sawStill || state.changeRun >= kAlreadyRunningSamples;
++    }
++}
++
++void TitleReentryProbe_PublishPresentCaller(const void* caller,
++                                             uint64_t nowMs) noexcept
++{
++    if (!caller || !nowMs)
++        return;
++    MEMORY_BASIC_INFORMATION mbi{};
++    if (VirtualQuery(caller, &mbi, sizeof(mbi)) != sizeof(mbi) ||
++        !mbi.AllocationBase)
++        return;
++    const uintptr_t allocation = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
++    size_t count = 0;
++    const TitleDescriptor* titles = TitleRegistry_All(count);
++    for (size_t i = 0; i < count; ++i)
++    {
++        HMODULE module = GetModuleHandleW(titles[i].moduleName);
++        if (reinterpret_cast<uintptr_t>(module) != allocation)
++            continue;
++        if (titles[i].title == GameTitle::HaloCE)
++            return;
++        // Publish the timestamp last. Clearing it first makes a concurrent
++        // worker either see no hint or a fully paired title+timestamp, never a
++        // newly written title with the previous title's still-fresh stamp.
++        g_presentHintMs.store(0, std::memory_order_release);
++        g_presentHint.store(titles[i].title, std::memory_order_release);
++        g_presentHintMs.store(nowMs, std::memory_order_release);
++        return;
++    }
++}
++
++GameTitle TitleReentryProbe_Resolve(const TitleRuntimeModuleSet& modules,
++                                    uint64_t nowMs,
++                                    GameTitle retainedTitle) noexcept
++{
++    const GameTitle hintBefore =
++        g_presentHint.load(std::memory_order_acquire);
++    const uint64_t hintMs =
++        g_presentHintMs.load(std::memory_order_acquire);
++    const GameTitle hintAfter =
++        g_presentHint.load(std::memory_order_acquire);
++    const size_t hintSlot = TitleRuntimeSlotIndex(hintAfter);
++    if (hintBefore == hintAfter && hintMs != 0 &&
++        hintSlot < kTitleRuntimeSlotCount && modules.moduleBases[hintSlot] &&
++        nowMs >= hintMs && nowMs - hintMs <= kPresentHintFreshMs)
++        return hintAfter;
++
++    GameTitle winner = GameTitle::None;
++    unsigned candidates = 0;
++    for (size_t i = 0; i < std::size(kEvidence); ++i)
++    {
++        const ProbeEvidence& evidence = kEvidence[i];
++        const bool active = SampleEvidence(
++            i, modules.moduleBases[evidence.slot], nowMs);
++        const ActivityState& state = g_activity[i];
++        if (!active || !state.lastChangeMs || nowMs < state.lastChangeMs ||
++            nowMs - state.lastChangeMs > kActivityFreshMs)
++            continue;
++        winner = evidence.title;
++        ++candidates;
++    }
++    if (candidates == 1)
++        return winner;
++
++    // Keep the already selected raw adapter stable while its module remains
++    // resident. This is intentionally weaker than runtime ownership: the
++    // existing lifecycle/heartbeat resolver can still revoke all capabilities
++    // immediately when the title stops running. A different title's unique
++    // fresh liveness evidence above always preempts this retention.
++    const size_t retainedSlot = TitleRuntimeSlotIndex(retainedTitle);
++    if (retainedTitle != GameTitle::HaloCE &&
++        retainedTitle != GameTitle::None &&
++        retainedTitle != GameTitle::Unknown &&
++        retainedSlot < kTitleRuntimeSlotCount &&
++        modules.moduleBases[retainedSlot])
++    {
++        return retainedTitle;
++    }
++    return GameTitle::None;
++}
+--- /dev/null	2026-08-27 01:10:00.415984664 +0000
++++ src/tools/stage3q_cross_title_reentry.S	2026-08-27 01:31:40.996890496 +0000
+@@ -0,0 +1,495 @@
++.intel_syntax noprefix
++.section .text
++
++.global stage3q_title_select
++.global stage3q_present_probe_4arg
++.global stage3q_present_probe_5arg
++.global stage3q_activity_probe
++.global stage3q_hash_region
++.global stage3q_evidence_table
++
++.extern REENTRY_DATA_RVA
++.extern VIRTUAL_QUERY_IAT_RVA
++.extern GET_MODULE_HANDLE_W_IAT_RVA
++.extern GET_TICK_COUNT64_IAT_RVA
++.extern TITLE_DESCRIPTORS_RVA
++.extern ACTIVE_TITLE_RVA
++
++# Writable data layout at REENTRY_DATA_RVA:
++# 00 qword cached Present caller AllocationBase
++# 08 byte  cached Present title
++# 09 byte  fresh Present title hint
++# 10 qword Present hint timestamp
++# 20 five activity states, 0x20 bytes each:
++#      +00 module base
++#      +08 last fingerprint
++#      +10 last change timestamp
++#      +18 saw-still byte
++#      +19 already-running change-run byte
++.equ DATA_CACHED_ALLOC, 0x00
++.equ DATA_CACHED_TITLE, 0x08
++.equ DATA_HINT_TITLE, 0x09
++.equ DATA_HINT_STAMP, 0x10
++.equ DATA_ACTIVITY, 0x20
++.equ STATE_SIZE, 0x20
++
++# ---------------------------------------------------------------------------
++# TitleAdapter_PollLoaded ambiguity selector.
++# This replaces the original 21-byte "count>1 => Unknown" value-selection
++# block. R13=detectedCount, RDI=first detected TitleDescriptor*, R14=nowMs.
++# The caller's moduleBases[6] start at caller RSP+0x68, which is helper
++# RSP+0x70 after CALL pushes our return address.
++# On a unique re-entry proof we intentionally set nonvolatile RDI to the
++# winning descriptor and R13=1 so the stock function follows its normal
++# single-title path. No proof => AL=Unknown and R13 remains >1, preserving the
++# stock fail-closed ambiguity branch.
++stage3q_title_select:
++    cmp r13, 1
++    ja .ambiguous
++    test rdi, rdi
++    je .single_none
++    movzx eax, byte ptr [rdi]
++    ret
++.single_none:
++    xor eax, eax
++    ret
++
++.ambiguous:
++    # Fast path: a fresh DXGI Present caller that resolved inside a resident
++    # title DLL. The hint never grants ownership; it only picks which adapter
++    # may begin its normal liveness proof.
++    movzx eax, byte ptr [rip + REENTRY_DATA_RVA + DATA_HINT_TITLE]
++    test al, al
++    je .activity
++    cmp al, 7
++    jae .activity
++    cmp al, 5                 # CE is unsupported and never a re-entry winner.
++    je .activity
++    mov r10, qword ptr [rip + REENTRY_DATA_RVA + DATA_HINT_STAMP]
++    movzx r9d, byte ptr [rip + REENTRY_DATA_RVA + DATA_HINT_TITLE]
++    cmp al, r9b               # reject a concurrent title/stamp publication
++    jne .activity
++    test r10, r10
++    je .activity
++    cmp r14, r10
++    jb .activity
++    mov r11, r14
++    sub r11, r10
++    cmp r11, 250
++    ja .activity
++    movzx ecx, al
++    cmp cl, 6
++    je .hint_h2
++    dec ecx                   # title 1..4 => slot 0..3
++    jmp .hint_slot
++.hint_h2:
++    mov ecx, 5
++.hint_slot:
++    cmp qword ptr [rsp + rcx*8 + 0x70], 0
++    jne .winner_al
++
++.activity:
++    lea rcx, [rsp + 0x70]
++    mov rdx, r14
++    sub rsp, 0x28
++    call stage3q_activity_probe
++    add rsp, 0x28
++    test al, al
++    jne .winner_al
++
++    # No new title proved itself on this sample. Retain the already selected
++    # raw adapter while its module remains resident. Runtime ownership is still
++    # independently heartbeat/lifecycle-gated, so this cannot keep stale VR
++    # capabilities alive; it only prevents selector flapping to Unknown.
++    movzx eax, byte ptr [rip + ACTIVE_TITLE_RVA]
++    test al, al
++    je .unresolved
++    cmp al, 7
++    jae .unresolved
++    cmp al, 5
++    je .unresolved
++    movzx ecx, al
++    cmp cl, 6
++    je .retain_h2
++    dec ecx
++    jmp .retain_slot
++.retain_h2:
++    mov ecx, 5
++.retain_slot:
++    cmp qword ptr [rsp + rcx*8 + 0x70], 0
++    je .unresolved
++
++.winner_al:
++    movzx ecx, al
++    cmp cl, 6
++    je .winner_h2_index
++    dec ecx                   # descriptor index 0..3
++    jmp .winner_index
++.winner_h2_index:
++    mov ecx, 5
++.winner_index:
++    imul ecx, ecx, 0x28
++    lea rdi, [rip + TITLE_DESCRIPTORS_RVA]
++    add rdi, rcx
++    mov r13d, 1
++    movzx eax, byte ptr [rdi]
++    ret
++
++.unresolved:
++    mov eax, 7
++    ret
++
++# ---------------------------------------------------------------------------
++# PresentHook entry trampoline for four-argument IDXGISwapChain::Present.
++# CALL is injected over the first 15 bytes. At helper entry, [rsp+8] is the
++# game's original return address. Replay the three overwritten nonvolatile
++# saves against the ORIGINAL PresentHook stack (helper offsets are +8).
++stage3q_present_probe_4arg:
++    mov qword ptr [rsp+0x10], rbx
++    mov qword ptr [rsp+0x18], rbp
++    mov qword ptr [rsp+0x20], rsi
++    jmp stage3q_present_common
++
++# Present1Hook has the same first three 5-byte saves.
++stage3q_present_probe_5arg:
++    mov qword ptr [rsp+0x10], rbx
++    mov qword ptr [rsp+0x18], rbp
++    mov qword ptr [rsp+0x20], rsi
++    # fallthrough
++
++# Preserve all volatile argument registers, classify the original caller's
++# allocation, and publish a short-lived title hint when that AllocationBase is
++# one of MCC's title DLLs. Unknown/MCC-shell callers simply let the old hint
++# expire after 250 ms.
++stage3q_present_common:
++    sub rsp, 0x90
++    mov qword ptr [rsp+0x50], rax
++    mov qword ptr [rsp+0x58], rcx
++    mov qword ptr [rsp+0x60], rdx
++    mov qword ptr [rsp+0x68], r8
++    mov qword ptr [rsp+0x70], r9
++    mov qword ptr [rsp+0x78], r10
++    mov qword ptr [rsp+0x80], r11
++
++    mov rcx, qword ptr [rsp+0x98]     # original game's return address
++    lea rdx, [rsp+0x20]               # MEMORY_BASIC_INFORMATION (0x30)
++    mov r8d, 0x30
++    call qword ptr [rip + VIRTUAL_QUERY_IAT_RVA]
++    test rax, rax
++    je .present_restore
++    mov r10, qword ptr [rsp+0x28]     # mbi.AllocationBase
++    test r10, r10
++    je .present_restore
++    cmp r10, qword ptr [rip + REENTRY_DATA_RVA + DATA_CACHED_ALLOC]
++    je .present_cached
++
++    mov qword ptr [rip + REENTRY_DATA_RVA + DATA_CACHED_ALLOC], r10
++    mov byte ptr [rip + REENTRY_DATA_RVA + DATA_CACHED_TITLE], 0
++    lea r11, [rip + TITLE_DESCRIPTORS_RVA]
++    xor r9d, r9d
++.present_lookup_loop:
++    mov rcx, qword ptr [r11+0x08]
++    mov qword ptr [rsp+0x88], r10
++    mov qword ptr [rsp+0x48], r11
++    mov dword ptr [rsp+0x44], r9d
++    call qword ptr [rip + GET_MODULE_HANDLE_W_IAT_RVA]
++    mov r10, qword ptr [rsp+0x88]
++    mov r11, qword ptr [rsp+0x48]
++    mov r9d, dword ptr [rsp+0x44]
++    cmp rax, r10
++    je .present_lookup_hit
++    inc r9d
++    add r11, 0x28
++    cmp r9d, 6
++    jb .present_lookup_loop
++    jmp .present_restore
++.present_lookup_hit:
++    mov al, byte ptr [r11]
++    mov byte ptr [rip + REENTRY_DATA_RVA + DATA_CACHED_TITLE], al
++    jmp .present_publish
++
++.present_cached:
++    mov al, byte ptr [rip + REENTRY_DATA_RVA + DATA_CACHED_TITLE]
++.present_publish:
++    test al, al
++    je .present_restore
++    cmp al, 5
++    je .present_restore
++    cmp al, 7
++    jae .present_restore
++    mov qword ptr [rip + REENTRY_DATA_RVA + DATA_HINT_STAMP], 0
++    mov byte ptr [rip + REENTRY_DATA_RVA + DATA_HINT_TITLE], al
++    call qword ptr [rip + GET_TICK_COUNT64_IAT_RVA]
++    mov qword ptr [rip + REENTRY_DATA_RVA + DATA_HINT_STAMP], rax
++
++.present_restore:
++    mov rax, qword ptr [rsp+0x50]
++    mov rcx, qword ptr [rsp+0x58]
++    mov rdx, qword ptr [rsp+0x60]
++    mov r8, qword ptr [rsp+0x68]
++    mov r9, qword ptr [rsp+0x70]
++    mov r10, qword ptr [rsp+0x78]
++    mov r11, qword ptr [rsp+0x80]
++    add rsp, 0x90
++    ret
++
++# ---------------------------------------------------------------------------
++# Hash one committed/readable range using the same FNV-1a basis as the
++# existing PlayerViewLivenessGate. RCX=address, EDX=bytes, R8=expected
++# AllocationBase (zero means any allocation, used for H2's heap singleton).
++# Returns RAX=nonzero fingerprint or 0 on an unprovable range.
++stage3q_hash_region:
++    push rbx
++    push rsi
++    push rdi
++    sub rsp, 0x50
++    mov rbx, rcx
++    mov esi, edx
++    mov rdi, r8
++    mov rcx, rbx
++    lea rdx, [rsp+0x20]
++    mov r8d, 0x30
++    call qword ptr [rip + VIRTUAL_QUERY_IAT_RVA]
++    test rax, rax
++    je .hash_bad
++    cmp dword ptr [rsp+0x40], 0x1000   # State == MEM_COMMIT
++    jne .hash_bad
++    mov eax, dword ptr [rsp+0x44]      # Protect
++    test eax, 0x100                    # PAGE_GUARD
++    jne .hash_bad
++    and eax, 0xff
++    test eax, eax
++    je .hash_bad
++    cmp eax, 1                         # PAGE_NOACCESS
++    je .hash_bad
++    test rdi, rdi
++    je .hash_alloc_ok
++    cmp qword ptr [rsp+0x28], rdi      # AllocationBase
++    jne .hash_bad
++.hash_alloc_ok:
++    mov r10, qword ptr [rsp+0x20]      # BaseAddress
++    cmp rbx, r10
++    jb .hash_bad
++    mov r11, qword ptr [rsp+0x38]      # RegionSize
++    add r11, r10
++    mov eax, esi
++    add rax, rbx
++    jc .hash_bad
++    cmp rax, r11
++    ja .hash_bad
++
++    mov rax, 1469598103934665603
++    mov r9, 1099511628211
++    mov rcx, rbx
++    mov edx, esi
++.hash_loop:
++    test edx, edx
++    je .hash_done
++    movzx r8d, byte ptr [rcx]
++    xor rax, r8
++    imul rax, r9
++    inc rcx
++    dec edx
++    jmp .hash_loop
++.hash_done:
++    test rax, rax
++    jne .hash_out
++    mov eax, 1
++    jmp .hash_out
++.hash_bad:
++    xor eax, eax
++.hash_out:
++    add rsp, 0x50
++    pop rdi
++    pop rsi
++    pop rbx
++    ret
++
++# ---------------------------------------------------------------------------
++# Ambiguous-resident fallback. RCX=&moduleBases[0], RDX=nowMs.
++# It samples ONLY proven title-owned liveness records, never scans modules and
++# never writes game memory. A frozen/still sample followed by a change is an
++# immediate candidate. If observation began mid-game, 120 changing samples
++# (6 s) match the existing level-gate conservative already-running rule.
++# Exactly one fresh candidate wins; zero/multiple return None.
++stage3q_activity_probe:
++    push rbx
++    push rbp
++    push rsi
++    push rdi
++    push r12
++    push r13
++    push r14
++    push r15
++    sub rsp, 0x58
++    mov r12, rcx                     # moduleBases
++    mov r13, rdx                     # nowMs
++    xor r14d, r14d                   # evidence index
++    xor r15d, r15d                   # candidate count
++    xor ebp, ebp                     # winner title
++
++.probe_loop:
++    lea r10, [rip + stage3q_evidence_table]
++    mov eax, r14d
++    shl rax, 4
++    add r10, rax
++    movzx ecx, byte ptr [r10+8]      # module slot
++    mov rbx, qword ptr [r12+rcx*8]
++    mov eax, r14d
++    shl rax, 5
++    lea rdi, [rip + REENTRY_DATA_RVA + DATA_ACTIVITY]
++    add rdi, rax                     # state
++    test rbx, rbx
++    jne .probe_have_module
++    pxor xmm0, xmm0
++    movdqu xmmword ptr [rdi], xmm0
++    movdqu xmmword ptr [rdi+0x10], xmm0
++    jmp .probe_next
++.probe_have_module:
++    cmp qword ptr [rdi], rbx
++    je .probe_same_module
++    pxor xmm0, xmm0
++    movdqu xmmword ptr [rdi], xmm0
++    movdqu xmmword ptr [rdi+0x10], xmm0
++    mov qword ptr [rdi], rbx
++.probe_same_module:
++    movzx eax, byte ptr [r10+10]     # special: 1 = H2 game time
++    test eax, eax
++    jne .probe_h2
++
++    mov ecx, dword ptr [r10]         # player-view RVA
++    add rcx, rbx
++    mov edx, dword ptr [r10+4]       # stride
++    mov r8, rbx
++    mov qword ptr [rsp+0x50], r10
++    call stage3q_hash_region
++    mov r10, qword ptr [rsp+0x50]
++    test rax, rax
++    je .probe_invalid
++    xor esi, esi                     # explicitStill=0
++    jmp .probe_update
++
++.probe_h2:
++    mov rcx, qword ptr [rbx+0x015FE008]
++    test rcx, rcx
++    je .probe_invalid
++    mov edx, 0x0c
++    xor r8d, r8d
++    mov qword ptr [rsp+0x50], r10
++    mov qword ptr [rsp+0x48], rcx
++    call stage3q_hash_region
++    mov r10, qword ptr [rsp+0x50]
++    mov rcx, qword ptr [rsp+0x48]
++    test rax, rax
++    je .probe_invalid
++    movzx esi, byte ptr [rcx]        # initialized
++    cmp esi, 1
++    ja .probe_invalid
++    test esi, esi
++    je .probe_h2_still
++    mov eax, dword ptr [rcx+8]       # current tick
++    shl rax, 32
++    xor rax, rcx
++    test rax, rax
++    jne .probe_h2_active_fp
++    mov eax, 1
++.probe_h2_active_fp:
++    xor esi, esi                     # explicitStill=0
++    jmp .probe_update
++.probe_h2_still:
++    mov rax, rcx
++    test rax, rax
++    jne .probe_h2_still_fp
++    mov eax, 1
++.probe_h2_still_fp:
++    mov esi, 1                       # explicitStill=1
++    jmp .probe_update
++
++.probe_invalid:
++    mov byte ptr [rdi+0x19], 0
++    jmp .probe_next
++
++.probe_update:
++    mov rcx, qword ptr [rdi+0x08]
++    test rcx, rcx
++    jne .probe_have_baseline
++    mov qword ptr [rdi+0x08], rax
++    test esi, esi
++    je .probe_next
++    mov byte ptr [rdi+0x18], 1
++    mov byte ptr [rdi+0x19], 0
++    jmp .probe_next
++
++.probe_have_baseline:
++    test esi, esi
++    jne .probe_still
++    cmp rcx, rax
++    je .probe_still
++    mov qword ptr [rdi+0x08], rax
++    cmp byte ptr [rdi+0x18], 0
++    jne .probe_ready_change
++    movzx eax, byte ptr [rdi+0x19]
++    cmp eax, 120
++    jae .probe_ready_change
++    inc eax
++    mov byte ptr [rdi+0x19], al
++    cmp eax, 120
++    jb .probe_next
++.probe_ready_change:
++    mov qword ptr [rdi+0x10], r13
++    jmp .probe_candidate
++
++.probe_still:
++    mov qword ptr [rdi+0x08], rax
++    mov byte ptr [rdi+0x18], 1
++    mov byte ptr [rdi+0x19], 0
++    jmp .probe_next
++
++.probe_candidate:
++    mov rax, qword ptr [rdi+0x10]
++    test rax, rax
++    je .probe_next
++    cmp r13, rax
++    jb .probe_next
++    mov rcx, r13
++    sub rcx, rax
++    cmp rcx, 250
++    ja .probe_next
++    inc r15d
++    movzx ebp, byte ptr [r10+9]      # title enum
++
++.probe_next:
++    inc r14d
++    cmp r14d, 5
++    jb .probe_loop
++    cmp r15d, 1
++    jne .probe_none
++    mov eax, ebp
++    jmp .probe_out
++.probe_none:
++    xor eax, eax
++.probe_out:
++    add rsp, 0x58
++    pop r15
++    pop r14
++    pop r13
++    pop r12
++    pop rdi
++    pop rsi
++    pop rbp
++    pop rbx
++    ret
++
++.align 16
++# rva, stride, slot, title, special, pad[5]
++stage3q_evidence_table:
++    .long 0x02D2F680, 0x2820
++    .byte 0, 1, 0, 0, 0, 0, 0, 0
++    .long 0x02D73590, 0x2810
++    .byte 1, 2, 0, 0, 0, 0, 0, 0
++    .long 0x029F2B90, 0x0A40
++    .byte 2, 3, 0, 0, 0, 0, 0, 0
++    .long 0x030AD1C0, 0x0AD0
++    .byte 3, 4, 0, 0, 0, 0, 0, 0
++    .long 0x00000000, 0x0000
++    .byte 5, 6, 1, 0, 0, 0, 0, 0
+--- /dev/null	2026-08-27 01:10:00.415984664 +0000
++++ src/tools/build_stage3q_cross_title_reentry.py	2026-08-27 01:29:10.629914624 +0000
+@@ -0,0 +1,267 @@
++from pathlib import Path
++import hashlib, shutil, struct, subprocess, sys, tempfile, json
++
++BASE_SHA = 'b5eeec1276e91197bade35b926d9f176437e0096a40b29a137338e4f2e22abe2'
++CODE = 0x2F2200
++DATA = 0x2F3000
++DATA_VSIZE = 0x200
++VIRTUAL_QUERY_IAT = 0x180208
++GET_MODULE_HANDLE_W_IAT = 0x1800F8
++GET_TICK_COUNT64_IAT = 0x180150
++TITLE_DESCRIPTORS = 0x189040
++ACTIVE_TITLE = 0x2BA6C8
++
++TITLE_SELECT = 0x87FF1
++TITLE_SELECT_LEN = 21
++PRESENT = 0xDF60
++PRESENT1 = 0xE060
++PRESENT_PATCH_LEN = 15
++
++# Every accepted Stage3P behavior is pinned byte-for-byte. Stage3Q may touch
++# only the generic title selector and the two process-wide Present entries.
++PRESERVE = [
++    (0x90AC4, 5, 'H2 Classic cleanup call pin'),
++    (0x90CE2, 7, 'H2 Classic release pin'),
++    (0x92F06, 5, 'Stage3M H2 stock translation hook'),
++    (0x95B16, 5, 'Stage3N H2 Classic carrier/yaw-pitch hook'),
++    (0x40A52, 5, 'Stage3M H3/ODST stock translation hook'),
++    (0x6B321, 5, 'Stage3M Reach stock translation hook'),
++    (0x51289, 5, 'Stage3M H4 stock translation hook'),
++    (0x48086, 8, 'H4 rollback span 1'),
++    (0x48110, 8, 'H4 rollback span 2'),
++    (0x5360B, 8, 'H4 rollback span 3'),
++    (0x53D41, 8, 'H4 rollback span 4'),
++    (0x53E37, 8, 'H4 rollback span 5'),
++    (0x7CDA3, 7, 'Stage3O H3 stability gate aim retry'),
++    (0x7CDAB, 7, 'Stage3O H3 stability gate cam retry'),
++    (0x7CDB3, 7, 'Stage3O H3 stability gate basecam retry'),
++    (0x7D167, 7, 'Stage3O H3 stability gate aim final'),
++    (0x7D17A, 7, 'Stage3O H3 stability gate cam final'),
++    (0x7D19E, 7, 'Stage3O H3 stability gate basecam final'),
++    # Stage3P accepted Reach HUD binding.
++    (0x81036, 40, 'Stage3P Reach HUD high-first scan start'),
++    (0x8112D, 25, 'Stage3P Reach HUD private+mapped filter'),
++    (0x813A8, 10, 'Stage3P Reach HUD early six-record completion'),
++    # Stage3P accepted H2 pause visual/resume scoping.
++    (0x47396, 12, 'Stage3P H3 authoritative pause scope'),
++    (0x4414D, 5, 'Stage3P generic pause native read scope'),
++    (0x44203, 8, 'Stage3P pause recovery title scope'),
++    # Correct attribution.
++    (0x34587, 7, 'Stage3P @MeWhenINameMyself welcome xref'),
++]
++
++EXPECTED_TITLE_SELECT = bytes.fromhex('4d3bec7604b007eb0c4885ff74050fb607eb0232c0')
++EXPECTED_PRESENT = bytes.fromhex('48895c240848896c24104889742418')
++EXPECTED_PRESENT1 = bytes.fromhex('48895c240848896c24104889742418')
++
++
++def align(v, a): return (v + a - 1) // a * a
++
++def run(cmd):
++    subprocess.run(cmd, check=True)
++
++def parse_pe(b):
++    pe_sig = struct.unpack_from('<I', b, 0x3C)[0]
++    coff = pe_sig + 4
++    nsec = struct.unpack_from('<H', b, coff + 2)[0]
++    opt_size = struct.unpack_from('<H', b, coff + 16)[0]
++    opt = coff + 20
++    table = opt + opt_size
++    sections = []
++    for i in range(nsec):
++        h = table + i * 40
++        name = bytes(b[h:h+8]).split(b'\0',1)[0].decode('ascii')
++        vs, va, rs, rp = struct.unpack_from('<IIII', b, h + 8)
++        ch = struct.unpack_from('<I', b, h + 36)[0]
++        sections.append(dict(name=name, vs=vs, va=va, rs=rs, rp=rp, ch=ch, h=h))
++    return dict(pe_sig=pe_sig, coff=coff, nsec=nsec, opt=opt, table=table,
++                sections=sections,
++                file_align=struct.unpack_from('<I', b, opt + 0x24)[0],
++                sect_align=struct.unpack_from('<I', b, opt + 0x20)[0],
++                size_headers=struct.unpack_from('<I', b, opt + 0x3C)[0])
++
++def rva_off(pe, rva):
++    for s in pe['sections']:
++        if s['va'] <= rva < s['va'] + max(s['vs'], s['rs']):
++            return s['rp'] + rva - s['va']
++    raise SystemExit(f'RVA not mapped: 0x{rva:X}')
++
++def req(b, pe, rva, expected, label):
++    o = rva_off(pe, rva)
++    actual = bytes(b[o:o+len(expected)])
++    if actual != expected:
++        raise SystemExit(f'{label} guard 0x{rva:X}: {actual.hex()} != {expected.hex()}')
++
++def patch(b, pe, rva, expected, replacement, label):
++    if len(expected) != len(replacement):
++        raise SystemExit(f'{label}: size mismatch {len(expected)} != {len(replacement)}')
++    req(b, pe, rva, expected, label)
++    o = rva_off(pe, rva)
++    b[o:o+len(expected)] = replacement
++    print(f'{label}: RVA 0x{rva:X}')
++
++def relcall(src, dst):
++    return b'\xE8' + struct.pack('<i', dst - src - 5)
++
++def assemble(td):
++    for exe in ('as','ld','objcopy','nm'):
++        if not shutil.which(exe):
++            raise SystemExit('missing tool: ' + exe)
++    src = Path(__file__).with_name('stage3q_cross_title_reentry.S')
++    obj, elf, raw = td/'q.o', td/'q.elf', td/'q.bin'
++    run(['as','--64','-o',str(obj),str(src)])
++    defs = {
++        'REENTRY_DATA_RVA': DATA,
++        'VIRTUAL_QUERY_IAT_RVA': VIRTUAL_QUERY_IAT,
++        'GET_MODULE_HANDLE_W_IAT_RVA': GET_MODULE_HANDLE_W_IAT,
++        'GET_TICK_COUNT64_IAT_RVA': GET_TICK_COUNT64_IAT,
++        'TITLE_DESCRIPTORS_RVA': TITLE_DESCRIPTORS,
++        'ACTIVE_TITLE_RVA': ACTIVE_TITLE,
++    }
++    cmd = ['ld','-m','elf_x86_64',f'-Ttext=0x{CODE:x}','-e','stage3q_title_select']
++    for k,v in defs.items():
++        cmd += ['--defsym', f'{k}=0x{v:x}']
++    cmd += ['-o',str(elf),str(obj)]
++    run(cmd)
++    run(['objcopy','-O','binary','-j','.text',str(elf),str(raw)])
++    sy = {}
++    for line in subprocess.check_output(['nm','-n',str(elf)],text=True).splitlines():
++        f=line.split()
++        if len(f)==3 and f[2].startswith('stage3q_'):
++            sy[f[2]] = int(f[0],16)
++    return raw.read_bytes(), sy, elf.read_bytes()
++
++def add_data_section(b, pe, s3ic, raw_ptr):
++    # One more IMAGE_SECTION_HEADER fits before the existing 0x400 headers end.
++    new_h = pe['table'] + pe['nsec'] * 40
++    if new_h + 40 > pe['size_headers']:
++        raise SystemExit('no PE section-header space for .s3qd')
++    if any(b[new_h:new_h+40]):
++        raise SystemExit('next PE section header is not zero padding')
++    if raw_ptr % pe['file_align']:
++        raise SystemExit('new .s3qd raw pointer is not file aligned')
++    hdr = bytearray(40)
++    hdr[:8] = b'.s3qd\0\0\0'
++    struct.pack_into('<IIII', hdr, 8, DATA_VSIZE, DATA, 0x200, raw_ptr)
++    struct.pack_into('<I', hdr, 36, 0xC0000040)  # initialized data, read/write
++    b[new_h:new_h+40] = hdr
++    struct.pack_into('<H', b, pe['coff'] + 2, pe['nsec'] + 1)
++    # SizeOfInitializedData and SizeOfImage.
++    init_data = struct.unpack_from('<I', b, pe['opt'] + 8)[0]
++    struct.pack_into('<I', b, pe['opt'] + 8, init_data + 0x200)
++    struct.pack_into('<I', b, pe['opt'] + 0x38,
++                     align(DATA + DATA_VSIZE, pe['sect_align']))
++    b.extend(b'\0' * 0x200)
++    return new_h
++
++def main():
++    if len(sys.argv) != 3:
++        raise SystemExit('usage: build_stage3q_cross_title_reentry.py <Stage3P.dll> <output.dll>')
++    src, out = map(Path, sys.argv[1:])
++    base = src.read_bytes()
++    sha = hashlib.sha256(base).hexdigest()
++    if sha != BASE_SHA:
++        raise SystemExit('wrong Stage3P base: ' + sha)
++    b = bytearray(base)
++    pe = parse_pe(b)
++    by = {s['name']:s for s in pe['sections']}
++    s = by.get('.s3ic')
++    d = by.get('.s3hd')
++    if not s or (s['va'],s['vs'],s['rs'],s['ch']) != (0x2F1000,0x11FE,0x1200,0x60000020):
++        raise SystemExit('Stage3P .s3ic geometry mismatch')
++    if not d or (d['va'],d['vs'],d['rs']) != (0x2F0000,0x1E4,0x200):
++        raise SystemExit('Stage3P .s3hd geometry mismatch')
++    if s['rp'] + s['rs'] != len(b):
++        raise SystemExit('Stage3P overlay/EOF geometry mismatch')
++    if pe['nsec'] != 11:
++        raise SystemExit(f'unexpected Stage3P section count {pe["nsec"]}')
++
++    req(b, pe, TITLE_SELECT, EXPECTED_TITLE_SELECT, 'stock ambiguity value selector')
++    req(b, pe, PRESENT, EXPECTED_PRESENT, 'PresentHook prologue')
++    req(b, pe, PRESENT1, EXPECTED_PRESENT1, 'Present1Hook prologue')
++
++    preserved = {}
++    for rva,n,label in PRESERVE:
++        o = rva_off(pe,rva)
++        preserved[(rva,label)] = bytes(b[o:o+n])
++
++    with tempfile.TemporaryDirectory(prefix='halomccvr-stage3q-') as tmp:
++        helper, sy, _ = assemble(Path(tmp))
++    required = {
++        'stage3q_title_select','stage3q_present_probe_4arg','stage3q_present_probe_5arg',
++        'stage3q_present_common','stage3q_hash_region','stage3q_activity_probe',
++        'stage3q_evidence_table'
++    }
++    if not required <= sy.keys():
++        raise SystemExit('missing Stage3Q symbols: ' + str(required - sy.keys()))
++    if sy['stage3q_title_select'] != CODE:
++        raise SystemExit('Stage3Q helper base mismatch')
++
++    # Grow the last executable helper section at EOF, starting exactly after its
++    # current raw allocation. Then create a distinct RW data section for probe
++    # state so no executable section becomes writable.
++    helper_rel = CODE - s['va']
++    if helper_rel < s['rs']:
++        raise SystemExit('Stage3Q code overlaps Stage3P helper bytes')
++    needed = helper_rel + len(helper)
++    new_vs = max(s['vs'], needed)
++    new_rs = align(needed, pe['file_align'])
++    old_rs = s['rs']
++    grow = new_rs - old_rs
++    if grow < 0:
++        raise SystemExit('Stage3Q helper section unexpectedly shrank')
++    if grow:
++        b.extend(b'\0' * grow)
++        size_code = struct.unpack_from('<I', b, pe['opt'] + 4)[0]
++        struct.pack_into('<I', b, pe['opt'] + 4, size_code + grow)
++    helper_off = s['rp'] + helper_rel
++    b[helper_off:helper_off+len(helper)] = helper
++    struct.pack_into('<I', b, s['h'] + 8, new_vs)
++    struct.pack_into('<I', b, s['h'] + 16, new_rs)
++    s['vs'], s['rs'] = new_vs, new_rs
++
++    data_raw = s['rp'] + new_rs
++    if data_raw != len(b):
++        raise SystemExit('Stage3Q .s3qd raw pointer does not match EOF')
++    add_data_section(b, pe, s, data_raw)
++
++    patch(b, pe, TITLE_SELECT, EXPECTED_TITLE_SELECT,
++          relcall(TITLE_SELECT, sy['stage3q_title_select']) + b'\x90'*(TITLE_SELECT_LEN-5),
++          'General cross-title ambiguity selector')
++    patch(b, pe, PRESENT, EXPECTED_PRESENT,
++          relcall(PRESENT, sy['stage3q_present_probe_4arg']) + b'\x90'*(PRESENT_PATCH_LEN-5),
++          'Present caller re-entry hint')
++    patch(b, pe, PRESENT1, EXPECTED_PRESENT1,
++          relcall(PRESENT1, sy['stage3q_present_probe_5arg']) + b'\x90'*(PRESENT_PATCH_LEN-5),
++          'Present1 caller re-entry hint')
++
++    # Prove accepted Stage3P title-specific behavior stayed byte-identical.
++    for (rva,label),data in preserved.items():
++        o = rva_off(pe,rva)
++        if bytes(b[o:o+len(data)]) != data:
++            raise SystemExit(f'protected Stage3P site changed: {label} at 0x{rva:X}')
++
++    # New data section must be fully zero initialized on disk.
++    if any(b[data_raw:data_raw+0x200]):
++        raise SystemExit('.s3qd initial state is not zero')
++    struct.pack_into('<I', b, pe['opt'] + 0x40, 0)  # checksum
++    out.parent.mkdir(parents=True, exist_ok=True)
++    out.write_bytes(b)
++
++    manifest = {
++        'input_sha256': sha,
++        'output_sha256': hashlib.sha256(b).hexdigest(),
++        'output_size': len(b),
++        'helper_sha256': hashlib.sha256(helper).hexdigest(),
++        'helper_size': len(helper),
++        'helper_rva': hex(CODE),
++        'data_rva': hex(DATA),
++        's3ic_virtual_size': hex(new_vs),
++        's3ic_raw_size': hex(new_rs),
++        's3qd_raw_pointer': hex(data_raw),
++        'symbols': {k:hex(v) for k,v in sorted(sy.items())},
++    }
++    print(json.dumps(manifest, indent=2))
++
++if __name__ == '__main__':
++    main()
+--- /dev/null	2026-08-27 01:10:00.415984664 +0000
++++ src/tools/audit_stage3q_cross_title_reentry.py	2026-08-27 01:31:53.005153443 +0000
+@@ -0,0 +1,88 @@
++from pathlib import Path
++import hashlib, struct, sys
++
++BASE_SHA='b5eeec1276e91197bade35b926d9f176437e0096a40b29a137338e4f2e22abe2'
++CAND_SHA='7c788d598dc2685178b5b3173476e4cf24c22a814acea720cf4f0eba8ad329f4'
++PATCHES=[(0x87FF1,21),(0xDF60,15),(0xE060,15)]
++PRESERVE=[
++(0x90AC4,5),(0x90CE2,7),(0x92F06,5),(0x95B16,5),(0x40A52,5),(0x6B321,5),(0x51289,5),
++(0x48086,8),(0x48110,8),(0x5360B,8),(0x53D41,8),(0x53E37,8),
++(0x7CDA3,7),(0x7CDAB,7),(0x7CDB3,7),(0x7D167,7),(0x7D17A,7),(0x7D19E,7),
++(0x81036,40),(0x8112D,25),(0x813A8,10),(0x47396,12),(0x4414D,5),(0x44203,8),(0x34587,7),
++]
++
++def parse(b):
++    pe=struct.unpack_from('<I',b,0x3c)[0]; coff=pe+4
++    n=struct.unpack_from('<H',b,coff+2)[0]; os=struct.unpack_from('<H',b,coff+16)[0]
++    opt=coff+20; tab=opt+os; ss=[]
++    for i in range(n):
++        h=tab+i*40; name=b[h:h+8].split(b'\0')[0].decode()
++        vs,va,rs,rp=struct.unpack_from('<IIII',b,h+8); ch=struct.unpack_from('<I',b,h+36)[0]
++        ss.append(dict(name=name,vs=vs,va=va,rs=rs,rp=rp,ch=ch,h=h))
++    return dict(pe=pe,coff=coff,opt=opt,tab=tab,n=n,ss=ss)
++
++def off(pe,r):
++    for s in pe['ss']:
++        if s['va']<=r<s['va']+max(s['vs'],s['rs']): return s['rp']+r-s['va']
++    raise AssertionError(hex(r))
++
++def ranges_contains(ranges, i):
++    return any(a<=i<b for a,b in ranges)
++
++def main():
++    if len(sys.argv)!=3: raise SystemExit('usage: audit_stage3q_cross_title_reentry.py <Stage3P.dll> <Stage3Q.dll>')
++    base=Path(sys.argv[1]).read_bytes(); cand=Path(sys.argv[2]).read_bytes()
++    assert hashlib.sha256(base).hexdigest()==BASE_SHA
++    assert hashlib.sha256(cand).hexdigest()==CAND_SHA
++    bp=parse(base); cp=parse(cand)
++    assert bp['n']==11 and cp['n']==12
++    bs={x['name']:x for x in bp['ss']}; cs={x['name']:x for x in cp['ss']}
++    assert (bs['.s3ic']['va'],bs['.s3ic']['vs'],bs['.s3ic']['rs'],bs['.s3ic']['ch'])==(0x2F1000,0x11FE,0x1200,0x60000020)
++    assert (cs['.s3ic']['va'],cs['.s3ic']['vs'],cs['.s3ic']['rs'],cs['.s3ic']['ch'])==(0x2F1000,0x16F0,0x1800,0x60000020)
++    assert (cs['.s3qd']['va'],cs['.s3qd']['vs'],cs['.s3qd']['rs'],cs['.s3qd']['ch'])==(0x2F3000,0x200,0x200,0xC0000040)
++    assert cs['.s3qd']['rp']==bs['.s3ic']['rp']+0x1800
++    assert cand[cs['.s3qd']['rp']:cs['.s3qd']['rp']+0x200]==b'\0'*0x200
++    assert struct.unpack_from('<I',cand,cp['opt']+0x38)[0]==0x2F4000
++    assert struct.unpack_from('<I',cand,cp['opt']+0x40)[0]==0
++
++    # Existing accepted title-specific bytes must be exactly Stage3P.
++    for r,n in PRESERVE:
++        assert base[off(bp,r):off(bp,r)+n]==cand[off(cp,r):off(cp,r)+n], hex(r)
++
++    # Verify patch opcodes and destinations.
++    expected_targets={0x87FF1:0x2F2200,0xDF60:0x2F22DE,0xE060:0x2F22EF}
++    for r,n in PATCHES:
++        chunk=cand[off(cp,r):off(cp,r)+n]
++        assert chunk[0]==0xE8 and chunk[5:]==b'\x90'*(n-5), hex(r)
++        disp=struct.unpack_from('<i',chunk,1)[0]
++        assert r+5+disp==expected_targets[r], (hex(r),hex(r+5+disp))
++
++    # Existing-file differences are restricted to the three guarded code
++    # patches plus PE bookkeeping needed to grow .s3ic and add .s3qd.
++    allowed=[]
++    for r,n in PATCHES:
++        o=off(bp,r); allowed.append((o,o+n))
++    allowed += [
++        (bp['coff']+2,bp['coff']+4),      # NumberOfSections
++        (bp['opt']+4,bp['opt']+12),       # SizeOfCode + SizeOfInitializedData
++        (bp['opt']+0x38,bp['opt']+0x3c),  # SizeOfImage
++        (bp['opt']+0x40,bp['opt']+0x44),  # CheckSum
++        (bs['.s3ic']['h']+8,bs['.s3ic']['h']+12),
++        (bs['.s3ic']['h']+16,bs['.s3ic']['h']+20),
++        (bp['tab']+bp['n']*40,bp['tab']+(bp['n']+1)*40),
++    ]
++    unexpected=[]
++    for i,(a,b) in enumerate(zip(base,cand[:len(base)])):
++        if a!=b and not ranges_contains(allowed,i): unexpected.append(i)
++    assert not unexpected, 'unexpected pre-existing byte changes: '+','.join(hex(x) for x in unexpected[:20])
++
++    # New helper begins exactly at old EOF; no old helper byte was overwritten.
++    assert off(cp,0x2F2200)==len(base)
++    assert len(cand)==len(base)+0x800  # +0x600 .s3ic growth +0x200 .s3qd
++    print('Stage3Q static audit PASS')
++    print('base',hashlib.sha256(base).hexdigest(),len(base))
++    print('candidate',hashlib.sha256(cand).hexdigest(),len(cand))
++    print('only existing code patches:', ', '.join(hex(r) for r,_ in PATCHES))
++    print('all Stage3P protected title-specific sites are byte-identical')
++
++if __name__=='__main__': main()
+--- /dev/null	2026-08-27 01:10:00.415984664 +0000
++++ src/tools/test_stage3q_reentry_policy.py	2026-08-27 01:32:15.564363229 +0000
+@@ -0,0 +1,32 @@
++# Pure policy simulation for Stage3Q's generic selector. This does not model
++# memory reads; it pins winner/retention semantics once each title's read-only
++# probe has reported fresh activity.
++NONE=0; H3=1; ODST=2; REACH=3; H4=4; CE=5; H2=6; UNKNOWN=7
++SUPPORTED={H3,ODST,REACH,H4,H2}
++
++def resolve(modules, retained=NONE, present_hint=NONE, fresh_activity=()):
++    if present_hint in SUPPORTED and present_hint in modules:
++        return present_hint
++    fresh=[t for t in fresh_activity if t in SUPPORTED and t in modules]
++    if len(fresh)==1:
++        return fresh[0]
++    if retained in SUPPORTED and retained in modules:
++        return retained
++    return NONE
++
++def check(name, got, want):
++    assert got==want, f'{name}: got {got}, wanted {want}'
++    print('PASS',name,'->',got)
++
++mods={H3,ODST,REACH,H4,H2}
++check('initial multi-resident ambiguity fails closed', resolve(mods), NONE)
++check('fresh Reach activity acquires Reach', resolve(mods,fresh_activity=[REACH]), REACH)
++check('static next sample retains selected Reach raw adapter', resolve(mods,retained=REACH), REACH)
++check('fresh H3 uniquely preempts retained Reach', resolve(mods,retained=REACH,fresh_activity=[H3]), H3)
++check('simultaneous H3+H4 activity does not choose a new winner', resolve(mods,retained=H3,fresh_activity=[H3,H4]), H3)
++check('once old H3 goes stale, fresh H4 preempts', resolve(mods,retained=H3,fresh_activity=[H4]), H4)
++check('fresh H2 singleton activity preempts H4', resolve(mods,retained=H4,fresh_activity=[H2]), H2)
++check('Present caller hint can immediately select Reach', resolve(mods,retained=H3,present_hint=REACH), REACH)
++check('unsupported CE hint is ignored', resolve(mods|{CE},retained=H3,present_hint=CE), H3)
++check('removed retained module cannot be retained', resolve({REACH,H4},retained=H3), NONE)
++print('Stage3Q re-entry policy simulation PASS')

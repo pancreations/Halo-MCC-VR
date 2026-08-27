@@ -855,6 +855,7 @@ namespace
     bool BuildFirstPersonCarrierFromAimPose(
         const Halo2CameraBasis& renderCamera, const float aimOrientation[4],
         const float aimPosition[3], float forwardTrimMeters,
+        float rightTrimMeters, float upTrimMeters,
         Halo2CameraBasis& carrier) noexcept
     {
         float headOrientation[4]{}, headPosition[3]{};
@@ -864,8 +865,8 @@ namespace
         }
         return Halo2BuildControllerCarrier(
             renderCamera, headOrientation, headPosition, aimOrientation,
-            aimPosition, Game_GetWorldScale(),
-            forwardTrimMeters, carrier);
+            aimPosition, Game_GetWorldScale(), forwardTrimMeters,
+            rightTrimMeters, upTrimMeters, carrier);
     }
 
     bool BuildFirstPersonCarrier(
@@ -876,7 +877,9 @@ namespace
         return VR_GetAimPose(aimOrientation, aimPosition) &&
             BuildFirstPersonCarrierFromAimPose(
                 renderCamera, aimOrientation, aimPosition,
-                std::clamp(g_config.gun_forward_m, -0.3f, 0.5f), carrier);
+                std::clamp(g_config.gun_forward_m, -0.3f, 0.5f),
+                std::clamp(g_config.gun_right_m, -0.3f, 0.3f),
+                std::clamp(g_config.gun_up_m, -0.3f, 0.3f), carrier);
     }
 
     bool BuildStableFirstPersonCarriers(
@@ -902,6 +905,8 @@ namespace
                    tracking.rightAimOrientation,
                    tracking.rightAimPosition, worldScale,
                    std::clamp(g_config.gun_forward_m, -0.3f, 0.5f),
+                   std::clamp(g_config.gun_right_m, -0.3f, 0.3f),
+                   std::clamp(g_config.gun_up_m, -0.3f, 0.3f),
                    rightCarrier) &&
             Halo2BuildStableControllerCarrier(
                    publication.stock, publication.referenceOrientation,
@@ -1805,7 +1810,20 @@ namespace
         const auto original = reinterpret_cast<Halo2NativeAimUpdateFn>(
             g_nativeAimOriginal.load(std::memory_order_acquire));
         uint64_t result = 0;
-        if (original)
+        // C-H2-72 diagnostic: when VR owns Halo 2's local-player aim, do not
+        // let stock unit_update_aiming run first. That stock transaction owns
+        // more than the two direction vectors and can retain Halo 2's
+        // controller aim-assist / target-acquisition state even though the mod
+        // overwrites +0x168/+0x174 afterwards. Reports from the accepted 0.3.5
+        // line describe aim assist remaining active and melee/lunge behaving
+        // incorrectly. In the VR-owned case the controller publication is
+        // already the authoritative sight line, so write the two H2EK-proven
+        // native aim vectors directly. Outside VR-owned gameplay the original
+        // updater remains completely stock.
+        const bool directVrAim =
+            original && Game_Halo2ControllerAimActive() &&
+            Halo2Observer6Dof_DirectWeaponAimArmed();
+        if (original && !directVrAim)
         {
             __try { result = original(objectIndex); }
             __except (EXCEPTION_EXECUTE_HANDLER)
@@ -1815,8 +1833,7 @@ namespace
         }
 
         bool applied = false;
-        if (original && Game_Halo2ControllerAimActive() &&
-            Halo2Observer6Dof_DirectWeaponAimArmed())
+        if (directVrAim)
         {
             __try
             {

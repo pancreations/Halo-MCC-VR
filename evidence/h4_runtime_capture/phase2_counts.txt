@@ -1,0 +1,37 @@
+Halo 4 VR muzzle-origin investigation — Phase 2A
+Mode: x64dbg software execution breakpoints, condition=false, fast-resume,
+silent, no per-hit logging. These are debugger-side hit-counter deltas only.
+No game/register/matrix/tag/projectile/camera/weapon data were written.
+
+Live halo4.dll base: 0x0000000180000000
+
+Sites
+-----
+  halo4.dll+0x1012E2  direct call to +0x100EBC
+  halo4.dll+0x100EBC  origin helper entry
+  halo4.dll+0x1059B8  first-person attachment resolver
+  halo4.dll+0x101300  later returned-matrix copy path
+
+Window              +1012E2   +100EBC   +1059B8   +101300
+------------------  --------  ---------  --------  --------
+Idle (3 seconds)           0          0       880         0
+AR right tap + idle       38          0     13324        38
+AR left tap + idle        34          0      8264        34
+
+Strict reading
+--------------
++0x1012E2 and +0x101300 are both zero in the measured idle window and nonzero
+in both firing windows, with equal deltas inside each window. That is enough
+to justify a one-event, pausing observation at +0x1012E2.
+
+The counts are aggregate site reaches: no particle-system identity predicate
+was applied. They do not by themselves distinguish AR particle A/B/C or prove
+a position/matrix difference.
+
+The zero counter at +0x100EBC is unresolved instrumentation evidence, not
+proof that the helper was skipped. The pinned retail call instruction at
++0x1012E2 directly targets +0x100EBC; Phase 2B step-over evidence will test
+that relationship directly.
+
+The high +0x1059B8 volume is shared resolver traffic and is not attributed to
+the visible muzzle effect from these counts alone.

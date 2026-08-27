@@ -1,0 +1,3 @@
+Stage3AD toggle assertions PASS
+gldf stock -> 4584ed9090900f85
+gldf patch -> 840db82dd2000f85

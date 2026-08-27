@@ -1,0 +1,28 @@
+{
+  "candidate": "Stage 3AF \u2014 Halo 4 upstream first-person particle-origin hide + runtime proof",
+  "base": "exact Stage 3AE DLL",
+  "base_dll_sha256": "6adac5256a975a5f829f6a45b3bdac3280cea0bd54b36126a34cc4bab56c1fed",
+  "dll_sha256": "d7648b272770d426dc458630fec331c239bca0e046a0438775d63a223c87d37d",
+  "runtime_target": {
+    "halo4_rva": "0x100EBC",
+    "resume": "0x100ECC",
+    "exact_caller_return": "0x1018F4",
+    "stock_guard": "48 89 5C 24 08 57 48 83 EC 60 48 8B DA 45 33 D2",
+    "classifier": "historical V15.1: saved r9b != 0, stack +0x2A == 1, RDX non-null, signed designator <= -2",
+    "action": "existing Stage3X finite BoneMatrix translation hide (+10000 XYZ)"
+  },
+  "runtime_markers": {
+    "H4AF IN": "hook installed",
+    "H4AF HIT": "qualified origin hidden",
+    "AFBAD": "guard/install failed closed"
+  },
+  "preservation": "Stage3AE existing bodies preserved outside guarded raw-tail exposure, title-call redirect, and PE VirtualSize/checksum fields",
+  "files": {
+    "HaloMCCVR.dll": "d7648b272770d426dc458630fec331c239bca0e046a0438775d63a223c87d37d",
+    "HaloMCCVRLauncher.exe": "8e1da430132f34030a1b463ac91567fe48a255c9b6cc2d73c99c10c8f77fe26c",
+    "halomccvr.cfg": "ecc6a84ce62aa8c9d6b49d91476fdb186f45f028f865657b0c353b18304420fb",
+    "LICENSE": "9e0045e5ab6fdb3ff8934d3f83e5fed0f07fc754a65598e29d9428204ac10a00",
+    "README-STAGE3AF.txt": "fa309f44106c2891de8331ef2f3a3afb228ddbb3d06cec185c89d84c83821664",
+    "STAGE3AF-STATIC-AUDIT.txt": "ba477b03b2bf6ec423da76931e8e3ba01e36f285934fca6028e066ba97f1ed55"
+  }
+}

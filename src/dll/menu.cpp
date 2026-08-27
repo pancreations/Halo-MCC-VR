@@ -148,7 +148,9 @@ namespace
         "Hi everyone, pancreations here!\n"
         "Thank you for taking the time to get this up and running.\n"
         "If you have any issues please reach out and let me know.\n"
-        "Expect the rest of the collection to be added over time";
+        "Expect the rest of the collection to be added over time.\n\n"
+        "Pass-on/community build maintained by @MeWhenINameMyself.\n"
+        "Join the Flat2VR Discord to report bugs or share feedback.";
 
     constexpr const char* kWelcomeCloseHint =
         "Press L3+R3 (both analog sticks) to recenter and close the menu";
@@ -187,11 +189,11 @@ namespace
         {"3D Theatre",    "A room-fixed stereo screen used only when the game locks the cinematic camera."},
         {"Controls",      "Turning, gestures, and controller vibration."},
         {"Vehicles",      "First-person driving: sit in the seat instead of floating behind the vehicle."},
-        {"Weapon & Aim",  "Where the gun sits in your hand, and two-handed aiming."},
+        {"Weapon & Aim",  "Gun placement, per-title calibration, muzzle alignment, and two-handed aiming."},
         {"Crosshair",     "The floating reticle that shows where the weapon really shoots."},
         {"Body & Hands",  "Arms, shoulders, and how much of Chief you can see."},
         {"Picture",       "Render resolution, sharpening, anti-aliasing and brightness."},
-        {"HUD",           "Size, shape and position of the game's own HUD."},
+        {"HUD",           "Size and position of each supported title's native HUD; curvature availability is title-specific."},
         {"Desktop",       "The window on your monitor, not the headset."},
         {"Scope",         "Experimental gun-mounted zoom screen."},
         {"Advanced",      "Tracking calibration, panel placement, and starting over."},
@@ -1035,9 +1037,17 @@ namespace
         ImGui::TextDisabled("0/0/0 keeps the current automatic barrel alignment.");
         changed |= ImGui::SliderFloat("Gun forward offset (m)", &g_config.gun_forward_m, -0.3f, 0.5f, "%.2f");
         ImGui::TextDisabled("Slides gun/arms along your aim. Negative seats the gun back in your fist.");
+        changed |= ImGui::SliderFloat("Gun right offset (m)", &g_config.gun_right_m, -0.3f, 0.3f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Center##gnrx")) { g_config.gun_right_m = 0.0f; changed = true; }
+        changed |= ImGui::SliderFloat("Gun up offset (m)", &g_config.gun_up_m, -0.3f, 0.3f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Center##gnux")) { g_config.gun_up_m = 0.0f; changed = true; }
+        ImGui::TextDisabled("Gun-stock calibration on the weapon's post-rotation right/up axes.");
+        ImGui::TextDisabled("All supported VR titles; visual only, shots/reticle remain on controller aim.");
         changed |= ImGui::SliderFloat("Muzzle height (m)", &g_config.muzzle_height_m, -0.3f, 0.3f, "%.2f");
-        ImGui::TextDisabled("HALO REACH ONLY for now - Halo 3 and ODST support is coming soon.");
-        ImGui::TextDisabled("Raises the muzzle flash / bullet spawn up the gun's own axis.");
+        ImGui::TextDisabled("Reach: adjusts its secondary muzzle placement; H3/ODST marker effects follow the gun. H2 Classic muzzle attachment is unchanged in this candidate.");
+        ImGui::TextDisabled("Raises supported muzzle/effect placement along the gun's own axis.");
         ImGui::TextDisabled("Where rounds LAND is unchanged. 0.11 is about four inches.");
 
         ImGui::Spacing();
@@ -1187,8 +1197,16 @@ namespace
         changed |= ImGui::SliderFloat("HUD size", &g_config.hud_size, 0.30f, 1.00f, "%.2f");
         changed |= ImGui::SliderFloat("HUD width / aspect", &g_config.hud_aspect,
                                       kHudAspectMin, kHudAspectMax, "%.2f");
+        const bool halo2NativeHud = Game_UsesHalo2NativeHudLayout();
+        const bool reachNativeHud =
+            TitleAdapter_GetActiveTitle() == GameTitle::HaloReach;
+        const bool noLiveHudCurvature = halo2NativeHud || reachNativeHud;
+        if (noLiveHudCurvature)
+            ImGui::BeginDisabled();
         changed |= ImGui::SliderFloat("HUD curvature", &g_config.hud_curvature,
                                       kHudCurvatureMin, kHudCurvatureMax, "%.2f");
+        if (noLiveHudCurvature)
+            ImGui::EndDisabled();
         changed |= ImGui::SliderFloat("HUD height", &g_config.hud_vertical_offset,
                                       kHudHeightMin, kHudHeightMax, "%+.0f px");
         if (ImGui::SmallButton("Pull HUD in (0.45)##sf"))
@@ -1211,7 +1229,12 @@ namespace
                             Config{}.hud_size, Config{}.hud_aspect,
                             Config{}.hud_curvature, Config{}.hud_vertical_offset);
         ImGui::TextDisabled("Width corrects squeeze separately from size; 1.00 uses automatic correction.");
-        ImGui::TextDisabled("Curvature: 0.00 = flat (+0.30), 1.00 = curved (-0.30); 0.50 is authored.");
+        if (halo2NativeHud)
+            ImGui::TextDisabled("Halo 2 uses its native per-eye HUD path and has no separate curvature basis here.");
+        else if (reachNativeHud)
+            ImGui::TextDisabled("Reach bakes HUD curvature when its tag loads; size and width are live, curvature is not.");
+        else
+            ImGui::TextDisabled("Curvature: 0.00 = flat (+0.30), 1.00 = curved (-0.30); 0.50 is authored.");
         ImGui::TextDisabled("Height: positive raises the HUD, negative lowers it; the aiming reticle stays fixed.");
         }
 

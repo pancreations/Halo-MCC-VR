@@ -10,6 +10,7 @@ param(
     # install is not present is reported and skipped; a target that IS present
     # must install cleanly or the whole deployment fails.
     [string[]]$GameDir = @(
+        'C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR',
         'N:\SteamLibrary\steamapps\common\Halo The Master Chief Collection\Halo_MCC_VR',
         'N:\XBOX\Halo- The Master Chief Collection\Content\Halo_MCC_VR'
     )
@@ -34,12 +35,25 @@ function Test-ExactBoolean([object]$Value, [bool]$Expected) {
 }
 
 function Test-ExactInt32([object]$Value, [int]$Expected) {
-    return ($Value -is [int]) -and ($Value -eq $Expected)
+    # Windows PowerShell's ConvertFrom-Json materializes small JSON integers as
+    # Int32; PowerShell 7 materializes the same manifest tokens as Int64. Accept
+    # those two integral representations only, require Int32 range, and compare
+    # exactly so floating-point/string coercion still cannot pass the gate.
+    if ($Value -isnot [int] -and $Value -isnot [long]) {
+        return $false
+    }
+    $integer = [long]$Value
+    return $integer -ge [int]::MinValue -and
+        $integer -le [int]::MaxValue -and
+        $integer -eq [long]$Expected
 }
 
 # The mod folder is only valid where a real MCC install sits beside it. For the
 # Store edition the install root is the package's Content folder.
 function Test-InstallRoot([string]$Root) {
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        return $false
+    }
     foreach ($exe in @($steamExeName, $storeExeName)) {
         $path = Join-Path $Root (Join-Path 'MCC\Binaries\Win64' $exe)
         if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -50,6 +64,9 @@ function Test-InstallRoot([string]$Root) {
 }
 
 function Get-EditionLabel([string]$Root) {
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        return 'unknown'
+    }
     if (Test-Path -LiteralPath (Join-Path $Root 'MicrosoftGame.config') -PathType Leaf) {
         return 'store'
     }
@@ -136,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -147,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-runtime-c1-supported-title-level-handoff-',
+            $head.Substring(0, 7) + '-c-h2-77-stage3e-proven-hud-native-crosshair-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -200,14 +217,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-65' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-77' -or
         [string]$manifest.halo2_candidate.status -cne
-            'READY_FOR_BUILD_UNACCEPTED' -or
+            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'c63-both-renderers-with-rejected-c64-generic-alignment-disabled' -or
+            'proven-hud-pixel-shader-raster-transform-plus-native-crosshair-capture-shared-both-renderers' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -500,7 +517,37 @@ if (-not (Test-ExactInt32 $manifest.schema_version 25) -or
         [string]$manifest.halo2_candidate.physical_hook_teardown_policy -cne
             'retire-at-level-liveness-boundary-while-title-mapping-is-current' -or
         -not (Test-ExactBoolean `
-            $manifest.halo2_candidate.hud $false) -or
+            $manifest.halo2_candidate.hud $true) -or
+        [string]$manifest.halo2_candidate.hud_layout -cne
+            'exact-field-proven-pixel-shader-viewport-scissor-affine' -or
+        [string]$manifest.halo2_candidate.native_chud_draw_rva -cne
+            '0x007FFD70' -or
+        [string]$manifest.halo2_candidate.hud_shader_hash_contract -cne
+            '3dmigoto-unseeded-fnv1' -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.hud_gameplay_shader_count 15) -or
+        @($manifest.halo2_candidate.hud_controls).Count -ne 3 -or
+        [string]$manifest.halo2_candidate.hud_controls[0] -cne
+            'hud_size' -or
+        [string]$manifest.halo2_candidate.hud_controls[1] -cne
+            'hud_aspect' -or
+        [string]$manifest.halo2_candidate.hud_controls[2] -cne
+            'hud_vertical_offset' -or
+        [string]$manifest.halo2_candidate.hud_crosshair_shader_hash -cne
+            '0x0a9b60d8f40268f6' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.native_crosshair $true) -or
+        [string]$manifest.halo2_candidate.hud_crosshair_layout -cne
+            'native-authored-controller-aim-quad' -or
+        [string]$manifest.halo2_candidate.native_crosshair_fallback -cne
+            'procedural-until-first-current-generation-capture' -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.hud_curvature $false) -or
+        -not (Test-ExactBoolean `
+            $manifest.halo2_candidate.hud_shared_across_renderer_switch `
+            $true) -or
+        [string]$manifest.halo2_candidate.hud_failure_policy -cne
+            'unknown-or-unavailable-shader-draws-stock-procedural-crosshair-fallback-stereo-remains-armed' -or
         -not (Test-ExactBoolean `
             $manifest.halo2_candidate.haptics $true) -or
         -not (Test-ExactBoolean `

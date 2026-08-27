@@ -1,0 +1,161 @@
+{
+  "base_sha256": "4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e",
+  "candidate_sha256": "486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6",
+  "base_size": 2887168,
+  "candidate_size": 2890752,
+  "changed_runs_within_base": [
+    {
+      "file_offset": "0x3D1",
+      "length": 1,
+      "label": "PE .s3qd VirtualSize",
+      "base": "02",
+      "candidate": "10"
+    },
+    {
+      "file_offset": "0x3D9",
+      "length": 1,
+      "label": "PE .s3qd SizeOfRawData",
+      "base": "02",
+      "candidate": "10"
+    },
+    {
+      "file_offset": "0x3EF",
+      "length": 1,
+      "label": "PE .s3qd R/W/X characteristics",
+      "base": "c0",
+      "candidate": "e0"
+    },
+    {
+      "file_offset": "0x142FB",
+      "length": 4,
+      "label": "H4 B-edge pause restore",
+      "base": "91cefeff",
+      "candidate": "23e82d00"
+    },
+    {
+      "file_offset": "0x2FC95",
+      "length": 2,
+      "label": "H4 title/install wrapper",
+      "base": "8b08",
+      "candidate": "3c2e"
+    },
+    {
+      "file_offset": "0x560A7",
+      "length": 12,
+      "label": "H4 real-camera heartbeat",
+      "base": "41c6030149895b0841895310",
+      "candidate": "e9c8ca290090909090909090"
+    },
+    {
+      "file_offset": "0x7BF70",
+      "length": 2,
+      "label": "H4 teardown wrapper",
+      "base": "8545",
+      "candidate": "aa6f"
+    },
+    {
+      "file_offset": "0x8371C",
+      "length": 7,
+      "label": "H4 heartbeat ownership gate",
+      "base": "0fb61dc52e2200",
+      "candidate": "e8a6f426009090"
+    },
+    {
+      "file_offset": "0x2BF11C",
+      "length": 8,
+      "label": "H4 effect location scope",
+      "base": "41837cb614007520",
+      "candidate": "9090909090909090"
+    },
+    {
+      "file_offset": "0x2BF133",
+      "length": 2,
+      "label": "H4 effect camera scope",
+      "base": "0175",
+      "candidate": "0274"
+    },
+    {
+      "file_offset": "0x2BF13F",
+      "length": 2,
+      "label": "H4 effect hide action",
+      "base": "001a",
+      "candidate": "0341"
+    }
+  ],
+  "appended_bytes": 3584,
+  "appended_region": "expanded .s3qd raw tail at RVA 0x2F3200",
+  "protected_sites": [
+    {
+      "rva": "0x90AC4",
+      "length": 5,
+      "label": "H2 cleanup acquire",
+      "identical": true
+    },
+    {
+      "rva": "0x90CE2",
+      "length": 5,
+      "label": "H2 cleanup release",
+      "identical": true
+    },
+    {
+      "rva": "0x92F06",
+      "length": 5,
+      "label": "H2 gun-stock translation",
+      "identical": true
+    },
+    {
+      "rva": "0x95B16",
+      "length": 5,
+      "label": "H2 Classic carrier/alignment",
+      "identical": true
+    },
+    {
+      "rva": "0x40A52",
+      "length": 5,
+      "label": "H3/ODST gun-stock translation",
+      "identical": true
+    },
+    {
+      "rva": "0x6B321",
+      "length": 5,
+      "label": "Reach gun-stock translation",
+      "identical": true
+    },
+    {
+      "rva": "0x81036",
+      "length": 5,
+      "label": "Reach HUD site 1",
+      "identical": true
+    },
+    {
+      "rva": "0x8112D",
+      "length": 5,
+      "label": "Reach HUD site 2",
+      "identical": true
+    },
+    {
+      "rva": "0x813A8",
+      "length": 5,
+      "label": "Reach HUD site 3",
+      "identical": true
+    },
+    {
+      "rva": "0x47396",
+      "length": 5,
+      "label": "H2/H3 pause scope 1",
+      "identical": true
+    },
+    {
+      "rva": "0x4414D",
+      "length": 5,
+      "label": "H2/H3 pause scope 2",
+      "identical": true
+    },
+    {
+      "rva": "0x44203",
+      "length": 5,
+      "label": "H2/H3 pause scope 3",
+      "identical": true
+    }
+  ]
+}

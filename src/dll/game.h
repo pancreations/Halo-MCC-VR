@@ -84,6 +84,9 @@ bool Game_AllowsSharedControllerInput();
 // fallback chord into a native Start pulse.
 bool Game_AllowsPauseToggleInput();
 bool Game_HasTitleCapability(uint32_t requiredCapabilities);
+// True only while Halo 2's armed native-CHUD rectangle adapter owns the title.
+// Its UI exposes size/aspect/height but disables the unsupported curvature knob.
+bool Game_UsesHalo2NativeHudLayout();
 CinematicControlState Game_GetCinematicControlState();
 bool Game_GetCutsceneTheaterPresentation(float& authoredAspect);
 void Game_OnCutsceneTheaterPresentationChanged();

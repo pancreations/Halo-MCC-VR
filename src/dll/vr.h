@@ -4,6 +4,7 @@
 #include <cstdint>
 
 struct IDXGISwapChain;
+struct Halo2CameraRectangle;
 
 #ifndef HALOMCCVR_HALO2_STEREO6DOF
 #define HALOMCCVR_HALO2_STEREO6DOF 0
@@ -391,6 +392,9 @@ bool VR_Halo2GetSynchronousPairPoses(
 // eye cache; Restore copies the eye cache back into that target.
 bool VR_Halo2HudReplayEligible(
     uint32_t generation, uint64_t preparedSerial, const char** reason);
+bool VR_Halo2GetHudSourceRectangle(
+    uint32_t generation, uint64_t preparedSerial,
+    Halo2CameraRectangle& rectangle);
 bool VR_Halo2RecaptureEyeFromFinalTarget(
     uint32_t generation, uint64_t preparedSerial, int eye);
 bool VR_Halo2RestoreEyeToFinalTarget(

@@ -1,0 +1,22 @@
+Stage3AD source handoff changes from Stage3AC source
+====================================================
+Added:
+- STAGE3AD-H4-PROMETHEAN-NONPARTICLE-HIDE-NOTES.md
+- STAGE3AD-BINARY-DIFF.json
+- STAGE3AD-STATIC-AUDIT.txt
+- STAGE3AD-PORTABLE-TEST.txt
+- BASE-STAGE3AC-SHA256.txt
+- baseline/Stage3AC-HaloMCCVR.dll
+- built/Stage3AD-HaloMCCVR.dll
+- tools/build_stage3ad_h4_promethean_nonparticle_hide.py
+- tools/stage3ad_h4_promethean_nonparticle_hide.S
+- tools/audit_stage3ad.py
+- tools/test_stage3ad_toggle.py
+- evidence/STAGE3AD-H4-NONPARTICLE-TAG-EVIDENCE.csv
+- evidence/STAGE3AD-H4-DISPATCHER-AUDIT.txt
+- evidence/STAGE3AD-H4-DISPATCHER-DISASSEMBLY.txt
+- evidence/STAGE3AD-CAVE-DISASSEMBLY.txt
+- evidence/STAGE3AC-HEADSET-BASELINE-EXCERPT.txt
+Updated:
+- BUILDING.md (Stage3AD reproduction instructions only)
+No C++ gameplay source was changed; Stage3AD is a guarded post-link H4-only runtime dispatcher patch.

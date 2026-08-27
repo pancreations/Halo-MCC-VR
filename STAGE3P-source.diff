@@ -1,0 +1,135 @@
+--- Stage3O/src/dll/game.cpp
++++ Stage3P/src/dll/game.cpp
+@@ -1983,6 +1983,11 @@
+         HudLayoutProfile::None};
+     std::atomic<uint32_t> g_safeFramePublishedGeneration{0};
+     std::atomic<bool> g_safeFrameScanInFlight{false};
++    // Reach's six headset-proven HUD records have repeatedly lived in the
++    // high 0x00007FF4... private tag allocation. The first scan of each Reach
++    // title generation starts there; if it misses, the normal auto-rescan for
++    // that same generation falls back to the full application range.
++    std::atomic<uint32_t> g_reachHudFastScanGeneration{UINT32_MAX};
+     SRWLOCK g_hudLayoutWriteLock = SRWLOCK_INIT;
+ 
+     // Per-title freshness beacons. A resident-but-idle game module cannot
+@@ -2598,10 +2603,29 @@
+         bool cancelled = false;
+         SYSTEM_INFO si;
+         GetSystemInfo(&si);
+-        uintptr_t addr =
++        const uintptr_t addrMin =
+             reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
+         const uintptr_t addrMax =
+             reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
++        uintptr_t addr = addrMin;
++        if (profile == HudLayoutProfile::HaloReach)
++        {
++            // The prior full scan proved all six Reach records as private RW
++            // near 0x00007FF4..., after spending ~45 s byte-scanning lower
++            // allocations. Start the first scan of a Reach generation in that
++            // proven high allocation band. If ASLR ever puts the records lower,
++            // a failed scan leaves no slots, so the existing auto-rescan runs
++            // again; the generation marker below then selects addrMin and gives
++            // us the old complete scan as a correctness fallback.
++            constexpr uintptr_t kReachHudFastStart =
++                static_cast<uintptr_t>(0x00007FF400000000ull);
++            const uint32_t priorGeneration =
++                g_reachHudFastScanGeneration.exchange(
++                    generation, std::memory_order_acq_rel);
++            if (priorGeneration != generation &&
++                kReachHudFastStart > addr && kReachHudFastStart < addrMax)
++                addr = kReachHudFastStart;
++        }
+         MEMORY_BASIC_INFORMATION mbi{};
+         while (addr < addrMax && accepted < kMaxSafeFrameHits &&
+                VirtualQuery(
+@@ -2638,13 +2662,13 @@
+                   mbi.Protect == PAGE_EXECUTE_READWRITE ||
+                   mbi.Protect == PAGE_EXECUTE_WRITECOPY));
+             const bool writableProtect = readableProtect;
+-            // Reach's proven retail HUD records are resident in mapped tag
+-            // storage. Prefer that exact storage class instead of byte-scanning
+-            // every private allocation in the process; H3/ODST keep their
+-            // established private-RW rule. A future source build can add a slow
+-            // private fallback if a different Reach edition proves it necessary.
++            // The headset-proven Reach anchors are MEM_PRIVATE/PAGE_READWRITE,
++            // while other tag-backed copies can be mapped. Reach therefore
++            // accepts both storage classes; H3/ODST retain their established
++            // private-only rule. Stage 3O accidentally narrowed this to mapped
++            // only, which made every Reach scan return zero raw anchor hits.
+             const bool allowedType = adapter->scanMappedRegions
+-                ? mbi.Type == MEM_MAPPED
++                ? (mbi.Type == MEM_PRIVATE || mbi.Type == MEM_MAPPED)
+                 : mbi.Type == MEM_PRIVATE;
+             const bool candidate =
+                 mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+@@ -2684,6 +2708,14 @@
+                     }
+                 }
+             }
++            // The accepted Steam proof contains six Reach records clustered
++            // in the same high tag allocation. Once all six are collected, do
++            // not waste tens of seconds scanning unrelated resident modules.
++            // If a future build exposes only the adapter minimum (three), this
++            // condition never fires and the scan naturally retains the complete
++            // fallback behavior.
++            if (profile == HudLayoutProfile::HaloReach && accepted >= 6)
++                break;
+             addr = next;
+         }
+ 
+@@ -36984,11 +37016,20 @@
+ }
+ bool Game_HasAuthoritativePauseState()
+ {
+-    if (g_enginePauseValidated.load(std::memory_order_acquire))
+-        return true;
+     const GameTitle activeTitle = TitleAdapter_GetActiveTitle();
+     const TitleAdapterRuntimeSnapshot runtime =
+         RuntimeSnapshot(GetTickCount64());
++    // g_enginePauseValidated belongs specifically to Halo 3. MCC keeps title
++    // modules resident, so this proof can remain true after switching away
++    // from Halo 3. Never let that stale proof suppress another title's edge
++    // fallback (notably Halo 2, which intentionally owns pause presentation
++    // without a proven native pause boolean).
++    const bool halo3Owned = activeTitle == GameTitle::Halo3 ||
++        (runtime.runtime.owner == GameTitle::Halo3 &&
++         runtime.runtime.qualifyingOwnerCount == 1);
++    if (halo3Owned &&
++        g_enginePauseValidated.load(std::memory_order_acquire))
++        return true;
+ #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
+     if ((activeTitle == GameTitle::Halo3ODST ||
+          (runtime.runtime.owner == GameTitle::Halo3ODST &&
+@@ -37944,7 +37985,10 @@
+     static bool enginePauseLogged = false;
+     static uint64_t pauseMismatchSince = 0;
+     static bool pauseMismatchValue = false;
+-    if (ReadEnginePaused(enginePaused))
++    // The native flag below is a Halo 3 proof. Keep it completely out of
++    // resident-module transitions so H2/Reach/ODST cannot inherit Halo 3's
++    // pause state merely because halo3.dll is still loaded.
++    if (haloTitleActive && ReadEnginePaused(enginePaused))
+     {
+         if (!enginePauseLogged || enginePaused != previousEnginePaused)
+         {
+@@ -37975,7 +38019,7 @@
+             pauseMismatchSince = 0;
+     }
+     static PauseLevelRecovery pauseLevelRecovery;
+-    if (!g_enginePauseValidated.load() &&
++    if (haloTitleActive && !g_enginePauseValidated.load() &&
+         pauseLevelRecovery.Update(pausePresentation, cameraStale, inLevelStable))
+     {
+         // Restart Level leaves Halo's native pause screen without producing a
+--- Stage3O/src/dll/menu.cpp
++++ Stage3P/src/dll/menu.cpp
+@@ -149,7 +149,7 @@
+         "Thank you for taking the time to get this up and running.\n"
+         "If you have any issues please reach out and let me know.\n"
+         "Expect the rest of the collection to be added over time.\n\n"
+-        "Pass-on/community build maintained by @holyjolias.\n"
++        "Pass-on/community build maintained by @MeWhenINameMyself.\n"
+         "Join the Flat2VR Discord to report bugs or share feedback.";
+ 
+     constexpr const char* kWelcomeCloseHint =

@@ -1,0 +1,53 @@
+{
+  "input_sha256": "7ceb1b741f94286c9766e777ec253208301fb97c8e3976b61d4fc6b141a8a402",
+  "output_sha256": "36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8",
+  "input_size": 2890752,
+  "output_size": 2898944,
+  "preexisting_range_changed_bytes": 10,
+  "preexisting_range_diff_spans": [
+    {
+      "file_offset_start": "0x129",
+      "file_offset_end": "0x12a",
+      "length": 1,
+      "old": "be",
+      "new": "de"
+    },
+    {
+      "file_offset_start": "0x159",
+      "file_offset_end": "0x15a",
+      "length": 1,
+      "old": "40",
+      "new": "60"
+    },
+    {
+      "file_offset_start": "0x3d1",
+      "file_offset_end": "0x3d2",
+      "length": 1,
+      "old": "10",
+      "new": "30"
+    },
+    {
+      "file_offset_start": "0x3d9",
+      "file_offset_end": "0x3da",
+      "length": 1,
+      "old": "10",
+      "new": "30"
+    },
+    {
+      "file_offset_start": "0x2fc95",
+      "file_offset_end": "0x2fc97",
+      "length": 2,
+      "old": "131f",
+      "new": "f43a"
+    },
+    {
+      "file_offset_start": "0x2c173b",
+      "file_offset_end": "0x2c173f",
+      "length": 4,
+      "old": "98e0ffff",
+      "new": "b1080000"
+    }
+  ],
+  "appended_file_offset": "0x2c1c00",
+  "appended_length": 8192
+}

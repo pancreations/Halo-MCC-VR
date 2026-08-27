@@ -1,0 +1,80 @@
+Halo 4 VR muzzle-origin investigation — Phase 2 findings
+========================================================
+
+Scope
+-----
+Read-only x64dbg work only. No source files were edited; no DLL/mod was
+built; no Halo 4 game-data, tags, matrices, projectile state, aim, camera, or
+weapon state was intentionally written. Software/hardware debugger
+breakpoints were removed before the final debugger cleanup attempt.
+
+PROVEN
+------
+1. Aggregate Phase 2A traffic
+   - halo4+0x1012E2: idle 0, right window 38, left window 34.
+   - halo4+0x101300: idle 0, right window 38, left window 34.
+   - This establishes firing-window correlation for that caller/copy path,
+     not a unique particle identity.
+
+2. A selected/composed 0x34-byte matrix changes with the hand pose.
+   - Right, after halo4+0x100EBC:
+       0000803FB8F614BF23C2C63E6AF2363F605E463DC8515CBF7EC6013FBCD34F3F0CC0A83E03C7F63E862CFB4144B54DC113280241
+   - Left, after halo4+0x100EBC:
+       0000803FC1A7033F8A201F3F1F44173F6C4452BF038D223EFE410C3FC2AE7C3E026044BF6399173FA6C601427B156CC1C20CF640
+   - The last three decoded components are right (31.39674, -12.856754,
+     8.134784) and left (32.443993, -14.755244, 7.6890574). Their observed
+     delta is approximately (+1.047253, -1.898490, -0.445727).
+
+3. The LEFT selected matrix is preserved, byte-for-byte, through:
+   +0x1012E7 RAX/R8 -> +0x101300 RBX -> temporary T=RBP-0x30 ->
+   +0x106D28 runtime-queue record -> generic worker memcpy -> TLS main queue.
+   A hardware write breakpoint established the first matrix write in the
+   queue producer (instruction +0x106DEB; debugger reports the following RIP
+   +0x106DF0), and a normal stop at +0x106E0A verified all 0x34 bytes.
+
+4. The first two later readers of the captured matrix were generic plumbing:
+   VCRUNTIME140!memcpy called from halo4+0x29A32B, followed by the 0x60-byte
+   queue transfer at halo4+0x1082B8/+0x10833D. Neither routine constructs a
+   particle or submits a render instance.
+
+5. Both one-shot captures had WORD [R15+2]=0 and R9B=1. This is an observed
+   local/location-0 event record. It is not the location-2-only candidate.
+
+LIKELY
+------
+1. The final three values in the captured 0x34 structure are the position
+   portion of the engine's affine attachment/origin matrix. The right/left
+   delta therefore shows that this observed local/location-0 path receives a
+   hand-dependent transform before it reaches scheduler queues.
+
+2. If the visible flash remains head-relative, the defect is more likely
+   downstream of this particular transform or on a different particle system
+   path, rather than an absence of a hand-dependent matrix in the observed
+   local/location-0 path.
+
+UNPROVEN
+---------
+1. The captured location-0 record cannot yet be named as particle A
+   (ar_muzzle_flash_round) versus particle B (muzzle_smoke). The visible
+   starburst could also be particle C (location 2), which Phase 2B did not
+   capture.
+
+2. No final particle-renderer reader/writer was captured. A selective,
+   exact-slot breakpoint at the static type-1 consumer halo4+0x101644 did not
+   hit in a short bounded continuation. That does not prove the consumer is
+   absent; it only means this capture did not observe it.
+
+3. No root cause or fix is justified from this evidence. In particular, no
+   conclusion should be made that a queue copy is a render path, or that a
+   matrix retarget patch would fix the visible muzzle flash.
+
+4. The +0x100EBC Phase 2A hit counter remained zero even though +0x1012E2
+   directly calls it in the pinned retail binary. This remains an x64dbg
+   breakpoint/counter instrumentation anomaly, not a behavior conclusion.
+
+Post-capture note
+-----------------
+The MCC debuggee process exited during the final x64dbg detach attempt. The
+capture files above had already been written. A read-only check of the recent
+Windows Application event log did not show an immediate MCC/halo4 fault
+record, so this report does not assign a cause to that exit.

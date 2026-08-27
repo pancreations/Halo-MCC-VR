@@ -11,9 +11,11 @@
 #include <intrin.h>
 
 #include "../common/config.h"
+#include "../common/halo2_hud_logic.h"
 #include "../common/halo2_render_logic.h"
 #include "../common/log.h"
 #include "game.h"
+#include "d3d11_hook.h"
 #include "halo2_observer_6dof.h"
 #include "vr.h"
 
@@ -51,6 +53,10 @@ namespace
         uint32_t, uint32_t, uint8_t, float (*)[4],
         uint16_t, int32_t, uint32_t, uint8_t, uint32_t,
         void*, uint8_t, int16_t, void*, uint8_t, void*);
+    using NativeChudDrawFn = void (__fastcall *)(
+        int32_t, int32_t, const Halo2CameraRectangle*);
+    using NativeHudAnchorBasisFn = void (__fastcall *)(
+        int32_t, int32_t, float*, uint8_t);
 
     enum class CoreState : uint8_t
     {
@@ -265,6 +271,13 @@ namespace
     uint32_t g_projectionReadbackLoggedBits[4]{};
 
     HMODULE g_moduleReference = nullptr;
+    // Stage 3I: a short-lived *owning* reference used only while the Classic
+    // MinHook targets are being restored/removed. InstallCore intentionally
+    // keeps g_moduleReference non-owning so MCC remains free to manage the
+    // title DLL during normal play. The cleanup pin closes the unload race
+    // proven by the Stage 3H headset log (MH_ERROR_MEMORY_PROTECT on both
+    // Classic hook targets after level liveness closed).
+    HMODULE g_cleanupModulePin = nullptr;
     void* g_outerTarget = nullptr;
     void* g_innerTarget = nullptr;
     CoreState g_coreState = CoreState::StockFallback;
@@ -278,6 +291,187 @@ namespace
     std::atomic<uint64_t> g_fpConstantWriteFailures{0};
     std::atomic<bool> g_fpConstantPinned{false};
     uint32_t g_fpConstantLoggedBits = 0;
+
+    // C-H2-77: renderer-independent ownership of the proven Blam CHUD draw.
+    // The Stage 3D anchor-basis candidate was conclusively rejected after this
+    // draw ran thousands of times while its alleged nested anchor routine ran
+    // zero times. The anchor fields remain only for defensive cleanup of an
+    // interrupted older install; this build never creates or enables that hook.
+    HMODULE g_nativeHudModuleReference = nullptr;
+    void* g_nativeChudTarget = nullptr;
+    void* g_nativeHudAnchorTarget = nullptr;
+    std::atomic<uintptr_t> g_nativeChudOriginal{0};
+    std::atomic<uintptr_t> g_nativeHudAnchorOriginal{0};
+    std::atomic<bool> g_nativeHudInstalled{false};
+    std::atomic<bool> g_nativeHudArmed{false};
+    std::atomic<bool> g_nativeHudTeardown{false};
+    std::atomic<uint32_t> g_nativeHudGeneration{0};
+    std::atomic<uintptr_t> g_nativeHudModuleBase{0};
+    std::atomic<uint32_t> g_nativeHudActiveCallbacks{0};
+    std::atomic<uint64_t> g_nativeHudScopedDraws{0};
+    std::atomic<uint64_t> g_nativeHudStockDraws{0};
+    std::atomic<uint64_t> g_nativeHudAnchorsAdjusted{0};
+    std::atomic<uint64_t> g_nativeHudCrosshairsPreserved{0};
+    std::atomic<uint64_t> g_nativeHudAnchorFailures{0};
+    uint32_t g_nativeHudRejectedGeneration = 0;
+    uint64_t g_nativeHudLastReportMs = 0;
+    uint64_t g_nativeHudLastReportedTotal = UINT64_MAX;
+    uint32_t g_nativeHudCrosshairPreparedGeneration = 0;
+    uint32_t g_nativeHudCrosshairPreparationFailedGeneration = 0;
+
+    struct NativeHudEyeContext
+    {
+        bool active = false;
+        bool layoutActive = false;
+        Halo2SymmetricHalfFovs cover{};
+        Halo2CameraRectangle source{};
+        Halo2CameraRectangle layout{};
+    };
+    thread_local NativeHudEyeContext g_nativeHudEyeContext{};
+
+    template <size_t N>
+    bool NativeHudEntryMatches(
+        uintptr_t address, const uint8_t (&expected)[N]) noexcept
+    {
+        uint8_t entry[N]{};
+        __try
+        {
+            std::memcpy(entry, reinterpret_cast<const void*>(address), N);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+        return std::memcmp(entry, expected, N) == 0;
+    }
+
+    bool BuildAdjustedNativeHudRectangle(
+        const Halo2CameraRectangle* source,
+        const Halo2SymmetricHalfFovs& cover,
+        Halo2CameraRectangle& adjusted) noexcept
+    {
+        if (!source)
+            return false;
+        Halo2CameraRectangle input{};
+        __try
+        {
+            std::memcpy(&input, source, sizeof(input));
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+        float eyeFov[2][4]{};
+        if (!VR_GetEyeFov(0, eyeFov[0]) ||
+            !VR_GetEyeFov(1, eyeFov[1]))
+        {
+            return false;
+        }
+        return halo2_hud::ComputeVisibleLayoutRectangle(
+            input, cover, eyeFov[0], eyeFov[1],
+            g_config.hud_size, g_config.hud_aspect,
+            g_config.hud_vertical_offset, adjusted);
+    }
+
+    __declspec(noinline) void __fastcall NativeChudDrawDetour(
+        int32_t player, int32_t drawSelector,
+        const Halo2CameraRectangle* rectangle)
+    {
+        const auto original = reinterpret_cast<NativeChudDrawFn>(
+            g_nativeChudOriginal.load(std::memory_order_acquire));
+        if (!original)
+            return;
+        g_nativeHudActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            Halo2CameraRectangle source{};
+            Halo2CameraRectangle layout{};
+            if (g_nativeHudEyeContext.active &&
+                g_nativeHudArmed.load(std::memory_order_acquire) &&
+                !g_nativeHudTeardown.load(std::memory_order_acquire) &&
+                drawSelector == -1 &&
+                BuildAdjustedNativeHudRectangle(
+                    rectangle, g_nativeHudEyeContext.cover, layout))
+            {
+                __try
+                {
+                    std::memcpy(&source, rectangle, sizeof(source));
+                    g_nativeHudEyeContext.source = source;
+                    g_nativeHudEyeContext.layout = layout;
+                    g_nativeHudEyeContext.layoutActive = true;
+                    // Preserve the engine's original CHUD call contract. The
+                    // D3D11 hooks consume this TLS source/layout pair only for
+                    // the exact field-proven HUD pixel shaders while original()
+                    // is actively issuing their draws.
+                    original(player, drawSelector, rectangle);
+                    g_nativeHudScopedDraws.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                __finally
+                {
+                    g_nativeHudEyeContext.layoutActive = false;
+                }
+            }
+            else
+            {
+                original(player, drawSelector, rectangle);
+                g_nativeHudStockDraws.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        __finally
+        {
+            g_nativeHudActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
+
+    __declspec(noinline) void __fastcall NativeHudAnchorBasisDetour(
+        int32_t anchor, int32_t selector, float* output, uint8_t special)
+    {
+        const auto original = reinterpret_cast<NativeHudAnchorBasisFn>(
+            g_nativeHudAnchorOriginal.load(std::memory_order_acquire));
+        if (!original)
+            return;
+        g_nativeHudActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            original(anchor, selector, output, special);
+            if (!g_nativeHudEyeContext.layoutActive || !output)
+                __leave;
+            if (anchor == halo2_hud::kCrosshairAnchor)
+            {
+                g_nativeHudCrosshairsPreserved.fetch_add(
+                    1, std::memory_order_relaxed);
+                __leave;
+            }
+            bool mapped = false;
+            __try
+            {
+                float x = output[0];
+                float y = output[1];
+                mapped = halo2_hud::MapNativeAnchorPoint(
+                    g_nativeHudEyeContext.source,
+                    g_nativeHudEyeContext.layout, anchor, x, y);
+                if (mapped)
+                {
+                    output[0] = x;
+                    output[1] = y;
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                mapped = false;
+            }
+            if (mapped)
+                g_nativeHudAnchorsAdjusted.fetch_add(1, std::memory_order_relaxed);
+            else
+                g_nativeHudAnchorFailures.fetch_add(1, std::memory_order_relaxed);
+        }
+        __finally
+        {
+            g_nativeHudActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
 
     bool WriteDwordGuarded(uintptr_t address, uint32_t value) noexcept
     {
@@ -1772,14 +1966,22 @@ namespace
                             ++scope->renderViewCalls;
                             __try
                             {
-                                original(
-                                    argument01, argument02, argument03, argument04,
-                                    argument05, argument06, argument07, argument08,
-                                    argument09, argument10, argument11, argument12,
-                                    argument13, argument14, argument15, argument16,
-                                    argument17, argument18, argument19);
-                                originalReturned = true;
-                                ++scope->renderViewReturns;
+                                Halo2NativeHud_BeginEye(scope->halfFovs);
+                                __try
+                                {
+                                    original(
+                                        argument01, argument02, argument03, argument04,
+                                        argument05, argument06, argument07, argument08,
+                                        argument09, argument10, argument11, argument12,
+                                        argument13, argument14, argument15, argument16,
+                                        argument17, argument18, argument19);
+                                    originalReturned = true;
+                                    ++scope->renderViewReturns;
+                                }
+                                __finally
+                                {
+                                    Halo2NativeHud_EndEye();
+                                }
                             }
                             __except (NoteClaimedTransactionException())
                             {
@@ -2382,7 +2584,9 @@ namespace
                 "firstPersonUnreadable=%llu firstPassUncompensated=%llu "
                 "fpFovHeld(eye0/eye1)=%llu/%llu fpFovLost(eye0/eye1)=%llu/%llu "
                 "fpFovUnreadable=%llu sceneLatchRearmed=%llu "
-                "sceneLatchUnreadable=%llu poseOwner=%s "
+                "sceneLatchUnreadable=%llu nativeHudScopedDraws=%llu "
+                "nativeHudAnchorsMapped=%llu nativeHudReticlesStock=%llu "
+                "poseOwner=%s "
                 "posePublished=%llu poseRederived=%llu poseSelf=%llu "
                 "poseUnavailable=%llu",
                 static_cast<unsigned long long>(current.outerCallbacks),
@@ -2421,6 +2625,12 @@ namespace
                     g_sceneLatchRearmed.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_sceneLatchUnreadable.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_nativeHudScopedDraws.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_nativeHudAnchorsAdjusted.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_nativeHudCrosshairsPreserved.load(std::memory_order_relaxed)),
                 Halo2Observer6Dof_Armed() ? "observer" : "classicCore",
                 static_cast<unsigned long long>(current.posePublished),
                 static_cast<unsigned long long>(current.poseRederived),
@@ -2832,6 +3042,35 @@ namespace
         return status == MH_OK || status == MH_ERROR_NOT_CREATED;
     }
 
+    void AcquireCleanupModulePin() noexcept
+    {
+        if (g_cleanupModulePin || !g_moduleReference)
+            return;
+
+        HMODULE module = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                reinterpret_cast<LPCWSTR>(g_moduleReference), &module))
+        {
+            return;
+        }
+        if (module != g_moduleReference)
+        {
+            if (module)
+                FreeLibrary(module);
+            return;
+        }
+        g_cleanupModulePin = module;
+    }
+
+    void ReleaseCleanupModulePin() noexcept
+    {
+        HMODULE module = g_cleanupModulePin;
+        g_cleanupModulePin = nullptr;
+        if (module)
+            FreeLibrary(module);
+    }
+
     bool DrainCallbacks() noexcept
     {
         const uint64_t deadline = GetTickCount64() + kCallbackDrainLimitMs;
@@ -2845,6 +3084,10 @@ namespace
 
     bool RemoveCore(const char* reason) noexcept
     {
+        // Stage 3I: hold halo2.dll mapped across MinHook disable/remove. The
+        // pin is retained on cleanup failure and released only after every
+        // Classic hook record has been retired.
+        AcquireCleanupModulePin();
         (void)RestoreFirstPersonFovConstant();
         g_fpConstantPinned.store(false, std::memory_order_release);
         g_stereoRequested.store(false, std::memory_order_release);
@@ -2951,6 +3194,7 @@ namespace
         g_coreState = CoreState::StockFallback;
         // Non-owning identity; MCC alone owns the title DLL lifetime.
         g_moduleReference = nullptr;
+        ReleaseCleanupModulePin();
         LOG("Halo 2 stereo core removed (%s); stock rendering restored",
             reason ? reason : "unspecified");
         return true;
@@ -3240,6 +3484,375 @@ namespace
             static_cast<unsigned>(kHalo2BackbufferRtvSlotRva));
         return true;
     }
+
+    bool DrainNativeHudCallbacks() noexcept
+    {
+        const uint64_t deadline = GetTickCount64() + kCallbackDrainLimitMs;
+        while (g_nativeHudActiveCallbacks.load(std::memory_order_acquire) != 0 &&
+               GetTickCount64() < deadline)
+        {
+            Sleep(1);
+        }
+        return g_nativeHudActiveCallbacks.load(std::memory_order_acquire) == 0;
+    }
+
+    void ReportNativeHud() noexcept
+    {
+        const uint64_t now = GetTickCount64();
+        if (g_nativeHudLastReportMs &&
+            now - g_nativeHudLastReportMs < kTelemetryPeriodMs)
+        {
+            return;
+        }
+        const uint64_t scoped =
+            g_nativeHudScopedDraws.load(std::memory_order_relaxed);
+        const uint64_t stock =
+            g_nativeHudStockDraws.load(std::memory_order_relaxed);
+        uint64_t gameplayShaders = 0;
+        uint64_t crosshairShaders = 0;
+        uint64_t rasterDraws = 0;
+        uint64_t crosshairDraws = 0;
+        uint64_t stateFailures = 0;
+        D3D_GetHalo2HudTelemetry(
+            gameplayShaders, crosshairShaders, rasterDraws,
+            crosshairDraws, stateFailures);
+        const uint64_t total = scoped + stock + gameplayShaders +
+            crosshairShaders + rasterDraws + crosshairDraws + stateFailures;
+        if (total != g_nativeHudLastReportedTotal)
+        {
+            LOG("Halo 2 native HUD CHUD scope telemetry: scopedDraws=%llu "
+                "stockDraws=%llu gameplayShaders=%llu crosshairShaders=%llu "
+                "rasterTransforms=%llu nativeCrosshairCaptures=%llu "
+                "stateFailures=%llu",
+                static_cast<unsigned long long>(scoped),
+                static_cast<unsigned long long>(stock),
+                static_cast<unsigned long long>(gameplayShaders),
+                static_cast<unsigned long long>(crosshairShaders),
+                static_cast<unsigned long long>(rasterDraws),
+                static_cast<unsigned long long>(crosshairDraws),
+                static_cast<unsigned long long>(stateFailures));
+            g_nativeHudLastReportedTotal = total;
+        }
+        g_nativeHudLastReportMs = now;
+    }
+
+    bool RemoveNativeHud(const char* reason) noexcept
+    {
+        g_nativeHudArmed.store(false, std::memory_order_release);
+        g_nativeHudTeardown.store(true, std::memory_order_release);
+        const MH_STATUS drawDisabled = g_nativeChudTarget
+            ? MH_DisableHook(g_nativeChudTarget)
+            : MH_ERROR_NOT_CREATED;
+        const MH_STATUS anchorDisabled = g_nativeHudAnchorTarget
+            ? MH_DisableHook(g_nativeHudAnchorTarget)
+            : MH_ERROR_NOT_CREATED;
+        if (!DisableStatusIsSafe(drawDisabled) ||
+            !DisableStatusIsSafe(anchorDisabled))
+        {
+            LOG("Halo 2 native HUD cleanup REQUIRED (%s): disable draw=%d "
+                "anchor=%d; ownership retained",
+                reason ? reason : "unspecified",
+                static_cast<int>(drawDisabled),
+                static_cast<int>(anchorDisabled));
+            return false;
+        }
+        if (!DrainNativeHudCallbacks())
+        {
+            LOG("Halo 2 native HUD cleanup REQUIRED (%s): %u callbacks did "
+                "not drain; ownership retained",
+                reason ? reason : "unspecified",
+                g_nativeHudActiveCallbacks.load(std::memory_order_relaxed));
+            return false;
+        }
+
+        bool removed = true;
+        if (g_nativeHudAnchorTarget)
+        {
+            const MH_STATUS status = MH_RemoveHook(g_nativeHudAnchorTarget);
+            if (RemoveStatusIsSafe(status))
+            {
+                g_nativeHudAnchorTarget = nullptr;
+                g_nativeHudAnchorOriginal.store(0, std::memory_order_release);
+            }
+            else
+            {
+                removed = false;
+                LOG("Halo 2 native HUD cleanup REQUIRED (%s): anchor "
+                    "remove=%d", reason ? reason : "unspecified",
+                    static_cast<int>(status));
+            }
+        }
+        if (g_nativeChudTarget)
+        {
+            const MH_STATUS status = MH_RemoveHook(g_nativeChudTarget);
+            if (RemoveStatusIsSafe(status))
+            {
+                g_nativeChudTarget = nullptr;
+                g_nativeChudOriginal.store(0, std::memory_order_release);
+            }
+            else
+            {
+                removed = false;
+                LOG("Halo 2 native HUD cleanup REQUIRED (%s): draw remove=%d",
+                    reason ? reason : "unspecified", static_cast<int>(status));
+            }
+        }
+        if (!removed || g_nativeChudTarget || g_nativeHudAnchorTarget)
+            return false;
+
+        g_nativeHudInstalled.store(false, std::memory_order_release);
+        g_nativeHudGeneration.store(0, std::memory_order_release);
+        g_nativeHudModuleBase.store(0, std::memory_order_release);
+        g_nativeHudModuleReference = nullptr;
+        LOG("Halo 2 native HUD CHUD draw ownership removed (%s); stock layout "
+            "restored", reason ? reason : "unspecified");
+        return true;
+    }
+
+    bool InstallNativeHud(
+        uintptr_t base, size_t size, uint32_t generation) noexcept
+    {
+        if (g_nativeHudRejectedGeneration == generation)
+            return false;
+        const uintptr_t draw = base + kHalo2RetailNativeChudDrawRva;
+        const bool drawPinned = VerifyExecutableTarget(
+                base, size, kHalo2RetailNativeChudDrawRva) &&
+            NativeHudEntryMatches(
+                draw, kHalo2RetailNativeChudDrawEntryBytes);
+        if (!drawPinned)
+        {
+            LOG("Halo 2 native HUD WITHHELD: proven retail CHUD draw "
+                "(+0x%X) did not match; stock layout remains",
+                static_cast<unsigned>(kHalo2RetailNativeChudDrawRva));
+            g_nativeHudRejectedGeneration = generation;
+            return false;
+        }
+        if (g_nativeChudTarget || g_nativeHudAnchorTarget ||
+            g_nativeHudModuleReference)
+        {
+            LOG("Halo 2 native HUD WITHHELD: prior shared ownership remains; "
+                "cleanup must finish first");
+            return false;
+        }
+
+        HMODULE module = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(base), &module) ||
+            reinterpret_cast<uintptr_t>(module) != base)
+        {
+            LOG("Halo 2 native HUD WITHHELD: module identity pin failed");
+            g_nativeHudRejectedGeneration = generation;
+            return false;
+        }
+
+        void* drawTrampoline = nullptr;
+        const MH_STATUS createdDraw = MH_CreateHook(
+            reinterpret_cast<void*>(draw),
+            reinterpret_cast<void*>(&NativeChudDrawDetour), &drawTrampoline);
+        if (createdDraw != MH_OK || !drawTrampoline)
+        {
+            MH_STATUS drawRollback = MH_ERROR_NOT_CREATED;
+            if (createdDraw == MH_OK)
+                drawRollback = MH_RemoveHook(reinterpret_cast<void*>(draw));
+            LOG("Halo 2 native HUD WITHHELD: CHUD draw hook create=%d "
+                "rollback=%d",
+                static_cast<int>(createdDraw),
+                static_cast<int>(drawRollback));
+            if (createdDraw == MH_OK &&
+                !RemoveStatusIsSafe(drawRollback))
+            {
+                g_nativeHudModuleReference = module;
+                g_nativeChudTarget = reinterpret_cast<void*>(draw);
+                g_nativeChudOriginal.store(
+                    reinterpret_cast<uintptr_t>(drawTrampoline),
+                    std::memory_order_release);
+                g_nativeHudGeneration.store(
+                    generation, std::memory_order_release);
+                g_nativeHudModuleBase.store(base, std::memory_order_release);
+                g_nativeHudInstalled.store(true, std::memory_order_release);
+                g_nativeHudTeardown.store(true, std::memory_order_release);
+            }
+            g_nativeHudRejectedGeneration = generation;
+            return false;
+        }
+
+        g_nativeHudModuleReference = module;
+        g_nativeChudTarget = reinterpret_cast<void*>(draw);
+        g_nativeChudOriginal.store(
+            reinterpret_cast<uintptr_t>(drawTrampoline),
+            std::memory_order_release);
+        g_nativeHudGeneration.store(generation, std::memory_order_release);
+        g_nativeHudModuleBase.store(base, std::memory_order_release);
+        g_nativeHudTeardown.store(false, std::memory_order_release);
+        g_nativeHudInstalled.store(true, std::memory_order_release);
+        g_nativeHudScopedDraws.store(0, std::memory_order_relaxed);
+        g_nativeHudStockDraws.store(0, std::memory_order_relaxed);
+        g_nativeHudAnchorsAdjusted.store(0, std::memory_order_relaxed);
+        g_nativeHudCrosshairsPreserved.store(0, std::memory_order_relaxed);
+        g_nativeHudAnchorFailures.store(0, std::memory_order_relaxed);
+        g_nativeHudLastReportMs = 0;
+        g_nativeHudLastReportedTotal = UINT64_MAX;
+
+        const MH_STATUS queuedDraw = MH_QueueEnableHook(g_nativeChudTarget);
+        const MH_STATUS applied = queuedDraw == MH_OK
+            ? MH_ApplyQueued()
+            : MH_ERROR_NOT_CREATED;
+        if (queuedDraw != MH_OK || applied != MH_OK)
+        {
+            LOG("Halo 2 native HUD WITHHELD: CHUD draw enable=%d apply=%d",
+                static_cast<int>(queuedDraw), static_cast<int>(applied));
+            (void)RemoveNativeHud("install rollback");
+            g_nativeHudRejectedGeneration = generation;
+            return false;
+        }
+        g_nativeHudArmed.store(true, std::memory_order_release);
+        LOG("Halo 2 native gameplay HUD draw scope ON at +0x%X across "
+            "Classic/Anniversary; Stage 3D's zero-callback anchor hook is "
+            "disabled and exact proven D3D11 HUD shaders own layout",
+            static_cast<unsigned>(kHalo2RetailNativeChudDrawRva));
+        return true;
+    }
+}
+
+bool Halo2NativeHud_Poll(
+    uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
+    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept
+{
+    const bool desired = moduleBase && generation &&
+        moduleSize == kHalo2RetailImageSize && activeAndRange &&
+        levelRunning && coldPassed;
+    const uint32_t owned =
+        g_nativeHudGeneration.load(std::memory_order_acquire);
+    const bool foreignModule = g_nativeHudInstalled.load(std::memory_order_acquire) &&
+        (owned != generation ||
+         g_nativeHudModuleBase.load(std::memory_order_acquire) != moduleBase);
+    if (!desired || foreignModule)
+    {
+        if (g_nativeHudInstalled.load(std::memory_order_acquire))
+        {
+            (void)RemoveNativeHud(foreignModule
+                ? "module generation changed"
+                : "level or title no longer eligible");
+        }
+        if (generation != g_nativeHudRejectedGeneration)
+            g_nativeHudRejectedGeneration = 0;
+        return false;
+    }
+    if (g_nativeHudInstalled.load(std::memory_order_acquire) &&
+        g_nativeHudTeardown.load(std::memory_order_acquire) &&
+        !RemoveNativeHud("cleanup retry"))
+    {
+        return false;
+    }
+    if (!g_nativeHudInstalled.load(std::memory_order_acquire) &&
+        !InstallNativeHud(moduleBase, moduleSize, generation))
+    {
+        return false;
+    }
+    // Resource allocation/OpenXR swapchain creation stays on this worker, not
+    // in Draw/DrawIndexed. The render hook uses only the prepared capture entry
+    // and otherwise leaves the native draw plus procedural fallback unchanged.
+    if (D3D_Halo2HudShaderPathAvailable() &&
+        g_nativeHudCrosshairPreparedGeneration != generation &&
+        VR_CanPrepareAuthoredReticleResources())
+    {
+        const AuthoredReticlePreparationResult preparation =
+            VR_PrepareAuthoredReticleResources();
+        if (preparation == AuthoredReticlePreparationResult::Ready)
+        {
+            g_nativeHudCrosshairPreparedGeneration = generation;
+            LOG("Halo 2 native crosshair capture resources cold-prepared for "
+                "generation %u", generation);
+        }
+        else if (preparation == AuthoredReticlePreparationResult::Failed &&
+                 g_nativeHudCrosshairPreparationFailedGeneration != generation)
+        {
+            g_nativeHudCrosshairPreparationFailedGeneration = generation;
+            LOG("Halo 2 native crosshair capture resources FAILED for "
+                "generation %u; retaining the procedural fallback", generation);
+        }
+    }
+    const bool armed = g_nativeHudInstalled.load(std::memory_order_acquire) &&
+        g_nativeHudGeneration.load(std::memory_order_acquire) == generation &&
+        !g_nativeHudTeardown.load(std::memory_order_acquire);
+    g_nativeHudArmed.store(armed, std::memory_order_release);
+    if (armed)
+        ReportNativeHud();
+    return armed;
+}
+
+bool Halo2NativeHud_Armed() noexcept
+{
+    return g_nativeHudArmed.load(std::memory_order_acquire) &&
+        g_nativeHudInstalled.load(std::memory_order_acquire) &&
+        !g_nativeHudTeardown.load(std::memory_order_acquire);
+}
+
+bool Halo2NativeHud_GetRasterLayout(
+    Halo2CameraRectangle& source,
+    Halo2CameraRectangle& layout) noexcept
+{
+    if (!Halo2NativeHud_Armed() ||
+        !g_nativeHudEyeContext.active ||
+        !g_nativeHudEyeContext.layoutActive)
+    {
+        return false;
+    }
+    source = g_nativeHudEyeContext.source;
+    layout = g_nativeHudEyeContext.layout;
+    return true;
+}
+
+void Halo2NativeHud_BeginEye(const Halo2SymmetricHalfFovs& cover) noexcept
+{
+    g_nativeHudEyeContext = {};
+    if (Halo2NativeHud_Armed())
+    {
+        g_nativeHudEyeContext.active = true;
+        g_nativeHudEyeContext.cover = cover;
+    }
+}
+
+void Halo2NativeHud_EndEye() noexcept
+{
+    g_nativeHudEyeContext = {};
+}
+
+bool Halo2NativeHud_DrawPlayer(
+    uint32_t generation, int32_t player,
+    const Halo2CameraRectangle& source,
+    const Halo2SymmetricHalfFovs& cover) noexcept
+{
+    if (!Halo2NativeHud_Armed() ||
+        g_nativeHudGeneration.load(std::memory_order_acquire) != generation ||
+        !g_nativeChudTarget)
+    {
+        return false;
+    }
+    const auto draw = reinterpret_cast<NativeChudDrawFn>(g_nativeChudTarget);
+    bool ok = false;
+    __try
+    {
+        Halo2NativeHud_BeginEye(cover);
+        __try
+        {
+            // H2EK +0x2EA955 / retail +0x7FFD70: player selector, -1 to
+            // derive the gameplay CHUD slot, and the original render bounds.
+            draw(player, -1, &source);
+            ok = true;
+        }
+        __finally
+        {
+            Halo2NativeHud_EndEye();
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        ok = false;
+    }
+    return ok;
 }
 
 bool Halo2Stereo_Poll(
@@ -3441,6 +4054,21 @@ void Halo2Stereo_RequestRecenter() noexcept
 }
 
 #else
+
+bool Halo2NativeHud_Poll(
+    uintptr_t, size_t, uint32_t, bool, bool, bool) noexcept
+{
+    return false;
+}
+bool Halo2NativeHud_Armed() noexcept { return false; }
+void Halo2NativeHud_BeginEye(const Halo2SymmetricHalfFovs&) noexcept {}
+void Halo2NativeHud_EndEye() noexcept {}
+bool Halo2NativeHud_DrawPlayer(
+    uint32_t, int32_t, const Halo2CameraRectangle&,
+    const Halo2SymmetricHalfFovs&) noexcept
+{
+    return false;
+}
 
 bool Halo2Stereo_Poll(
     uintptr_t, size_t, uint32_t, bool, bool, bool, bool) noexcept

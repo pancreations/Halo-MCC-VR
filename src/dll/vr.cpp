@@ -6226,9 +6226,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         // upload can leave the newly-created swapchain as undefined pixels.
         const bool halo4ProceduralBootstrap =
             reticleTitle == GameTitle::Halo4 &&
-            Halo4CuiReticleNeedsProceduralBootstrap(
-                titleHasAuthoredCapture, g_reticleContainsAuthored,
-                g_config.crosshair, g_config.kill_reticle);
+            Halo4CuiReticleUsesProceduralFallback(
+                titleHasAuthoredCapture, g_config.crosshair,
+                g_config.kill_reticle);
         const bool authoredThisFrame =
             g_authoredReticleReady &&
             g_authoredReticleSerial == g_preparedFrame.serial;
@@ -9158,9 +9158,13 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     VR_Halo2GetRepeatableHalfFovs(
                         halo2Generation, g_preparedFrame.serial,
                         halo2RepeatHalfX, halo2RepeatHalfY);
+                const bool halo2PauseStockScreen =
+                    Halo2PausePresentationOwnsStockScreen(
+                        halo2Title, pausedPresentation);
                 const Halo2SynchronousPresentationDecision
-                    halo2PresentationDecision =
-                        Halo2SynchronousSelectPresentation(
+                    halo2PresentationDecision = halo2PauseStockScreen
+                        ? Halo2SynchronousPresentationDecision::SharedDefault
+                        : Halo2SynchronousSelectPresentation(
                             stereo, halo2ProjectionReady, halo2Title,
                             halo2LiveExactPair,
                             halo2Generation, g_preparedFrame.serial,
@@ -9827,6 +9831,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         const AuthoredReticleRefreshPolicy refreshPolicy =
                             reticleTitle == GameTitle::HaloReach ||
                             reticleTitle == GameTitle::Halo4 ||
+                            reticleTitle == GameTitle::Halo2 ||
                             halo3AnimatesReticle
                                 ? AuthoredReticleRefreshPolicy::BoundedAnimation
                                 : reticleTitle == GameTitle::Halo3ODST
@@ -9914,7 +9919,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                         // ODST is included too: its ink has never been measured
                         // in a headset session, and a stale-crosshair report is
                         // only actionable next to the coverage the guard saw.
-                        if (reachTitle || reticleTitle == GameTitle::Halo3 ||
+                        if (reachTitle || reticleTitle == GameTitle::Halo2 ||
+                            reticleTitle == GameTitle::Halo3 ||
                             reticleTitle == GameTitle::Halo3ODST ||
                             reticleTitle == GameTitle::Halo4)
                         {
@@ -9938,6 +9944,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                                     "skipped in the last window (key %llX, "
                                     "pieces %u, held %u, art %u, blankHeld %u)",
                                     reachTitle ? "Reach" :
+                                        reticleTitle == GameTitle::Halo2
+                                            ? "Halo 2" :
                                         reticleTitle == GameTitle::Halo4
                                             ? "Halo 4" :
                                         reticleTitle == GameTitle::Halo3ODST
@@ -10109,9 +10117,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                             AuthoredReticleLayerHasContent(
                                 titleCapturesArt &&
                                     !(reticleTitle == GameTitle::Halo4 &&
-                                      Halo4CuiReticleNeedsProceduralBootstrap(
+                                      Halo4CuiReticleUsesProceduralFallback(
                                           titleCapturesArt,
-                                          g_reticleContainsAuthored,
                                           g_config.crosshair,
                                           g_config.kill_reticle)),
                                 g_reticleContainsAuthored);
@@ -13403,6 +13410,30 @@ bool VR_Halo2HudReplayEligible(
     return Halo2HudReplayTarget(generation, preparedSerial, reason, nullptr);
 }
 
+bool VR_Halo2GetHudSourceRectangle(
+    uint32_t generation, uint64_t preparedSerial,
+    Halo2CameraRectangle& rectangle)
+{
+    if (!Halo2HudReplayTarget(
+            generation, preparedSerial, nullptr, nullptr) ||
+        !g_eyeCache[0])
+    {
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    g_eyeCache[0]->GetDesc(&desc);
+    if (!desc.Width || !desc.Height ||
+        desc.Width > static_cast<UINT>(INT16_MAX) ||
+        desc.Height > static_cast<UINT>(INT16_MAX))
+    {
+        return false;
+    }
+    rectangle = {
+        0, 0, static_cast<int16_t>(desc.Height),
+        static_cast<int16_t>(desc.Width)};
+    return true;
+}
+
 bool VR_Halo2RecaptureEyeFromFinalTarget(
     uint32_t generation, uint64_t preparedSerial, int eye)
 {
@@ -14376,6 +14407,16 @@ static bool BeginAuthoredReticleCaptureInternal(
 
 bool VR_ShouldCaptureAuthoredReticleThisFrame()
 {
+    // C-H4-50: Halo 4's whole-CUI replay is not a proven authored-reticle
+    // boundary. In the 7a24814 Steam log it spent minutes at art=0, then one
+    // isolated opaque capture was promoted and held -- matching the reported
+    // black-square-after-zoom failure. The Game Pass log likewise starts with
+    // a long blank capture interval. Keep the already-proven procedural
+    // bullet-ray reticle for Halo 4 and leave these hooks responsible only for
+    // hiding the duplicate native flat copy. Halo 3/ODST/Reach are unchanged.
+    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
+        return false;
+
     // Until valid art is held there is nothing to fall back on, so never skip.
     if (!g_reticleContainsAuthored)
         return true;

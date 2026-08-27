@@ -3,6 +3,7 @@
 #include <dxgi1_2.h>
 #include <dxgi1_5.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdlib>
 #include <climits>
@@ -14,7 +15,13 @@
 #include "d3d11_hook.h"
 #include "game.h"
 #include "vr.h"
+#include "title_reentry_probe.h"
 #include "title_adapter.h"
+#if HALOMCCVR_HALO2_STEREO6DOF
+#include "halo2_stereo_core.h"
+#include "../common/halo2_hud_logic.h"
+#include "../common/halo2_hud_shader_logic.h"
+#endif
 #include "../common/config.h"
 #include "../common/coop_probe_logic.h"
 #include "../common/log.h"
@@ -42,18 +49,247 @@ typedef void(STDMETHODCALLTYPE* CopyResourceFn)(ID3D11DeviceContext*,
 typedef void(STDMETHODCALLTYPE* Halo2DrawIndexedFn)(
     ID3D11DeviceContext*, UINT, UINT, INT);
 typedef void(STDMETHODCALLTYPE* Halo2DrawFn)(ID3D11DeviceContext*, UINT, UINT);
+typedef HRESULT(STDMETHODCALLTYPE* Halo2CreatePixelShaderFn)(
+    ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*,
+    ID3D11PixelShader**);
 static Halo2DrawIndexedFn g_origHalo2DrawIndexed = nullptr;
 static Halo2DrawFn g_origHalo2Draw = nullptr;
+static Halo2CreatePixelShaderFn g_origHalo2CreatePixelShader = nullptr;
+static std::atomic<bool> g_halo2ShaderHooksAvailable{false};
+static std::atomic<uint32_t> g_halo2NativeCrosshairGeneration{0};
 
-// E-H2-8 draw census. One title check and one atomic increment per draw,
-// nothing else; the engine's call is always forwarded unchanged.
+struct Halo2RegisteredPixelShader
+{
+    std::atomic<uintptr_t> pointer{0};
+    std::atomic<uint8_t> role{
+        static_cast<uint8_t>(halo2_hud_shader::Role::Other)};
+};
+
+// The working external HUD mod identifies sixteen shaders. Leave spare slots
+// for duplicate objects (device rebuilds can instantiate the same bytecode
+// again) without putting a lock or allocation in Draw/DrawIndexed.
+static std::array<Halo2RegisteredPixelShader, 64>
+    g_halo2RegisteredPixelShaders{};
+static std::atomic<uint64_t> g_halo2GameplayShadersRegistered{0};
+static std::atomic<uint64_t> g_halo2CrosshairShadersRegistered{0};
+static std::atomic<uint64_t> g_halo2HudRasterDraws{0};
+static std::atomic<uint64_t> g_halo2NativeCrosshairDraws{0};
+static std::atomic<uint64_t> g_halo2HudStateFailures{0};
+
+static bool RegisterHalo2PixelShader(
+    ID3D11PixelShader* shader, halo2_hud_shader::Role role) noexcept
+{
+    if (!shader)
+        return false;
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(shader);
+    for (auto& registered : g_halo2RegisteredPixelShaders)
+    {
+        if (registered.pointer.load(std::memory_order_acquire) == pointer)
+        {
+            const halo2_hud_shader::Role oldRole =
+                static_cast<halo2_hud_shader::Role>(registered.role.exchange(
+                    static_cast<uint8_t>(role), std::memory_order_acq_rel));
+            if (role == halo2_hud_shader::Role::Other)
+                registered.pointer.store(0, std::memory_order_release);
+            return role != halo2_hud_shader::Role::Other && oldRole != role;
+        }
+    }
+    if (role == halo2_hud_shader::Role::Other)
+        return false;
+    for (auto& registered : g_halo2RegisteredPixelShaders)
+    {
+        uintptr_t empty = 0;
+        if (registered.pointer.compare_exchange_strong(
+                empty, 1, std::memory_order_acq_rel,
+                std::memory_order_acquire))
+        {
+            registered.role.store(
+                static_cast<uint8_t>(role), std::memory_order_relaxed);
+            registered.pointer.store(pointer, std::memory_order_release);
+            return true;
+        }
+    }
+    return false;
+}
+
+static halo2_hud_shader::Role LookupHalo2PixelShader(
+    ID3D11PixelShader* shader) noexcept
+{
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(shader);
+    if (!pointer)
+        return halo2_hud_shader::Role::Other;
+    for (const auto& registered : g_halo2RegisteredPixelShaders)
+    {
+        if (registered.pointer.load(std::memory_order_acquire) == pointer)
+        {
+            return static_cast<halo2_hud_shader::Role>(
+                registered.role.load(std::memory_order_acquire));
+        }
+    }
+    return halo2_hud_shader::Role::Other;
+}
+
+static HRESULT STDMETHODCALLTYPE Halo2CreatePixelShaderHook(
+    ID3D11Device* device, const void* bytecode, SIZE_T bytecodeLength,
+    ID3D11ClassLinkage* linkage, ID3D11PixelShader** shader)
+{
+    const HRESULT result = g_origHalo2CreatePixelShader(
+        device, bytecode, bytecodeLength, linkage, shader);
+    if (SUCCEEDED(result) && shader && *shader && bytecode && bytecodeLength)
+    {
+        const uint64_t hash =
+            halo2_hud_shader::MigotoFnv1(bytecode, bytecodeLength);
+        const halo2_hud_shader::Role role =
+            halo2_hud_shader::Classify(hash);
+        const bool newlyRegistered = RegisterHalo2PixelShader(*shader, role);
+        if (role != halo2_hud_shader::Role::Other && newlyRegistered)
+        {
+            (role == halo2_hud_shader::Role::Crosshair
+                 ? g_halo2CrosshairShadersRegistered
+                 : g_halo2GameplayShadersRegistered)
+                .fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return result;
+}
+
+struct Halo2HudDrawMutation
+{
+    enum class Kind : uint8_t { None, Raster, NativeCrosshair } kind = Kind::None;
+    UINT viewportCount = 0;
+    D3D11_VIEWPORT viewports[
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+    UINT scissorCount = 0;
+    D3D11_RECT scissors[
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+};
+
+static Halo2HudDrawMutation BeginHalo2HudDraw(
+    ID3D11DeviceContext* context) noexcept
+{
+    Halo2HudDrawMutation mutation{};
+    if (!context ||
+        !g_halo2ShaderHooksAvailable.load(std::memory_order_acquire) ||
+        TitleAdapter_GetActiveTitle() != GameTitle::Halo2)
+    {
+        return mutation;
+    }
+
+    // Stage 3F ownership proof: Stage 3E proved that the native CHUD CPU
+    // routine and the known HUD pixel shaders are both live, but that their
+    // execution scopes never overlap. Classify the shader on the *actual*
+    // D3D11 context issuing Draw/DrawIndexed instead of requiring the rejected
+    // Halo2NativeHud_GetRasterLayout TLS gate.
+    ID3D11PixelShader* shader = nullptr;
+    UINT classInstanceCount = 0;
+    context->PSGetShader(&shader, nullptr, &classInstanceCount);
+    const halo2_hud_shader::Role role = LookupHalo2PixelShader(shader);
+    if (shader)
+        shader->Release();
+
+    // Stage 3G native-crosshair handoff: the exact Halo 2 crosshair shader is
+    // already proven independently by the working Toggle HUD/3DMigoto mod.
+    // Stage 3F removed the rejected CHUD-TLS conjunction, so reaching this
+    // branch means the *actual Draw/DrawIndexed context* has that authored
+    // crosshair shader bound. Redirect that draw into the existing authored
+    // reticle capture path. EndHalo2HudDraw publishes ownership only after the
+    // draw completes, and Game_TitleCapturesAuthoredCrosshair then makes the
+    // old procedural VR marker transparent. Until this first real draw occurs,
+    // the procedural controller marker remains visible as the fail-open
+    // fallback.
+    if (role == halo2_hud_shader::Role::Crosshair)
+    {
+        if (VR_BeginAuthoredReticleCapture())
+            mutation.kind = Halo2HudDrawMutation::Kind::NativeCrosshair;
+        return mutation;
+    }
+    if (role != halo2_hud_shader::Role::GameplayHud)
+        return mutation;
+
+    // Stage 3H converts Stage 3F/3G's deliberately hard-coded 50% ownership
+    // proof into the shipped HUD controls at the same headset-proven shader
+    // draw boundary. Halo 2 has no native curvature basis, so the planar
+    // viewport transaction consumes only size, aspect and vertical offset.
+    // The exact old viewport is still restored immediately after this draw.
+    mutation.viewportCount =
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    context->RSGetViewports(&mutation.viewportCount, mutation.viewports);
+    if (!mutation.viewportCount ||
+        mutation.viewportCount >
+            D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)
+    {
+        g_halo2HudStateFailures.fetch_add(1, std::memory_order_relaxed);
+        return mutation;
+    }
+
+    std::array<D3D11_VIEWPORT,
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE> adjusted{};
+    const float scaleY = std::clamp(
+        g_config.hud_size,
+        halo2_hud::kMinimumLayoutFraction,
+        halo2_hud::kMaximumLayoutFraction);
+    const float scaleX = std::clamp(
+        g_config.hud_size * g_config.hud_aspect,
+        halo2_hud::kMinimumLayoutFraction,
+        halo2_hud::kMaximumLayoutFraction);
+    const float verticalOffset = std::clamp(
+        g_config.hud_vertical_offset,
+        -halo2_hud::kMaximumVerticalOffset,
+        halo2_hud::kMaximumVerticalOffset);
+    for (UINT index = 0; index < mutation.viewportCount; ++index)
+    {
+        adjusted[index] = mutation.viewports[index];
+        adjusted[index].TopLeftX +=
+            mutation.viewports[index].Width * (1.0f - scaleX) * 0.5f;
+        adjusted[index].TopLeftY +=
+            mutation.viewports[index].Height * (1.0f - scaleY) * 0.5f -
+            verticalOffset;
+        adjusted[index].Width = mutation.viewports[index].Width * scaleX;
+        adjusted[index].Height = mutation.viewports[index].Height * scaleY;
+    }
+    context->RSSetViewports(mutation.viewportCount, adjusted.data());
+    mutation.scissorCount = 0;
+    mutation.kind = Halo2HudDrawMutation::Kind::Raster;
+    return mutation;
+}
+
+static void EndHalo2HudDraw(
+    ID3D11DeviceContext* context, Halo2HudDrawMutation& mutation) noexcept
+{
+    if (mutation.kind == Halo2HudDrawMutation::Kind::NativeCrosshair)
+    {
+        VR_EndAuthoredReticleCapture();
+        const uint32_t generation =
+            TitleAdapter_GetGeneration(GameTitle::Halo2);
+        if (generation)
+            g_halo2NativeCrosshairGeneration.store(
+                generation, std::memory_order_release);
+        g_halo2NativeCrosshairDraws.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    else if (mutation.kind == Halo2HudDrawMutation::Kind::Raster)
+    {
+        context->RSSetViewports(mutation.viewportCount, mutation.viewports);
+        if (mutation.scissorCount)
+            context->RSSetScissorRects(
+                mutation.scissorCount, mutation.scissors);
+        g_halo2HudRasterDraws.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Exact shader identities keep this hook out of world/weapon/menu draws.
+// Stage 3F removes Stage 3E's disproven native-CHUD TLS conjunction and
+// mutates the actual context that reaches Draw/DrawIndexed. Every changed
+// viewport is restored immediately after the draw.
 static void STDMETHODCALLTYPE Halo2DrawIndexedCensusHook(
     ID3D11DeviceContext* context, UINT indexCount, UINT startIndex,
     INT baseVertex)
 {
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         VR_Halo2NoteDraw();
+    Halo2HudDrawMutation mutation = BeginHalo2HudDraw(context);
     g_origHalo2DrawIndexed(context, indexCount, startIndex, baseVertex);
+    EndHalo2HudDraw(context, mutation);
 }
 
 static void STDMETHODCALLTYPE Halo2DrawCensusHook(
@@ -61,9 +297,60 @@ static void STDMETHODCALLTYPE Halo2DrawCensusHook(
 {
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         VR_Halo2NoteDraw();
+    Halo2HudDrawMutation mutation = BeginHalo2HudDraw(context);
     g_origHalo2Draw(context, vertexCount, startVertex);
+    EndHalo2HudDraw(context, mutation);
 }
 #endif
+
+bool D3D_Halo2NativeCrosshairCaptured()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    const uint32_t generation =
+        TitleAdapter_GetGeneration(GameTitle::Halo2);
+    return generation != 0 &&
+        TitleAdapter_GetActiveTitle() == GameTitle::Halo2 &&
+        g_halo2ShaderHooksAvailable.load(std::memory_order_acquire) &&
+        g_halo2NativeCrosshairGeneration.load(std::memory_order_acquire) ==
+            generation;
+#else
+    return false;
+#endif
+}
+
+bool D3D_Halo2HudShaderPathAvailable()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    return g_halo2ShaderHooksAvailable.load(std::memory_order_acquire);
+#else
+    return false;
+#endif
+}
+
+void D3D_GetHalo2HudTelemetry(
+    uint64_t& gameplayShadersRegistered,
+    uint64_t& crosshairShadersRegistered,
+    uint64_t& rasterDraws,
+    uint64_t& nativeCrosshairDraws,
+    uint64_t& stateFailures)
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    gameplayShadersRegistered =
+        g_halo2GameplayShadersRegistered.load(std::memory_order_relaxed);
+    crosshairShadersRegistered =
+        g_halo2CrosshairShadersRegistered.load(std::memory_order_relaxed);
+    rasterDraws = g_halo2HudRasterDraws.load(std::memory_order_relaxed);
+    nativeCrosshairDraws =
+        g_halo2NativeCrosshairDraws.load(std::memory_order_relaxed);
+    stateFailures = g_halo2HudStateFailures.load(std::memory_order_relaxed);
+#else
+    gameplayShadersRegistered = 0;
+    crosshairShadersRegistered = 0;
+    rasterDraws = 0;
+    nativeCrosshairDraws = 0;
+    stateFailures = 0;
+#endif
+}
 
 static PresentFn g_origPresent = nullptr;
 static Present1Fn g_origPresent1 = nullptr;
@@ -1019,6 +1306,7 @@ static HRESULT STDMETHODCALLTYPE PresentHook(IDXGISwapChain* sc, UINT syncInterv
     LARGE_INTEGER hookStart{};
     if (runVrFrame)
     {
+        TitleReentryProbe_PublishPresentCaller(_ReturnAddress(), GetTickCount64());
         if constexpr (kEnableCoopPresentProbe)
             QueryPerformanceCounter(&hookStart);
         LogSwapchainConfigOnce(sc);
@@ -1050,6 +1338,7 @@ static HRESULT STDMETHODCALLTYPE Present1Hook(IDXGISwapChain1* sc, UINT syncInte
     LARGE_INTEGER hookStart{};
     if (runVrFrame)
     {
+        TitleReentryProbe_PublishPresentCaller(_ReturnAddress(), GetTickCount64());
         if constexpr (kEnableCoopPresentProbe)
             QueryPerformanceCounter(&hookStart);
         LogSwapchainConfigOnce(sc);
@@ -1145,7 +1434,11 @@ bool InstallD3D11Hooks()
     }
 
     void** vtbl = *(void***)sc;
+    void** deviceVtbl = *(void***)dev;
     void** contextVtbl = *(void***)ctx;
+#if HALOMCCVR_HALO2_STEREO6DOF
+    bool halo2ShaderPathCreated = false;
+#endif
     bool ok = MH_CreateHook(vtbl[8], (void*)&PresentHook, (void**)&g_origPresent) == MH_OK &&
               MH_CreateHook(vtbl[13], (void*)&ResizeBuffersHook, (void**)&g_origResizeBuffers) == MH_OK &&
               MH_CreateHook(contextVtbl[33], (void*)&OMSetRenderTargetsHook,
@@ -1172,16 +1465,29 @@ bool InstallD3D11Hooks()
     }
 #endif
 #if HALOMCCVR_HALO2_STEREO6DOF
-    // DrawIndexed is slot 12 and Draw slot 13. The Reach diagnostic above is
-    // compile-time off, so these slots are free; never part of `ok`, so a
-    // failure here cannot gate Present or any title camera core.
-    if (MH_CreateHook(contextVtbl[12], (void*)&Halo2DrawIndexedCensusHook,
-                      (void**)&g_origHalo2DrawIndexed) != MH_OK ||
-        MH_CreateHook(contextVtbl[13], (void*)&Halo2DrawCensusHook,
-                      (void**)&g_origHalo2Draw) != MH_OK)
+    // CreatePixelShader is ID3D11Device slot 15; DrawIndexed/Draw are context
+    // slots 12/13. These remain optional and fail open: the core Present path
+    // and every other title continue even if this exact HUD path is unavailable.
+    const MH_STATUS halo2CreatePixelShader = MH_CreateHook(
+        deviceVtbl[15], (void*)&Halo2CreatePixelShaderHook,
+        (void**)&g_origHalo2CreatePixelShader);
+    const MH_STATUS halo2DrawIndexed = MH_CreateHook(
+        contextVtbl[12], (void*)&Halo2DrawIndexedCensusHook,
+        (void**)&g_origHalo2DrawIndexed);
+    const MH_STATUS halo2Draw = MH_CreateHook(
+        contextVtbl[13], (void*)&Halo2DrawCensusHook,
+        (void**)&g_origHalo2Draw);
+    halo2ShaderPathCreated =
+        halo2CreatePixelShader == MH_OK &&
+        halo2DrawIndexed == MH_OK && halo2Draw == MH_OK;
+    if (!halo2ShaderPathCreated)
     {
-        LOG("Halo 2 draw census: DrawIndexed/Draw hooks failed; the "
-            "census line will not appear");
+        LOG("Halo 2 proven HUD shader path unavailable: CreatePS=%d "
+            "DrawIndexed=%d Draw=%d; HUD stays stock and the procedural "
+            "crosshair fallback remains",
+            static_cast<int>(halo2CreatePixelShader),
+            static_cast<int>(halo2DrawIndexed),
+            static_cast<int>(halo2Draw));
     }
 #endif
 
@@ -1339,5 +1645,16 @@ bool InstallD3D11Hooks()
         LOG("MinHook could not hook the required D3D render path");
         return false;
     }
-    return MH_EnableHook(MH_ALL_HOOKS) == MH_OK;
+    const bool enabled = MH_EnableHook(MH_ALL_HOOKS) == MH_OK;
+#if HALOMCCVR_HALO2_STEREO6DOF
+    g_halo2ShaderHooksAvailable.store(
+        enabled && halo2ShaderPathCreated, std::memory_order_release);
+    if (enabled && halo2ShaderPathCreated)
+    {
+        LOG("Halo 2 native HUD shader path ON: exact gameplay HUD shaders "
+            "receive slider raster transforms; native crosshair shader is "
+            "captured for the controller-aim quad");
+    }
+#endif
+    return enabled;
 }

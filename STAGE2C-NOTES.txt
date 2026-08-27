@@ -1,0 +1,86 @@
+HaloMCCVR Stage 2C — Halo 2 Pause Stock-Screen Presentation
+===========================================================
+
+Baseline
+--------
+Stage 2C is based on the user's Stage 2B combined 0.3.5/C50 branch:
+- accepted upstream runtime/source identity: 1939eabc21c1607ef93ccaec97de004271d70091
+- C50 Halo 4 fail-closed reticle safety retained
+- Stage 2A H2 aim ownership diagnostic retained
+- Stage 2B H2 inherited-pause-clear repair retained
+
+Observed Stage 2B failure
+-------------------------
+The Stage 2B runtime log proves that Y+B successfully requests and completes
+Halo 2's head-locked 2D pause transition, but Halo 2's synchronous presentation
+policy immediately classifies the current frame as a frame-local Drop. That
+policy intentionally refuses to sample an unproven H2 backbuffer, so after the
+comfort fade completes OpenXR reaches layers=0 and the headset is black.
+
+The second Y+B switches back to stereo 3D and the H2 synchronous compositor
+resumes as soon as a projection-ready exact-current-serial pair exists.
+
+C-H2-72 source policy
+---------------------
+Once BOTH of these are true:
+  1. the current title/frame is Halo 2, and
+  2. g_pausePresentation says the displayed presentation is already head-locked
+     pause mode,
+Halo 2 deliberately selects the shared stock-screen presentation instead of
+applying the synchronous eye-pair Drop decision.
+
+This is intentionally NOT keyed from the pending pause target. The existing
+opaque comfort fade therefore still covers the transition edge, and failed H2
+stereo frames outside a displayed pause retain the strict no-unproven-backbuffer
+Drop policy.
+
+Why the stock screen is valid here
+----------------------------------
+During an intentional pause the desktop/backbuffer is the desired source: MCC
+renders the native Halo 2 pause menu there. The shared head-locked screen path
+already knows how to copy that source into the OpenXR screen quad.
+
+Direct test DLL patch
+---------------------
+The matching test DLL is reproduced from the exact Stage 2B DLL by
+`tools/build_stage2c_h2_pause_stock_screen.py`.
+
+Stage 2B input DLL SHA-256:
+  0898e5ad980651ba93ab97e7ff7541da4c7dec8d353280f5697372a7575efbb2
+
+Stage 2C output DLL SHA-256:
+  417dceb73759ef5980a3a2edf8baf84f856f06a6a970f0da744704c6f6ba7d7a
+
+The direct patch:
+- reuses unused padding in the existing Stage 2A `.h2aa` section
+- changes only the H2 synchronous-presentation decision path
+- checks the H2-frame/title gate and the already-displayed pause local
+- forces SharedDefault only for that intersection
+- replays the displaced instruction and returns to stock code
+- does not add a new section/page or alter H3/ODST/Reach/H4 code/data
+
+Testing focus
+-------------
+1. Halo 2 Anniversary: enter gameplay, press Y+B.
+   Expected: native pause menu is visible on the head-locked 2D screen.
+2. Press Y+B again.
+   Expected: comfort fade and stereo gameplay return.
+3. Repeat several times.
+4. Repeat in Halo 2 Classic graphics.
+5. Briefly verify another supported title still enters VR.
+
+Important resume caveat
+-----------------------
+Halo 2 still does not have an authoritative H2-native pause-state binding in
+this branch. For THIS test, use Y+B to enter and Y+B to leave the pause screen.
+If selecting Resume / pressing B inside the native pause menu resumes the game
+but leaves the headset in head-locked 2D, report that separately. That would be
+a distinct H2EK-first native pause-state synchronization task, not a failure of
+the Stage 2C screen-delivery fix.
+
+Not changed in Stage 2C
+-----------------------
+- H2 Classic vs Anniversary visual gun calibration
+- H2 native centre-screen reticle suppression/authored VR reticle
+- H4 muzzle/Promethean effect restoration
+- H4 native animated reticle work

@@ -1,0 +1,53 @@
+
+/mnt/data/stage3ah_test.dll:     file format pei-x86-64
+
+
+Disassembly of section .s3qd:
+
+00000001802f3f32 <.s3qd+0xf32>:
+   1802f3f32:	53                   	push   rbx
+   1802f3f33:	56                   	push   rsi
+   1802f3f34:	48 83 ec 28          	sub    rsp,0x28
+   1802f3f38:	89 d3                	mov    ebx,edx
+   1802f3f3a:	48 8d b1 32 bd 27 00 	lea    rsi,[rcx+0x27bd32]
+   1802f3f41:	0f b7 06             	movzx  eax,WORD PTR [rsi]
+   1802f3f44:	85 db                	test   ebx,ebx
+   1802f3f46:	74 0e                	je     0x1802f3f56
+   1802f3f48:	66 3d 30 db          	cmp    ax,0xdb30
+   1802f3f4c:	74 65                	je     0x1802f3fb3
+   1802f3f4e:	66 3d 8a da          	cmp    ax,0xda8a
+   1802f3f52:	75 6b                	jne    0x1802f3fbf
+   1802f3f54:	eb 0c                	jmp    0x1802f3f62
+   1802f3f56:	66 3d 8a da          	cmp    ax,0xda8a
+   1802f3f5a:	74 57                	je     0x1802f3fb3
+   1802f3f5c:	66 3d 30 db          	cmp    ax,0xdb30
+   1802f3f60:	75 5d                	jne    0x1802f3fbf
+   1802f3f62:	48 89 f1             	mov    rcx,rsi
+   1802f3f65:	ba 07 00 00 00       	mov    edx,0x7
+   1802f3f6a:	6a 40                	push   0x40
+   1802f3f6c:	41 58                	pop    r8
+   1802f3f6e:	4c 8d 4c 24 20       	lea    r9,[rsp+0x20]
+   1802f3f73:	ff 15 87 c2 e8 ff    	call   QWORD PTR [rip+0xffffffffffe8c287]        # 0x180180200
+   1802f3f79:	85 c0                	test   eax,eax
+   1802f3f7b:	74 42                	je     0x1802f3fbf
+   1802f3f7d:	85 db                	test   ebx,ebx
+   1802f3f7f:	74 11                	je     0x1802f3f92
+   1802f3f81:	66 c7 06 30 db       	mov    WORD PTR [rsi],0xdb30
+   1802f3f86:	66 c7 46 04 30 db    	mov    WORD PTR [rsi+0x4],0xdb30
+   1802f3f8c:	c6 46 06 90          	mov    BYTE PTR [rsi+0x6],0x90
+   1802f3f90:	eb 0f                	jmp    0x1802f3fa1
+   1802f3f92:	66 c7 06 8a da       	mov    WORD PTR [rsi],0xda8a
+   1802f3f97:	66 c7 46 04 41 8a    	mov    WORD PTR [rsi+0x4],0x8a41
+   1802f3f9d:	c6 46 06 da          	mov    BYTE PTR [rsi+0x6],0xda
+   1802f3fa1:	48 89 f1             	mov    rcx,rsi
+   1802f3fa4:	ba 07 00 00 00       	mov    edx,0x7
+   1802f3fa9:	44 8b 44 24 20       	mov    r8d,DWORD PTR [rsp+0x20]
+   1802f3fae:	e8 4d f2 ff ff       	call   0x1802f3200
+   1802f3fb3:	b8 01 00 00 00       	mov    eax,0x1
+   1802f3fb8:	48 83 c4 28          	add    rsp,0x28
+   1802f3fbc:	5e                   	pop    rsi
+   1802f3fbd:	5b                   	pop    rbx
+   1802f3fbe:	c3                   	ret
+   1802f3fbf:	31 c0                	xor    eax,eax
+   1802f3fc1:	eb f5                	jmp    0x1802f3fb8
+   1802f3fc3:	90                   	nop

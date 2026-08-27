@@ -1,0 +1,19 @@
+Stage 3AE source additions / changes
+====================================
+
+Added:
+- tools/stage3ae_h4_suppressor_attachment_gate.S
+- tools/build_stage3ae_h4_suppressor_attachment_hide.py
+- tools/test_stage3ae_suppressor_attachment_gate.py
+- evidence/STAGE3AE-SUPPRESSOR-ATTACHMENT-EVIDENCE.csv
+- STAGE3AE-H4-SUPPRESSOR-ATTACHMENT-HIDE-NOTES.md
+- STAGE3AE-STATIC-AUDIT.txt
+- STAGE3AE-BINARY-DIFF.json
+- STAGE3AE-PORTABLE-TEST.txt
+- STAGE3AE-REPRO-SHA256.txt
+- BASE-STAGE3AD-SHA256.txt
+- baseline/Stage3AD-HaloMCCVR.dll
+- built/Stage3AE-HaloMCCVR.dll
+
+No pre-Stage3AE source file was edited except BUILDING.md documentation if present.
+The Stage3AE DLL is a guarded post-link build from the exact Stage3AD DLL.

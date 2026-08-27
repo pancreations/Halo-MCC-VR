@@ -1,0 +1,73 @@
+{
+  "stage3ak_sha256": "4ce06fc1e33040990b4db630748d07688803a7216c74cd9d89484c9403510389",
+  "stage3al_sha256": "fb1e6b5d7a584930303b2f6aed6696c4012e24f007538d7c7955ad75ca583da2",
+  "old_size": 2907136,
+  "new_size": 2911232,
+  "changed_bytes_within_old_file": 19,
+  "changed_spans_within_old_file": [
+    {
+      "file_start": "0x129",
+      "file_end": "0x12a",
+      "length": 2,
+      "section": "header",
+      "rva_start": "0x129",
+      "before": "fe16",
+      "after": "0e17"
+    },
+    {
+      "file_start": "0x159",
+      "file_end": "0x159",
+      "length": 1,
+      "section": "header",
+      "rva_start": "0x159",
+      "before": "80",
+      "after": "90"
+    },
+    {
+      "file_start": "0x3d1",
+      "file_end": "0x3d1",
+      "length": 1,
+      "section": "header",
+      "rva_start": "0x3d1",
+      "before": "50",
+      "after": "60"
+    },
+    {
+      "file_start": "0x3d9",
+      "file_end": "0x3d9",
+      "length": 1,
+      "section": "header",
+      "rva_start": "0x3d9",
+      "before": "50",
+      "after": "60"
+    },
+    {
+      "file_start": "0x40fd7",
+      "file_end": "0x40fd9",
+      "length": 3,
+      "section": ".text",
+      "rva_start": "0x41bd7",
+      "before": "35ab03",
+      "after": "7c642b"
+    },
+    {
+      "file_start": "0x5b6a6",
+      "file_end": "0x5b6ac",
+      "length": 7,
+      "section": ".text",
+      "rva_start": "0x5c2a6",
+      "before": "4889052bb12500",
+      "after": "e855bd29009090"
+    },
+    {
+      "file_start": "0x84246",
+      "file_end": "0x84249",
+      "length": 4,
+      "section": ".text",
+      "rva_start": "0x84e46",
+      "before": "c678ffff",
+      "after": "0d322700"
+    }
+  ],
+  "appended_bytes": 4096
+}

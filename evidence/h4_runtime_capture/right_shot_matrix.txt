@@ -1,0 +1,24 @@
+Halo 4 VR muzzle-origin investigation — Phase 2B RIGHT capture
+Mode: x64dbg read-only breakpoint observation. No game state was edited.
+
+[P2B-R ENTRY] tid=22172 site=00000001801012E2 rcx=000001E38F94BBD0 rdx=000001E38F97A550 r8=0000005B55340310 r9=000001E38F96D001 r14=000001E28EF40000 r15=000001E38F97A550 rsp=0000005B553402A0 rbp=0000005B553403A0 attachment=0 r15_4c=7BA40000FFFFFFFFCA027AA40000803FF204353FF604B5BE70C41C3F000080B2D6B35D3F0200003FF40435BFF504B5BE6FC41C3F3666713E77C1B7BA9A355E3D0000803F0000000000000000
+
+[P2B-R AFTER100EBC] tid=22172 cip=00000001801012E7 rax=0000005B55340310 r8=0000005B55340310 rbp=0000005B553403A0 r15=000001E38F97A550 rax_34=0000803FB8F614BF23C2C63E6AF2363F605E463DC8515CBF7EC6013FBCD34F3F0CC0A83E03C7F63E862CFB4144B54DC113280241 r8_34=0000803FB8F614BF23C2C63E6AF2363F605E463DC8515CBF7EC6013FBCD34F3F0CC0A83E03C7F63E862CFB4144B54DC113280241
+
+Direct facts
+------------
+- The selected/composed 0x34-byte matrix returned by halo4+0x100EBC is at
+  RAX = R8 = 0x0000005B55340310 (RBP-0x90 for this caller frame).
+- WORD [R15+2] was 0 and R9B was 1. This identifies a local/location-0
+  event record, but it does not distinguish particle A (round flash) from
+  particle B (smoke).
+- The entry's embedded R15 record is not assumed to be the returned matrix.
+
+Returned matrix decoded as 13 little-endian floats
+--------------------------------------------------
+  [0..3]   1, -0.5818896, 0.3881999, 0.71463645
+  [4..7]   0.048429847, -0.8606229, 0.506935, 0.81182456
+  [8..12]  0.3295902, 0.4819871, 31.39674, -12.856754, 8.134784
+
+This file contains the actual captured return matrix only. It does not claim
+that this particular local/location-0 event is the visible muzzle flame.

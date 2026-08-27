@@ -1,0 +1,34 @@
+--- a/src/dll/halo2_observer_6dof.cpp
++++ b/src/dll/halo2_observer_6dof.cpp
+@@ -1805,7 +1805,20 @@
+         const auto original = reinterpret_cast<Halo2NativeAimUpdateFn>(
+             g_nativeAimOriginal.load(std::memory_order_acquire));
+         uint64_t result = 0;
+-        if (original)
++        // C-H2-72 diagnostic: when VR owns Halo 2's local-player aim, do not
++        // let stock unit_update_aiming run first. That stock transaction owns
++        // more than the two direction vectors and can retain Halo 2's
++        // controller aim-assist / target-acquisition state even though the mod
++        // overwrites +0x168/+0x174 afterwards. Reports from the accepted 0.3.5
++        // line describe aim assist remaining active and melee/lunge behaving
++        // incorrectly. In the VR-owned case the controller publication is
++        // already the authoritative sight line, so write the two H2EK-proven
++        // native aim vectors directly. Outside VR-owned gameplay the original
++        // updater remains completely stock.
++        const bool directVrAim =
++            original && Game_Halo2ControllerAimActive() &&
++            Halo2Observer6Dof_DirectWeaponAimArmed();
++        if (original && !directVrAim)
+         {
+             __try { result = original(objectIndex); }
+             __except (EXCEPTION_EXECUTE_HANDLER)
+@@ -1815,8 +1828,7 @@
+         }
+ 
+         bool applied = false;
+-        if (original && Game_Halo2ControllerAimActive() &&
+-            Halo2Observer6Dof_DirectWeaponAimArmed())
++        if (directVrAim)
+         {
+             __try
+             {

@@ -12,6 +12,7 @@
 #include "halo2_adapter.h"
 #include "halo4_adapter.h"
 #include "reach_adapter.h"
+#include "title_reentry_probe.h"
 
 namespace
 {
@@ -504,11 +505,23 @@ const TitleDescriptor* TitleAdapter_PollLoaded(uint64_t observedAtMs)
         return nullptr;
     }
 
-    const bool ambiguous = detectedCount > 1;
-    const GameTitle next = ambiguous ? GameTitle::Unknown :
-        (detected ? detected->title : GameTitle::None);
     const GameTitle previous =
         g_activeTitle.load(std::memory_order_acquire);
+    bool ambiguous = detectedCount > 1;
+    if (ambiguous)
+    {
+        const GameTitle reentry =
+            TitleReentryProbe_Resolve(modules, observedAtMs, previous);
+        if (reentry != GameTitle::None && reentry != GameTitle::Unknown)
+        {
+            detected = TitleRegistry_Find(reentry);
+            ambiguous = detected == nullptr;
+            if (!ambiguous)
+                detectedCount = 1;
+        }
+    }
+    const GameTitle next = ambiguous ? GameTitle::Unknown :
+        (detected ? detected->title : GameTitle::None);
     if (!moduleSetChanged && previous == next)
         return ambiguous ? nullptr : detected;
 

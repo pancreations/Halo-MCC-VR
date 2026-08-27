@@ -15,6 +15,29 @@ enum class Halo2StereoQuarantineReason : uint32_t
     VrClaimedSubmissionFailed,
 };
 
+struct Halo2CameraRectangle;
+struct Halo2SymmetricHalfFovs;
+
+// Shared native-HUD ownership. This is renderer-independent so changing
+// Classic/Anniversary cannot make the two stereo cores race for the same Blam
+// CHUD entry point. Poll from the title worker before either renderer core.
+bool Halo2NativeHud_Poll(
+    uintptr_t moduleBase, size_t moduleSize, uint32_t generation,
+    bool activeAndRange, bool levelRunning, bool coldPassed) noexcept;
+bool Halo2NativeHud_Armed() noexcept;
+// Render-thread/TLS only. Returns the source CHUD raster and the slider-derived
+// visible layout while the proven native chud_draw_screen call is actively
+// issuing D3D draws. Callers outside that exact scope receive false.
+bool Halo2NativeHud_GetRasterLayout(
+    Halo2CameraRectangle& source,
+    Halo2CameraRectangle& layout) noexcept;
+void Halo2NativeHud_BeginEye(const Halo2SymmetricHalfFovs& cover) noexcept;
+void Halo2NativeHud_EndEye() noexcept;
+bool Halo2NativeHud_DrawPlayer(
+    uint32_t generation, int32_t player,
+    const Halo2CameraRectangle& source,
+    const Halo2SymmetricHalfFovs& cover) noexcept;
+
 // Dormant until the title worker deliberately selects the synchronous Halo 2
 // route. The temporal C-H2-2 core remains separate and must never be polled at
 // the same time: both own render_player_window.

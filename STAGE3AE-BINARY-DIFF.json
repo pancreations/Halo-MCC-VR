@@ -1,0 +1,189 @@
+{
+  "input_sha256": "92108c3235e2ef9d3d97ba33b09ae900fa7ce2f46bb67ccf5195d7ef4541b5bd",
+  "output_sha256": "6adac5256a975a5f829f6a45b3bdac3280cea0bd54b36126a34cc4bab56c1fed",
+  "size": 2890752,
+  "sections": 12,
+  "size_of_image": "0x2f4000",
+  "diff_runs": [
+    {
+      "file_offset": "0x2bf133",
+      "length": 2,
+      "rva": "0x2ef733"
+    },
+    {
+      "file_offset": "0x2bf136",
+      "length": 8,
+      "rva": "0x2ef736"
+    },
+    {
+      "file_offset": "0x2c0407",
+      "length": 5,
+      "rva": "0x2f2007"
+    },
+    {
+      "file_offset": "0x2c040d",
+      "length": 7,
+      "rva": "0x2f200d"
+    },
+    {
+      "file_offset": "0x2c0415",
+      "length": 8,
+      "rva": "0x2f2015"
+    }
+  ],
+  "helper": {
+    "rva": "0x2F2007",
+    "length": 22,
+    "sha256": "749241b22692633c1029d81dba6f85aec12743011350a978f3f48dea39e64e18"
+  },
+  "camera_filter": {
+    "rva": "0x2EF72D",
+    "stage3ad": "6641837cb61e02740e",
+    "stage3ae": "6641837cb61e01750e"
+  },
+  "negative_designator_gate": {
+    "rva": "0x2EF736",
+    "stage3ad": "6641837f02007c06",
+    "stage3ae": "e8cc280000909090"
+  },
+  "protected": [
+    {
+      "name": "H4 B-edge pause",
+      "rva": "0x14efa",
+      "length": 5,
+      "sha256": "820da241b5588d555ab99e49c792910e06e1b04681b0280b83251594b24e0617"
+    },
+    {
+      "name": "H4 real heartbeat",
+      "rva": "0x56ca7",
+      "length": 12,
+      "sha256": "393f91d4062bbaff94d409ff5f701ba3e05cb5a8f74993d1beefb767b72d420d"
+    },
+    {
+      "name": "H4 heartbeat gate",
+      "rva": "0x8431c",
+      "length": 7,
+      "sha256": "711d885e25d5fb9db1b5c9856fe9ce0f2bd3b10867be85f0df46e02b5fc435d1"
+    },
+    {
+      "name": "H4 procedural rollback A",
+      "rva": "0x48086",
+      "length": 16,
+      "sha256": "734a54de29beca256012de961b6d48afd2c236049f51ede6a6b150fa6ce27ed1"
+    },
+    {
+      "name": "H4 procedural rollback B",
+      "rva": "0x48110",
+      "length": 16,
+      "sha256": "8472ab4c59f6f537d2e2465cfb66bfd458241130475be62ea009ad49ff014bd4"
+    },
+    {
+      "name": "H4 procedural rollback C",
+      "rva": "0x5360b",
+      "length": 16,
+      "sha256": "d042da9e8dc922a214b241c4d37d87a9e141f8c9e09961c28e7a5f29605dac11"
+    },
+    {
+      "name": "H4 procedural rollback D",
+      "rva": "0x53d41",
+      "length": 16,
+      "sha256": "6ac67791170ff7ffb5d6a8f608498ae7ca9bc7595e3fdff66d194446113230e6"
+    },
+    {
+      "name": "H4 procedural rollback E",
+      "rva": "0x53e37",
+      "length": 16,
+      "sha256": "174a07e804ab7a74cee1f792bc98e57a66945d9c38a154ce364d1c3c443acaae"
+    },
+    {
+      "name": "H2 cleanup pin A",
+      "rva": "0x90ac4",
+      "length": 8,
+      "sha256": "32ee40f82e4c86a65284f9c7c3a35221e20067a860174bebabb772549f72936e"
+    },
+    {
+      "name": "H2 cleanup pin B",
+      "rva": "0x90ce2",
+      "length": 8,
+      "sha256": "e5774eb2c24e6a354f6c957d02a9cbd13e9c0f97c2611f851ca34412a007c8d9"
+    },
+    {
+      "name": "H2 stock translation",
+      "rva": "0x92f06",
+      "length": 8,
+      "sha256": "20139831f77ea1de8244f56e72f6eeaa35cd070d80f9b9d4de35f4ebb28cbe8d"
+    },
+    {
+      "name": "H2 Classic carrier",
+      "rva": "0x95b16",
+      "length": 8,
+      "sha256": "09cccbd134bdeca31afb05562bc2b9ac66ca757bbaf793ffce62eb5083ec4c8c"
+    },
+    {
+      "name": "H3/ODST stock translation",
+      "rva": "0x40a52",
+      "length": 8,
+      "sha256": "10e4ad831577330b72ced25729df12f5849e80425d495ea9bd4053598e3147db"
+    },
+    {
+      "name": "Reach stock translation",
+      "rva": "0x6b321",
+      "length": 8,
+      "sha256": "c5415dbe03a1341ebe2d968b10915cf71eee6ae9fa4027e85315c5330fef2677"
+    },
+    {
+      "name": "Reach HUD A",
+      "rva": "0x81036",
+      "length": 8,
+      "sha256": "2e55c64c2c71dfe17dc03242eb087a8260411d15ac7b42526aaf58e3620a1142"
+    },
+    {
+      "name": "Reach HUD B",
+      "rva": "0x8112d",
+      "length": 8,
+      "sha256": "da9d967709a33ca8caf80cb52e0dc6623b89939bde48d65b22acaa9b02d897a4"
+    },
+    {
+      "name": "Reach HUD C",
+      "rva": "0x813a8",
+      "length": 8,
+      "sha256": "94670b09910b0431d56097d7c82fad37d09d1ebc243fb670ae9e86d6baf6a144"
+    },
+    {
+      "name": "Stage3AD title edge",
+      "rva": "0x30894",
+      "length": 5,
+      "sha256": "7fe1abeb575e3dfa0c213147f1adf92cb830d7862f10dc73fecec47b4d7cf46b"
+    },
+    {
+      "name": "Stage3AD cleanup edge",
+      "rva": "0x2f3b3a",
+      "length": 5,
+      "sha256": "5550ae56e4d6a7dc50091bb7afb8636da3e18784b22289055eb9e3d293ad78e8"
+    },
+    {
+      "name": "Stage3AD patcher",
+      "rva": "0x2f114b",
+      "length": 165,
+      "sha256": "fc4f2d273c84df62e9cc03f408bb0ac3e01283a8ec88967954c4f9d33e5df7c0"
+    },
+    {
+      "name": "Stage3AD title wrapper",
+      "rva": "0x2f15bb",
+      "length": 47,
+      "sha256": "e214296e4c202c32f74c3580bc6080ea780af3813d96d3c2f1a64878ce3d8ba5"
+    },
+    {
+      "name": "Stage3AD cleanup wrapper",
+      "rva": "0x2f1bd7",
+      "length": 37,
+      "sha256": "7a8b97961beb01e88e2331591b10ecc273bc05d97e616262f33f24f25c47a311"
+    },
+    {
+      "name": ".s3qd live state",
+      "rva": "0x2f3000",
+      "length": 512,
+      "sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560"
+    }
+  ]
+}

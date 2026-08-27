@@ -1,0 +1,27 @@
+{
+  "base_sha256": "f81bb6106e54739fc61bbe5790fb9df9b1fd7d06941b4808a4f7467ad8bdac64",
+  "output_sha256": "7ceb1b741f94286c9766e777ec253208301fb97c8e3976b61d4fc6b141a8a402",
+  "changed_bytes": 142,
+  "spans": [
+    {
+      "file_start": "0x2c1b33",
+      "file_end": "0x2c1ba7",
+      "length": 117
+    },
+    {
+      "file_start": "0x2c1ba9",
+      "file_end": "0x2c1baa",
+      "length": 2
+    },
+    {
+      "file_start": "0x2c1bac",
+      "file_end": "0x2c1bb6",
+      "length": 11
+    },
+    {
+      "file_start": "0x2c1bb8",
+      "file_end": "0x2c1bc3",
+      "length": 12
+    }
+  ]
+}

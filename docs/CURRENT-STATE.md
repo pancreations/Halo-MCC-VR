@@ -7,16 +7,53 @@
 > The published `HaloMCCVR.dll` is the exact accepted, unrecompiled artifact,
 > SHA-256 `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
 > The uploaded `MCC_VR_ALPHA_0.3.5.zip` is 1,245,953 bytes, SHA-256
-> `BAD8D05852A22C8F00A378A0F1B02EB5A290E8FB1A4FCA7D90A4AEB012CA6B5D`;
-> a post-publication download matched that hash. GitHub reports the release as
-> a non-draft pre-release. It supports Halo 3, ODST, Reach, Halo 4 and Halo 2
-> Anniversary on both Steam and Microsoft Store / Xbox app. Halo CE remains
-> stock. Historical statements below saying 0.3.3 is still the published
-> release are retained as dated evidence and are superseded by this block.
+> `BAD8D05852A22C8F00A378A0F1B02EB5A290E8FB1A4FCA7D90A4AEB012CA6B5D`.
+> This handoff is newer source work and does not replace that accepted
+> published artifact until headset acceptance advances the pointer.
 
-> **CURRENT ACCEPTED CUMULATIVE DEVELOPMENT BASELINE: C-RUNTIME-1
-> SUPPORTED-TITLE / CONSECUTIVE-LEVEL HANDOFF - 2026-08-24.** C-H2-71's
-> culling behavior and C-H2-72's Halo 4
+> **CURRENT ACCEPTED CUMULATIVE DEVELOPMENT BASELINE: C-RUNTIME-1 -
+> 2026-08-24.** Source is
+> `1939eabc21c1607ef93ccaec97de004271d70091`; installed DLL SHA-256 is
+> `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
+> The supported-title regression matrix remains required for later shared
+> lifecycle changes. Halo CE remains stock.
+
+> **UNACCEPTED C-H2-77 FIELD-PROVEN D3D11 HUD LAYOUT AND NATIVE CROSSHAIR IN
+> SOURCE - 2026-08-25.** The C-H2-76 headset log conclusively rejects Stage
+> 3D's anchor hypothesis: the exact native CHUD draw ran 3,412 scoped times,
+> while `halo2.dll+0x829490` produced zero anchor callbacks, zero crosshair
+> callbacks, and zero failures. C-H2-77 therefore leaves the old detour code as
+> audit evidence but never creates or enables that hook.
+>
+> A current working Halo 2 Toggle HUD v1.2 3DMigoto mod supplies the actual
+> shipping render identities: fifteen gameplay-HUD pixel shader hashes and a
+> separate crosshair shader `0a9b60d8f40268f6`. Its configuration explicitly
+> selects 3DMigoto's traditional unseeded 64-bit FNV-1 contract. Installed
+> official H2EK tags independently confirm the semantic split: Master Chief's
+> HUD names shield and motion-sensor widgets, while the battle-rifle HUD names
+> crosshair/friendly/headshot/weakspot widgets backed by native reticle bitmaps.
+>
+> C-H2-77 hashes original bytecode at `ID3D11Device::CreatePixelShader`, then
+> changes a draw only when both its exact shader identity and the already-live
+> `halo2.dll+0x7FFD70` TLS CHUD scope agree. The fifteen HUD shaders receive a
+> reversible viewport/scissor affine mapping from the source raster into the
+> `hud_size`/`hud_aspect`/`hud_vertical_offset` rectangle visible to both eyes.
+> Unknown shaders, world geometry, weapon geometry, menus, and failed state
+> reads stay stock. The distinct native crosshair shader is not scaled with the
+> HUD: its exact per-weapon pixels are captured into the existing controller-aim
+> OpenXR quad. The procedural marker remains until a capture succeeds for the
+> current module generation, so failure cannot remove all aiming feedback.
+>
+> Classic scopes its natural CHUD call and Anniversary replays the same call
+> after each restored eye, preserving shared renderer ownership and avoiding
+> the Stage 3C graphics-switch race. Pure tests pin all shader identities, the
+> FNV contract, exact source-to-layout mapping, and material changes for all
+> three sliders. Release compilation passes; headset confirmation is still the
+> acceptance test. `hud_curvature` remains unavailable because this raster
+> path is planar.
+
+> **UNACCEPTED C-RUNTIME-1 SUPPORTED-TITLE / CONSECUTIVE-LEVEL HANDOFF IN
+> SOURCE - 2026-08-24.** C-H2-71's culling behavior and C-H2-72's Halo 4
 > registration remain enabled. The first C-H2-72 Steam run proves Halo 2 ->
 > Halo 4 now completes: Halo 4 installed, armed, and continuously submitted
 > stereo pairs. The following Halo 4 -> Reach transition then detected Reach as
@@ -35,18 +72,10 @@
 > the full eight-state truth table is pinned in core tests. No camera, render,
 > hand, culling, input, or engine binding changes.
 >
-> Source is `1939eabc21c1607ef93ccaec97de004271d70091`; installed DLL SHA-256
-> is `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
-> The exact package is
-> `out/candidates/1939eab-runtime-c1-supported-title-level-handoff-20260824-130722605Z/`;
-> its manifest-verified DLL and launcher were installed into both Steam and
-> Microsoft Store MCC. The user explicitly promoted this candidate: "ok this
-> is our new commit baseline". This accepts the cumulative source and deployed
-> artifact as the next development baseline. The supported-title regression
-> matrix remains the required check for later shared lifecycle changes: one MCC
-> session covering Halo 3, ODST, Reach, Halo 4 and Halo 2, cross-title switches,
-> and two consecutive levels in each. Halo CE remains stock because this source
-> has no Halo CE VR camera adapter.
+> Required headset validation is a single MCC session covering every supported
+> VR title (Halo 3, ODST, Reach, Halo 4, Halo 2), cross-title switches, and two
+> consecutive levels in each title. This remains unaccepted until that matrix
+> passes; the accepted per-title gameplay baselines remain rollback evidence.
 
 > **UNACCEPTED C-H2-72 CROSS-TITLE HALO 4 HANDOFF IN SOURCE - 2026-08-24.**
 > C-H2-71's Halo 2 visibility-cover behavior remains enabled; this candidate

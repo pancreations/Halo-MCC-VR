@@ -1,0 +1,55 @@
+HaloMCCVR 0.3.5 + C50 Stage 2B - Halo 2 Y+B pause-menu VR repair
+=================================================================
+
+Baseline
+--------
+This candidate is Stage 2A unchanged except for the Halo 2 pause-presentation
+ownership repair below. It therefore retains:
+- accepted 0.3.5 / 1939eabc Halo 2 + H2A runtime support
+- C50 Halo 4 fail-closed reticle behavior
+- Stage 2A's H2 VR-owned native-aim diagnostic path
+- all existing H3/ODST/Reach/H4/H2 stereo, hands, two-hand and pacing code
+
+Problem
+-------
+Halo 2's Y+B chord injected Start correctly, but the pause menu was visible only
+on the desktop. The H2 lifecycle treated ANY pending/active head-locked pause as
+foreign state and cleared it continuously while H2 owned stereo. That safeguard
+was intended only to clear a stale pause inherited while switching in from
+another MCC title, but it also cleared H2's own Y+B fallback presentation.
+
+Fix
+---
+The foreign-pause clear is now admitted only on the frame H2 ENTERS its stereo
+claim context. Once H2 is already active, its own Y+B head-locked presentation
+is preserved, allowing the existing compositor stock-screen/headlocked quad to
+show the native pause menu in VR.
+
+Direct DLL patch
+----------------
+The test DLL is derived directly from Stage 2A. At VA 0x180042D87 the existing
+compiled `mustClearForeignPause` test is gated by the already-live
+`enteringHalo2ClaimContext` boolean:
+  old: 40 84 FF    test dil,dil
+  new: 40 20 F7    and  dil,sil
+The instruction length is unchanged. Only two byte values differ from Stage 2A.
+No H2 render, camera, hand, weapon, Anniversary, H4, H3, ODST or Reach code is
+otherwise changed.
+
+Test
+----
+1. Load Halo 2 in VR and enter gameplay.
+2. Press Y+B.
+3. Confirm the native pause menu is visible in the headset on the head-locked
+   2D screen, not just on the desktop.
+4. Resume with Y+B / normal menu action and confirm stereo returns.
+5. Repeat in both Classic and Anniversary graphics.
+6. Switch graphics before and after pausing and confirm H2 stereo remains live.
+7. Briefly load H4/H3/ODST/Reach to catch lifecycle regressions.
+
+Not changed in this candidate
+-----------------------------
+- H2 Classic-vs-Anniversary gun presentation calibration.
+- H2 native centre-screen reticle suppression.
+Those need distinct evidence-backed source changes; they are intentionally not
+mixed into this pause ownership diagnostic.

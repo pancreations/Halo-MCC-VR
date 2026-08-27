@@ -1,0 +1,18 @@
+{
+  "stage": "3AK",
+  "status": "HEADSET_PENDING",
+  "base_stage": "3AI accepted/frozen",
+  "base_dll_sha256": "36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8",
+  "output_dll_sha256": "4ce06fc1e33040990b4db630748d07688803a7216c74cd9d89484c9403510389",
+  "output_dll_size": 2907136,
+  "target": "Halo 2 Classic current-user first-person particle dispatch only",
+  "halo2_retail_sha256": "DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946",
+  "halo2_particle_renderer_rva": "0x76DC90",
+  "halo2_renderer_gate_rva": "0xE70CF8",
+  "install_edge_halomccvr_rva": "0x8F66B",
+  "cleanup_restore_edge_halomccvr_rva": "0x90AC4",
+  "cleanup_release_edge_halomccvr_rva": "0x90CE2",
+  "reproducible_builds": 3,
+  "stage3ai_original_s3qd_bytes_unchanged": true,
+  "anniversary_behavior": "stock particle renderer path via live gate value != 0"
+}

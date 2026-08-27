@@ -1,0 +1,92 @@
+diff --git a/src/common/halo4_cui_reticle_logic.h b/src/common/halo4_cui_reticle_logic.h
+index ef31668..4b58e1b 100644
+--- a/src/common/halo4_cui_reticle_logic.h
++++ b/src/common/halo4_cui_reticle_logic.h
+@@ -349,3 +349,21 @@ constexpr bool Halo4CuiReticleNeedsProceduralBootstrap(
+     return authoredCaptureLive && !authoredArtHeld && crosshairEnabled &&
+         killNativeReticle;
+ }
++
++// C-H4-50 fail-closed reticle policy. 7a24814 headset logs proved that the
++// whole-CUI replay can be blank for long stretches and can occasionally
++// produce unrelated opaque content that passes the generic alpha-only guard.
++// Once that false-positive image reaches the OpenXR quad, later blank captures
++// are correctly held -- which also means the bad image stays visible.
++//
++// Halo 4 already has a title-independent procedural bullet-ray reticle that is
++// known to stay correctly placed while the native flat type-0x28 copy is
++// suppressed. Until the authored H4 capture has a narrower, independently
++// proven widget boundary, keep that procedural art as the only H4 quad content.
++// The CUI hooks remain live for native-reticle suppression and diagnostics.
++constexpr bool Halo4CuiReticleUsesProceduralFallback(
++    bool authoredCaptureLive, bool crosshairEnabled,
++    bool killNativeReticle) noexcept
++{
++    return authoredCaptureLive && crosshairEnabled && killNativeReticle;
++}
+diff --git a/src/dll/vr.cpp b/src/dll/vr.cpp
+index 81a160e..b440c0c 100644
+--- a/src/dll/vr.cpp
++++ b/src/dll/vr.cpp
+@@ -6226,9 +6226,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
+         // upload can leave the newly-created swapchain as undefined pixels.
+         const bool halo4ProceduralBootstrap =
+             reticleTitle == GameTitle::Halo4 &&
+-            Halo4CuiReticleNeedsProceduralBootstrap(
+-                titleHasAuthoredCapture, g_reticleContainsAuthored,
+-                g_config.crosshair, g_config.kill_reticle);
++            Halo4CuiReticleUsesProceduralFallback(
++                titleHasAuthoredCapture, g_config.crosshair,
++                g_config.kill_reticle);
+         const bool authoredThisFrame =
+             g_authoredReticleReady &&
+             g_authoredReticleSerial == g_preparedFrame.serial;
+@@ -10109,9 +10109,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
+                             AuthoredReticleLayerHasContent(
+                                 titleCapturesArt &&
+                                     !(reticleTitle == GameTitle::Halo4 &&
+-                                      Halo4CuiReticleNeedsProceduralBootstrap(
++                                      Halo4CuiReticleUsesProceduralFallback(
+                                           titleCapturesArt,
+-                                          g_reticleContainsAuthored,
+                                           g_config.crosshair,
+                                           g_config.kill_reticle)),
+                                 g_reticleContainsAuthored);
+@@ -14376,6 +14375,16 @@ static bool BeginAuthoredReticleCaptureInternal(
+ 
+ bool VR_ShouldCaptureAuthoredReticleThisFrame()
+ {
++    // C-H4-50: Halo 4's whole-CUI replay is not a proven authored-reticle
++    // boundary. In the 7a24814 Steam log it spent minutes at art=0, then one
++    // isolated opaque capture was promoted and held -- matching the reported
++    // black-square-after-zoom failure. The Game Pass log likewise starts with
++    // a long blank capture interval. Keep the already-proven procedural
++    // bullet-ray reticle for Halo 4 and leave these hooks responsible only for
++    // hiding the duplicate native flat copy. Halo 3/ODST/Reach are unchanged.
++    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
++        return false;
++
+     // Until valid art is held there is nothing to fall back on, so never skip.
+     if (!g_reticleContainsAuthored)
+         return true;
+diff --git a/tests/core_tests.cpp b/tests/core_tests.cpp
+index cb800f4..3d67d78 100644
+--- a/tests/core_tests.cpp
++++ b/tests/core_tests.cpp
+@@ -9265,6 +9265,16 @@ int main()
+                   true, false, false, true),
+         "Halo 4 keeps procedural gun-ray pixels only while a live authored "
+         "hook is waiting for its first validated image");
++    Check(Halo4CuiReticleUsesProceduralFallback(
++              true, true, true) &&
++              !Halo4CuiReticleUsesProceduralFallback(
++                  false, true, true) &&
++              !Halo4CuiReticleUsesProceduralFallback(
++                  true, false, true) &&
++              !Halo4CuiReticleUsesProceduralFallback(
++                  true, true, false),
++        "Halo 4 fail-closes to the procedural bullet-ray reticle whenever "
++        "the authored hook is live and native-reticle suppression is enabled");
+ 
+     using CuiAction = Halo4CuiReticleAction;
+     Check(Halo4DecideCuiReticleAction(

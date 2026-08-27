@@ -320,3 +320,108 @@ The ignored local exact-byte copy is `dist/MCC_VR_ALPHA_0.2.2.zip`. A local buil
 gets a new hash because compile time and toolchain output affect its bytes.
 Never substitute a rebuild for accepted artifacts or overwrite the preserved
 ZIP.
+
+## Reproduce the Stage 3H post-link headset candidate
+
+Stage 3H is an unaccepted C50 headset candidate built from the exact Stage 3G
+DLL whose SHA-256 is
+`40291c25af302046675d55f680d9f656105b766b388c72078ea4a15832adcd6e`.
+On a machine with Python 3 and GNU x86-64 binutils (`as`, `ld`, `objcopy`, and
+`nm`) on `PATH`, run:
+
+```text
+python tools/build_stage3h_h2_sliders_h4_native_reticle.py \
+  Stage3G-HaloMCCVR.dll HaloMCCVR.dll
+```
+
+The builder refuses every other input hash, checks all modified C50 instruction
+bytes before writing, replaces the existing `.h2sf` helper, and appends the
+`.s3hc`/`.s3hd` Halo 4 helper sections. It does not modify or install MCC files.
+The expected Stage 3H DLL is 2,880,512 bytes with SHA-256
+`0d0338b7c0b749ce8c7f956914eace9812bcc2d5d26bda14c4024043416f6249`.
+
+## Reproduce Stage 3X Halo 4 full restoration candidate
+
+Stage 3X is a deterministic post-link candidate based on the exact Stage 3V working-H4 DLL with SHA-256
+`4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e`.
+
+With Python 3 and GNU x86-64 binutils (`as`, `ld`, `objcopy`, `nm`) on PATH:
+
+```text
+python tools/build_stage3x_h4_full_restore.py \
+  built/Stage3V-HaloMCCVR.dll HaloMCCVR.dll
+```
+
+The builder keeps the 12-section Q-R1/Stage3V PE layout and `SizeOfImage=0x2F4000`; helper code is placed in the previously zero tail of the existing final `.s3qd` image page. See `STAGE3X-H4-FULL-RESTORE-NOTES.md` and `STAGE3X-STATIC-AUDIT.txt`.
+
+## Reproduce Stage 3AD — Halo 4 Promethean/non-particle first-person hide
+
+Stage 3AD is a post-link headset candidate built only from the exact Stage 3AC
+DLL with SHA-256
+`3a09288b5b8de4420ffc08695ebeb7431456971ccfe59de1f8c43f999caf700d`.
+It preserves Stage 3AC and adds a guarded runtime suppression transaction for
+Halo 4's first-person `gldf`, `lens`, and `ltvl` dispatcher branches.
+
+```text
+python tools/build_stage3ad_h4_promethean_nonparticle_hide.py \
+  baseline/Stage3AC-HaloMCCVR.dll HaloMCCVR.dll
+python tools/audit_stage3ad.py \
+  baseline/Stage3AC-HaloMCCVR.dll HaloMCCVR.dll \
+  STAGE3AD-BINARY-DIFF.json STAGE3AD-STATIC-AUDIT.txt
+python tools/test_stage3ad_toggle.py
+```
+
+The builder refuses any other input hash and uses only verified executable
+post-function gaps in `.s3ic`; `.s3qd+0` remains runtime state and is never used
+for injected code.
+
+## Stage 3AE — Halo 4 Suppressor attachment-detail hide
+
+Stage 3AE is a guarded post-link pass over the exact Stage 3AD DLL:
+
+```text
+python tools/build_stage3ae_h4_suppressor_attachment_hide.py \
+  baseline/Stage3AD-HaloMCCVR.dll built/Stage3AE-HaloMCCVR.dll
+```
+
+Expected Stage 3AD input SHA-256:
+`92108c3235e2ef9d3d97ba33b09ae900fa7ce2f46bb67ccf5195d7ef4541b5bd`
+
+Expected Stage 3AE output SHA-256:
+`6adac5256a975a5f829f6a45b3bdac3280cea0bd54b36126a34cc4bab56c1fed`
+
+The pass restores exact camera-mode-1 admission in the retained Stage3X local
+effect wrapper and replaces its blanket negative-designator rejection with the
+small non-primary-location gate documented in
+`STAGE3AE-H4-SUPPRESSOR-ATTACHMENT-HIDE-NOTES.md`.
+
+## Reproduce Stage 3AG active-edge upstream hide candidate
+
+Starting from the exact Stage 3AF DLL SHA-256
+`d7648b272770d426dc458630fec331c239bca0e046a0438775d63a223c87d37d`:
+
+```text
+python tools/build_stage3ag_h4_active_edge_upstream_hide.py Stage3AF-HaloMCCVR.dll HaloMCCVR.dll
+```
+
+Expected output SHA-256:
+`f81bb6106e54739fc61bbe5790fb9df9b1fd7d06941b4808a4f7467ad8bdac64`.
+
+
+## Reproduce Stage 3AI — H4 public-C50 full-coverage hide
+
+Stage 3AI is an unaccepted headset candidate built from the exact Stage 3AH
+DLL SHA-256 `7ceb1b741f94286c9766e777ec253208301fb97c8e3976b61d4fc6b141a8a402`.
+With Python 3 and GNU x86-64 binutils (`as`, `ld`, `objcopy`, `nm`) on PATH:
+
+```text
+python tools/build_stage3ai_h4_c50_fullcoverage_hide.py \
+  baseline/Stage3AH-HaloMCCVR.dll built/Stage3AI-HaloMCCVR.dll \
+  tools/stage3ai_h4_c50_fullcoverage_hide.S
+```
+
+The builder refuses every other input hash. It extends only the existing final
+`.s3qd` post-link section, redirects the single active-title edge through an
+H4-only wrapper, and replaces the H4 teardown restore slot. No Halo 2, Halo 3,
+ODST, or Reach feature block is rewritten. The expected Stage 3AI output is
+`36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8`.

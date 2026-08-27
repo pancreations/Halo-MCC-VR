@@ -1,0 +1,28 @@
+Stage 3AK static audit
+======================
+
+Stage3AI input SHA-256: 36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8
+Stage3AK output SHA-256: 4ce06fc1e33040990b4db630748d07688803a7216c74cd9d89484c9403510389
+Input/output size: 2898944 / 2907136 bytes
+Independent reproducible builds: 3/3 byte-identical
+Original Stage3AI .s3qd bytes unchanged: True (file 0x2C0C00..0x2C3C00, RVA 0x2F3000..0x2F6000)
+
+Changed bytes inside original Stage3AI file: 15 across 7 spans
+  file 0x129..0x129 (1): de -> fe
+  file 0x159..0x159 (1): 60 -> 80
+  file 0x3D1..0x3D1 (1): 30 -> 50
+  file 0x3D9..0x3D9 (1): 30 -> 50
+  file 0x8EA6B..0x8EA71 (7): 48 89 05 c6 b4 22 00 -> e8 38 6c 26 00 90 90
+  file 0x8FEC5..0x8FEC6 (2): 37 05 -> 6d 58
+  file 0x900E3..0x900E4 (2): 7f 03 -> 6e 56
+
+Expected interpretation of the seven changed spans:
+  - PE SizeOfCode / SizeOfImage and .s3qd virtual/raw-size metadata for two appended pages.
+  - HaloMCCVR+0x8F66B exact H2 module-reference store -> Stage3AK install+store wrapper.
+  - HaloMCCVR+0x90AC4 Stage3I restore/pin call -> Stage3AK restore chain.
+  - HaloMCCVR+0x90CE2 Stage3I release/clear call -> Stage3AK guarded release chain.
+  - PE checksum field remains zero.
+
+Appended bytes: 8192; SHA-256 404999f5089a95e37331e5bda930cfab57be6bbf734d56607efb303fb7461591
+New code/data RVAs: +0x2F6000 / +0x2F7000, beyond Stage3AI original .s3qd extent.
+No pre-existing Halo 4/Reach/H3/ODST implementation bytes changed outside the three H2 lifecycle edges and PE metadata.

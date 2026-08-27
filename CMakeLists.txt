@@ -259,6 +259,7 @@ add_library(halo3xr SHARED
     src/dll/ik.cpp
     src/dll/input.cpp
     src/dll/title_adapter.cpp
+    src/dll/title_reentry_probe.cpp
     src/dll/reach_adapter.cpp
     src/dll/halo2_adapter.cpp
     src/dll/halo2_cold_observation.cpp

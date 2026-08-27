@@ -1,0 +1,7 @@
+PASS: Stage 3M all-title gun-stock source audit
+  config/menu: PASS
+  H3 + ODST right weapon: PASS
+  Reach right weapon: PASS
+  Halo 2 right visible carrier + zero-trim compatibility: PASS
+  Halo 4 right weapon + Stage 3L source normalization: PASS
+  left/support-hand exclusion: PASS

@@ -1,0 +1,40 @@
+HaloMCCVR Stage 3AE static audit
+=================================
+Base Stage3AD SHA-256: 92108c3235e2ef9d3d97ba33b09ae900fa7ce2f46bb67ccf5195d7ef4541b5bd
+Stage3AE DLL SHA-256:  6adac5256a975a5f829f6a45b3bdac3280cea0bd54b36126a34cc4bab56c1fed
+Size: 2890752 bytes
+PE headers: IDENTICAL; sections=12; SizeOfImage=0x2f4000
+
+Root-cause-targeted changes:
+  RVA 0x2EF72D: restore exact camera-mode == 1 admission (first-person only).
+  RVA 0x2EF736: replace blanket negative-designator rejection with a call to
+                 the Stage3AE guarded attachment-location gate.
+  RVA 0x2F2007: 22-byte helper in an exact zero-filled, mapped .s3ic gap.
+
+Gate policy:
+  - local coordinate + camera mode 1 remain mandatory in the original wrapper;
+  - nonnegative designators preserve Stage3X finite XYZ hide;
+  - negative designator + authored location > 0 now preserves that hide;
+  - negative designator + location <= 0 skips the hide and remains stock.
+
+User-supplied H4 tag proof used:
+  storm_forerunner_smg weapon attachment fx\fr_smg_firing contains first-person
+  local systems at location 1 mid_plate, 2 top_plate, and 3 fx_rear_slide.
+  Its parallel third-person rows are camera mode 2 and remain excluded.
+
+Preservation proof:
+  - Stage3Z camera-mode-1 particle deny: unchanged.
+  - Stage3AD gldf/lens/ltvl runtime suppression layer: unchanged.
+  - .s3qd live state 0x2F3000..0x2F31FF: byte-identical.
+  - H4 pause/heartbeat/reticle/HUD/lifecycle protected sites: byte-identical.
+  - H2/H3/ODST/Reach protected sites: byte-identical.
+
+Diff runs:
+  RVA 0x2ef733 length 2 file 0x2bf133
+  RVA 0x2ef736 length 8 file 0x2bf136
+  RVA 0x2f2007 length 5 file 0x2c0407
+  RVA 0x2f200d length 7 file 0x2c040d
+  RVA 0x2f2015 length 8 file 0x2c0415
+
+Portable policy test: PASS (see tools/test_stage3ae_suppressor_attachment_gate.py).
+No headset acceptance is claimed until the user verifies the Suppressor effect is gone.

@@ -1,0 +1,24 @@
+HaloMCCVR Stage 3AC static audit
+=================================
+Base: exact headset-proven Stage 3Z DLL
+Base SHA-256: 154f31b34049ef2797eb8993a252a51c411df3ec6a8b30f583b0b8137e66ebce
+Output SHA-256: 3a09288b5b8de4420ffc08695ebeb7431456971ccfe59de1f8c43f999caf700d
+Output size: 2890752 bytes
+
+PASS — three independent deterministic builds are byte-identical.
+PASS — 12 PE sections unchanged.
+PASS — SizeOfImage remains 0x2F4000.
+PASS — PE headers are byte-identical to Stage 3Z.
+PASS — import table is byte-identical to Stage 3Z.
+PASS — live .s3qd state 0x2F3000..0x2F31FF is byte-identical to Stage 3Z.
+PASS — 134 changed file bytes in 9 contiguous runs only.
+PASS — H2 protected sites unchanged: 0x90AC4 0x90CE2 0x92F06 0x95B16.
+PASS — H3/ODST stock-translation site 0x40A52 unchanged.
+PASS — Reach stock/HUD sites 0x6B321 0x81036 0x8112D 0x813A8 unchanged.
+PASS — H4 rollback/reticle protected sites 0x48086 0x48110 0x5360B 0x53D41 0x53E37 unchanged.
+PASS — Stage3X H4 pause + camera heartbeat sites 0x14EFA 0x56CA7 0x8431C unchanged.
+PASS — Stage3Z particle gate implementation remains at 0x2F3F32 and runtime target remains halo4.dll+0x27BD36.
+PASS — Stage3X residual effect installer remains at 0x2EF595 and is called by the new wrapper.
+PASS — combined cleanup restores Stage3X effect splice via 0x2F385C, then Stage3Z particle gate via 0x2F3FC4.
+
+Rejected 3AA/3AB root cause is documented separately. No .s3qd+0 BSS reuse.

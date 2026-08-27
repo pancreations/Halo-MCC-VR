@@ -1,0 +1,84 @@
+Stage 3AK Halo 2 Classic muzzle-effect tag evidence
+================================================
+
+Rows: 126
+Weapons: 17
+Component types: {'particle': 126}
+Camera modes: {'0,independent of camera mode': 15, '2,only in third person': 58, '3,both first and third': 24, '1,only in first person': 29}
+
+Weapon tags:
+  objects\weapons\fixed\plasma_cannon\plasma_cannon
+  objects\weapons\pistol\magnum\magnum
+  objects\weapons\pistol\needler\needler
+  objects\weapons\pistol\plasma_pistol\plasma_pistol
+  objects\weapons\rifle\battle_rifle\battle_rifle
+  objects\weapons\rifle\beam_rifle\beam_rifle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle
+  objects\weapons\rifle\covenant_carbine\covenant_carbine
+  objects\weapons\rifle\gpmg\gpmg
+  objects\weapons\rifle\plasma_rifle\plasma_rifle
+  objects\weapons\rifle\shotgun\shotgun
+  objects\weapons\rifle\smg\smg
+  objects\weapons\rifle\smg_silenced\smg_silenced
+  objects\weapons\rifle\sniper_rifle\sniper_rifle
+  objects\weapons\support_high\flak_cannon\flak_cannon
+  objects\weapons\support_high\rocket_launcher\rocket_launcher
+  objects\weapons\support_low\brute_shot\brute_shot
+
+Battle rifle / magnum rows containing flash or smoke:
+  objects\weapons\pistol\magnum\magnum | effects\objects\weapons\pistol\magnum\fire_bullet | muzzle_flash | effects\objects\weapons\rifle\battle_rifle\muzzle_flash | muzzle_flash | 2,only in third person | effects\bitmaps\weapons_fire\br_muzzle_flash_long
+  objects\weapons\pistol\magnum\magnum | effects\objects\weapons\pistol\magnum\fire_bullet | muzzle_flash | effects\objects\weapons\rifle\battle_rifle\muzzle_flash | muzzle_flash | 3,both first and third | effects\bitmaps\weapons_fire\br_muzzle_flash_long
+  objects\weapons\pistol\magnum\magnum | effects\objects\weapons\pistol\magnum\fire_bullet | muzzle_flash | effects\objects\weapons\rifle\battle_rifle\muzzle_flash | primary_trigger | 2,only in third person | effects\bitmaps\weapons_fire\br_muzzle_flash_long
+  objects\weapons\pistol\magnum\magnum | effects\objects\weapons\pistol\magnum\fire_bullet | muzzle_flash_center | effects\objects\weapons\rifle\battle_rifle\muzzle_flash_center | primary_trigger | 1,only in first person | effects\bitmaps\weapons_fire\br_muzzle_flash_center
+  objects\weapons\pistol\magnum\magnum | effects\objects\weapons\pistol\magnum\fire_bullet | muzzle_flash_center | effects\objects\weapons\rifle\battle_rifle\muzzle_flash_center | primary_trigger | 2,only in third person | effects\bitmaps\weapons_fire\br_muzzle_flash_center
+  objects\weapons\pistol\magnum\magnum | effects\objects\weapons\pistol\magnum\fire_bullet | smoke | effects\objects\weapons\rifle\battle_rifle\smoke | primary_trigger | 3,both first and third | effects\bitmaps\smoke\smoke_warthog_gun
+  objects\weapons\rifle\battle_rifle\battle_rifle | effects\objects\weapons\rifle\battle_rifle\fire_bullet | muzzle_flash | effects\objects\weapons\rifle\battle_rifle\muzzle_flash | muzzle_flash | 2,only in third person | effects\bitmaps\weapons_fire\br_muzzle_flash_long
+  objects\weapons\rifle\battle_rifle\battle_rifle | effects\objects\weapons\rifle\battle_rifle\fire_bullet | muzzle_flash | effects\objects\weapons\rifle\battle_rifle\muzzle_flash | muzzle_flash | 3,both first and third | effects\bitmaps\weapons_fire\br_muzzle_flash_long
+  objects\weapons\rifle\battle_rifle\battle_rifle | effects\objects\weapons\rifle\battle_rifle\fire_bullet | muzzle_flash | effects\objects\weapons\rifle\battle_rifle\muzzle_flash | primary_trigger | 2,only in third person | effects\bitmaps\weapons_fire\br_muzzle_flash_long
+  objects\weapons\rifle\battle_rifle\battle_rifle | effects\objects\weapons\rifle\battle_rifle\fire_bullet | muzzle_flash_center | effects\objects\weapons\rifle\battle_rifle\muzzle_flash_center | primary_trigger | 1,only in first person | effects\bitmaps\weapons_fire\br_muzzle_flash_center
+  objects\weapons\rifle\battle_rifle\battle_rifle | effects\objects\weapons\rifle\battle_rifle\fire_bullet | muzzle_flash_center | effects\objects\weapons\rifle\battle_rifle\muzzle_flash_center | primary_trigger | 2,only in third person | effects\bitmaps\weapons_fire\br_muzzle_flash_center
+  objects\weapons\rifle\battle_rifle\battle_rifle | effects\objects\weapons\rifle\battle_rifle\fire_bullet | smoke | effects\objects\weapons\rifle\battle_rifle\smoke | primary_trigger | 3,both first and third | effects\bitmaps\smoke\smoke_warthog_gun
+
+Covenant/energy examples containing flash/electric/smoke:
+  objects\weapons\pistol\needler\needler | effects\objects\weapons\pistol\needler\firing | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 3,both first and third | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\pistol\needler\needler | effects\objects\weapons\pistol\needler\firing | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger | 3,both first and third | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\pistol\needler\needler | effects\objects\weapons\pistol\needler\firing | flash_h_shield_impact | effects\generic\sparks\flash_h_shield_impact | primary_trigger | 3,both first and third | effects\bitmaps\sparks\flash_h_shield_impact
+  objects\weapons\pistol\needler\needler | effects\objects\weapons\pistol\needler\firing | smoke_c_generic | effects\generic\energy\smoke_c_generic | smoke | 1,only in first person | effects\bitmaps\energy\smoke_white_c_generic
+  objects\weapons\pistol\needler\needler | effects\objects\weapons\pistol\needler\firing | smoke_c_generic | effects\generic\energy\smoke_c_generic | smoke | 2,only in third person | effects\bitmaps\energy\smoke_white_c_generic
+  objects\weapons\pistol\plasma_pistol\plasma_pistol | effects\objects\weapons\pistol\plasma_pistol\fire_bolt | flash_c_generic | effects\generic\energy\flash_c_generic | secondary_trigger | 3,both first and third | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\pistol\plasma_pistol\plasma_pistol | effects\objects\weapons\pistol\plasma_pistol\fire_bolt | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | secondary_trigger | 3,both first and third | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\pistol\plasma_pistol\plasma_pistol | effects\objects\weapons\pistol\plasma_pistol\fire_bolt | plasma_electric_burst | effects\generic\energy\plasma_electric_burst | secondary_trigger | 2,only in third person | effects\bitmaps\energy\plasma_grenade_electric_burst
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\lower_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger1 | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\lower_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger1 | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\lower_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger1 | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\lower_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger1 | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\lower_fire | plasma_electric_burst | effects\generic\energy\plasma_electric_burst | primary_trigger1 | 2,only in third person | effects\bitmaps\energy\plasma_grenade_electric_burst
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\upper_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\upper_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\upper_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\upper_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\brute_plasma_rifle\brute_plasma_rifle | effects\objects\weapons\rifle\brute_plasma_rifle\upper_fire | plasma_electric_burst | effects\generic\energy\plasma_electric_burst | primary_trigger | 2,only in third person | effects\bitmaps\energy\plasma_grenade_electric_burst
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | muzzle_flash_long_2 | effects\generic\weapon_flares\muzzle_flash_long_2 | primary_trigger | 2,only in third person | effects\bitmaps\weapons_fire\muzzle_flash_long_2
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | muzzle_flash_long_2 | effects\generic\weapon_flares\muzzle_flash_long_2 | primary_trigger | 2,only in third person | effects\bitmaps\weapons_fire\muzzle_flash_long_2
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery | effects\generic\smoke\smoke_fiery | primary_trigger | 1,only in first person | effects\bitmaps\smoke\smoke_fiery
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery | effects\generic\smoke\smoke_fiery | primary_trigger | 1,only in first person | effects\bitmaps\smoke\smoke_fiery
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery | effects\generic\smoke\smoke_fiery | primary_trigger | 2,only in third person | effects\bitmaps\smoke\smoke_fiery
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery | effects\generic\smoke\smoke_fiery | primary_trigger | 2,only in third person | effects\bitmaps\smoke\smoke_fiery
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery_small | effects\generic\smoke\smoke_fiery_small | muzzle_break | 1,only in first person | effects\bitmaps\smoke\smoke_fiery_small
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery_small | effects\generic\smoke\smoke_fiery_small | muzzle_break | 1,only in first person | effects\bitmaps\smoke\smoke_fiery_small
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery_small | effects\generic\smoke\smoke_fiery_small | muzzle_break | 2,only in third person | effects\bitmaps\smoke\smoke_fiery_small
+  objects\weapons\rifle\covenant_carbine\covenant_carbine | effects\objects\weapons\rifle\covenant_carbine\firing | smoke_fiery_small | effects\generic\smoke\smoke_fiery_small | muzzle_break | 2,only in third person | effects\bitmaps\smoke\smoke_fiery_small
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\lower_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger1 | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\lower_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger1 | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\lower_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger1 | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\lower_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger1 | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\lower_fire | plasma_electric_burst | effects\generic\energy\plasma_electric_burst | primary_trigger1 | 2,only in third person | effects\bitmaps\energy\plasma_grenade_electric_burst
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\upper_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\upper_fire | flash_c_generic | effects\generic\energy\flash_c_generic | primary_trigger | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\upper_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger | 1,only in first person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\upper_fire | flash_c_generic_med | effects\generic\energy\flash_c_generic_med | primary_trigger | 2,only in third person | effects\bitmaps\energy\flash_c_generic_muzzle
+  objects\weapons\rifle\plasma_rifle\plasma_rifle | effects\objects\weapons\rifle\plasma_rifle\upper_fire | plasma_electric_burst | effects\generic\energy\plasma_electric_burst | primary_trigger | 2,only in third person | effects\bitmaps\energy\plasma_grenade_electric_burst

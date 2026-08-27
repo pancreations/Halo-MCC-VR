@@ -1,0 +1,30 @@
+Stage 3AA / Stage 3AB black-screen root cause
+==============================================
+
+Rejected behavior:
+- Halo 4 arms but XR produces zero completed H4 eye pairs.
+- log reports repeated `last rejection: transaction exception`.
+- compositor reports `layers=0`, matching the black headset screen.
+
+Binary-layout error:
+The rejected builders treated .s3qd RVA 0x2F3000 as an unused executable zero
+cave merely because its on-disk bytes were zero. It is actually live writable
+runtime state (BSS-like storage) owned by Stage 3X/3Z helpers.
+
+Verified Stage3Z references include:
+  0x2F3000  state QWORD (read/store)
+  0x2F3008  state byte
+  0x2F3009  state byte
+  0x2F3010  state QWORD
+  0x2F3020  writable state/entry array (SIMD stores)
+  0x2F31C0, 0x2F31C8, 0x2F31D0, 0x2F31D8, 0x2F31E0, 0x2F31F0
+
+3AA placed its ~507-byte core at 0x2F3000. 3AB likewise placed its helper at
+0x2F3000. That corrupted the live state when H4 rendering began.
+
+Stage 3AC correction:
+- No helper or data is placed in .s3qd+0..+0x200.
+- That full range compares byte-identical to Stage 3Z.
+- New title wrapper uses verified .s3ic post-function gap 0x2F1A87..0x2F1AE9.
+- New combined cleanup uses final mapped tail 0x2F3FCB..0x2F3FF6, immediately
+  after Stage3Z particle-restorer code and before SizeOfImage 0x2F4000.

@@ -83,7 +83,9 @@ namespace
     // C-H2-6 owns same-frame binocular geometry and headset room-scale only;
     // unclaimed frames retain stock screen presentation, while a partially
     // claimed failed stereo transaction drops only that frame.
-    // HUD and cutscene behavior remain denied.
+    // C-H2-76 keeps the native gameplay CHUD inside the submitted OpenXR
+    // crop and grants its size/aspect/height layout controls. Cutscene
+    // behavior remains denied.
     // C-H2-22: the virtual gamepad (VR controllers merged over any physical
     // pad) and rumble are granted. Without ControllerInput the XInput hook
     // passed the physical pad through untouched inside every Halo 2 level,
@@ -97,7 +99,8 @@ namespace
     constexpr uint32_t kHalo2Capabilities =
         TitleCapability_Stereo | TitleCapability_RoomScale |
         TitleCapability_RuntimeModes | TitleCapability_ControllerInput |
-        TitleCapability_Haptics | TitleCapability_ControllerAim;
+        TitleCapability_Haptics | TitleCapability_ControllerAim |
+        TitleCapability_Hud;
     constexpr uint32_t kHalo2AdmissionCapabilities =
         TitleCapability_ControllerInput;
 #elif HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO

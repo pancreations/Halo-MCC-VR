@@ -1,0 +1,96 @@
+--- a/src/common/halo2_render_logic.h
++++ b/src/common/halo2_render_logic.h
+@@ -27,24 +27,29 @@
+ inline constexpr char kHalo2KitTagTestSha256[] =
+     "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36";
+ 
+-// Halo 2 does not yet own a title-native pause signal. A pause/head-lock
+-// transition requested by another MCC engine must therefore be cleared while
+-// H2 owns the title context, and the synchronous render hooks must remain stock
+-// until both the requested and currently displayed presentation have returned
+-// to immersive stereo. Keeping this policy pure makes the no-claim boundary
+-// independently testable without touching OpenXR state.
++// Halo 2 does not yet own a title-native pause signal. A stale head-locked
++// presentation can be inherited while switching in from another MCC engine,
++// so clear that FOREIGN state exactly when H2 first enters its stereo claim
++// context. Do not keep clearing while H2 remains active: Y+B uses the shared
++// edge fallback to inject Start and intentionally requests the same head-locked
++// presentation for Halo 2's own pause menu. The old continuous clear treated
++// H2's own request as foreign and immediately kicked the headset back to stereo,
++// leaving the pause menu visible only on the desktop.
+ inline bool Halo2MustClearForeignPause(
+-    bool stereoContext, bool pauseTarget, bool pausePresentation)
++    bool stereoContext, bool enteringStereoContext, bool pauseTarget,
++    bool pausePresentation)
+ {
+-    return stereoContext && (pauseTarget || pausePresentation);
++    return stereoContext && enteringStereoContext &&
++        (pauseTarget || pausePresentation);
+ }
+ 
+ inline bool Halo2ShouldRequestForeignPauseClear(
+-    bool stereoContext, bool pauseTarget, bool pausePresentation,
+-    bool clearAlreadyRequested)
++    bool stereoContext, bool enteringStereoContext, bool pauseTarget,
++    bool pausePresentation, bool clearAlreadyRequested)
+ {
+     return Halo2MustClearForeignPause(
+-               stereoContext, pauseTarget, pausePresentation) &&
++               stereoContext, enteringStereoContext, pauseTarget,
++               pausePresentation) &&
+         !clearAlreadyRequested;
+ }
+ 
+--- a/src/dll/game.cpp
++++ b/src/dll/game.cpp
+@@ -37424,7 +37424,7 @@
+         const bool pauseTarget = VR_IsPausePresentationTarget();
+         const bool pausePresentation = VR_IsPausePresentation();
+         const bool mustClearForeignPause = Halo2MustClearForeignPause(
+-            true, pauseTarget, pausePresentation);
++            true, enteringHalo2ClaimContext, pauseTarget, pausePresentation);
+         Halo2PreparedCadenceSnapshot halo2Cadence{};
+         const bool halo2CadenceCurrent =
+             VR_Halo2GetCurrentPreparedCadence(halo2Cadence);
+@@ -37445,8 +37445,8 @@
+             // episode; repeating it every Present would restart FadeOut before
+             // it could ever finish.
+             if (Halo2ShouldRequestForeignPauseClear(
+-                    true, pauseTarget, pausePresentation,
+-                    halo2PauseClearRequested))
++                    true, enteringHalo2ClaimContext, pauseTarget,
++                    pausePresentation, halo2PauseClearRequested))
+             {
+                 VR_RequestPausePresentation(false);
+                 LOG("Halo 2 presentation: clearing foreign pause/head-lock "
+--- a/tests/core_tests.cpp
++++ b/tests/core_tests.cpp
+@@ -5276,18 +5276,19 @@
+             "private ODST entry clears either pending or active foreign pause state");
+         Check(!OdstMustClearForeignPause(false, true, true),
+             "foreign pause cleanup cannot affect non-ODST title ownership");
+-        Check(Halo2MustClearForeignPause(true, true, false) &&
+-                  Halo2MustClearForeignPause(true, false, true),
+-            "H2 ownership clears either pending or active foreign pause state");
+-        Check(!Halo2MustClearForeignPause(false, true, true),
+-            "H2 foreign pause cleanup is confined to its title context");
++        Check(Halo2MustClearForeignPause(true, true, true, false) &&
++                  Halo2MustClearForeignPause(true, true, false, true),
++            "H2 title entry clears either pending or active inherited pause state");
++        Check(!Halo2MustClearForeignPause(true, false, true, true) &&
++                  !Halo2MustClearForeignPause(false, true, true, true),
++            "H2 preserves its own Y+B pause after entry and leaves foreign titles alone");
+         Check(Halo2ShouldRequestForeignPauseClear(
+-                  true, false, true, false) &&
++                  true, true, false, true, false) &&
+                   !Halo2ShouldRequestForeignPauseClear(
+-                      true, false, true, true) &&
++                      true, true, false, true, true) &&
+                   !Halo2ShouldRequestForeignPauseClear(
+-                      true, false, false, false),
+-            "H2 requests one pause clear per episode and does not restart its fade");
++                      true, false, true, true, false),
++            "H2 requests one inherited-pause clear only on title entry");
+         Check(!Halo2RefreshCadenceSupported(0.0f) &&
+                   !Halo2RefreshCadenceSupported(45.0f) &&
+                   !Halo2RefreshCadenceSupported(60.0f) &&

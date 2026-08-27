@@ -845,6 +845,13 @@ namespace
     }
 }
 
+bool Halo2ColdObservation_ReadGameTime(
+    bool& initialized, uint32_t& tick) noexcept
+{
+    uintptr_t object = 0;
+    return ReadCoherentGameTimeSample(object, initialized, tick);
+}
+
 bool Halo2ColdObservation_Poll(
     uintptr_t moduleBase, size_t moduleSize, uint32_t generation) noexcept
 {

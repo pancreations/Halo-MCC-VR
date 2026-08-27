@@ -1,0 +1,11 @@
+Public C50 effect-routing provenance
+====================================
+Public C50 DLL: 4aa0467453591430762d4f3201b5eb1f32affee7308b15bbf6ab069c819b027a
+Original V6 donor recorded in C50 audit: 419f2ca425a41f3fe42a2f27cfd0ce55123f71c5ef34c1c45604018285efea82
+
+C50 negative-designator cave template file offset: 0x287a20
+C50 0x40-byte template SHA-256: 53057cfbcd1f4d4d33ea3b3f4250f16001bbcba2382a9cab94b308895e1b2f6a
+C50 helper cave template file offset: 0x287a60
+C50 0x80-byte template SHA-256: 5ceeab990516df7695652c15e06574a92d5c405756eb12866769689e249d7d9e
+
+Stage3AI embeds these exact templates with only the 0x1111222233334444 bridge placeholder replaced at runtime by its finite-hide bridge.

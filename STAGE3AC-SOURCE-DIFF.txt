@@ -1,0 +1,7 @@
+Stage3AC new/changed source files relative to Stage3Z:
+  tools/build_stage3ac_h4_combined_muzzle_hide.py (new)
+  tools/stage3ac_h4_combined_muzzle_hide.S (new)
+  STAGE3AC-H4-COMBINED-MUZZLE-HIDE-NOTES.md (new)
+  STAGE3AC-STATIC-AUDIT.txt (new)
+  STAGE3AC-BINARY-DIFF.json (new)
+  STAGE3AA-3AB-BLACKSCREEN-ROOT-CAUSE.txt (new)

@@ -1,0 +1,114 @@
+{
+  "format": "PE32+ x86-64 DLL",
+  "base_sha256": "4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e",
+  "candidate_sha256": "486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6",
+  "section_count": 12,
+  "size_of_image": "0x2F4000",
+  "section_alignment": "0x1000",
+  "file_alignment": "0x200",
+  "sections": [
+    {
+      "name": ".text",
+      "virtual_size": "0x17E680",
+      "virtual_address": "0x1000",
+      "raw_size": "0x17E800",
+      "raw_pointer": "0x400",
+      "characteristics": "0x60000020"
+    },
+    {
+      "name": ".rdata",
+      "virtual_size": "0xC1C94",
+      "virtual_address": "0x180000",
+      "raw_size": "0xC1E00",
+      "raw_pointer": "0x17EC00",
+      "characteristics": "0x40000040"
+    },
+    {
+      "name": ".data",
+      "virtual_size": "0x94FAC",
+      "virtual_address": "0x242000",
+      "raw_size": "0x69200",
+      "raw_pointer": "0x240A00",
+      "characteristics": "0xC0000040"
+    },
+    {
+      "name": ".pdata",
+      "virtual_size": "0xEBF8",
+      "virtual_address": "0x2D7000",
+      "raw_size": "0xEC00",
+      "raw_pointer": "0x2A9C00",
+      "characteristics": "0x40000040"
+    },
+    {
+      "name": ".fptable",
+      "virtual_size": "0x100",
+      "virtual_address": "0x2E6000",
+      "raw_size": "0x200",
+      "raw_pointer": "0x2B8800",
+      "characteristics": "0xC0000040"
+    },
+    {
+      "name": ".rsrc",
+      "virtual_size": "0x4B60",
+      "virtual_address": "0x2E7000",
+      "raw_size": "0x4C00",
+      "raw_pointer": "0x2B8A00",
+      "characteristics": "0x40000040"
+    },
+    {
+      "name": ".reloc",
+      "virtual_size": "0x10E4",
+      "virtual_address": "0x2EC000",
+      "raw_size": "0x1200",
+      "raw_pointer": "0x2BD600",
+      "characteristics": "0x42000040"
+    },
+    {
+      "name": ".h2sf",
+      "virtual_size": "0x160",
+      "virtual_address": "0x2EE000",
+      "raw_size": "0x200",
+      "raw_pointer": "0x2BE800",
+      "characteristics": "0x60000020"
+    },
+    {
+      "name": ".s3hc",
+      "virtual_size": "0x7C0",
+      "virtual_address": "0x2EF000",
+      "raw_size": "0x800",
+      "raw_pointer": "0x2BEA00",
+      "characteristics": "0x60000020"
+    },
+    {
+      "name": ".s3hd",
+      "virtual_size": "0x1E4",
+      "virtual_address": "0x2F0000",
+      "raw_size": "0x200",
+      "raw_pointer": "0x2BF200",
+      "characteristics": "0xC0000040"
+    },
+    {
+      "name": ".s3ic",
+      "virtual_size": "0x16F0",
+      "virtual_address": "0x2F1000",
+      "raw_size": "0x1800",
+      "raw_pointer": "0x2BF400",
+      "characteristics": "0x60000020"
+    },
+    {
+      "name": ".s3qd",
+      "virtual_size": "0x1000",
+      "virtual_address": "0x2F3000",
+      "raw_size": "0x1000",
+      "raw_pointer": "0x2C0C00",
+      "characteristics": "0xE0000040"
+    }
+  ],
+  "loader_geometry": "PASS: exact 12-section Q-R1/Stage3V layout retained; final .s3qd grows within its existing 0x2F3000-0x2F3FFF page; SizeOfImage remains 0x2F4000",
+  "imports": "PASS: objdump import-table description byte-for-byte identical to Stage3V",
+  "reticle_branch": {
+    "rva": "0x30899",
+    "bytes": "3c040f84a2000000",
+    "status": "PASS C-H4-50 procedural fallback branch unchanged"
+  }
+}

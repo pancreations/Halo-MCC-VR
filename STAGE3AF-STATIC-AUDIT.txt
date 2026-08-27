@@ -1,0 +1,67 @@
+HaloMCCVR Stage 3AF static audit
+================================
+
+Input
+-----
+Exact Stage 3AE DLL SHA-256:
+6adac5256a975a5f829f6a45b3bdac3280cea0bd54b36126a34cc4bab56c1fed
+
+Output DLL SHA-256:
+d7648b272770d426dc458630fec331c239bca0e046a0438775d63a223c87d37d
+Output size: 2,890,752 bytes
+
+Historical path restored
+------------------------
+The upstream hook is based on the older V15.1 Halo 4 particle-origin candidate,
+not the Stage 3AE downstream location/designator guess.
+
+Runtime patch target: halo4.dll+0x100EBC
+Exact guarded stock bytes (16):
+48 89 5C 24 08 57 48 83 EC 60 48 8B DA 45 33 D2
+Resume: halo4.dll+0x100ECC
+Exact admitted caller return: halo4.dll+0x1018F4
+Additional old V15.1 admission proof:
+- saved r9b != 0
+- original stack word +0x2A == 1
+- RDX non-null
+- signed WORD [RDX+2] <= -2
+
+Stage 3AF action
+----------------
+A qualified, non-null returned BoneMatrix is passed to the existing Stage 3X
+finite-hide helper at core RVA 0x2F3846, which writes +10000.0f to translation
+X/Y/Z. The pointer, basis, scale, and caller ABI remain valid.
+
+Runtime proof
+-------------
+H4AF IN  : installer successfully installed the exact upstream splice.
+H4AF HIT : at least one exact historical branch qualified and was hidden.
+AFBAD    : exact guard/protection path failed closed.
+
+Post-link placement
+-------------------
+- .text old raw-only tail exposed: installer at RVA 0x17F680, 330 bytes
+- .s3hc old raw-only tail exposed: title chain RVA 0x2EF7C0 and exact trampoline
+  RVA 0x2EF7E0, total 63 bytes
+- .s3hd old raw-only tail exposed: 16 bytes runtime state at RVA 0x2F01E4
+- .s3ic old raw-only tail exposed: upstream hook at RVA 0x2F26F0, 189 bytes
+- title wrapper call RVA 0x2F3715 redirects to Stage 3AF chain
+- section count remains 12; SizeOfImage remains 0x2F4000
+- .s3qd runtime-data head is byte-identical to Stage 3AE
+
+Preservation checks
+-------------------
+- Existing .text body through old VirtualSize: byte-identical to Stage 3AE
+- Existing .s3hd body through old VirtualSize: byte-identical to Stage 3AE
+- Existing .s3ic body through old VirtualSize: byte-identical to Stage 3AE
+- .s3qd first 0x200 runtime-data region: byte-identical to Stage 3AE
+- Stage 3AD toggle assertions: PASS
+- Stage 3AE gate assertions: PASS
+- Stage 3Z FP particle assertions: PASS
+- Stage 3Q re-entry policy simulation: PASS
+- Stage 3U Reach shell lifecycle assertions: PASS
+- Three independent Stage 3AF builds: byte-for-byte identical
+
+No headset acceptance is claimed by this audit. The runtime markers are included
+specifically so the next headset result proves whether this hook installed and
+whether the old Promethean-origin branch actually executed.

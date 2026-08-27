@@ -1,0 +1,8 @@
+weapon,weapon_attachment_effect,particle_system,location_index,marker,coordinate_system,camera_mode,target_stage3ae
+storm_forerunner_smg,fx\\fr_smg_firing,firing_mid_plate_1p,1,mid_plate,local,only in first person,yes
+storm_forerunner_smg,fx\\fr_smg_firing,firing_top_plate_1p,2,top_plate,local,only in first person,yes
+storm_forerunner_smg,fx\\fr_smg_firing,firing_rear_slide_1p,3,fx_rear_slide,local,only in first person,yes
+storm_forerunner_smg,fx\\fr_smg_firing,firing_mid_plate_1p,1,mid_plate,local,only in third person,no
+storm_forerunner_smg,fx\\fr_smg_firing,firing_top_plate_1p,2,top_plate,local,only in third person,no
+storm_forerunner_smg,fx\\fr_smg_firing,firing_rear_slide_1p,3,fx_rear_slide,local,only in third person,no
+storm_forerunner_smg,fx\\fr_smg_firing,firing_vent_ring1_3p,4,fx_vent_large,local,only in third person,no

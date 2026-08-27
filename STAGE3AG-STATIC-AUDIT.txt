@@ -1,0 +1,42 @@
+HaloMCCVR Stage 3AG static audit
+================================
+Input Stage3AF SHA-256:
+  d7648b272770d426dc458630fec331c239bca0e046a0438775d63a223c87d37d
+Output Stage3AG SHA-256:
+  f81bb6106e54739fc61bbe5790fb9df9b1fd7d06941b4808a4f7467ad8bdac64
+Output size: 2,890,752 bytes
+
+Determinism:
+  Three independent builds compare byte-for-byte identical.
+
+Exact Stage3AF -> Stage3AG byte-diff spans:
+  file 0x0002FC95-0x0002FC96 (2 bytes): active title rel32 displacement
+  file 0x002C0BAC-0x002C0BD5 (42 bytes): new active title wrapper
+  file 0x002C1316-0x002C1317 (2 bytes): restore dormant nested rel32 displacement
+  Total changed bytes: 46
+
+Runtime/PE RVAs:
+  active title call          0x00030894 -> 0x002F27AC
+  Stage3AG active wrapper    0x002F27AC (42 bytes)
+  preserved Stage3AD wrapper 0x002F15BB
+  Stage3AF installer         0x0017F680
+  retained H4 module ref     0x002A7208
+  restored nested call       0x002F3715 -> 0x002F34E4
+  Stage3AF upstream site     halo4.dll+0x00100EBC
+
+Final active-edge disassembly:
+  180030894: call 1802F27AC
+
+Final Stage3AG wrapper:
+  calls 1802F15BB
+  preserves returned title
+  on Halo4 loads [1802A7208]
+  calls 18017F680
+  returns original title
+
+Stage3AF runtime proof strings retained:
+  H4AF IN
+  H4AF HIT
+  AFBAD
+
+No headset acceptance is claimed by this audit.

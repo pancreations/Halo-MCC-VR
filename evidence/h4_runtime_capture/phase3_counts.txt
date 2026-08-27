@@ -1,0 +1,37 @@
+Halo 4 VR muzzle-flash investigation — Phase 3A counts
+========================================================
+
+Scope: read-only x64dbg breakpoint observation on a fresh MCC/Halo 4 process.
+No source, mod, game-memory, register, matrix, tag, projectile, camera, aim,
+or weapon data was intentionally written.
+
+Counting method
+---------------
+x64dbg increments its native breakpoint hit counter before evaluating a break
+condition, so one breakpoint at one address cannot provide two filtered native
+hit counters. The classified values below are persistent x64dbg USER-variable
+counters updated only by the debugger callback for the two requested
+predicates. There was no per-hit text logging and no target-memory write.
+
+Predicate A (location 0):
+  ReadWord(R15+0x02) == 0 && ((R9 & 0xFF) != 0)
+
+Predicate C (location 2):
+  ReadWord(R15+0x02) == 2 && ((R9 & 0xFF) != 0)
+
+Site: halo4.dll + 0x1012E2
+
+Window                         Location 0     Location 2     Raw site hits
+-----------------------------  -------------  -------------  -------------
+Idle, 3 seconds                            0              0              8
+AR held far RIGHT, tap + 3 sec             8              0             46
+AR held far LEFT, tap + 3 sec              8              0             30
+
+Strict result
+-------------
+The location-2 predicate produced zero hits in both controlled AR firing
+windows. Per the Phase 3 stop rule, no location-2 matrix capture or consumer
+trace was armed.
+
+The raw-site column is a debugger aggregate sanity value only; it includes
+unclassified reaches and must not be interpreted as particle-specific traffic.

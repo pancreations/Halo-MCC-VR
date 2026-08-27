@@ -3637,6 +3637,92 @@ ownership. The late eye raster cover remains unchanged. This is an
 evidence-backed candidate awaiting headset confirmation, not yet a proven
 culling fix.
 
+## E-H2-63 (C-H2-75): native gameplay CHUD ABI and submitted-frustum layout - 2026-08-24
+
+The Stage 3B visibility test is rejected. Its direct call declared retail
+`halo2.dll+0x7FFD70` as `void __fastcall(int32_t)` and invoked `draw(0)`.
+Disassembly of the pinned retail entry starts
+`40 53 56 41 56 48 83 EC 50 4D 8B F0 8B F2 8B D9`: it preserves R8, EDX,
+and ECX as three independent arguments and later dereferences the R8
+rectangle. The old call therefore supplied neither the `-1` gameplay draw
+selector nor a valid rectangle. Its zero-fault telemetry did not prove a
+correct draw.
+
+The official H2EK supplies the semantic proof. `halo2_tag_test.exe+0x2EA955`
+is called with `(player/window selector, draw selector, rectangle*)`; the
+Classic gameplay call supplies its live player selector, `-1`, and the render
+rectangle. Retail's homolog is `halo2.dll+0x7FFD70`. The ordinary retail
+Classic render path already calls it at `+0x7E354B`. Anniversary's proven host
+UI path `+0x696A0 -> +0x69540 -> +0x960230(1) -> +0x7E1990 -> +0x831CB0`
+draws the generic interface but does not call the gameplay CHUD routine, so
+Anniversary must issue the correctly typed native gameplay draw explicitly.
+
+The supplied log records a symmetric cover of about `126.5 x 110.1` degrees
+rendered into each eye cache, followed by OpenXR submission of a native-FOV
+sub-rectangle (for example `(776,468)+1500x2409` of `2688x2880`). Halo 2 lays
+out native CHUD edge anchors against the full cover. Those pixels can therefore
+exist in the completed eye texture while remaining outside the rectangle the
+compositor receives. This exactly explains why the Stage 3B interface
+restore/draw/recapture transaction ran while health, shields, ammo, grenades,
+and radar remained invisible.
+
+C-H2-75 derives the tangent-space intersection visible to both OpenXR eyes,
+maps it into the current eye-cache pixel dimensions, applies a two-pixel guard,
+and passes that rectangle to the native renderer. Classic changes only the
+rectangle on its existing `drawSelector == -1` call while an owned eye is
+inside `render_view`. Anniversary draws `(0, -1, &rectangle)` after restoring
+each completed eye and before recapture. The optional paths validate the exact
+retail entry and fail open: stereo and the existing interface replay remain
+active if native CHUD proof or rectangle construction fails.
+
+The shared `hud_size`, `hud_aspect`, and `hud_vertical_offset` values scale,
+reshape, and vertically place the visible rectangle with finite bounds and
+clamping. H2EK's exported `ui\\hud\\default.hud_globals` exposes width/height
+scale and offset fields but no Halo 2-native curvature basis. Accordingly,
+`hud_curvature` is disabled with an explicit Halo 2 menu explanation rather
+than writing a guessed field or presenting a dead control as functional.
+Pure tests pin the frustum intersection, three live layout mappings, invalid
+FOV/slider refusal, H2EK/retail RVAs, and retail entry-proof length. This is a
+build-tested, headset-pending candidate, not accepted behavior.
+
+## E-H2-64 (C-H2-76): native widget anchor basis and shared ownership - 2026-08-25
+
+The Stage 3C headset result rejects the final C-H2-75 layout hypothesis. The
+corrected three-argument Classic hook executed 2,022 scoped native CHUD draws
+with zero exceptions, but changing the top-level rectangle produced no visible
+HUD or slider response. That rectangle is therefore a render/clip input, not
+the widget-layout basis. The same log exposed a second deterministic defect:
+after Classic installed its `+0x7FFD70` detour, Anniversary's later raw-entry
+check saw modified bytes and withheld its direct gameplay-HUD replay.
+
+Official H2EK `new_hud_definition` exports resolve the real topology. Widget
+records select anchors named `health and shield`, `weapon hud`, `motion sensor`,
+and `crosshair`, then apply authored fullscreen offsets and registration
+points. The resolver at `halo2_tag_test.exe+0x30C365` takes the anchor selector,
+an override selector, a writable `float[2]`, and a special-mode flag. Retail
+`halo2.dll+0x829490` has the same control flow and ABI; its exact entry begins
+`48 8B C4 55 53 48 8D 68 A1 48 81 EC F8 00 00 00 48 89 70 08 49 8B D8`.
+Retail callers at `+0x823BA7`, `+0x8293A0`, and the `+0x829480` tail wrapper
+consume the returned x/y basis before widget placement.
+
+C-H2-76 keeps the engine's original CHUD rectangle and remaps only that native
+anchor result from the symmetric-cover rectangle to the guarded binocular
+layout rectangle. Health/shield, weapon-HUD, and motion-sensor categories move
+with live `hud_size`, `hud_aspect`, and `hud_vertical_offset`; official
+crosshair category 4 returns untouched, so this work cannot move shot aim.
+Invalid rectangles, FOVs, outputs, or slider values leave the native point
+stock. Exact entry checks precede both hooks.
+
+One shared level-scoped owner installs `+0x7FFD70` and `+0x829490` before either
+renderer-specific stereo core polls. Classic merely names the active eye around
+its stock gameplay draw. Anniversary calls the shared typed replay after each
+restored eye. Graphics-mode switches never disable, recreate, or raw-validate
+the already-owned entry, eliminating Stage 3C's Classic-to-Anniversary race.
+Telemetry separately counts scoped draws, mapped anchors, stock crosshairs, and
+mapping failures. Pure tests pin the H2EK/retail RVAs and 23 entry bytes, edge
+mapping, crosshair exclusion, and all prior frustum/slider guards. This remains
+headset-pending.
+
 ## E-H2-61 (C-H2-70): semantic hand axes and Elite wrist-pivot collapse - 2026-08-24
 
 The corrected semantic mount is title-independent player behavior but is built
@@ -3720,3 +3806,58 @@ mount`; it does not copy Chief's wrist frame into Arbiter or add another guessed
 pi rotation. Two-hand mode instead keeps the authored support grip rigid inside
 the gun-root delta, while the gun's proven +X barrel axis maps to the crosshair
 ray. The identical helper is consumed by Classic and Anniversary packets.
+## E-H2-65 (C-H2-77): field-proven HUD shaders and native crosshair capture - 2026-08-25
+
+The Steam / SteamVR 2.17.7 / Oculus / 120 Hz C-H2-76 run is preserved in the
+user-provided log with SHA-256
+`CEF1A87C821ADEB8259416852421845AE2CEF12C4A82D641CFEC1F6F65811513`.
+It installs both Stage 3D hooks twice across graphics-mode lifetimes. Its last
+telemetry line records `scopedDraws=3412`, `stockDraws=2920`,
+`anchorsMapped=0`, `crosshairsStock=0`, and `mapFailures=0`. Thus the native
+CHUD draw at retail `+0x7FFD70` is a live execution boundary, while the alleged
+nested anchor-basis consumer at `+0x829490` is not on retail's executed HUD
+path. C-H2-77 retains that failed detour as dormant evidence and removes its
+creation/enabling from `InstallNativeHud`.
+
+The current Toggle HUD for Halo 2 v1.2 archive has SHA-256
+`A4E022A6F725B8C2187986E529BF6C823FD1CE634186F0C9144FB57974082F33`.
+It is a working D3D11/3DMigoto HUD mod and its `d3dx.ini` explicitly sets
+`shader_hash = 3dmigoto`, documented there as unseeded software FNV-1. Its
+replacement inventory identifies the native crosshair alone as pixel shader
+`0a9b60d8f40268f6`; the other fifteen HUD shaders are pinned in
+`halo2_hud_shader_logic.h`. The official 3DMigoto implementation at source
+commit `8f329bd94fecc9bbcb9211ffd42a95dd7fe6b43e` starts at zero, multiplies by
+`0x100000001b3`, then XORs each byte. The same function and an independent
+`"abc" -> 014984000117d8a0` fixture are in the pure core tests.
+
+An independent DXBC-container scan of the exact pinned Steam retail
+`halo2.dll` directly reproduces two of those gameplay hashes:
+`c7f2063e1d1d87df` (motion sensor) at file offset 11,971,088 and
+`f972418445d6e438` (pickup notification) at file offset 11,916,528. The other
+HUD/crosshair programs are not present as plain DXBC containers in
+`halo2.dll`, `MCC-Win64-Shipping.exe`, or `Data/shaders/shaders.temp.bin`; H2's
+tag/map assets load them later. C-H2-77 therefore performs the authoritative
+match at `CreatePixelShader`, against the exact unpacked bytecode the retail
+runtime actually supplies, rather than pretending the absent containers can be
+verified statically.
+
+The locally installed official H2EK is build
+`2023.06.20.176294.1-Release`; `halo2_tag_test.exe` hashes to the already-pinned
+`D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`.
+Its stock `tags/ui/hud/masterchief.new_hud_definition` references shield-meter
+and motion-sensor widgets. Its stock `battle_rifle.new_hud_definition`
+separately names `crosshair`, `crosshair_friendly`, `crosshair_headshot`, and
+`crosshair_weakspot`, backed by `ui/hud/bitmaps/new_hud/crosshairs/hud_reticles`
+and the native simple-flash shaders. This independently confirms that the
+mod's separate crosshair shader represents native authored reticle content.
+
+C-H2-77 hooks `ID3D11Device::CreatePixelShader` only to register exact matching
+objects. A Draw/DrawIndexed call changes only inside the proven CHUD TLS scope
+and only for a registered hash. Gameplay HUD shaders receive a temporary
+viewport/scissor affine from the source raster to the slider-derived visible
+layout and immediately restore the original state. The native-crosshair shader
+instead uses the existing authored-reticle capture and controller-aim quad;
+ownership does not switch from the procedural fallback until a capture finishes
+for the current `halo2.dll` generation. Unknown/missing hashes and every
+resource/capture failure remain stock for that feature and never disarm stereo,
+input, window fitting, or OpenXR.

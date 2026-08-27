@@ -1,0 +1,35 @@
+Stage 3AD Halo 4 non-particle dispatcher evidence
+================================================
+Reference halo4.dll SHA-256: 17fa1ee40ce5d96cb2d4038fc6026efb774f133a72989e6fd8e73d8a071bf896
+PE timestamp: 0x68A0E7BF
+SizeOfImage: 0x04A3F000
+
+Exact stock bytes at Stage3AD runtime sites:
+  +0x3A0822: 84 0D B8 2D D2 00  (gldf pre-dispatch test; existing JNE -> stock skip)
+  +0x3A0AA1: 84 C9              (LTVL r13b!=0 branch; existing JE -> stock skip)
+  +0x3A0B1A: 84 C9              (lens r13b!=0 branch; existing JE -> stock skip)
+
+Dispatch type identities in the same retail function:
+  +0x3A09FD cmp eax, 0x676C6466  ; gldf
+  +0x3A0A08 cmp eax, 0x6C656E73  ; lens
+  +0x3A0A1B cmp eax, 0x6C74766C  ; ltvl
+
+First-person context proof:
+  LTVL: +0x3A0A26 tests r13b; r13b!=0 takes +0x3A0A77 and reaches +0x3A0AA1.
+        r13b==0 takes the alternate transform path and jumps to +0x3A0AA5, bypassing +0x3A0AA1.
+  Lens: +0x3A0B15 tests r13b; r13b!=0 reaches +0x3A0B1A, while r13b==0 jumps around it.
+  gldf: the same dispatcher carries r13b as the render-context byte (also forwarded as r9b at +0x3A084B).
+
+Stage3AD runtime bytes:
+  +0x3A0822: 45 84 ED 90 90 90  ; test r13b,r13b; existing JNE skips FP gldf
+  +0x3A0AA1: 31 C9              ; existing JE skips FP LTVL
+  +0x3A0B1A: 31 C9              ; existing JE skips FP lens
+
+Supplied Halo 4 effect-table non-particle rows: 24 ({'gldf': 7, 'lens': 12, 'ltvl': 5})
+Examples covered by those component groups:
+  storm_spread_gun: gldf muzzle_flash; ltvl firing_forward_flash_1p
+  storm_forerunner_rifle: first-person lens flare/muzzle entries; ltvl muzzle glow
+  storm_stasis_pistol: gldf first-person muzzle entries
+  storm_forerunner_incineration_launcher: gldf muzzle_flash_1p
+
+No halo4.dll file is shipped or modified on disk. Stage3AD applies these bytes only to the retained loaded H4 image and restores stock bytes before Stage3AC teardown/module release.

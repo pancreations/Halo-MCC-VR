@@ -16,6 +16,7 @@
 #include "game.h"
 #include "halo2_observer_6dof.h"
 #include "halo2_saber_camera.h"
+#include "halo2_stereo_core.h"
 #include "vr.h"
 
 #ifndef HALOMCCVR_HALO2_ANNIVERSARY_STEREO
@@ -70,6 +71,8 @@ namespace
     // rebuild detour unifies with the world projection (0 = none).
     std::atomic<uintptr_t> g_originalRebuild{0};
     std::atomic<uintptr_t> g_originalHostUi{0};
+    std::atomic<uint64_t> g_nativeChudDraws{0};
+    std::atomic<uint64_t> g_nativeChudFailures{0};
     std::atomic<uintptr_t> g_fpPatchRecord{0};
     std::atomic<uint64_t> g_fpPatches{0};
     std::atomic<uint64_t> g_fpReadbacks{0};
@@ -1096,6 +1099,30 @@ namespace
     // again, recapture eye 0. Both eyes then carry the HUD, the way the
     // classic render_view draws it per eye. A frame without a complete pair
     // of its own runs the callback once, untouched.
+    bool DrawNativeGameplayHud(
+        uint32_t generation, uint64_t serial) noexcept
+    {
+        Halo2CameraRectangle source{};
+        float halfX[2]{}, halfY[2]{};
+        if (!VR_Halo2GetHudSourceRectangle(generation, serial, source) ||
+            !VR_Halo2GetSynchronousHalfFovs(
+                generation, serial, halfX, halfY))
+        {
+            g_nativeChudFailures.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        const Halo2SymmetricHalfFovs cover{
+            std::max(halfX[0], halfX[1]),
+            std::max(halfY[0], halfY[1])};
+        const bool ok = Halo2NativeHud_DrawPlayer(
+            generation, 0, source, cover);
+        if (ok)
+            g_nativeChudDraws.fetch_add(1, std::memory_order_relaxed);
+        else
+            g_nativeChudFailures.fetch_add(1, std::memory_order_relaxed);
+        return ok;
+    }
+
     thread_local bool g_insideHudReplay = false;
     __declspec(noinline) void __fastcall HostUiDetour(void* param)
     {
@@ -1145,7 +1172,10 @@ namespace
             if (!ok)
                 reason = "eye 1 restore refused";
             if (ok)
-                original(param);                                // HUD over eye 1
+            {
+                original(param);                         // interface over eye 1
+                (void)DrawNativeGameplayHud(generation, serial);
+            }
             if (ok)
                 ok = VR_Halo2RecaptureEyeFromFinalTarget(generation, serial, 1);
             if (!ok)
@@ -1157,7 +1187,8 @@ namespace
             }
             if (ok)
             {
-                original(param);                                // HUD over eye 0
+                original(param);                         // interface over eye 0
+                (void)DrawNativeGameplayHud(generation, serial);
                 ok = VR_Halo2RecaptureEyeFromFinalTarget(generation, serial, 0);
                 if (!ok)
                     reason = "eye 0 recapture refused";
@@ -1345,7 +1376,6 @@ namespace
             g_rejectedGeneration = generation;
             return false;
         }
-
         HMODULE module = nullptr;
         if (!GetModuleHandleExW(
                 GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -1406,6 +1436,8 @@ namespace
             reinterpret_cast<uintptr_t>(rebuildTrampoline), std::memory_order_release);
         g_originalHostUi.store(
             reinterpret_cast<uintptr_t>(hostUiTrampoline), std::memory_order_release);
+        g_nativeChudDraws.store(0, std::memory_order_relaxed);
+        g_nativeChudFailures.store(0, std::memory_order_relaxed);
         g_fpPatchRecord.store(0, std::memory_order_release);
         g_rebuildMatrices.store(rebuild, std::memory_order_release);
         g_cameraCommit.store(commit, std::memory_order_release);
@@ -1430,6 +1462,17 @@ namespace
             return false;
         }
         g_coreState = CoreState::Installed;
+        if (Halo2NativeHud_Armed())
+        {
+            LOG("Halo 2 native gameplay HUD replay ON in Anniversary: each "
+                "restored eye uses the shared H2EK-mapped anchor layout");
+        }
+        else
+        {
+            LOG("Halo 2 native gameplay HUD replay WITHHELD in Anniversary: "
+                "shared anchor ownership is not armed; interface replay and "
+                "stereo remain active");
+        }
         LOG("Halo 2 Anniversary stereo installed: scene render +0x%X run twice "
             "per frame, per-eye camera written into the view record at "
             "collection+0x150+view*0x758+0x20 and rebuilt by the engine's own "
@@ -1621,12 +1664,17 @@ namespace
                 "-> 0x7E1990 interface draw) fired %llu times; replayed per eye "
                 "(eye 1 restored+drawn+recaptured, eye 0 restored+drawn+recaptured) on "
                 "%llu frames, run once untouched on %llu (no complete pair), "
-                "%llu failures; last reason: %s",
+                "%llu interface failures; native gameplay HUD draws=%llu "
+                "failures=%llu; last reason: %s",
                 static_cast<unsigned>(kHalo2SaberHostUiCallbackRva),
                 static_cast<unsigned long long>(g_hudCallbacks.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(replays),
                 static_cast<unsigned long long>(g_hudStockPasses.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(g_hudFailures.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_nativeChudDraws.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_nativeChudFailures.load(std::memory_order_relaxed)),
                 g_hudLastReason);
         }
     }

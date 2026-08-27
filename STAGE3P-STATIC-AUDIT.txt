@@ -1,0 +1,46 @@
+Stage 3P static audit
+Base SHA-256: 90798fa17c73e9b3d3fa451480e9c44ab5cda5cb41b3dc912cf4b3ae62a5036c
+Candidate SHA-256: b5eeec1276e91197bade35b926d9f176437e0096a40b29a137338e4f2e22abe2
+PASS: exact Stage 3O accepted-test binary used as input
+PASS: Stage 3P candidate SHA-256 matches reproducible build
+PASS: candidate file size unchanged from Stage 3O (2,885,120 bytes)
+PASS: entire .h2sf injected H2 section is byte-identical to Stage 3O
+PASS: H2 Classic cleanup call pin unchanged at RVA 0x90AC4
+PASS: H2 Classic release pin unchanged at RVA 0x90CE2
+PASS: H2 stock translation hook unchanged at RVA 0x92F06
+PASS: H2 Classic carrier/yaw-pitch hook unchanged at RVA 0x95B16
+PASS: H3/ODST stock translation hook unchanged at RVA 0x40A52
+PASS: Reach stock translation hook unchanged at RVA 0x6B321
+PASS: H4 stock translation hook unchanged at RVA 0x51289
+PASS: H4 rollback span 1 unchanged at RVA 0x48086
+PASS: H4 rollback span 2 unchanged at RVA 0x48110
+PASS: H4 rollback span 3 unchanged at RVA 0x5360B
+PASS: H4 rollback span 4 unchanged at RVA 0x53D41
+PASS: H4 rollback span 5 unchanged at RVA 0x53E37
+PASS: Stage3O H3 stability gate aim retry unchanged at RVA 0x7CDA3
+PASS: Stage3O H3 stability gate camera retry unchanged at RVA 0x7CDAB
+PASS: Stage3O H3 stability gate base-camera retry unchanged at RVA 0x7CDB3
+PASS: Stage3O H3 stability gate aim final unchanged at RVA 0x7D167
+PASS: Stage3O H3 stability gate camera final unchanged at RVA 0x7D17A
+PASS: Stage3O H3 stability gate base-camera final unchanged at RVA 0x7D19E
+PASS: Stage3O Halo2/Reach HUD-curvature disable wrapper unchanged at RVA 0x35FD9
+PASS: Stage3O muzzle menu note xref 1 unchanged at RVA 0x3588A
+PASS: Stage3O muzzle menu note xref 2 unchanged at RVA 0x35899
+PASS: Stage3O generic curvature note xref unchanged at RVA 0x36160
+PASS: Stage3O H2 curvature note xref unchanged at RVA 0x36169
+PASS: Stage3O Weapon category description pointer unchanged at RVA 0x1BF1A8
+PASS: Stage3O HUD category description pointer unchanged at RVA 0x1BF1E8
+PASS: Reach first scan redirects to high-address-first/fallback start helper
+PASS: Reach storage filter redirects to private+mapped helper
+PASS: Reach scan continuation redirects to six-record early-stop helper
+PASS: Reach fast-scan generation sentinel initialized to UINT32_MAX in writable .s3hd
+PASS: shared authoritative-pause query title-scopes Halo 3 native proof
+PASS: Halo 3 auto-pause native flag read is gated by computed Halo3 ownership
+PASS: Halo 3 restart-level pause recovery is skipped for non-H3 titles
+PASS: welcome xref points to corrected @MeWhenINameMyself attribution
+PASS: .s3hd remains writable data; only virtual size grows 4 bytes inside existing raw padding
+PASS: .s3ic Stage3P helper fits inside existing executable raw allocation; no raw section growth
+PASS: PE checksum remains intentionally zero, matching prior post-link candidates
+PASS: three independent Stage3P builds are byte-identical
+
+RESULT: PASS

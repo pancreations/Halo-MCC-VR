@@ -1,0 +1,52 @@
+HaloMCCVR Stage 3AH static audit
+=================================
+
+Purpose
+-------
+Diagnostic contrast for the surviving Halo 4 Promethean hard-light weapon effect.
+Stage 3AG runtime proof showed H4AF IN and H4AF HIT while the visible effect remained,
+so the upstream-origin hypothesis is falsified. Stage 3AH instead extends the already
+headset-effective Stage 3Z particle deny from camera mode 1 to camera mode 2.
+
+Input Stage3AG SHA-256:
+  f81bb6106e54739fc61bbe5790fb9df9b1fd7d06941b4808a4f7467ad8bdac64
+Output Stage3AH SHA-256:
+  7ceb1b741f94286c9766e777ec253208301fb97c8e3976b61d4fc6b141a8a402
+Output size: 2,890,752 bytes
+
+Determinism
+-----------
+Three independent builds compare byte-for-byte identical.
+
+Patch scope
+-----------
+Only HaloMCCVR's existing Stage3Z helper at RVA 0x002F3F32 is replaced in-place.
+PE section/import geometry is unchanged. Active title/teardown edges are unchanged.
+The existing Stage3Z install and restore callers therefore automatically install and
+restore BOTH particle allow sites.
+
+Pinned retail Halo 4 switch (PE timestamp 0x68A0E7BF, SizeOfImage 0x04A3F000):
+  halo4.dll+0x27BD32: 8A DA       mov bl,dl     (camera mode 2 allow)
+  halo4.dll+0x27BD34: EB 08       jump to common path
+  halo4.dll+0x27BD36: 41 8A DA    mov bl,r10b   (camera mode 1 allow)
+
+Stage3AH installed bytes:
+  +0x27BD32: 30 DB                xor bl,bl
+  +0x27BD34: EB 08                unchanged
+  +0x27BD36: 30 DB 90             xor bl,bl; nop
+
+Result: camera modes 1 and 2 take Halo 4's existing result-5 particle skip path;
+mode 0 remains stock. This is deliberately broader than the intended final fix and is
+NOT headset-accepted. It is designed to answer one question cleanly: are the surviving
+Suppressor/Boltshot hard-light pieces coming through the duplicated camera-mode-2 particle rows?
+
+Source evidence
+---------------
+evidence/STAGE3AH-PROMETHEAN-CAMERA-MODE-EVIDENCE.csv is extracted from the user's
+Halo4_Promethean_Weapon_Effects pack. Both storm_forerunner_smg and storm_stasis_pistol
+contain named first-person hard-light/muzzle particle assets duplicated as 'only in third person'.
+
+Changed bytes from Stage3AG: 142
+Changed spans: 4
+
+No headset acceptance is claimed by this audit.

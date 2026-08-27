@@ -1,0 +1,33 @@
+HaloMCCVR Stage 3O - Static Audit
+=================================
+
+PASS: exact Stage 3N protected input SHA-256 verified.
+PASS: three independently generated Stage 3O DLLs are byte-identical.
+PASS: Stage 3O DLL SHA-256 90798fa17c73e9b3d3fa451480e9c44ab5cda5cb41b3dc912cf4b3ae62a5036c.
+
+INTENTIONAL EXISTING-IMAGE CHANGES ONLY:
+  - Reach SAFEFRAME memory-type filter: Reach scans MEM_MAPPED tag storage only; H3/ODST retain MEM_PRIVATE.
+  - Six Reach teardown shared-camera clears are gated by active title (clear only Reach/None/Unknown).
+  - HUD curvature availability query now disables the slider for Halo 2 and Reach.
+  - Welcome/category/muzzle/HUD explanatory menu strings are repointed to Stage 3O text.
+  - Two existing category-description pointers are repointed; both existing DIR64 relocation sites remain present.
+  - .s3ic grows only by the appended Stage 3O helper/text payload.
+
+PROTECTED / UNCHANGED:
+  - Full .h2sf raw section unchanged (SHA-256 156e93d19b7e5468bd30a2e3bb0eb86001f572768115527b550eb031f187b385).
+  - Full .s3hc raw section unchanged.
+  - Full .s3hd raw section unchanged (Stage 3N yaw/pitch calibration data preserved).
+  - First 0xC00 raw bytes of .s3ic unchanged (all Stage 3M/3N post-link helpers preserved).
+  - H2 cleanup/release pins unchanged.
+  - Stage 3N H2 Classic visible-carrier hook unchanged.
+  - H2 native aim direct carrier call unchanged.
+  - Stage 3M H2/H3-ODST/Reach/H4 gun-right/up calibration hooks unchanged.
+  - All five Stage 3L Halo 4 procedural-reticle rollback spans unchanged.
+
+H2 CLASSIC MUZZLE SAFETY HOLD:
+  - No H2 firing helper, projectile origin, shot direction, effect resolver, or marker transaction is patched in Stage 3O.
+  - The Classic muzzle flash therefore remains Stage 3N behavior in this candidate.
+  - This is deliberate: public/H2EK evidence supports a marker/attachment fix, but the exact retail visual resolver is not yet pinned.
+
+PASS: no unexpected byte differences in the original Stage 3N image outside the listed patch/header sites.
+PASS: output is statically ready for headset testing; it is NOT promoted to protected base until user acceptance.

@@ -1,0 +1,2 @@
+Accepted Stage 3X binary input required by the Stage 3Z deterministic post-link builder:
+486cc6e4f943c6fc58e227328777c54926799b1053f7e402767e3e38fca78ff6  HaloMCCVR.dll

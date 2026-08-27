@@ -1,0 +1,51 @@
+--- /mnt/data/stage3ak_source_work/HaloMCCVR-518aebe-C50-Stage3AK-H2-Classic-FP-Particle-Gate-Source/src/dll/game.cpp	2026-08-27 03:58:12.000000000 +0000
++++ /mnt/data/stage3al_source_work/HaloMCCVR-518aebe-C50-Stage3AL-ODST-Teardown-Pin-Source/src/dll/game.cpp	2026-08-27 22:40:58.238149609 +0000
+@@ -15905,9 +15905,15 @@
+ 
+     void ReleaseOdstModuleReferenceAndClearPointers()
+     {
+-        // moduleReference is an exact-base identity only. MCC owns the loader
+-        // reference; releasing one here used to race its consecutive load.
++        // Stage 3AL owns exactly one post-preflight loader reference. Keep it
++        // until every hook is quiescent/removed and both direct native patches
++        // have been restored; only then clear module-backed pointers and release
++        // the pin exactly once. A title exit can no longer stale restoration
++        // pointers while verified cleanup is still in progress.
++        HMODULE retiredModuleReference = g_odstCamera.moduleReference;
+         ClearOdstCameraPointers();
++        if (retiredModuleReference)
++            FreeLibrary(retiredModuleReference);
+     }
+ 
+     bool DiscardCreatedOdstHooks()
+@@ -15979,9 +15985,29 @@
+             return OdstInstallResult::Failed;
+         }
+ 
++        // Stage 3AL: the first GetModuleHandleExW above remains an
++        // identity-only probe so failed preflight does not pin a title image.
++        // Only now - after exact ODST preflight and prior-ownership checks have
++        // passed - acquire one real loader reference for the lifetime of our
++        // MinHook targets and native byte patches. Reach already uses this same
++        // post-proof ownership model. Stage 3AK kept only the identity handle,
++        // allowing MCC to unmap halo3odst.dll before title-exit restoration and
++        // causing the repeated stale weapon-IK cleanup storm seen in headset.
++        HMODULE ownedModuleReference = nullptr;
++        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
++                                reinterpret_cast<LPCWSTR>(base),
++                                &ownedModuleReference) ||
++            reinterpret_cast<uintptr_t>(ownedModuleReference) != base)
++        {
++            if (ownedModuleReference)
++                FreeLibrary(ownedModuleReference);
++            LOG("ODST camera preflight: exact title mapping is no longer current");
++            return OdstInstallResult::Failed;
++        }
++
+         g_odstCamera.moduleBase = base;
+         g_odstCamera.moduleSize = size;
+-        g_odstCamera.moduleReference = moduleReference;
++        g_odstCamera.moduleReference = ownedModuleReference;
+         g_odstCamera.prepareView =
+             reinterpret_cast<PrepareViewFn>(resolved.prepareView);
+         g_odstCamera.buildViewport =

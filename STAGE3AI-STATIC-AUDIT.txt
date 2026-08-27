@@ -1,0 +1,65 @@
+HaloMCCVR Stage 3AI static audit
+================================
+
+Input Stage 3AH SHA-256:
+  7ceb1b741f94286c9766e777ec253208301fb97c8e3976b61d4fc6b141a8a402
+Output Stage 3AI SHA-256:
+  36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8
+Output size: 2,898,944 bytes
+
+Public C50 forensic source
+--------------------------
+Public C50 DLL SHA-256:
+  4aa0467453591430762d4f3201b5eb1f32affee7308b15bbf6ab069c819b027a
+Original V6 donor SHA-256 recorded by C50 provenance:
+  419f2ca425a41f3fe42a2f27cfd0ce55123f71c5ef34c1c45604018285efea82
+
+Recovered C50 runtime sites:
+  halo4.dll+0x1059A2 -> reserved cave +0xB79C10
+  halo4.dll+0x100EE8 -> reserved cave +0xB79C80
+  halo4.dll+0x1012D5 -> local positive-designator transient wrapper
+
+The 0x40-byte negative-designator cave template and the 0x80-byte helper cave
+template embedded by Stage 3AI compare byte-for-byte equal to public C50 before
+the runtime bridge pointer is relocated.
+
+Stage 3AI action
+----------------
+The recovered C50 routes call one H4-only bridge. It retains C50 effect-record
+validation and moves the resolved matrix origin at +0x28/+0x2C/+0x30 to finite
++10000.0f. No null pointer, zero-scale matrix, global particle kill, or draw-hook
+suppression is used.
+
+The accepted camera-mode-1 particle deny is independently reproduced at
+halo4.dll+0x27BD36 (41 8A DA <-> 30 DB 90). Stage 3AH's broader mode-2 function
+is not called by Stage 3AI.
+
+Binary preservation
+-------------------
+Before the appended Stage 3AI pages, only 10 existing file bytes differ from the
+exact Stage 3AH input. Those bytes are limited to:
+  - PE aggregate/last-section size fields required to extend the existing final
+    .s3qd section by two pages;
+  - the active-title rel32 call at RVA +0x30894 -> Stage3AI H4-only wrapper;
+  - the Halo 4 teardown restore rel32 call at RVA +0x2F3B3A -> Stage3AI restore.
+
+The existing shared call at RVA +0x5274E remains byte-for-byte Stage 3AH; no
+generic held-model/capture call site is modified. Halo 2 / Reach HUD code and all
+other game-specific code remains at identical bytes/RVAs.
+
+Direct-call audit of the final binary:
+  active main title edge -> Stage3AI title wrapper: PASS
+  Stage3AI title -> own mode-1 deny: PASS
+  Stage3AI title -> current H4 HUD installer: PASS
+  Stage3AI title -> current H4 curvature installer: PASS
+  Stage3AI title -> C50 full-coverage installer: PASS
+  H4 teardown -> Stage3AI exact restore: PASS
+  old Stage3AG title wrapper direct incoming calls: 0
+  old Stage3AD cleanup direct incoming calls: 0
+
+Reproducibility
+---------------
+Three independent Stage 3AI post-link builds were byte-for-byte identical:
+  36232bc077d1ca4f5080bf514f93fb5b70f746ec3baaba5e75c46a66e3a2d0a8
+
+No headset acceptance is claimed by this static audit.

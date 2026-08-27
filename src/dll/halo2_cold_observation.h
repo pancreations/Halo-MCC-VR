@@ -20,6 +20,12 @@ void Halo2ColdObservation_Rearm() noexcept;
 bool Halo2ColdObservation_Pending(uint32_t generation) noexcept;
 bool Halo2ColdObservation_Passed(uint32_t generation) noexcept;
 
+// C-H2-73. Read-only reuse of the same H2EK-proven game_time_globals sample
+// used by the cold-observation gate. Returns false rather than manufacturing a
+// value if the slot/object is absent, moving, unreadable, or incoherent.
+bool Halo2ColdObservation_ReadGameTime(
+    bool& initialized, uint32_t& tick) noexcept;
+
 // E-H2-3. Which halo2.dll renderer owns the frame this module generation.
 // Halo 2 ships two: the classic Blam tree and the remastered Anniversary
 // (Saber GroundHog) renderer. The classic tree is skipped whole while the

@@ -1,0 +1,208 @@
+--- a/src/common/halo2_render_logic.h
++++ b/src/common/halo2_render_logic.h
+@@ -65,6 +65,88 @@
+     return activeHalo2 && pausePresentation;
+ }
+ 
++// C-H2-73: Halo 2 still lacks a proven native pause boolean, but its official
++// H2EK game_time_globals clock is already identity-proven and read coherently
++// by the level-load gate. The Y+B fallback therefore treats a *frozen* native
++// game-time clock as evidence that the displayed head-locked screen really is
++// a paused simulation, then restores stereo only after that same native clock
++// advances through two distinct ticks again. This deliberately does NOT key
++// from A/B/menu buttons: those inputs can navigate Settings and other pause
++// submenus without resuming gameplay.
++inline constexpr uint8_t kHalo2PauseFreezeConfirmSamples = 4;
++inline constexpr uint8_t kHalo2PauseResumeTickChanges = 2;
++
++struct Halo2PauseResumeClock
++{
++    uint32_t lastTick = 0;
++    bool haveTick = false;
++    bool frozenObserved = false;
++    uint8_t stableSamples = 0;
++    uint8_t advancingTicks = 0;
++
++    void Reset() noexcept
++    {
++        lastTick = 0;
++        stableSamples = 0;
++        advancingTicks = 0;
++        haveTick = false;
++        frozenObserved = false;
++    }
++
++    bool Update(
++        bool activeHalo2, bool pausePresentation, bool sampleValid,
++        bool initialized, uint32_t tick) noexcept
++    {
++        if (!activeHalo2 || !pausePresentation || !sampleValid || !initialized)
++        {
++            Reset();
++            return false;
++        }
++
++        if (!haveTick)
++        {
++            lastTick = tick;
++            stableSamples = 0;
++            advancingTicks = 0;
++            haveTick = true;
++            frozenObserved = false;
++            return false;
++        }
++
++        if (tick == lastTick)
++        {
++            if (!frozenObserved)
++            {
++                if (stableSamples < UINT8_MAX)
++                    ++stableSamples;
++                if (stableSamples >= kHalo2PauseFreezeConfirmSamples)
++                    frozenObserved = true;
++            }
++            // Once a genuine freeze has been witnessed, repeated samples at
++            // the same newly-advanced tick do not erase progress. At H2's
++            // 30-Hz simulation and a different headset cadence, duplicates
++            // between two distinct resumed ticks are normal.
++            return false;
++        }
++
++        lastTick = tick;
++        stableSamples = 0;
++        if (!frozenObserved)
++        {
++            advancingTicks = 0;
++            return false;
++        }
++
++        if (advancingTicks < UINT8_MAX)
++            ++advancingTicks;
++        if (advancingTicks < kHalo2PauseResumeTickChanges)
++            return false;
++
++        Reset();
++        return true;
++    }
++};
++
+ inline constexpr float kHalo2MinimumAppCadenceHz = 72.0f;
+ inline constexpr float kHalo2MaximumAppCadenceHz = 144.0f;
+ 
+--- a/src/dll/halo2_cold_observation.h
++++ b/src/dll/halo2_cold_observation.h
+@@ -20,6 +20,12 @@
+ bool Halo2ColdObservation_Pending(uint32_t generation) noexcept;
+ bool Halo2ColdObservation_Passed(uint32_t generation) noexcept;
+ 
++// C-H2-73. Read-only reuse of the same H2EK-proven game_time_globals sample
++// used by the cold-observation gate. Returns false rather than manufacturing a
++// value if the slot/object is absent, moving, unreadable, or incoherent.
++bool Halo2ColdObservation_ReadGameTime(
++    bool& initialized, uint32_t& tick) noexcept;
++
+ // E-H2-3. Which halo2.dll renderer owns the frame this module generation.
+ // Halo 2 ships two: the classic Blam tree and the remastered Anniversary
+ // (Saber GroundHog) renderer. The classic tree is skipped whole while the
+--- a/src/dll/halo2_cold_observation.cpp
++++ b/src/dll/halo2_cold_observation.cpp
+@@ -845,6 +845,13 @@
+     }
+ }
+ 
++bool Halo2ColdObservation_ReadGameTime(
++    bool& initialized, uint32_t& tick) noexcept
++{
++    uintptr_t object = 0;
++    return ReadCoherentGameTimeSample(object, initialized, tick);
++}
++
+ bool Halo2ColdObservation_Poll(
+     uintptr_t moduleBase, size_t moduleSize, uint32_t generation) noexcept
+ {
+--- a/src/dll/game.cpp
++++ b/src/dll/game.cpp
+@@ -37407,6 +37407,7 @@
+ 
+ #if HALOMCCVR_HALO2_STEREO6DOF
+     static bool wasHalo2Stereo6DofContext = false;
++    static Halo2PauseResumeClock halo2PauseResumeClock;
+     if (halo2ClaimContext)
+     {
+         // This atomic gate starts false in the H2 core. Publish false before
+@@ -37423,6 +37424,28 @@
+             Halo2Stereo_Armed() || Halo2AnniversaryStereo_Armed();
+         const bool pauseTarget = VR_IsPausePresentationTarget();
+         const bool pausePresentation = VR_IsPausePresentation();
++
++        // C-H2-73: Y+B is only an edge fallback for H2, so selecting Resume
++        // inside the native pause menu produces no second Start/Y+B edge for
++        // the VR presentation. Do not guess from A/B. Prove that the H2EK
++        // game-time clock first froze while the head-locked pause screen was
++        // actually displayed, then require two distinct native ticks after it
++        // starts advancing again before requesting stereo.
++        bool halo2GameTimeInitialized = false;
++        uint32_t halo2GameTimeTick = 0;
++        const bool halo2GameTimeValid = pausePresentation &&
++            Halo2ColdObservation_ReadGameTime(
++                halo2GameTimeInitialized, halo2GameTimeTick);
++        if (halo2PauseResumeClock.Update(
++                true, pausePresentation, halo2GameTimeValid,
++                halo2GameTimeInitialized, halo2GameTimeTick))
++        {
++            Halo2Stereo_SetPresentationReady(false);
++            VR_RequestPausePresentation(false);
++            LOG("Halo 2 pause presentation: native game-time clock resumed; "
++                "restoring stereo 3D");
++        }
++
+         const bool mustClearForeignPause = Halo2MustClearForeignPause(
+             true, enteringHalo2ClaimContext, pauseTarget, pausePresentation);
+         Halo2PreparedCadenceSnapshot halo2Cadence{};
+@@ -37555,6 +37578,7 @@
+     {
+         Halo2Stereo_SetPresentationReady(false);
+         wasHalo2Stereo6DofContext = false;
++        halo2PauseResumeClock.Reset();
+         halo2PauseClearRequested = false;
+         halo2CadenceStateKnown = false;
+         g_enabled.store(false, std::memory_order_release);
+--- a/tests/core_tests.cpp
++++ b/tests/core_tests.cpp
+@@ -5294,6 +5294,36 @@
+                   !Halo2PausePresentationOwnsStockScreen(false, true),
+             "C-H2-72 gives the shared stock-screen path only to an active "
+             "H2 displayed pause presentation");
++        Halo2PauseResumeClock pauseClock;
++        Check(!pauseClock.Update(true, true, true, true, 100) &&
++                  !pauseClock.Update(true, true, true, true, 100) &&
++                  !pauseClock.Update(true, true, true, true, 100) &&
++                  !pauseClock.Update(true, true, true, true, 100) &&
++                  !pauseClock.Update(true, true, true, true, 100),
++            "C-H2-73 requires a proven frozen H2 clock before resume");
++        Check(!pauseClock.Update(true, true, true, true, 101),
++            "C-H2-73 requires two distinct resumed H2 ticks");
++        Check(pauseClock.Update(true, true, true, true, 102),
++            "C-H2-73 restores stereo after two native H2 ticks resume");
++
++        Halo2PauseResumeClock menuClock;
++        menuClock.Update(true, true, true, true, 200);
++        menuClock.Update(true, true, true, true, 200);
++        menuClock.Update(true, true, true, true, 200);
++        Check(!menuClock.Update(true, true, true, true, 201) &&
++                  !menuClock.Update(true, true, true, true, 202),
++            "C-H2-73 cannot infer Resume from a moving clock that never froze");
++
++        Halo2PauseResumeClock invalidClock;
++        invalidClock.Update(true, true, true, true, 300);
++        invalidClock.Update(true, true, true, true, 300);
++        invalidClock.Update(true, true, true, true, 300);
++        invalidClock.Update(true, true, true, true, 300);
++        invalidClock.Update(true, true, true, true, 300);
++        Check(!invalidClock.Update(true, true, false, true, 300) &&
++                  !invalidClock.Update(true, true, true, true, 301) &&
++                  !invalidClock.Update(true, true, true, true, 302),
++            "C-H2-73 invalid H2 game-time samples reset pause evidence");
+         Check(!Halo2RefreshCadenceSupported(0.0f) &&
+                   !Halo2RefreshCadenceSupported(45.0f) &&
+                   !Halo2RefreshCadenceSupported(60.0f) &&

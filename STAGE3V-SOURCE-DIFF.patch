@@ -1,0 +1,631 @@
+diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/H2-H4-MUZZLE-EVIDENCE.md /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/H2-H4-MUZZLE-EVIDENCE.md
+--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/H2-H4-MUZZLE-EVIDENCE.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/H2-H4-MUZZLE-EVIDENCE.md	2026-08-27 04:44:15.165348528 +0000
+@@ -0,0 +1,29 @@
++# H2 / H4 muzzle-effect evidence used for Stage 3V
++
++## User-supplied official tag bundle
++
++Archive SHA-256:
++`119d4c1cb875d6f458098f26172ce3f2d6f00d1d0cddad830a9fae6e29228544`
++
++The archive was generated from the installed official H2EK and H4EK tag roots. Stage 3V preserves the compact index/tables under `evidence/muzzle_bundle_tables/`.
++
++Key conclusions used by this pass:
++
++- Halo 2 Classic muzzle effects are multi-marker and sometimes multi-instance. The Battle Rifle long and center components do not share one authored transform.
++- Halo 4 Promethean effects span weapon-specific marker families. Suppressor notably uses `primary_trigger_muzzle`; other families include vents, plates, rails, barrels and source ports.
++- Those tag facts are sufficient to reject a one-marker generic relocation algorithm, but not sufficient by themselves to identify an exact retail runtime consumer/ABI.
++
++## Historical H4 runtime captures
++
++Preserved under `evidence/h4_runtime_capture/`:
++
++- `phase2_counts.txt`: firing-specific `halo4.dll+0x1012E2` and the later matrix-copy path are idle-zero and firing-live.
++- `left_shot_matrix.txt` / `right_shot_matrix.txt`: the returned 0x34-byte local/location-0 matrix differs with the held-hand position.
++- `phase2_findings.txt`: the matrix is preserved through the queue producer; the evidence explicitly says no additional matrix-retarget fix is justified and the visible culprit may be downstream/different.
++- `phase3_counts.txt`: the tested location-2 predicate did not fire in the controlled AR firing windows.
++
++That is why Stage 3V chooses the narrow hide fallback for H4 rather than layering an unproven transform onto an already hand-dependent matrix.
++
++## H2 runtime boundary status
++
++No exact H2EK-to-retail runtime effect resolver has been established in the accepted source/history. Stage 3V does not copy a Reach/H4 offset or ABI into Halo 2. That restraint is intentional regression protection, not a claim that the H2 muzzle issue is solved.
+diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md
+--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md	2026-08-27 04:44:15.164292945 +0000
+@@ -0,0 +1,59 @@
++# Stage 3V — Halo 4 loader lifetime + narrow local-FP effect fallback
++
++Status: **HEADSET-PENDING candidate built directly from headset-accepted Stage 3U**.
++
++Accepted input DLL SHA-256:
++`ca2a939e24594292ee543f6498c780b1609c3dba53aabe07f65cfa720fd6a549`
++
++Stage 3V DLL SHA-256:
++`4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e`
++
++## Why this candidate exists
++
++The accepted Stage 3U run proves Reach -> shell -> Halo 3 -> Reach is fixed and all accepted H2 behavior is intact. The same run then shows Halo 4's camera core can install and arm but lose all owned camera/CUI/Storm work immediately afterward. The Stage 3U H4 install still acquired `halo4.dll` with `GetModuleHandleExW(FROM_ADDRESS | UNCHANGED_REFCOUNT)`, so live MinHook targets had only a non-owning DLL identity. That is the same class of loader-lifetime defect already proven and fixed for Reach, but Stage 3V scopes the solution independently to Halo 4.
++
++## Change 1 — H4 camera-core loader ownership
++
++Only the installed H4 camera-core lifetime changes:
++
++- install takes a real loader reference (`GetModuleHandleExW` flags `0x4` instead of `0x6`);
++- any install failure that did not transfer that reference releases it only after hook cleanup;
++- successful install transfers the owning HMODULE into the existing `g_halo4Camera.moduleReference`;
++- successful teardown captures that HMODULE before the existing state clear, removes the hooks/state, logs the normal completion, then calls `FreeLibrary`;
++- any teardown failure retains the pin, so a retry never touches an unmapped `halo4.dll`.
++
++Cold/title detection remains non-owning. PE headers, imports, section geometry, image size, and the Q-R1 loader layout are byte-identical to Stage 3U.
++
++## Change 2 — H4 local first-person weapon-effect fallback
++
++The supplied official H4EK tables prove that muzzle/Promethean visuals are not one universal trigger-marker effect. Promethean weapons use weapon-specific first-person marker families (vents, plates, rails, barrel/source ports, `primary_trigger_muzzle`, etc.). The historical x64dbg Phase 2/3 captures also prove that the firing-specific local/location-0 matrix already changes with the hand before it enters the runtime queue; those captures explicitly did **not** justify adding another guessed re-parent transform.
++
++Therefore Stage 3V does not invent a new effect-space transform. It activates the already-existing, exact-byte-guarded H4 local first-person effect splice and changes only its previously ineffective scale-zero action:
++
++- the existing classifier remains byte-identical;
++- world/enemy/environment paths remain outside that classifier;
++- the selected local first-person matrix keeps its pointer/orientation valid;
++- only translation Z is moved to `+10000.0f`, making that detached local weapon effect invisible rather than risking a bad re-parent.
++
++This is the requested fallback behavior when exact restoration is not runtime-proven.
++
++## Reticle behavior deliberately preserved
++
++Halo 4 stays on the accepted C-H4-50 procedural controller/bullet-ray reticle. The rejected whole-CUI/native-reticle replay experiments remain disabled. Stage 3V wraps the existing active-title query only to opportunistically install the effect splice; the immediately following `cmp al,4` / Halo-4 fail-closed reticle branch is byte-identical.
++
++The all-title gun-stock controls remain **visual gun only**. They do not translate the projectile/crosshair ray.
++
++## Halo 2 deliberately unchanged in this candidate
++
++The supplied H2EK data is valuable, but it proves why a generic trigger-marker redirect would be wrong: for example, the Battle Rifle has a center component on `primary_trigger` plus a long component on three distinct `muzzle_flash` transforms with authored rotations. Stage 3U currently has no H2-specific, H2EK-mapped runtime effect/marker resolver comparable to the proven Reach/H4 boundaries.
++
++Stage 3V therefore changes **zero H2 bytes**. H2 Classic stereo, H2A, HUD/crosshair, authored weapon alignment, Y+B behavior, and the visual gun-stock calibration remain exactly the headset-accepted Stage 3U implementation. A future H2 muzzle pass should begin from an H2EK-derived retail ABI/boundary, then rigidly transfer each real authored marker matrix rather than collapse marker identities.
++
++## Headset test order
++
++1. Launch Halo 4. Confirm it progresses from camera-core install/arm into live stereo/6DOF instead of stalling with zero camera readbacks.
++2. Confirm controller aim, hands/two-hand behavior, and the procedural reticle are live and aligned. Zoom/unzoom and switch weapons; no black square or stale native flat reticle should return.
++3. Fire UNSC, Covenant and Promethean weapons. The selected detached local first-person muzzle/detail family should be invisible. Enemy/world/explosion/environment effects should remain stock.
++4. Save/quit or switch out of H4, then enter H4 again without restarting MCC if convenient. The log should show a clean H4 camera-core removal followed by a later clean install/arm.
++5. Smoke-test H2 Classic/H2A, especially the accepted Classic weapon alignment and gun-stock sliders. They should be unchanged.
++6. Keep the log from the run. Do not label the H4 effect work accepted until headset behavior confirms the classifier catches the offending visuals without collateral suppression.
+diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-SOURCE-DIFF.patch /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-SOURCE-DIFF.patch
+--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-SOURCE-DIFF.patch	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-SOURCE-DIFF.patch	2026-08-27 04:44:15.170702622 +0000
+@@ -0,0 +1,96 @@
++diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/H2-H4-MUZZLE-EVIDENCE.md /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/H2-H4-MUZZLE-EVIDENCE.md
++--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/H2-H4-MUZZLE-EVIDENCE.md	1970-01-01 00:00:00.000000000 +0000
+++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/H2-H4-MUZZLE-EVIDENCE.md	2026-08-27 04:44:15.165348528 +0000
++@@ -0,0 +1,29 @@
+++# H2 / H4 muzzle-effect evidence used for Stage 3V
+++
+++## User-supplied official tag bundle
+++
+++Archive SHA-256:
+++`119d4c1cb875d6f458098f26172ce3f2d6f00d1d0cddad830a9fae6e29228544`
+++
+++The archive was generated from the installed official H2EK and H4EK tag roots. Stage 3V preserves the compact index/tables under `evidence/muzzle_bundle_tables/`.
+++
+++Key conclusions used by this pass:
+++
+++- Halo 2 Classic muzzle effects are multi-marker and sometimes multi-instance. The Battle Rifle long and center components do not share one authored transform.
+++- Halo 4 Promethean effects span weapon-specific marker families. Suppressor notably uses `primary_trigger_muzzle`; other families include vents, plates, rails, barrels and source ports.
+++- Those tag facts are sufficient to reject a one-marker generic relocation algorithm, but not sufficient by themselves to identify an exact retail runtime consumer/ABI.
+++
+++## Historical H4 runtime captures
+++
+++Preserved under `evidence/h4_runtime_capture/`:
+++
+++- `phase2_counts.txt`: firing-specific `halo4.dll+0x1012E2` and the later matrix-copy path are idle-zero and firing-live.
+++- `left_shot_matrix.txt` / `right_shot_matrix.txt`: the returned 0x34-byte local/location-0 matrix differs with the held-hand position.
+++- `phase2_findings.txt`: the matrix is preserved through the queue producer; the evidence explicitly says no additional matrix-retarget fix is justified and the visible culprit may be downstream/different.
+++- `phase3_counts.txt`: the tested location-2 predicate did not fire in the controlled AR firing windows.
+++
+++That is why Stage 3V chooses the narrow hide fallback for H4 rather than layering an unproven transform onto an already hand-dependent matrix.
+++
+++## H2 runtime boundary status
+++
+++No exact H2EK-to-retail runtime effect resolver has been established in the accepted source/history. Stage 3V does not copy a Reach/H4 offset or ABI into Halo 2. That restraint is intentional regression protection, not a claim that the H2 muzzle issue is solved.
++diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md
++--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md	1970-01-01 00:00:00.000000000 +0000
+++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-H4-LIFETIME-EFFECTS-NOTES.md	2026-08-27 04:44:15.164292945 +0000
++@@ -0,0 +1,59 @@
+++# Stage 3V — Halo 4 loader lifetime + narrow local-FP effect fallback
+++
+++Status: **HEADSET-PENDING candidate built directly from headset-accepted Stage 3U**.
+++
+++Accepted input DLL SHA-256:
+++`ca2a939e24594292ee543f6498c780b1609c3dba53aabe07f65cfa720fd6a549`
+++
+++Stage 3V DLL SHA-256:
+++`4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e`
+++
+++## Why this candidate exists
+++
+++The accepted Stage 3U run proves Reach -> shell -> Halo 3 -> Reach is fixed and all accepted H2 behavior is intact. The same run then shows Halo 4's camera core can install and arm but lose all owned camera/CUI/Storm work immediately afterward. The Stage 3U H4 install still acquired `halo4.dll` with `GetModuleHandleExW(FROM_ADDRESS | UNCHANGED_REFCOUNT)`, so live MinHook targets had only a non-owning DLL identity. That is the same class of loader-lifetime defect already proven and fixed for Reach, but Stage 3V scopes the solution independently to Halo 4.
+++
+++## Change 1 — H4 camera-core loader ownership
+++
+++Only the installed H4 camera-core lifetime changes:
+++
+++- install takes a real loader reference (`GetModuleHandleExW` flags `0x4` instead of `0x6`);
+++- any install failure that did not transfer that reference releases it only after hook cleanup;
+++- successful install transfers the owning HMODULE into the existing `g_halo4Camera.moduleReference`;
+++- successful teardown captures that HMODULE before the existing state clear, removes the hooks/state, logs the normal completion, then calls `FreeLibrary`;
+++- any teardown failure retains the pin, so a retry never touches an unmapped `halo4.dll`.
+++
+++Cold/title detection remains non-owning. PE headers, imports, section geometry, image size, and the Q-R1 loader layout are byte-identical to Stage 3U.
+++
+++## Change 2 — H4 local first-person weapon-effect fallback
+++
+++The supplied official H4EK tables prove that muzzle/Promethean visuals are not one universal trigger-marker effect. Promethean weapons use weapon-specific first-person marker families (vents, plates, rails, barrel/source ports, `primary_trigger_muzzle`, etc.). The historical x64dbg Phase 2/3 captures also prove that the firing-specific local/location-0 matrix already changes with the hand before it enters the runtime queue; those captures explicitly did **not** justify adding another guessed re-parent transform.
+++
+++Therefore Stage 3V does not invent a new effect-space transform. It activates the already-existing, exact-byte-guarded H4 local first-person effect splice and changes only its previously ineffective scale-zero action:
+++
+++- the existing classifier remains byte-identical;
+++- world/enemy/environment paths remain outside that classifier;
+++- the selected local first-person matrix keeps its pointer/orientation valid;
+++- only translation Z is moved to `+10000.0f`, making that detached local weapon effect invisible rather than risking a bad re-parent.
+++
+++This is the requested fallback behavior when exact restoration is not runtime-proven.
+++
+++## Reticle behavior deliberately preserved
+++
+++Halo 4 stays on the accepted C-H4-50 procedural controller/bullet-ray reticle. The rejected whole-CUI/native-reticle replay experiments remain disabled. Stage 3V wraps the existing active-title query only to opportunistically install the effect splice; the immediately following `cmp al,4` / Halo-4 fail-closed reticle branch is byte-identical.
+++
+++The all-title gun-stock controls remain **visual gun only**. They do not translate the projectile/crosshair ray.
+++
+++## Halo 2 deliberately unchanged in this candidate
+++
+++The supplied H2EK data is valuable, but it proves why a generic trigger-marker redirect would be wrong: for example, the Battle Rifle has a center component on `primary_trigger` plus a long component on three distinct `muzzle_flash` transforms with authored rotations. Stage 3U currently has no H2-specific, H2EK-mapped runtime effect/marker resolver comparable to the proven Reach/H4 boundaries.
+++
+++Stage 3V therefore changes **zero H2 bytes**. H2 Classic stereo, H2A, HUD/crosshair, authored weapon alignment, Y+B behavior, and the visual gun-stock calibration remain exactly the headset-accepted Stage 3U implementation. A future H2 muzzle pass should begin from an H2EK-derived retail ABI/boundary, then rigidly transfer each real authored marker matrix rather than collapse marker identities.
+++
+++## Headset test order
+++
+++1. Launch Halo 4. Confirm it progresses from camera-core install/arm into live stereo/6DOF instead of stalling with zero camera readbacks.
+++2. Confirm controller aim, hands/two-hand behavior, and the procedural reticle are live and aligned. Zoom/unzoom and switch weapons; no black square or stale native flat reticle should return.
+++3. Fire UNSC, Covenant and Promethean weapons. The selected detached local first-person muzzle/detail family should be invisible. Enemy/world/explosion/environment effects should remain stock.
+++4. Save/quit or switch out of H4, then enter H4 again without restarting MCC if convenient. The log should show a clean H4 camera-core removal followed by a later clean install/arm.
+++5. Smoke-test H2 Classic/H2A, especially the accepted Classic weapon alignment and gun-stock sliders. They should be unchanged.
+++6. Keep the log from the run. Do not label the H4 effect work accepted until headset behavior confirms the classifier catches the offending visuals without collateral suppression.
+diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-STATIC-AUDIT.txt /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-STATIC-AUDIT.txt
+--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/STAGE3V-STATIC-AUDIT.txt	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/STAGE3V-STATIC-AUDIT.txt	2026-08-27 04:44:15.166462373 +0000
+@@ -0,0 +1,62 @@
++HaloMCCVR Stage 3V static audit
++===============================
++
++Status: PASS (static/reproducibility only; headset acceptance pending)
++
++Accepted Stage 3U input
++SHA-256: ca2a939e24594292ee543f6498c780b1609c3dba53aabe07f65cfa720fd6a549
++Size:    2,887,168 bytes
++
++Stage 3V output
++SHA-256: 4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e
++Size:    2,887,168 bytes
++Helper:  RVA 0x2F109A, 177 bytes
++Helper SHA-256: 3100d7f47c835bad65336824749119118416b9453427b137b166e34865166f34
++Changed file bytes: 193
++
++Loader/PE proof
++---------------
++PASS: PE32+ x86-64, 12 sections.
++PASS: complete PE header + section table prefix is byte-identical to Stage 3U.
++PASS: SizeOfImage remains 0x2F4000.
++PASS: .s3ic remains VA 0x2F1000, VirtualSize 0x16F0, RawSize 0x1800, RX.
++PASS: .s3qd remains VA 0x2F3000, RawSize 0x200 (Q-R1 loader layout preserved).
++PASS: import data is byte-identical because the full-file diff whitelist permits no .rdata changes.
++PASS: runtime H4 cleanup scratch at .s3qd RVA 0x2F31F0 remains eight zero bytes on disk.
++PASS: helper fits entirely in the pre-existing zero executable cave 0x2F109A..0x2F114A; no section growth/header edit.
++
++Exact Stage 3V guarded patches
++------------------------------
++0x0597FB: B9 06 00 00 00 -> B9 04 00 00 00
++  H4 installed camera-core obtains an owning FROM_ADDRESS loader reference.
++0x059A9A: original logger call -> Stage3V log+release helper
++0x059AA8: original logger call -> same log+release helper
++  Untransferred HMODULE is released on create/handle failure.
++0x059A3F: generation clear -> helper replay + post-MinHook FreeLibrary
++  Enable failure releases only after disable/remove/state clear.
++0x07CA57: generation load/xor -> jump to capture helper
++  Successful teardown captures retained HMODULE before existing state clear.
++0x07CB6F: final logger call -> logger+release helper
++  Successful teardown drops loader ownership only after hooks/state are gone.
++0x030894: TitleAdapter_GetActiveTitle call -> wrapper that preserves AL and opportunistically invokes existing exact-byte H4 effect installer.
++0x2EF73E: ineffective selected-effect scale=0 -> call helper writing matrix translation.z = +10000.0f.
++
++Reticle/effect proof
++--------------------
++PASS: bytes at 0x030899 remain `3C 04 0F 84 A2 00 00 00`; H4 still takes C-H4-50's procedural-reticle fail-closed branch.
++PASS: the existing H4 effect classifier at 0x2EF71C..0x2EF73D is byte-identical; only the selected action changed.
++PASS: the existing H4 effect installer remains exact-byte guarded against retail halo4.dll+0x1012D5.
++
++Regression proof
++----------------
++PASS: full-file diff contains no change outside the eight guarded patch spans and the 177-byte helper cave.
++Therefore every H2 byte is identical to accepted Stage 3U, including H2 Classic cleanup pin, H2/H2A stereo/HUD/crosshair, Stage 3N Classic authored barrel alignment, and Stage 3M visual gun-stock translation.
++PASS: Stage 3T Reach loader-lifetime helper is byte-identical.
++PASS: Stage 3U Reach real-camera heartbeat/shell lifecycle helper is byte-identical.
++PASS: Stage 3Q-R1 cross-title selector and Present caller hints are byte-identical.
++PASS: Stage 3O H3 stability patches and Stage 3P Reach HUD/pause patches are byte-identical.
++PASS: all H4 rollback spans that keep rejected native-reticle/muzzle experiments dormant are byte-identical.
++
++Reproducibility
++---------------
++PASS: three independent executions of build_stage3v_h4_lifetime_effects.py from the exact accepted Stage 3U DLL produced byte-for-byte identical DLLs with SHA-256 4200862ac38918d5c7c88c24e31e2cf0873e7c93313b8b79438236cd17db885e.
+diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/tools/build_stage3v_h4_lifetime_effects.py /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/build_stage3v_h4_lifetime_effects.py
+--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/tools/build_stage3v_h4_lifetime_effects.py	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/build_stage3v_h4_lifetime_effects.py	2026-08-27 04:42:07.839581154 +0000
+@@ -0,0 +1,264 @@
++from pathlib import Path
++import hashlib, json, struct, subprocess, sys, tempfile
++
++BASE_SHA = 'ca2a939e24594292ee543f6498c780b1609c3dba53aabe07f65cfa720fd6a549'
++CODE_RVA = 0x2F109A
++H4_CLEANUP_SCRATCH_RVA = 0x2F31F0
++
++ORIGINAL_LOG_RVA = 0x1D90
++FREE_LIBRARY_IAT_RVA = 0x180230
++H4_GENERATION_RVA = 0x2A7200
++H4_MODULE_REF_RVA = 0x2A7208
++H4_CLEANUP_CONTINUE_RVA = 0x7CA5F
++TITLE_ACTIVE_RVA = 0x879C0
++H4_EFFECT_INSTALLER_RVA = 0x2EF595
++
++# Exact Stage 3U sites. Every mutation is fail-closed on byte identity.
++PATCHES = {
++    'h4_installed_hook_loader_pin': (0x597FB, bytes.fromhex('b906000000')),
++    'h4_create_fail_log':           (0x59A9A, bytes.fromhex('e8f182faff')),
++    'h4_handle_fail_log':           (0x59AA8, bytes.fromhex('e8e382faff')),
++    'h4_enable_fail_generation':    (0x59A3F, bytes.fromhex('448935bad72400')),
++    'h4_cleanup_capture':           (0x7CA57, bytes.fromhex('8b1da3a7220033ff')),
++    'h4_cleanup_final_log':         (0x7CB6F, bytes.fromhex('e81c52f8ff')),
++    'h4_reticle_title_query':       (0x30894, bytes.fromhex('e827710500')),
++    'h4_local_fp_effect_action':    (0x2EF73E, bytes.fromhex('c70000000000')),
++}
++
++# Regression anchors called out by the accepted Stage 3U lineage. The full
++# diff whitelist below protects every other byte too; these make failures more
++# understandable if the wrong base is ever supplied.
++ANCHORS = [
++    (0x87FF1, 21, 'Stage3Q-R1 cross-title selector'),
++    (0xDF60, 15, 'Stage3Q Present caller hint'),
++    (0xE060, 15, 'Stage3Q Present1 caller hint'),
++    (0x90AC4, 5, 'H2 Classic cleanup pin'),
++    (0x90CE2, 7, 'H2 Classic release pin'),
++    (0x92F06, 5, 'Stage3M H2 visual stock translation'),
++    (0x95B16, 5, 'Stage3N H2 Classic authored barrel alignment'),
++    (0x40A52, 5, 'Stage3M H3/ODST visual stock translation'),
++    (0x6B321, 5, 'Stage3M Reach visual stock translation'),
++    (0x51289, 5, 'Stage3M H4 visual stock translation'),
++    (0x48086, 8, 'H4 procedural-reticle rollback span 1'),
++    (0x48110, 8, 'H4 procedural-reticle rollback span 2'),
++    (0x5360B, 8, 'H4 procedural-reticle rollback span 3'),
++    (0x53D41, 8, 'H4 procedural-reticle rollback span 4'),
++    (0x53E37, 8, 'H4 procedural-reticle rollback span 5'),
++    (0x7CDA3, 7, 'Stage3O H3 stability 1'),
++    (0x7CDAB, 7, 'Stage3O H3 stability 2'),
++    (0x7CDB3, 7, 'Stage3O H3 stability 3'),
++    (0x7D167, 7, 'Stage3O H3 stability 4'),
++    (0x7D17A, 7, 'Stage3O H3 stability 5'),
++    (0x7D19E, 7, 'Stage3O H3 stability 6'),
++    (0x81036, 40, 'Stage3P Reach HUD scan'),
++    (0x8112D, 25, 'Stage3P Reach HUD memory filter'),
++    (0x813A8, 10, 'Stage3P Reach HUD six-anchor completion'),
++    (0x47396, 12, 'Stage3P H3 pause scope'),
++    (0x4414D, 5, 'Stage3P native pause scope'),
++    (0x44203, 8, 'Stage3P pause recovery scope'),
++    (0x34587, 7, 'community attribution'),
++    (0xA2B86, 5, 'Reach cold adapter non-owning identity'),
++    (0x2F1B00, 0x5A, 'Stage3T Reach loader-lifetime helper'),
++    (0x2F1B60, 0xB8, 'Stage3U Reach shell-lifecycle helper'),
++]
++
++
++def parse_pe(b):
++    pe_sig = struct.unpack_from('<I', b, 0x3c)[0]
++    if b[pe_sig:pe_sig+4] != b'PE\0\0':
++        raise SystemExit('not a PE image')
++    coff = pe_sig + 4
++    nsec = struct.unpack_from('<H', b, coff + 2)[0]
++    opt_size = struct.unpack_from('<H', b, coff + 16)[0]
++    opt = coff + 20
++    table = opt + opt_size
++    secs = []
++    for i in range(nsec):
++        h = table + i * 40
++        name = bytes(b[h:h+8]).split(b'\0', 1)[0].decode('ascii')
++        vs, va, rs, rp = struct.unpack_from('<IIII', b, h + 8)
++        ch = struct.unpack_from('<I', b, h + 36)[0]
++        secs.append(dict(name=name, vs=vs, va=va, rs=rs, rp=rp, ch=ch, h=h))
++    return dict(pe_sig=pe_sig, coff=coff, opt=opt, table=table, sections=secs,
++                nsec=nsec,
++                image_base=struct.unpack_from('<Q', b, opt + 0x18)[0],
++                size_of_image=struct.unpack_from('<I', b, opt + 0x38)[0])
++
++
++def rva_off(pe, rva):
++    for s in pe['sections']:
++        if s['va'] <= rva < s['va'] + max(s['vs'], s['rs']):
++            return s['rp'] + rva - s['va']
++    raise SystemExit(f'RVA not mapped 0x{rva:X}')
++
++
++def req(b, pe, rva, exp, label):
++    o = rva_off(pe, rva)
++    got = bytes(b[o:o+len(exp)])
++    if got != exp:
++        raise SystemExit(f'{label} guard failed at 0x{rva:X}: {got.hex()} != {exp.hex()}')
++
++
++def write(b, pe, rva, exp, repl, label):
++    if len(exp) != len(repl):
++        raise SystemExit(f'{label}: patch length mismatch')
++    req(b, pe, rva, exp, label)
++    o = rva_off(pe, rva)
++    b[o:o+len(exp)] = repl
++    print(f'{label}: 0x{rva:X} {exp.hex()} -> {repl.hex()}')
++
++
++def relop(op, src, dst):
++    return bytes([op]) + struct.pack('<i', dst - src - 5)
++
++
++def assemble(td):
++    src = Path(__file__).with_name('stage3v_h4_lifetime_effects.S')
++    obj, elf, raw = td/'s.o', td/'s.elf', td/'s.bin'
++    subprocess.run(['as', '--64', '-o', str(obj), str(src)], check=True)
++    subprocess.run([
++        'ld', '-m', 'elf_x86_64', f'-Ttext=0x{CODE_RVA:x}',
++        '-e', 'stage3v_h4_install_log_release',
++        '--defsym', f'ORIGINAL_LOG_RVA=0x{ORIGINAL_LOG_RVA:x}',
++        '--defsym', f'FREE_LIBRARY_IAT_RVA=0x{FREE_LIBRARY_IAT_RVA:x}',
++        '--defsym', f'H4_GENERATION_RVA=0x{H4_GENERATION_RVA:x}',
++        '--defsym', f'H4_MODULE_REF_RVA=0x{H4_MODULE_REF_RVA:x}',
++        '--defsym', f'H4_CLEANUP_SCRATCH_RVA=0x{H4_CLEANUP_SCRATCH_RVA:x}',
++        '--defsym', f'H4_CLEANUP_CONTINUE_RVA=0x{H4_CLEANUP_CONTINUE_RVA:x}',
++        '--defsym', f'TITLE_ACTIVE_RVA=0x{TITLE_ACTIVE_RVA:x}',
++        '--defsym', f'H4_EFFECT_INSTALLER_RVA=0x{H4_EFFECT_INSTALLER_RVA:x}',
++        '-o', str(elf), str(obj),
++    ], check=True)
++    subprocess.run(['objcopy', '-O', 'binary', '-j', '.text', str(elf), str(raw)], check=True)
++    syms = {}
++    for line in subprocess.check_output(['nm', '-n', str(elf)], text=True).splitlines():
++        f = line.split()
++        if len(f) == 3 and f[2].startswith('stage3v_'):
++            syms[f[2]] = int(f[0], 16)
++    return raw.read_bytes(), syms
++
++
++def main():
++    if len(sys.argv) != 3:
++        raise SystemExit('usage: build_stage3v_h4_lifetime_effects.py <Stage3U-HaloMCCVR.dll> <out.dll>')
++    src, out = map(Path, sys.argv[1:])
++    base = src.read_bytes()
++    sha = hashlib.sha256(base).hexdigest()
++    if sha != BASE_SHA:
++        raise SystemExit('wrong accepted Stage3U base: ' + sha)
++
++    b = bytearray(base)
++    pe = parse_pe(b)
++    by = {s['name']: s for s in pe['sections']}
++    if pe['image_base'] != 0x180000000 or pe['nsec'] != 12 or pe['size_of_image'] != 0x2F4000:
++        raise SystemExit('Stage3U loader-safe PE identity mismatch')
++    s3ic, s3qd = by.get('.s3ic'), by.get('.s3qd')
++    if not s3ic or not s3qd:
++        raise SystemExit('Stage3U helper sections missing')
++    if (s3ic['va'], s3ic['vs'], s3ic['rs'], s3ic['ch']) != (0x2F1000, 0x16F0, 0x1800, 0x60000020):
++        raise SystemExit('Stage3U .s3ic geometry mismatch')
++    if (s3qd['va'], s3qd['rs']) != (0x2F3000, 0x200):
++        raise SystemExit('Stage3U Q-R1 .s3qd loader layout regressed')
++
++    for name, (rva, exp) in PATCHES.items():
++        req(b, pe, rva, exp, name)
++
++    anchors = {(r,n,label): bytes(b[rva_off(pe,r):rva_off(pe,r)+n])
++               for r,n,label in ANCHORS}
++
++    scratch_off = rva_off(pe, H4_CLEANUP_SCRATCH_RVA)
++    if any(b[scratch_off:scratch_off+8]):
++        raise SystemExit('H4 teardown scratch is not zero in accepted Stage3U')
++
++    with tempfile.TemporaryDirectory(prefix='stage3v-') as t:
++        helper, syms = assemble(Path(t))
++    needed = {
++        'stage3v_h4_install_log_release', 'stage3v_h4_enable_fail_release',
++        'stage3v_h4_cleanup_capture', 'stage3v_h4_cleanup_log_release',
++        'stage3v_h4_title_and_install_effect', 'stage3v_h4_hide_local_fp_effect'
++    }
++    if not needed <= syms.keys():
++        raise SystemExit('missing Stage3V helper symbols: ' + repr(sorted(needed - syms.keys())))
++
++    cave_off = rva_off(pe, CODE_RVA)
++    if CODE_RVA + len(helper) > 0x2F1200:
++        raise SystemExit(f'Stage3V helper exceeds the proven 0x2F109A..0x2F11FF zero cave ({len(helper)} bytes)')
++    if any(b[cave_off:cave_off+len(helper)]):
++        raise SystemExit('Stage3V helper cave is not zero in accepted Stage3U')
++    b[cave_off:cave_off+len(helper)] = helper
++
++    write(b, pe, 0x597FB, PATCHES['h4_installed_hook_loader_pin'][1],
++          bytes.fromhex('b904000000'), 'H4 installed-hook loader ownership')
++    write(b, pe, 0x59A9A, PATCHES['h4_create_fail_log'][1],
++          relop(0xE8, 0x59A9A, syms['stage3v_h4_install_log_release']),
++          'H4 create-failure untransferred pin release')
++    write(b, pe, 0x59AA8, PATCHES['h4_handle_fail_log'][1],
++          relop(0xE8, 0x59AA8, syms['stage3v_h4_install_log_release']),
++          'H4 handle-failure/mismatch pin release')
++    write(b, pe, 0x59A3F, PATCHES['h4_enable_fail_generation'][1],
++          relop(0xE8, 0x59A3F, syms['stage3v_h4_enable_fail_release']) + b'\x90\x90',
++          'H4 enable-failure post-MinHook pin release')
++    write(b, pe, 0x7CA57, PATCHES['h4_cleanup_capture'][1],
++          relop(0xE9, 0x7CA57, syms['stage3v_h4_cleanup_capture']) + b'\x90\x90\x90',
++          'H4 successful teardown retained-module capture')
++    write(b, pe, 0x7CB6F, PATCHES['h4_cleanup_final_log'][1],
++          relop(0xE8, 0x7CB6F, syms['stage3v_h4_cleanup_log_release']),
++          'H4 successful teardown post-hook pin release')
++
++    # Effect suppression is activated through the existing title query, without
++    # touching the following C-H4-50 cmp/branch that keeps the procedural
++    # controller/bullet-ray reticle authoritative for Halo 4.
++    write(b, pe, 0x30894, PATCHES['h4_reticle_title_query'][1],
++          relop(0xE8, 0x30894, syms['stage3v_h4_title_and_install_effect']),
++          'H4 guarded local-FP effect installer activation')
++    write(b, pe, 0x2EF73E, PATCHES['h4_local_fp_effect_action'][1],
++          relop(0xE8, 0x2EF73E, syms['stage3v_h4_hide_local_fp_effect']) + b'\x90',
++          'H4 selected local-FP effect finite far-translation')
++
++    # Explicitly prove accepted procedural H4 reticle branch remains byte-identical.
++    req(b, pe, 0x30899, bytes.fromhex('3c040f84a2000000'), 'C-H4-50 procedural reticle H4 branch')
++
++    # Full-file allowed-difference proof. Nothing outside the eight exact patch
++    # spans and helper cave may differ from the headset-accepted Stage3U DLL.
++    allowed = set(range(cave_off, cave_off + len(helper)))
++    for rva, exp in PATCHES.values():
++        o = rva_off(pe, rva)
++        allowed.update(range(o, o + len(exp)))
++    diffs = [i for i,(x,y) in enumerate(zip(base,b)) if x != y]
++    extras = [i for i in diffs if i not in allowed]
++    if extras:
++        raise SystemExit('unexpected byte changes outside guarded Stage3V spans: ' + ','.join(hex(x) for x in extras[:16]))
++
++    for (r,n,label), data in anchors.items():
++        o = rva_off(pe, r)
++        if bytes(b[o:o+n]) != data:
++            raise SystemExit(f'accepted protected anchor changed: {label} 0x{r:X}')
++
++    # Runtime-only scratch must remain zero on disk.
++    if any(b[scratch_off:scratch_off+8]):
++        raise SystemExit('Stage3V accidentally initialized runtime cleanup scratch on disk')
++
++    header_end = min(s['rp'] for s in pe['sections'])
++    if bytes(b[:header_end]) != base[:header_end]:
++        raise SystemExit('PE headers/section table changed unexpectedly')
++
++    out.parent.mkdir(parents=True, exist_ok=True)
++    out.write_bytes(b)
++    print(json.dumps({
++        'input_sha256': sha,
++        'output_sha256': hashlib.sha256(b).hexdigest(),
++        'output_size': len(b),
++        'helper_rva': hex(CODE_RVA),
++        'helper_size': len(helper),
++        'helper_sha256': hashlib.sha256(helper).hexdigest(),
++        'changed_file_bytes': len(diffs),
++        'pe_headers_identical': True,
++        'section_geometry_identical': True,
++        'size_of_image': hex(pe['size_of_image']),
++        's3qd_rva': hex(s3qd['va']),
++        'runtime_scratch_rva': hex(H4_CLEANUP_SCRATCH_RVA),
++        'symbols': {k: hex(v) for k,v in syms.items()},
++    }, indent=2))
++
++if __name__ == '__main__':
++    main()
+diff -ruN '--exclude=.git' '--exclude=baseline' '--exclude=evidence' /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/tools/stage3v_h4_lifetime_effects.S /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/stage3v_h4_lifetime_effects.S
+--- /mnt/data/stage3v_build/src/HaloMCCVR-518aebe-C50-Stage3U-Reach-Shell-Handoff-Reentry-Source/tools/stage3v_h4_lifetime_effects.S	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/stage3v_build/HaloMCCVR-518aebe-C50-Stage3V-H4-Lifetime-LocalEffects-Source/tools/stage3v_h4_lifetime_effects.S	2026-08-27 04:42:17.215002499 +0000
+@@ -0,0 +1,97 @@
++.intel_syntax noprefix
++.section .text
++
++.global stage3v_h4_install_log_release
++.global stage3v_h4_enable_fail_release
++.global stage3v_h4_cleanup_capture
++.global stage3v_h4_cleanup_log_release
++.global stage3v_h4_title_and_install_effect
++.global stage3v_h4_hide_local_fp_effect
++
++.extern ORIGINAL_LOG_RVA
++.extern FREE_LIBRARY_IAT_RVA
++.extern H4_GENERATION_RVA
++.extern H4_MODULE_REF_RVA
++.extern H4_CLEANUP_SCRATCH_RVA
++.extern H4_CLEANUP_CONTINUE_RVA
++.extern TITLE_ACTIVE_RVA
++.extern H4_EFFECT_INSTALLER_RVA
++
++// Install failure helper for the create-hook and GetModuleHandleEx failure
++// tails. The original HMODULE local is caller [rsp+0x50]. A CALL puts it at
++// helper [rsp+0x58], then our 0x28-byte shadow/alignment frame moves it to
++// [rsp+0x80]. Log first with the original ABI, then release only an acquired
++// reference that was never transferred into g_halo4Camera.moduleReference.
++stage3v_h4_install_log_release:
++    sub rsp, 0x28
++    call ORIGINAL_LOG_RVA
++    mov rcx, QWORD PTR [rsp + 0x80]
++    test rcx, rcx
++    jz .install_log_done
++    call QWORD PTR [rip + FREE_LIBRARY_IAT_RVA]
++.install_log_done:
++    add rsp, 0x28
++    ret
++
++// Enable-hook failure arrives only after both MinHook targets have been
++// disabled/removed and the global camera state/moduleReference have been
++// cleared. Replay the overwritten generation clear, then release the still
++// live owning HMODULE kept in the installer's stack local.
++stage3v_h4_enable_fail_release:
++    mov DWORD PTR [rip + H4_GENERATION_RVA], 0
++    mov rcx, QWORD PTR [rsp + 0x58]
++    test rcx, rcx
++    jz .enable_fail_done
++    sub rsp, 0x28
++    call QWORD PTR [rip + FREE_LIBRARY_IAT_RVA]
++    add rsp, 0x28
++.enable_fail_done:
++    ret
++
++// Successful teardown must keep halo4.dll resident until every MinHook target
++// is gone. Capture the retained module before the existing XMM clear zeros the
++// camera state, then resume the untouched teardown body.
++stage3v_h4_cleanup_capture:
++    mov ebx, DWORD PTR [rip + H4_GENERATION_RVA]
++    mov rax, QWORD PTR [rip + H4_MODULE_REF_RVA]
++    mov QWORD PTR [rip + H4_CLEANUP_SCRATCH_RVA], rax
++    xor edi, edi
++    jmp H4_CLEANUP_CONTINUE_RVA
++
++// Final successful teardown log occurs after all hook removal/state clearing.
++// Only now is it safe to drop the title-DLL reference. Cleanup-failure paths
++// never reach this helper, so their pin remains live for a later retry.
++stage3v_h4_cleanup_log_release:
++    sub rsp, 0x28
++    call ORIGINAL_LOG_RVA
++    mov rcx, QWORD PTR [rip + H4_CLEANUP_SCRATCH_RVA]
++    test rcx, rcx
++    jz .cleanup_log_done
++    mov QWORD PTR [rip + H4_CLEANUP_SCRATCH_RVA], 0
++    call QWORD PTR [rip + FREE_LIBRARY_IAT_RVA]
++.cleanup_log_done:
++    add rsp, 0x28
++    ret
++
++// Keep C-H4-50's accepted procedural bullet-ray reticle behavior exactly as it
++// is. We wrap only its already-existing active-title query to opportunistically
++// install the old, signature-guarded local first-person effect splice while H4
++// owns the runtime. The subsequent cmp al,4 / return-false branch is untouched.
++stage3v_h4_title_and_install_effect:
++    sub rsp, 0x28
++    call TITLE_ACTIVE_RVA
++    mov BYTE PTR [rsp + 0x20], al
++    cmp al, 4
++    jne .title_done
++    call H4_EFFECT_INSTALLER_RVA
++    mov al, BYTE PTR [rsp + 0x20]
++.title_done:
++    add rsp, 0x28
++    ret
++
++// Stage 3H's scale=0 action was headset-ineffective. For only the existing
++// narrow local/first-person effect classification, preserve the matrix pointer
++// and authored orientation but move its finite origin far outside play space.
++stage3v_h4_hide_local_fp_effect:
++    mov DWORD PTR [rax + 0x30], 0x461c4000  # +10000.0f
++    ret

@@ -1,0 +1,53 @@
+--- a/src/common/halo2_render_logic.h
++++ b/src/common/halo2_render_logic.h
+@@ -53,6 +53,18 @@
+         !clearAlreadyRequested;
+ }
+ 
++// C-H2-72: once the comfort fade has actually switched to Halo 2's
++// head-locked pause presentation, the desktop/backbuffer is the intended
++// source because it contains the native pause menu. The synchronous eye-pair
++// safety policy may still carry a Claim/Drop from the fade edge; that must not
++// suppress the deliberately requested flat pause screen. Pending pause targets
++// do not qualify -- the opaque fade still protects that transition.
++inline constexpr bool Halo2PausePresentationOwnsStockScreen(
++    bool activeHalo2, bool pausePresentation) noexcept
++{
++    return activeHalo2 && pausePresentation;
++}
++
+ inline constexpr float kHalo2MinimumAppCadenceHz = 72.0f;
+ inline constexpr float kHalo2MaximumAppCadenceHz = 144.0f;
+ 
+--- a/src/dll/vr.cpp
++++ b/src/dll/vr.cpp
+@@ -9158,9 +9158,13 @@
+                     VR_Halo2GetRepeatableHalfFovs(
+                         halo2Generation, g_preparedFrame.serial,
+                         halo2RepeatHalfX, halo2RepeatHalfY);
++                const bool halo2PauseStockScreen =
++                    Halo2PausePresentationOwnsStockScreen(
++                        halo2Title, pausedPresentation);
+                 const Halo2SynchronousPresentationDecision
+-                    halo2PresentationDecision =
+-                        Halo2SynchronousSelectPresentation(
++                    halo2PresentationDecision = halo2PauseStockScreen
++                        ? Halo2SynchronousPresentationDecision::SharedDefault
++                        : Halo2SynchronousSelectPresentation(
+                             stereo, halo2ProjectionReady, halo2Title,
+                             halo2LiveExactPair,
+                             halo2Generation, g_preparedFrame.serial,
+--- a/tests/core_tests.cpp
++++ b/tests/core_tests.cpp
+@@ -5289,6 +5289,11 @@
+                   !Halo2ShouldRequestForeignPauseClear(
+                       true, false, true, true, false),
+             "H2 requests one inherited-pause clear only on title entry");
++        Check(Halo2PausePresentationOwnsStockScreen(true, true) &&
++                  !Halo2PausePresentationOwnsStockScreen(true, false) &&
++                  !Halo2PausePresentationOwnsStockScreen(false, true),
++            "C-H2-72 gives the shared stock-screen path only to an active "
++            "H2 displayed pause presentation");
+         Check(!Halo2RefreshCadenceSupported(0.0f) &&
+                   !Halo2RefreshCadenceSupported(45.0f) &&
+                   !Halo2RefreshCadenceSupported(60.0f) &&

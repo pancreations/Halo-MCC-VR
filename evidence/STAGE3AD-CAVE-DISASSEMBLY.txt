@@ -1,0 +1,104 @@
+
+/mnt/data/stage3ad_work/HaloMCCVR.dll:     file format pei-x86-64
+
+
+Disassembly of section .s3ic:
+
+00000001802f1580 <.s3ic+0x580>:
+   1802f1580:	d3 f3                	shl    ebx,cl
+   1802f1582:	0f 58 54 24 7c       	addps  xmm2,XMMWORD PTR [rsp+0x7c]
+   1802f1587:	f3 0f 11 54 24 7c    	movss  DWORD PTR [rsp+0x7c],xmm2
+   1802f158d:	0f 28 d0             	movaps xmm2,xmm0
+   1802f1590:	f3 0f 59 54 24 68    	mulss  xmm2,DWORD PTR [rsp+0x68]
+   1802f1596:	0f 28 d9             	movaps xmm3,xmm1
+   1802f1599:	f3 0f 59 5c 24 74    	mulss  xmm3,DWORD PTR [rsp+0x74]
+   1802f159f:	f3 0f 58 d3          	addss  xmm2,xmm3
+   1802f15a3:	f3 0f 58 94 24 80 00 	addss  xmm2,DWORD PTR [rsp+0x80]
+   1802f15aa:	00 00 
+   1802f15ac:	f3 0f 11 94 24 80 00 	movss  DWORD PTR [rsp+0x80],xmm2
+   1802f15b3:	00 00 
+   1802f15b5:	0f 10 44 24 50       	movups xmm0,XMMWORD PTR [rsp+0x50]
+   1802f15ba:	c3                   	ret
+   1802f15bb:	53                   	push   rbx
+   1802f15bc:	48 83 ec 20          	sub    rsp,0x20
+   1802f15c0:	e8 c2 04 00 00       	call   0x1802f1a87
+   1802f15c5:	89 c3                	mov    ebx,eax
+   1802f15c7:	80 fb 04             	cmp    bl,0x4
+   1802f15ca:	75 16                	jne    0x1802f15e2
+   1802f15cc:	48 8b 0d 35 5c fb ff 	mov    rcx,QWORD PTR [rip+0xfffffffffffb5c35]        # 0x1802a7208
+   1802f15d3:	48 85 c9             	test   rcx,rcx
+   1802f15d6:	74 0a                	je     0x1802f15e2
+   1802f15d8:	ba 01 00 00 00       	mov    edx,0x1
+   1802f15dd:	e8 69 fb ff ff       	call   0x1802f114b
+   1802f15e2:	89 d8                	mov    eax,ebx
+   1802f15e4:	48 83 c4 20          	add    rsp,0x20
+   1802f15e8:	5b                   	pop    rbx
+   1802f15e9:	c3                   	ret
+	...
+   1802f15fe:	00 00                	add    BYTE PTR [rax],al
+   1802f1600:	48 8d 15 09 eb ff ff 	lea    rdx,[rip+0xffffffffffffeb09]        # 0x1802f0110
+   1802f1607:	48 89 d9             	mov    rcx,rbx
+   1802f160a:	e8 21 5d e8 ff       	call   0x180177330
+   1802f160f:	85 c0                	test   eax,eax
+   1802f1611:	74 18                	je     0x1802f162b
+   1802f1613:	48 8d 15 16 eb ff ff 	lea    rdx,[rip+0xffffffffffffeb16]        # 0x1802f0130
+   1802f161a:	48 89 d9             	mov    rcx,rbx
+   1802f161d:	e8 0e 5d         	call   0x180177330
+
+/mnt/data/stage3ad_work/HaloMCCVR.dll:     file format pei-x86-64
+
+
+Disassembly of section .s3ic:
+
+00000001802f1ba0 <.s3ic+0xba0>:
+   1802f1ba0:	50                   	push   rax
+   1802f1ba1:	fb                   	sti
+   1802f1ba2:	ff 01                	inc    DWORD PTR [rcx]
+   1802f1ba4:	74 2a                	je     0x1802f1bd0
+   1802f1ba6:	48 83 ec 28          	sub    rsp,0x28
+   1802f1baa:	4c 89 54 24 20       	mov    QWORD PTR [rsp+0x20],r10
+   1802f1baf:	ff 15 9b e5 e8 ff    	call   QWORD PTR [rip+0xffffffffffe8e59b]        # 0x180180150
+   1802f1bb5:	4c 8b 54 24 20       	mov    r10,QWORD PTR [rsp+0x20]
+   1802f1bba:	48 83 c4 28          	add    rsp,0x28
+   1802f1bbe:	4c 29 d0             	sub    rax,r10
+   1802f1bc1:	48 3d e8 03 00 00    	cmp    rax,0x3e8
+   1802f1bc7:	76 07                	jbe    0x1802f1bd0
+   1802f1bc9:	c6 05 e2 51 fb ff 01 	mov    BYTE PTR [rip+0xfffffffffffb51e2],0x1        # 0x1802a6db2
+   1802f1bd0:	4c 89 d0             	mov    rax,r10
+   1802f1bd3:	c3                   	ret
+   1802f1bd4:	31 c0                	xor    eax,eax
+   1802f1bd6:	c3                   	ret
+   1802f1bd7:	53                   	push   rbx
+   1802f1bd8:	48 83 ec 20          	sub    rsp,0x20
+   1802f1bdc:	48 89 cb             	mov    rbx,rcx
+   1802f1bdf:	31 d2                	xor    edx,edx
+   1802f1be1:	e8 65 f5 ff ff       	call   0x1802f114b
+   1802f1be6:	85 c0                	test   eax,eax
+   1802f1be8:	74 0a                	je     0x1802f1bf4
+   1802f1bea:	48 89 d9             	mov    rcx,rbx
+   1802f1bed:	e8 d9 23 00 00       	call   0x1802f3fcb
+   1802f1bf2:	eb 02                	jmp    0x1802f1bf6
+   1802f1bf4:	31 c0                	xor    eax,eax
+   1802f1bf6:	48 83 c4 20          	add    rsp,0x20
+   1802f1bfa:	5b                   	pop    rbx
+   1802f1bfb:	c3                   	ret
+   1802f1bfc:	00 00                	add    BYTE PTR [rax],al
+   1802f1bfe:	00 00                	add    BYTE PTR [rax],al
+   1802f1c00:	80 39 00             	cmp    BYTE PTR [rcx],0x0
+   1802f1c03:	75 09                	jne    0x1802f1c0e
+   1802f1c05:	3d 00 00 02 00       	cmp    eax,0x20000
+   1802f1c0a:	0f 94 c0             	sete   al
+   1802f1c0d:	c3                   	ret
+   1802f1c0e:	3d 00 00 04 00       	cmp    eax,0x40000
+   1802f1c13:	0f 94 c0             	sete   al
+   1802f1c16:	c3                   	ret
+   1802f1c17:	9c                   	pushf
+   1802f1c18:	50                   	push   rax
+   1802f1c19:	8a 05 a9 8a fc ff    	mov    al,BYTE PTR [rip+0xfffffffffffc8aa9]        # 0x1802ba6c8
+   1802f1c1f:	84 c0                	test   al,al
+   1802f1c21:	74 08                	je     0x1802f1c2b
+   1802f1c23:	3c 03                	cmp    al,0x3
+   1802f1c25:	74 04                	je     0x1802f1c2b
+   1802f1c27:	3c 07                	cmp    al,0x7
+   1802f1c29:	75 07                	jne    0x1802f1c32
+   1802f1c2b:	c6 05 89 55 fc   	mov    BYTE PTR [rip+0xfffffffffffc5589],0x0        # 0x1802b71bb

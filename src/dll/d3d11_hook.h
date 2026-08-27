@@ -1,10 +1,25 @@
 #pragma once
 
+#include <cstdint>
+
 // Hooks IDXGISwapChain::Present / Present1 / ResizeBuffers process-wide.
 // Present is the "here's a finished frame" call every D3D11 game makes each
 // frame — our hook is where all VR work happens.
 
 bool InstallD3D11Hooks();
+
+// True only after Halo 2's identified native crosshair shader has completed a
+// capture for the currently loaded halo2.dll generation. Until then the shared
+// compositor retains its procedural fallback, so a shader mismatch cannot
+// leave the player without any aiming marker.
+bool D3D_Halo2NativeCrosshairCaptured();
+bool D3D_Halo2HudShaderPathAvailable();
+void D3D_GetHalo2HudTelemetry(
+    uint64_t& gameplayShadersRegistered,
+    uint64_t& crosshairShadersRegistered,
+    uint64_t& rasterDraws,
+    uint64_t& nativeCrosshairDraws,
+    uint64_t& stateFailures);
 
 // --- Desktop-window fit (config.fit_desktop_window) -------------------------
 // The forced full-render backbuffer size (0,0 when the fit is off or not yet

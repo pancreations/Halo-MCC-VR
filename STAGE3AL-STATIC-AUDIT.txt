@@ -1,0 +1,23 @@
+Stage 3AL static audit
+======================
+Baseline Stage 3AK DLL SHA-256: 4ce06fc1e33040990b4db630748d07688803a7216c74cd9d89484c9403510389
+Stage 3AL DLL SHA-256: fb1e6b5d7a584930303b2f6aed6696c4012e24f007538d7c7955ad75ca583da2
+
+Scope:
+- ODST module lifetime/teardown only.
+- Existing early ODST identity-only GetModuleHandleExW flags=6 remain unchanged.
+- Post-preflight module-reference store at RVA +0x5C2A6 redirects to Stage3AL acquire wrapper.
+- Rollback release call at RVA +0x41BD6 redirects to Stage3AL release wrapper.
+- Normal teardown release call at RVA +0x84E45 redirects to Stage3AL release wrapper.
+- New code occupies appended .s3qd page RVA +0x2F8000.
+- Stage 3AK's original .s3qd 0x5000 bytes are byte-for-byte identical.
+- Halo 2 Stage3AK muzzle gate and Halo 4 Stage3AI C50 payload are untouched.
+- Reach/Halo3/ODST gameplay hook logic is otherwise untouched; Reach pause logic is not modified.
+
+Verification:
+- 3 independent builds byte-identical: PASS
+- Stage3AL post-preflight pin/release static test: PASS
+- Stage3AK H2 portable particle-gate regression test: PASS
+- Existing Stage3AK payload preservation test: PASS
+- New loader pin is acquired only after exact ODST preflight/prior-ownership checks.
+- Pin is released only after verified hook removal/native byte restoration and pointer clear.
