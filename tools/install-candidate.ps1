@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 31) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 32) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 31) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h4-57-ghost-boost-motion-suck-',
+            $head.Substring(0, 7) + '-c-h2-89-aim-assist-off-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -188,7 +188,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 31) -or
         # behavior block, which happened repeatedly during bring-up.
         [string]$manifest.halo4_candidate.id -cne 'C-H4-57' -or
         [string]$manifest.halo4_candidate.status -cne
-            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
+            'TARGET_HEADSET_ACCEPTED_HALO3_REGRESSION_PENDING' -or
         [string]$manifest.halo4_candidate.behavior -notmatch '\S' -or
         $manifest.halo4_candidate.parity_diagnostic.player_visible_behavior_changed -ne
             $true -or
@@ -272,14 +272,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 31) -or
             'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map' -or
         [string]$manifest.halo4_candidate.screen_effect_failure_policy -cne
             'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed' -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-88' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-89' -or
         [string]$manifest.halo2_candidate.status -cne
-            'HEADSET_ACCEPTED_CARRIED_FORWARD' -or
+            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'classic-muzzle-stage3ak-plus-two-slider-visual-alignment-plus-bounded-stage3am-diagnostics' -or
+            'accepted-c-h2-88-plus-official-engine-global-aim-assist-disable-transaction' -or
         $manifest.halo2_candidate.classic_muzzle_suppression -ne $true -or
         [string]$manifest.halo2_candidate.classic_muzzle_particle_renderer_rva -cne
             '0x0076DC90' -or
@@ -340,6 +340,19 @@ if (-not (Test-ExactInt32 $manifest.schema_version 31) -or
             '0x008FDF50' -or
         [string]$manifest.halo2_candidate.native_aim_ownership -cne
             'desired-and-current-unit-aiming-vectors' -or
+        $manifest.halo2_candidate.aim_assist_disabled -ne $true -or
+        [string]$manifest.halo2_candidate.aim_assist_debug_global -cne
+            'sim_disable_aim_assist' -or
+        -not (Test-ExactInt32 `
+            $manifest.halo2_candidate.aim_assist_debug_global_type 5) -or
+        [string]$manifest.halo2_candidate.aim_assist_scope -cne
+            'vr-owned-halo2-live-level-both-renderers' -or
+        [string]$manifest.halo2_candidate.aim_assist_restore -cne
+            'captured-stock-byte-on-core-teardown' -or
+        [string]$manifest.halo2_candidate.aim_assist_reassert -cne
+            'title-worker-only-if-engine-resets-global' -or
+        [string]$manifest.halo2_candidate.aim_assist_failure_policy -cne
+            'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed' -or
         $manifest.halo2_candidate.rejected_post_return_packet_enabled -ne
             $false -or
         $manifest.halo2_candidate.rejected_firing_helper_enabled -ne $false -or

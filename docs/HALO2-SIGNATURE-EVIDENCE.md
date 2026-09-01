@@ -4264,3 +4264,52 @@ alternate-target copies retire with source validation. This is not yet a
 headset acceptance result. C-H2-88 must demonstrate the missing Classic flash,
 working two-dial visual alignment, stock Anniversary effects, and no recurring
 cutscene diagnostic hitch before any accepted pointer advances.
+
+## E-H2-76 (C-H2-89): official global aim-assist disable transaction
+
+The 2026-09-01 Steam / SteamVR 2.17.7 / Oculus / 120 Hz report shows Halo 2's
+existing direct native-aim hook working (`native aim` reaches thousands of
+applied local-player updates with zero refused), while the player still sees
+the camera pulled near enemies. The same interval shows the headset-pitch loop
+correcting differences between headset and engine pitch. Therefore the
+remaining report is upstream camera/input assistance, not a failure to write
+the controller sight line into unit aiming vectors.
+
+The official H2EK provides the engine-owned control needed for a narrow test:
+
+    tool.exe script-doc sim_disable_aim_assist
+    (<boolean> sim_disable_aim_assist)
+
+Pinned evidence identities:
+
+- H2EK `tool.exe` SHA-256
+  `84A2D9EDB30381D30F4458748815801042291E03C817B0E4BFB422369C8EB042`.
+- H2EK `halo2_tag_test.exe` SHA-256
+  `D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`.
+  The unique NUL-terminated name is at file `0x8A71EC`, RVA `0x8A7DEC`;
+  its kit debug-global record has boolean type 5.
+- Pinned Steam retail `halo2.dll` SHA-256
+  `DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`.
+  The same unique name is at file `0xB39C48`, RVA `0xB3AE48`; its unique
+  catalog reference is at file `0xE0C018` and the following type word is 5.
+
+The retail catalog's value pointer is populated at runtime, so C-H2-89 does
+not ship a guessed RVA. It uses the project's established typed debug-global
+resolver: exact NUL-bounded name, exact boolean type 5, value inside the
+module, and committed writable non-executable memory. The current byte must be
+0 or 1 and every write is read back.
+
+This is an optional feature transaction. Once the Halo 2 VR core has installed
+for a live level, it captures the stock byte and sets the official disable
+boolean to 1. The title worker reasserts it if map/script initialization resets
+the global. Level exit, title exit, module-generation change, install rollback,
+or VR failure restores the captured value before camera-hook cleanup. Failure
+to resolve, write, verify, reassert or restore is logged for this feature only;
+it never disarms the observer, stereo, hands, HUD or OpenXR.
+
+Because this is the engine's global switch, the test intentionally disables
+camera friction/adhesion, weapon magnetism/autoaim and melee assistance
+together. It may also change target-sensitive reticle color and melee lunge;
+those are expected observations for this diagnostic, not evidence that the
+native reticle itself regressed. No map, weapon tag, cache file or on-disk game
+file is modified.

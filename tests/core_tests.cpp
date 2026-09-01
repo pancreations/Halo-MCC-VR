@@ -15881,6 +15881,21 @@ int main()
             "out-of-range slider values");
     }
 
+    // C-H2-89: pin the official H2EK boolean identity and, importantly, the
+    // lifecycle contract. VR-owned gameplay requests 1; leaving gameplay
+    // returns the exact captured value rather than assuming stock was 0.
+    Check(std::string_view(kHalo2DisableAimAssistDebugVar) ==
+              "sim_disable_aim_assist" &&
+              kHalo2DebugVarTypeBoolean == 5 &&
+              Halo2AimAssistDebugValueValid(0) &&
+              Halo2AimAssistDebugValueValid(1) &&
+              !Halo2AimAssistDebugValueValid(2) &&
+              Halo2AimAssistDebugValue(true, 0) == 1 &&
+              Halo2AimAssistDebugValue(false, 0) == 0 &&
+              Halo2AimAssistDebugValue(false, 1) == 1,
+        "Halo 2 aim-assist suppression uses the official typed H2EK boolean "
+        "only while VR owns gameplay and restores the captured stock value");
+
     if (g_failures == 0)
         std::cout << "HaloMCCVR core tests passed\n";
     return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

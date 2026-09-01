@@ -1,6 +1,7 @@
 # C-H4-57 Halo 4 boosted-Ghost blackout correction
 
-Status: **ready for headset test; unaccepted**.
+Status: **Halo 4 target accepted in headset; cumulative acceptance pending the
+required Halo 3 regression**.
 
 C-H4-57 is one isolated Halo-4-only correction above the headset-accepted
 C-H4-56 source `271f6dffb8cf2e13dc4feafd85b9b4c61440ff25`. It does not change the
@@ -54,3 +55,18 @@ and suppressed binds per interval.
 
 Do not advance `docs/CURRENT-STATE.md` until both the target Halo 4 result and
 the Halo 3 regression result are reported from the headset.
+
+## Headset result (2026-09-01)
+
+The user explicitly reported that C-H4-57 fixed the supercharged-Ghost boost
+black screen. The supplied log identifies source
+`bccc14f2e2d6fcc38d69dde02f7dc538672277da`, Steam edition,
+SteamVR/OpenXR 2.17.7, Oculus headset, 120 Hz. This accepts the Halo 4 target
+behavior only; no Halo 3 gameplay regression result was supplied, so C-H4-56
+remains the authoritative cumulative accepted pointer.
+
+The ordinary Ghost boost trail was not globally removed. C-H4-57 gates only
+the exact `motion_suck` pixel shader hash `0x47668A1953271934`. H4EK's
+mission-specific `non_suck` speed-line/tint material and the ordinary Storm
+Ghost boost effect path do not use that shader and remain untouched. This is a
+code/tag-path verification, not a second visual headset claim.

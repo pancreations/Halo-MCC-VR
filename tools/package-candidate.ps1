@@ -215,6 +215,16 @@ try {
             'Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only') {
         throw 'C-H4-57 gate failed: exact H4EK/retail motion-suck identity, Halo-4/stereo isolation, telemetry, or unit coverage is missing.'
     }
+    if ($gameSource -notmatch 'kHalo2DisableAimAssistDebugVar' -or
+        $gameSource -notmatch 'Game_Halo2TryDisableAimAssist' -or
+        $gameSource -notmatch 'FindDebugVarSlot\([\s\S]{0,180}kHalo2DebugVarTypeBoolean' -or
+        $gameSource -notmatch 'Game_Halo2RestoreAimAssist' -or
+        $halo2ObserverSource -notmatch
+            'Game_Halo2MaintainDisabledAimAssist' -or
+        $coreTestsSource -notmatch
+            'Halo 2 aim-assist suppression uses the official typed H2EK boolean') {
+        throw 'C-H2-89 gate failed: official typed debug-global identity, fail-open lifecycle, restoration, or unit coverage is missing.'
+    }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
     $halo2HudLogicSource = [IO.File]::ReadAllText(
@@ -307,7 +317,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h4-57-ghost-boost-motion-suck',
+        'c-h2-89-aim-assist-off',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -354,7 +364,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 31
+        schema_version = 32
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -385,7 +395,7 @@ try {
         }
         halo4_candidate = [ordered]@{
             id = 'C-H4-57'
-            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            status = 'TARGET_HEADSET_ACCEPTED_HALO3_REGRESSION_PENDING'
             behavior = 'accepted-c-h4-56-plus-exact-h4ek-retail-motion-suck-screen-effect-suppression'
             head_tracking = $true
             six_dof = $true
@@ -481,12 +491,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-88'
-            status = 'HEADSET_ACCEPTED_CARRIED_FORWARD'
+            id = 'C-H2-89'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'classic-muzzle-stage3ak-plus-two-slider-visual-alignment-plus-bounded-stage3am-diagnostics'
+                'accepted-c-h2-88-plus-official-engine-global-aim-assist-disable-transaction'
             classic_muzzle_suppression = $true
             classic_muzzle_particle_renderer_rva = '0x0076DC90'
             classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
@@ -531,6 +541,16 @@ try {
             right_hand_gun_transform = 'unchanged-c63-controller-barrel-alignment'
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
+            aim_assist_disabled = $true
+            aim_assist_debug_global = 'sim_disable_aim_assist'
+            aim_assist_debug_global_type = 5
+            aim_assist_scope = 'vr-owned-halo2-live-level-both-renderers'
+            aim_assist_effect =
+                'camera-friction-adhesion-weapon-magnetism-autoaim-and-melee-assistance-off'
+            aim_assist_restore = 'captured-stock-byte-on-core-teardown'
+            aim_assist_reassert = 'title-worker-only-if-engine-resets-global'
+            aim_assist_failure_policy =
+                'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed'
             rejected_post_return_packet_enabled = $false
             rejected_firing_helper_enabled = $false
             live_renderer_report = $true
@@ -777,7 +797,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H4-57 carries forward headset-accepted C-H4-56, including its native reticle, adjustable HUD, helmet/visor toggle, pause, effects, camera, hands, and OpenXR behavior. The accepted C-H4-56 Ghost-run log proves the blackout is scene-painted while current stereo pairs and the XR session stay healthy. Official H4EK tags select the opaque seven-tap screen motion_suck material for the m30 supercharged-Ghost boost; its complete PC DXBC is byte-identical in the pinned retail mission map and hashes to 47668A1953271934. C-H4-57 nulls only that exact pixel shader while Halo 4 stereo is active, preserving the separate speed-line/tint effect and every other post-process. This also covers any other Halo 4 blackout produced by the same exact shader, without blanket suppression. The feature fails open independently. This package does not install automatically. Halo 4 target and Halo 3 regression headset validation are required.'
+        note = 'C-H2-89 carries forward C-H4-57 unchanged; its Halo 4 supercharged-Ghost blackout target is headset-accepted while the separate Halo 3 regression remains pending. Code/tag verification confirms the ordinary Ghost trail path is untouched. This candidate changes Halo 2 only: the official H2EK boolean sim_disable_aim_assist is resolved from the live retail debug-global table by exact name and type 5, set only for VR-owned Halo 2 gameplay, reasserted from the title worker if the engine resets it, and restored to the captured stock value on teardown. Failure is feature-local StockFallback. No game files are patched. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

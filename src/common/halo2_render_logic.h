@@ -27,6 +27,26 @@ inline constexpr char kHalo2KitBuildTag[] =
 inline constexpr char kHalo2KitTagTestSha256[] =
     "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36";
 
+// C-H2-89: the official H2EK script surface exposes
+// `sim_disable_aim_assist` as a boolean. Retail carries the same unique name
+// and typed debug-global catalog entry. Runtime code resolves the live value
+// slot by this name and exact type; these pure helpers pin the only two legal
+// values and the teardown rule used by the optional override.
+inline constexpr char kHalo2DisableAimAssistDebugVar[] =
+    "sim_disable_aim_assist";
+inline constexpr uint64_t kHalo2DebugVarTypeBoolean = 5;
+
+inline constexpr bool Halo2AimAssistDebugValueValid(uint8_t value) noexcept
+{
+    return value <= 1;
+}
+
+inline constexpr uint8_t Halo2AimAssistDebugValue(
+    bool vrOwnsGameplay, uint8_t stockValue) noexcept
+{
+    return vrOwnsGameplay ? uint8_t{1} : stockValue;
+}
+
 // Halo 2 does not yet own a title-native pause signal. A stale head-locked
 // presentation can be inherited while switching in from another MCC engine,
 // so clear that FOREIGN state exactly when H2 first enters its stereo claim

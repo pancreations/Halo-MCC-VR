@@ -1829,6 +1829,14 @@ namespace
         return 1;
     }
 
+    struct Halo2AimAssistOverride
+    {
+        uint8_t* slot = nullptr;
+        uint8_t stock = 0;
+        uint64_t reassertions = 0;
+    };
+    Halo2AimAssistOverride g_halo2AimAssistOverride{};
+
     static int SafeReadFloat(const float* slot, float* value)
     {
         __try
@@ -39982,6 +39990,106 @@ namespace
 #endif
         return false;
     }
+}
+
+bool Game_Halo2TryDisableAimAssist(uintptr_t moduleBase, size_t moduleSize)
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // A stale slot would mean the preceding module generation did not reach
+    // its normal teardown. Restore it before resolving anything in the new
+    // generation; this feature never owns or gates the Halo 2 camera core.
+    Game_Halo2RestoreAimAssist();
+
+    auto* const slot = static_cast<uint8_t*>(FindDebugVarSlot(
+        moduleBase, moduleSize, kHalo2DisableAimAssistDebugVar,
+        kHalo2DebugVarTypeBoolean));
+    uint8_t stock = 0;
+    if (!slot || !SafeReadByte(slot, &stock) ||
+        !Halo2AimAssistDebugValueValid(stock))
+    {
+        LOG("Halo 2 C-H2-89 aim-assist suppression StockFallback: official "
+            "H2EK boolean `%s` did not resolve to a readable boolean slot; "
+            "stock aim assist remains active and camera/stereo are unaffected",
+            kHalo2DisableAimAssistDebugVar);
+        return false;
+    }
+
+    const uint8_t disabled = Halo2AimAssistDebugValue(true, stock);
+    uint8_t verified = 0;
+    if (!SafeWriteByte(slot, disabled) || !SafeReadByte(slot, &verified) ||
+        verified != disabled)
+    {
+        // The first write may have landed even when the verification read did
+        // not. Make a best-effort rollback before abandoning this feature.
+        (void)SafeWriteByte(slot, stock);
+        LOG("Halo 2 C-H2-89 aim-assist suppression StockFallback: `%s` was "
+            "resolved but could not be set and verified; stock value %u was "
+            "restored best-effort and camera/stereo remain active",
+            kHalo2DisableAimAssistDebugVar, static_cast<unsigned>(stock));
+        return false;
+    }
+
+    g_halo2AimAssistOverride = {slot, stock, 0};
+    LOG("Halo 2 C-H2-89 aim-assist suppression Installed: official H2EK "
+        "boolean `%s` set to 1 (stock %u) only for VR-owned Halo 2 gameplay; "
+        "camera friction/adhesion, weapon magnetism and melee assistance are "
+        "disabled together; teardown restores the captured stock value",
+        kHalo2DisableAimAssistDebugVar, static_cast<unsigned>(stock));
+    return true;
+#else
+    (void)moduleBase;
+    (void)moduleSize;
+    return false;
+#endif
+}
+
+void Game_Halo2MaintainDisabledAimAssist()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    auto& state = g_halo2AimAssistOverride;
+    if (!state.slot)
+        return;
+    uint8_t current = 0;
+    const uint8_t disabled = Halo2AimAssistDebugValue(true, state.stock);
+    if (SafeReadByte(state.slot, &current) && current == disabled)
+        return;
+    uint8_t verified = 0;
+    if (!SafeWriteByte(state.slot, disabled) ||
+        !SafeReadByte(state.slot, &verified) || verified != disabled)
+    {
+        LOG("Halo 2 C-H2-89 aim-assist suppression LOST: `%s` could not be "
+            "reasserted after the engine changed it; this optional feature "
+            "returns to StockFallback and camera/stereo remain active",
+            kHalo2DisableAimAssistDebugVar);
+        state.slot = nullptr;
+        return;
+    }
+    ++state.reassertions;
+    LOG("Halo 2 C-H2-89 aim-assist suppression: `%s` was reset by the engine "
+        "and reasserted (correction %llu)", kHalo2DisableAimAssistDebugVar,
+        static_cast<unsigned long long>(state.reassertions));
+#endif
+}
+
+void Game_Halo2RestoreAimAssist()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    auto& state = g_halo2AimAssistOverride;
+    if (!state.slot)
+        return;
+    const uint8_t* const slot = state.slot;
+    const uint8_t stock = Halo2AimAssistDebugValue(false, state.stock);
+    const uint64_t reassertions = state.reassertions;
+    state = {};
+    uint8_t verified = 0;
+    const bool restored = SafeWriteByte(const_cast<uint8_t*>(slot), stock) &&
+        SafeReadByte(slot, &verified) && verified == stock;
+    LOG("Halo 2 C-H2-89 aim-assist suppression removed: stock value %u %s "
+        "after %llu engine reassertions; camera-core teardown continues "
+        "independently",
+        static_cast<unsigned>(stock), restored ? "restored" : "restore FAILED",
+        static_cast<unsigned long long>(reassertions));
+#endif
 }
 
 bool Game_ComputeAimStick(float& outRx, float& outRy)

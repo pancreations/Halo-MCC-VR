@@ -2728,6 +2728,9 @@ namespace
     {
         g_armed.store(false, std::memory_order_release);
         g_teardownRequested.store(true, std::memory_order_release);
+        // Optional and failure-isolated: restore the stock engine boolean even
+        // if a later hook cleanup needs to remain pending.
+        Game_Halo2RestoreAimAssist();
         if (!RemoveParticleGate())
             return false;
         if (g_target)
@@ -3624,6 +3627,11 @@ namespace
         // particles for this generation.
         (void)InstallParticleGate(base, size, generation);
 
+        // C-H2-89 is deliberately a separate optional transaction. A missing
+        // or invalid debug-global slot leaves stock aim assist active without
+        // disarming any of the proven Halo 2 VR paths.
+        (void)Game_Halo2TryDisableAimAssist(base, size);
+
         g_coreState = CoreState::Installed;
         LOG("Halo 2 observer 6DOF installed: observer final transform "
             "+0x%X, observer results +0x%X stride 0x%X, user %u. Three "
@@ -3966,6 +3974,9 @@ bool Halo2Observer6Dof_Poll(
     }
 
     g_armed.store(true, std::memory_order_release);
+    // Map/script initialization can rewrite debug globals after core install.
+    // This poll runs on the title worker, not an eye/render hook.
+    Game_Halo2MaintainDisabledAimAssist();
     if (g_armedLoggedGeneration != generation)
     {
         g_armedLoggedGeneration = generation;

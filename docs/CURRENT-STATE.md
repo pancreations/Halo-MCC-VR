@@ -1,5 +1,24 @@
 # Current state
 
+> **C-H2-89 HALO 2 AIM-ASSIST-OFF TEST READY; UNACCEPTED (2026-09-01).**
+> The user's new Halo 2 log proves the direct controller sight-line writer is
+> already applying, while stock camera/input assistance still pulls the engine
+> view near enemies. The official H2EK exposes the boolean
+> `sim_disable_aim_assist`; C-H2-89 resolves its live retail slot by exact name
+> and type 5, sets it only during VR-owned Halo 2 gameplay, and restores the
+> captured stock value on teardown. Resolution/write failure is feature-local
+> StockFallback. This candidate changes Halo 2 only; it does not alter Halo 4.
+
+> **C-H4-57 HALO 4 TARGET ACCEPTED; HALO 3 REGRESSION STILL REQUIRED
+> (user headset, 2026-09-01).** The user explicitly reported that source
+> `bccc14f2e2d6fcc38d69dde02f7dc538672277da` fixed the Forerunner
+> supercharged-Ghost boost black screen. Result: Steam edition,
+> SteamVR/OpenXR 2.17.7, Oculus headset, 120 Hz. The exact suppression cannot
+> remove the ordinary Ghost trail globally: it nulls only H4EK/retail shader
+> hash `0x47668A1953271934`; the separate mission speed-line/tint material and
+> ordinary Ghost effect path remain untouched. C-H4-56 stays the cumulative
+> accepted pointer until the required Halo 3 headset regression is reported.
+
 > **ACCEPTED CUMULATIVE SOURCE BASELINE (user headset, 2026-09-01):
 > C-H4-56, source commit `271f6dffb8cf2e13dc4feafd85b9b4c61440ff25`,
 > DLL SHA-256
