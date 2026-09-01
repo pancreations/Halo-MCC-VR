@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 29) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 30) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 29) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h4-55-reticle-helmet-',
+            $head.Substring(0, 7) + '-c-h4-56-helmet-visor-frontend-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -186,7 +186,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 29) -or
         # Producer and installer advance together. This prevents a package for
         # the new source from silently carrying the preceding Halo 4 candidate's
         # behavior block, which happened repeatedly during bring-up.
-        [string]$manifest.halo4_candidate.id -cne 'C-H4-55' -or
+        [string]$manifest.halo4_candidate.id -cne 'C-H4-56' -or
         [string]$manifest.halo4_candidate.status -cne
             'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo4_candidate.behavior -notmatch '\S' -or
@@ -221,7 +221,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 29) -or
         [string]$manifest.halo4_candidate.reticle_failure_policy -cne
             'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed' -or
         [string]$manifest.halo4_candidate.hud_layout -cne
-            'stage3x-native-gameplay-cui-root-affine-and-prop-curvature-consumer' -or
+            'stage3x-native-complete-gameplay-cui-frontend-affine-and-prop-curvature-consumer' -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout-camera-effects-and-openxr-remain-armed' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 4 -or
@@ -253,6 +253,10 @@ if (-not (Test-ExactInt32 $manifest.schema_version 29) -or
             'exact-3dmigoto-pixel-shader-4BE62AC49C2BF210' -or
         [string]$manifest.halo4_candidate.helmet_hidden_policy -cne
             'pssetshader-null-only-exact-visor-shader' -or
+        [string]$manifest.halo4_candidate.helmet_geometry -cne
+            'h4ek-container-visor-and-container-visor-glow-sibling-cui-polyart' -or
+        [string]$manifest.halo4_candidate.helmet_geometry_transform -cne
+            'complete-gameplay-cui-frontend-depth-excluding-private-reticle-replay-and-pause' -or
         [string]$manifest.halo2_candidate.id -cne 'C-H2-88' -or
         [string]$manifest.halo2_candidate.status -cne
             'HEADSET_ACCEPTED_CARRIED_FORWARD' -or

@@ -9588,6 +9588,13 @@ int main()
                   std::fabs(affine.heightPixels - 16.0f) < 0.0001f,
             "Halo 4 native HUD affine matches Stage 3X size/aspect/height semantics");
 
+        Check(Halo4NativeHudAdmitsCuiRoot(1, false, false) &&
+                  Halo4NativeHudAdmitsCuiRoot(2, false, false) &&
+                  !Halo4NativeHudAdmitsCuiRoot(0, false, false) &&
+                  !Halo4NativeHudAdmitsCuiRoot(1, true, false) &&
+                  !Halo4NativeHudAdmitsCuiRoot(1, false, true),
+            "Halo 4 native HUD admits the complete frontend for visor siblings while private reticle replay and pause stay stock");
+
         Check(halo4_helmet_shader::IsVisorFramingShader(
                   0x4BE62AC49C2BF210ULL) &&
                   !halo4_helmet_shader::IsVisorFramingShader(

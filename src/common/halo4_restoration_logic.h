@@ -54,3 +54,17 @@ inline bool Halo4ComputeNativeHudAffine(
     out.heightPixels = std::clamp(heightPixels, -300.0f, 300.0f);
     return true;
 }
+
+// The headset-working V6 wrapper admitted the native affine for the complete
+// Halo 4 gameplay-CUI frontend callback, not only for the reticle-owned child
+// pass. That distinction matters for the authored visor: its edge polyart is
+// a sibling CUI draw and remains outside the VR eye crop if it keeps the stock
+// flat-screen root. Private reticle replays and pause presentation keep their
+// stock canvas.
+inline bool Halo4NativeHudAdmitsCuiRoot(
+    uint32_t frontendCallbackDepth, bool privateReticleReplay,
+    bool pausePresentation) noexcept
+{
+    return frontendCallbackDepth != 0 && !privateReticleReplay &&
+        !pausePresentation;
+}

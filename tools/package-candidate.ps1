@@ -185,6 +185,10 @@ try {
             'Halo4PauseReasonGetterMatches' -or
         $halo4RestoreLogicSource -notmatch
             'Halo4ComputeNativeHudAffine' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4NativeHudAdmitsCuiRoot' -or
+        $gameSource -notmatch
+            'Halo4NativeHudAdmitsCuiRoot\([\s\S]{0,240}g_halo4CuiFrontendCallbackDepth' -or
         $halo4CuiSource -notmatch 'Halo4SelectCuiCaptureCanvas' -or
         $gameSource -notmatch 'cuiReticleCaptureBaseX' -or
         $gameSource -notmatch 'cuiReticleCaptureBaseY' -or
@@ -198,7 +202,7 @@ try {
         $halo4RestoreAsmSource -notmatch 'Halo4CurvatureBridge' -or
         $configHeaderSource -notmatch 'bool halo4_helmet\s*=\s*true' -or
         $menuSource -notmatch 'Show Halo 4 helmet frame') {
-        throw 'C-H4-55 gate failed: the native-reticle replay canvas, exact visor-shader toggle, pause, effects, or adjustable HUD source is missing.'
+        throw 'C-H4-56 gate failed: the full-frontend visor geometry admission, native-reticle replay canvas, exact visor-shader toggle, pause, effects, or adjustable HUD source is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -239,7 +243,7 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H4-55: the Halo 4 camera core is not ON.'
+        throw 'Refusing to package C-H4-56: the Halo 4 camera core is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
@@ -292,7 +296,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h4-55-reticle-helmet',
+        'c-h4-56-helmet-visor-frontend',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -339,7 +343,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 29
+        schema_version = 30
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -369,9 +373,9 @@ try {
                 '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-55'
+            id = 'C-H4-56'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'c-h4-53-restoration-plus-private-stock-replay-canvas-native-reticle-plus-exact-v6-visor-shader-toggle'
+            behavior = 'c-h4-55-native-reticle-plus-exact-v6-visor-shader-toggle-plus-complete-gameplay-cui-frontend-visor-root-transform'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -382,7 +386,7 @@ try {
             # Exact accepted C-H4-43 player-visible behavior.
             hud = 'native-inside-captured-scene-no-redirect'
             hud_layout =
-                'stage3x-native-gameplay-cui-root-affine-and-prop-curvature-consumer'
+                'stage3x-native-complete-gameplay-cui-frontend-affine-and-prop-curvature-consumer'
             hud_controls = @(
                 'hud_size', 'hud_aspect', 'hud_curvature',
                 'hud_vertical_offset')
@@ -405,6 +409,10 @@ try {
                 'exact-3dmigoto-pixel-shader-4BE62AC49C2BF210'
             helmet_hidden_policy =
                 'pssetshader-null-only-exact-visor-shader'
+            helmet_geometry =
+                'h4ek-container-visor-and-container-visor-glow-sibling-cui-polyart'
+            helmet_geometry_transform =
+                'complete-gameplay-cui-frontend-depth-excluding-private-reticle-replay-and-pause'
             helmet_failure_policy = 'stock-authored-helmet-art'
             authored_crosshair = $true
             native_face_crosshair_suppressed = $true
@@ -745,7 +753,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H4-55 carries forward headset-accepted C-H2-88 and headset-confirmed C-H4-53 pause, effects, and adjustable HUD paths unchanged. The native authored reticle uses the private stock-transform replay canvas proven by the bda7 headset log, while the visible HUD keeps its sliders. The helmet checkbox targets only the exact 3Dmigoto visor pixel shader 4BE62AC49C2BF210 proven by the supplied 7a24814 log and donor disassembly; visible is stock by default and hidden nulls only that shader pointer. Every optional feature fails open independently. This package does not install automatically. Halo 4 headset validation required.'
+        note = 'C-H4-56 carries forward headset-accepted C-H2-88 and the user-confirmed C-H4-55 native reticle, pause, effects, and adjustable HUD behavior. The supplied C-H4-55 log proves the exact visor shader and checkbox are live while the helmet geometry remains absent. The headset-working V6 donor applies HUD affine and curvature to the complete gameplay-CUI frontend depth; C-H4-56 restores that admission for H4EK container_visor/container_visor_glow sibling polyart while explicitly excluding the private stock-canvas reticle replay and pause. The exact shader hook remains default-visible and hidden nulls only hash 4BE62AC49C2BF210. Every optional feature fails open independently. This package does not install automatically. Halo 4 headset validation required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

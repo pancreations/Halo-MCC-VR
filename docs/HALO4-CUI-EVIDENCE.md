@@ -876,3 +876,32 @@ PSSetShader nulls only the shader argument on an exact registered-pointer match,
 preserving the context and class-instance arguments. This is positive evidence
 for the C-H4-55 implementation, but its source-native port remains unaccepted
 until the user's headset test.
+
+### C-H4-55 headset result and C-H4-56 visor-root correction
+
+The 2026-09-01 Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz test of source
+`6cccbc8ec65d4f690869f8fcf6224d151f39f1cd` confirmed that C-H4-55 restored
+the exact native reticle and left the other Halo 4 behavior in good standing.
+The authored helmet frame alone remained absent.
+
+The log proves this is not a shader-discovery or checkbox failure. It registers
+exact hash `4BE62AC49C2BF210`; configuration changes between visible and hidden;
+and exact suppressions rise only on hidden intervals. A visible interval still
+renders no helmet, so the geometry is lost before `PSSetShader`.
+
+The headset-working V6 donor resolves that earlier boundary. Its `.h4hs+0x2EA`
+wrapper admits HUD affine through the complete gameplay-CUI frontend callback
+depth, and its native-curvature bridge uses the same depth. The Stage 3X
+recovery notes explicitly map that donor TLS field to
+`g_halo4CuiFrontendCallbackDepth`. C-H4-55 narrowed its source port to
+`gameplayPassActive`, which is the reticle-owned child scope rather than the
+complete frontend. H4EK proves the helmet is sibling CUI polyart under
+`container_visor` / `container_visor_glow`; it therefore kept flat-screen edge
+coordinates and could remain outside the VR eye crop while the exact shader
+continued to bind.
+
+C-H4-56 restores complete frontend-depth admission for the existing Halo 4
+affine and curvature paths. It explicitly excludes the private native-reticle
+replay and pause presentation, so the now-confirmed reticle canvas and stock
+pause behavior are unchanged. The shader hook and checkbox are unchanged.
+This is a headset-unaccepted correction until the user sees the visor return.

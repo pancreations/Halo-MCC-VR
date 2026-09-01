@@ -33073,9 +33073,10 @@ namespace
     {
         if (!renderer || !g_halo4Restoration.hudInstalled.load(
                 std::memory_order_acquire) ||
-            !g_halo4CuiReticleEyeScope.gameplayPassActive ||
-            g_halo4CuiReticleEyeScope.captureReplay ||
-            VR_IsPausePresentationTarget())
+            !Halo4NativeHudAdmitsCuiRoot(
+                g_halo4CuiFrontendCallbackDepth,
+                g_halo4CuiReticleEyeScope.captureReplay,
+                VR_IsPausePresentationTarget()))
         {
             return;
         }
@@ -33479,6 +33480,13 @@ namespace
             reinterpret_cast<uintptr_t>(_ReturnAddress());
         g_halo4Camera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
         ++g_halo4CuiFrontendCallbackDepth;
+        // The V6 affine and curvature wrappers used this complete frontend
+        // scope. Publish the same scope for the assembly curvature bridge so
+        // sibling visor draws receive the same native HUD transform as radar,
+        // shields and ammo. The private reticle replay temporarily clears it
+        // inside Halo4CuiGameplayRenderBody and therefore remains stock.
+        if (g_halo4CuiFrontendCallbackDepth == 1)
+            g_halo4HudGameplayThreadId = GetCurrentThreadId();
         __try
         {
             Halo4CuiGameplayRenderBody(
@@ -33488,6 +33496,8 @@ namespace
         __finally
         {
             --g_halo4CuiFrontendCallbackDepth;
+            if (g_halo4CuiFrontendCallbackDepth == 0)
+                g_halo4HudGameplayThreadId = 0;
             g_halo4Camera.activeCallbacks.fetch_sub(
                 1, std::memory_order_acq_rel);
         }
@@ -36308,9 +36318,10 @@ namespace
         uint64_t helmetSuppressions = 0;
         D3D_GetHalo4HelmetTelemetry(
             helmetShaders, helmetSuppressions);
-        LOG("Halo 4 C-H4-55 restorations: effects=%s (%lld local FP hides), "
+        LOG("Halo 4 C-H4-56 restorations: effects=%s (%lld local FP hides), "
             "HUD=%s (%llu native affine writes, curvature=%s), pause=%s, "
-            "helmet=%s/config-%s (%llu exact shaders, %llu suppressed binds); "
+            "helmet=%s/config-%s (%llu exact shaders, %llu suppressed binds; "
+            "full frontend root); "
             "every unavailable feature stays stock",
             g_halo4Restoration.effectsInstalled.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
