@@ -161,6 +161,26 @@ try {
         $vrSource -notmatch 'Halo 2 Stage 3AM performance gate') {
         throw 'C-H2-88 gate failed: Classic muzzle isolation, the two alignment controls, V5 defaults, welcome, or bounded Stage 3AM diagnostics are missing.'
     }
+    $halo4RestoreLogicSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_restoration_logic.h'))
+    $halo4RestoreAsmSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo4_restoration.asm'))
+    if ($gameSource -notmatch 'InstallHalo4Restoration' -or
+        $gameSource -notmatch 'kHalo4EffectNegRva\s*=\s*0x1059A2' -or
+        $gameSource -notmatch 'kHalo4PauseReasonRva\s*=\s*0xA0AE4' -or
+        $gameSource -notmatch 'kHalo4HudRootRva\s*=\s*0x3F313C' -or
+        $gameSource -notmatch 'kHalo4CurvatureRva\s*=\s*0x420D7E' -or
+        $gameSource -notmatch 'VR_IsPausePresentationTarget\(\)' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4PauseReasonGetterMatches' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4ComputeNativeHudAffine' -or
+        $halo4RestoreAsmSource -notmatch 'Halo4EffectTransientWrapper' -or
+        $halo4RestoreAsmSource -notmatch 'Halo4CurvatureBridge' -or
+        $configHeaderSource -notmatch 'bool halo4_helmet\s*=\s*true' -or
+        $menuSource -notmatch 'Show Halo 4 helmet frame') {
+        throw 'C-H4-53 gate failed: pause, Stage 3AI effects, Stage 3X HUD, or helmet control source is missing.'
+    }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
     $halo2HudLogicSource = [IO.File]::ReadAllText(
@@ -202,7 +222,7 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H4-D1: the Halo 4 camera core is not ON.'
+        throw 'Refusing to package C-H4-53: the Halo 4 camera core is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
@@ -255,7 +275,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-88-classic-restoration',
+        'c-h4-53-restoration',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -302,7 +322,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 26
+        schema_version = 27
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -332,9 +352,9 @@ try {
                 '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-D1'
-            status = 'DIAGNOSTIC_HEADSET_CAPTURE_REQUIRED'
-            behavior = 'c-h4-49-player-visible-path-plus-log-only-bounded-gameplay-cui-command-and-transform-identity-census'
+            id = 'C-H4-53'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            behavior = 'stage3aw-native-pause-plus-stage3ai-local-fp-effect-hide-plus-stage3x-native-hud-plus-optional-authored-helmet-toggle'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -345,10 +365,27 @@ try {
             # Exact accepted C-H4-43 player-visible behavior.
             hud = 'native-inside-captured-scene-no-redirect'
             hud_layout =
-                'dormant-after-c-h4-44-headset-rejection'
-            hud_controls = @()
+                'stage3x-native-gameplay-cui-root-affine-and-prop-curvature-consumer'
+            hud_controls = @(
+                'hud_size', 'hud_aspect', 'hud_curvature',
+                'hud_vertical_offset')
             hud_failure_policy =
-                'stock-halo4-cui-layout'
+                'stock-halo4-cui-layout-camera-effects-and-openxr-remain-armed'
+            pause_reason_getter_rva = '0x000A0AE4'
+            pause_reason = 3
+            pause_presentation = 'native-reason-authoritative-headlocked-2d-stock-wrapper'
+            pause_failure_policy = 'raw-edge-fallback-other-h4-features-remain-armed'
+            local_fp_effect_suppression = $true
+            effect_negative_route_rva = '0x001059A2'
+            effect_helper_route_rva = '0x00100EE8'
+            effect_transient_route_rva = '0x001012D5'
+            effect_mode_one_gate_rva = '0x0027BD36'
+            effect_policy = 'stage3ai-selected-local-first-person-finite-far'
+            effect_failure_policy = 'stock-effects-camera-hud-and-openxr-remain-armed'
+            helmet_default_visible = $true
+            helmet_control = 'halo4_helmet'
+            helmet_binding = 'name-and-type-resolved-helmet_armor-boolean'
+            helmet_failure_policy = 'stock-authored-helmet-art'
             authored_crosshair = $true
             native_face_crosshair_suppressed = $true
             reticle_capture_boundary =
@@ -385,7 +422,7 @@ try {
         }
         halo2_candidate = [ordered]@{
             id = 'C-H2-88'
-            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            status = 'HEADSET_ACCEPTED_CARRIED_FORWARD'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
@@ -680,7 +717,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H2-88 restores the Stage 3AK Classic-only first-person muzzle gate, the two Stage 3N Classic visual alignment controls, and Stage 3AM bounded eye-source diagnostics on the accepted C-H4-52 baseline. The packaged V5-default seed keeps show_welcome enabled; existing installed configs remain untouched. Headset validation required.'
+        note = 'C-H4-53 carries forward headset-accepted C-H2-88 unchanged and restores Halo 4 Stage 3AW native pause ownership, Stage 3AI local first-person effect suppression, Stage 3X native adjustable HUD/curvature, and a default-on authored helmet toggle. Every optional feature fails open independently. Existing installed configs remain untouched. Halo 4 headset validation required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

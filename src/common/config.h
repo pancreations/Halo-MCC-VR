@@ -525,6 +525,10 @@ struct Config
     float halo4_hand_lateral_m = 0.00f;   // + moves it toward your right
     // Left-handed: mirrors the placement across the forward axis.
     bool halo4_hands_mirrored = false;
+    // Halo 4's authored Mjolnir helmet/visor overlay. This is deliberately
+    // separate from HUD scale/curvature so players can keep the complete HUD
+    // while hiding only the helmet frame.
+    bool halo4_helmet = true;
 
     // rendering. The game's own HUD reticle sits at head-center and is wrong
     // whenever hand aim is on; this one is the truth.

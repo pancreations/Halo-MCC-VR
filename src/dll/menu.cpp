@@ -1248,6 +1248,14 @@ namespace
         else
             ImGui::TextDisabled("Curvature: 0.00 = flat (+0.30), 1.00 = curved (-0.30); 0.50 is authored.");
         ImGui::TextDisabled("Height: positive raises the HUD, negative lowers it; the aiming reticle stays fixed.");
+        if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
+        {
+            ImGui::Spacing();
+            changed |= ImGui::Checkbox(
+                "Show Halo 4 helmet frame", &g_config.halo4_helmet);
+            ImGui::TextDisabled(
+                "Keeps or hides only the authored Mjolnir helmet/visor shading; the rest of the HUD stays visible.");
+        }
         }
 
         if (g_activeCategory == Cat_Picture)

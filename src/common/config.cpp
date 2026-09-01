@@ -611,6 +611,12 @@ void ConfigLoad(const wchar_t* path)
         // C-TITLE-1: per-title profile keys, handled by table.
         if (ParseTitleProfileKey(key, val))
             continue;
+        // Keep new keys outside the already-at-limit legacy else-if chain.
+        if (!strcmp(key, "halo4_helmet"))
+        {
+            g_config.halo4_helmet = atoi(val) != 0;
+            continue;
+        }
         // C-H2-85: handled by table, not by the else-if chain below - that
         // chain is at MSVC's block nesting limit and cannot take more arms.
         {
@@ -1214,6 +1220,10 @@ void ConfigSave()
     fprintf(f, "# Left-handed: mirror the Halo 4 hand placement. (default %d)\n",
             d.halo4_hands_mirrored);
     fprintf(f, "halo4_hands_mirrored = %d\n\n", g_config.halo4_hands_mirrored);
+    fprintf(f, "# Halo 4 authored Mjolnir helmet/visor frame. This does not hide\n");
+    fprintf(f, "# shields, radar, ammo, objectives, or the aiming reticle. (default %d)\n",
+            d.halo4_helmet ? 1 : 0);
+    fprintf(f, "halo4_helmet = %d\n\n", g_config.halo4_helmet ? 1 : 0);
     fprintf(f, "# Floating VR-crosshair smoothing only; bullets stay raw.\n");
     fprintf(f, "# (default %.2f, range 0 to 0.95)\n", d.aim_stabilization);
     fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);

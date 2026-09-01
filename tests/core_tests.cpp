@@ -32,6 +32,7 @@
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
 #include "halo4_hud_logic.h"
+#include "halo4_restoration_logic.h"
 #include "halo4_parity_trace_logic.h"
 #include "halo4_render_logic.h"
 #include "reach_adapter.h"
@@ -9557,6 +9558,36 @@ int main()
             "Halo 4 HUD layout rejects out-of-range config values");
     }
 
+    {
+        std::array<uint8_t, kHalo4PauseReasonGetterBytes> pauseGetter{
+            0x8B,0x15,0x11,0x22,0x33,0x44,
+            0x65,0x48,0x8B,0x04,0x25,0x58,0x00,0x00,0x00,
+            0x41,0xB8,0x90,0x00,0x00,0x00,0x48,0x8B,0x04,0xD0,
+            0x49,0x8B,0x14,0x00,0x32,0xC0,0x38,0x02,0x74,0x0F,
+            0xB8,0x01,0x00,0x00,0x00,0x66,0xD3,0xE0,0x66,0x85,
+            0x42,0x02,0x0F,0x95,0xC0,0xC3};
+        Check(Halo4PauseReasonGetterMatches(
+                  pauseGetter.data(), pauseGetter.size()),
+            "Halo 4 native pause getter accepts the exact body with only its RIP displacement wildcarded");
+        pauseGetter[22] ^= 1;
+        Check(!Halo4PauseReasonGetterMatches(
+                  pauseGetter.data(), pauseGetter.size()),
+            "Halo 4 native pause getter rejects any fixed-byte drift");
+
+        Check(Halo4EffectDescriptorIsLocalFirstPerson(0x01) &&
+                  Halo4EffectDescriptorIsLocalFirstPerson(0xA3) &&
+                  !Halo4EffectDescriptorIsLocalFirstPerson(0x00) &&
+                  !Halo4EffectDescriptorIsLocalFirstPerson(0xF1),
+            "Halo 4 C50 effect admission keeps only local first-person descriptor families");
+
+        Halo4HudAffine affine{};
+        Check(Halo4ComputeNativeHudAffine(0.43f, 1.22f, 16.0f, affine) &&
+                  std::fabs(affine.vertical - 0.43f) < 0.0001f &&
+                  std::fabs(affine.horizontal - 0.5246f) < 0.0001f &&
+                  std::fabs(affine.heightPixels - 16.0f) < 0.0001f,
+            "Halo 4 native HUD affine matches Stage 3X size/aspect/height semantics");
+    }
+
     Halo4CuiReticleInstallProof halo4CuiInstall{};
     halo4CuiInstall.transformLayoutProven = true;
     halo4CuiInstall.anchorsMatchedOnce = kHalo4CuiReticleAnchorCount;
@@ -12235,8 +12266,8 @@ int main()
     Check(halo4Row && !(halo4Row->capabilities & TitleCapability_ArmIk),
         "Halo 4 withholds ArmIk: C-H4-43 has one rigid no-IK floating-hands "
         "transaction on the proven first-person return site");
-    Check(halo4Row && !(halo4Row->capabilities & TitleCapability_Hud),
-        "Halo 4 withholds Hud while C-H4-44's rejected basis writer is dormant");
+    Check(halo4Row && (halo4Row->capabilities & TitleCapability_Hud),
+        "Halo 4 grants Hud through the restored native CUI-root path while the rejected tag-basis writer stays dormant");
     Check(halo4Row &&
               (halo4Row->capabilities & TitleCapability_CutsceneTheater),
         "Halo 4 advertises CutsceneTheater after its evidence-backed cinematic "
@@ -12453,7 +12484,7 @@ int main()
         "vehicle_view_follow", "vehicle_cam_smoothing",
         "vehicle_motion", "vehicle_wheel_max_deg",
         "vehicle_wheel_deadzone_deg",
-        "crosshair", "crosshair_distance_m", "crosshair_size_deg",
+        "halo4_helmet", "crosshair", "crosshair_distance_m", "crosshair_size_deg",
         "reticle_r", "reticle_g", "reticle_b", "kill_reticle",
         "gun_scale", "left_hand_scale", "gun_pitch_deg", "gun_yaw_deg",
         "gun_roll_deg", "gun_forward_m", "muzzle_height_m",
@@ -13154,6 +13185,7 @@ int main()
           g_config.hud_aspect == defaults.hud_aspect &&
           g_config.hud_curvature == defaults.hud_curvature &&
           g_config.hud_vertical_offset == defaults.hud_vertical_offset &&
+          g_config.halo4_helmet == defaults.halo4_helmet &&
           g_config.scope_enabled &&
           g_config.scope_zoom == defaults.scope_zoom &&
           g_config.scope_screen_width_m == defaults.scope_screen_width_m &&

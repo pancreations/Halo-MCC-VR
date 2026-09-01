@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 27) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h2-88-classic-restoration-',
+            $head.Substring(0, 7) + '-c-h4-53-restoration-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -186,9 +186,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         # Producer and installer advance together. This prevents a package for
         # the new source from silently carrying the preceding Halo 4 candidate's
         # behavior block, which happened repeatedly during bring-up.
-        [string]$manifest.halo4_candidate.id -cne 'C-H4-D1' -or
+        [string]$manifest.halo4_candidate.id -cne 'C-H4-53' -or
         [string]$manifest.halo4_candidate.status -cne
-            'DIAGNOSTIC_HEADSET_CAPTURE_REQUIRED' -or
+            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo4_candidate.behavior -notmatch '\S' -or
         $manifest.halo4_candidate.parity_diagnostic.player_visible_behavior_changed -ne
             $false -or
@@ -213,13 +213,39 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         [string]$manifest.halo4_candidate.reticle_failure_policy -cne
             'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed' -or
         [string]$manifest.halo4_candidate.hud_layout -cne
-            'dormant-after-c-h4-44-headset-rejection' -or
+            'stage3x-native-gameplay-cui-root-affine-and-prop-curvature-consumer' -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
-            'stock-halo4-cui-layout' -or
-        @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
+            'stock-halo4-cui-layout-camera-effects-and-openxr-remain-armed' -or
+        @($manifest.halo4_candidate.hud_controls).Count -ne 4 -or
+        [string]$manifest.halo4_candidate.hud_controls[0] -cne 'hud_size' -or
+        [string]$manifest.halo4_candidate.hud_controls[1] -cne 'hud_aspect' -or
+        [string]$manifest.halo4_candidate.hud_controls[2] -cne 'hud_curvature' -or
+        [string]$manifest.halo4_candidate.hud_controls[3] -cne
+            'hud_vertical_offset' -or
+        [string]$manifest.halo4_candidate.pause_reason_getter_rva -cne
+            '0x000A0AE4' -or
+        -not (Test-ExactInt32 $manifest.halo4_candidate.pause_reason 3) -or
+        [string]$manifest.halo4_candidate.pause_presentation -cne
+            'native-reason-authoritative-headlocked-2d-stock-wrapper' -or
+        $manifest.halo4_candidate.local_fp_effect_suppression -ne $true -or
+        [string]$manifest.halo4_candidate.effect_negative_route_rva -cne
+            '0x001059A2' -or
+        [string]$manifest.halo4_candidate.effect_helper_route_rva -cne
+            '0x00100EE8' -or
+        [string]$manifest.halo4_candidate.effect_transient_route_rva -cne
+            '0x001012D5' -or
+        [string]$manifest.halo4_candidate.effect_mode_one_gate_rva -cne
+            '0x0027BD36' -or
+        [string]$manifest.halo4_candidate.effect_policy -cne
+            'stage3ai-selected-local-first-person-finite-far' -or
+        $manifest.halo4_candidate.helmet_default_visible -ne $true -or
+        [string]$manifest.halo4_candidate.helmet_control -cne
+            'halo4_helmet' -or
+        [string]$manifest.halo4_candidate.helmet_binding -cne
+            'name-and-type-resolved-helmet_armor-boolean' -or
         [string]$manifest.halo2_candidate.id -cne 'C-H2-88' -or
         [string]$manifest.halo2_candidate.status -cne
-            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
+            'HEADSET_ACCEPTED_CARRIED_FORWARD' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
