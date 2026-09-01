@@ -32,6 +32,7 @@
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
 #include "halo4_helmet_shader_logic.h"
+#include "halo4_screen_effect_shader_logic.h"
 #include "halo4_hud_logic.h"
 #include "halo4_restoration_logic.h"
 #include "halo4_parity_trace_logic.h"
@@ -9611,6 +9612,23 @@ int main()
                   !halo4_helmet_shader::ShouldSuppress(
                       true, true, false, false),
             "Halo 4 suppresses only the exact visor shader when the live checkbox is off");
+
+        Check(halo4_screen_effect_shader::IsMotionSuckShader(
+                  0x47668A1953271934ULL) &&
+                  !halo4_screen_effect_shader::IsMotionSuckShader(
+                      0x47668A1953271935ULL),
+            "Halo 4 screen-effect bridge admits only the byte-proven H4EK/retail motion-suck shader");
+        Check(halo4_screen_effect_shader::ShouldSuppress(
+                  true, true, true, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      false, true, true, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      true, false, true, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      true, true, false, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      true, true, true, false),
+            "Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only");
     }
 
     Halo4CuiReticleInstallProof halo4CuiInstall{};

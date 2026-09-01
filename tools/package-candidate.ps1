@@ -64,14 +64,12 @@ try {
     }
 
     # Every unaccepted continuation must descend from the authoritative
-    # user-accepted C-H4-52 source pointer. Older reconstructed-C50 commit ids
-    # are not objects in this repository and therefore cannot be ancestry
-    # anchors here.
-    $acceptedC52Baseline =
-        '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
-    & git -C $repoRoot merge-base --is-ancestor $acceptedC52Baseline $commit
+    # user-accepted C-H4-56 source pointer.
+    $acceptedC56Baseline =
+        '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
+    & git -C $repoRoot merge-base --is-ancestor $acceptedC56Baseline $commit
     if ($LASTEXITCODE -ne 0) {
-        throw "Refusing to package: HEAD does not descend from accepted C-H4-52 source $acceptedC52Baseline."
+        throw "Refusing to package: HEAD does not descend from accepted C-H4-56 source $acceptedC56Baseline."
     }
 
     # C-H2-55 observer identity is explicitly non-owning. Do not apply that
@@ -173,6 +171,8 @@ try {
         (Join-Path $repoRoot 'src\common\halo4_cui_reticle_logic.h'))
     $halo4HelmetShaderSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\halo4_helmet_shader_logic.h'))
+    $halo4ScreenEffectShaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_screen_effect_shader_logic.h'))
     $d3dSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
     if ($gameSource -notmatch 'InstallHalo4Restoration' -or
@@ -203,6 +203,17 @@ try {
         $configHeaderSource -notmatch 'bool halo4_helmet\s*=\s*true' -or
         $menuSource -notmatch 'Show Halo 4 helmet frame') {
         throw 'C-H4-56 gate failed: the full-frontend visor geometry admission, native-reticle replay canvas, exact visor-shader toggle, pause, effects, or adjustable HUD source is missing.'
+    }
+    if ($halo4ScreenEffectShaderSource -notmatch
+            'kMotionSuckHash\s*=\s*0x47668A1953271934ULL' -or
+        $halo4ScreenEffectShaderSource -notmatch 'ShouldSuppress' -or
+        $d3dSource -notmatch 'RegisterHalo4MotionSuckShader' -or
+        $d3dSource -notmatch 'VR_IsStereoEnabled\(\)' -or
+        $d3dSource -notmatch 'D3D_Halo4ScreenEffectShaderPathAvailable' -or
+        $gameSource -notmatch 'screen-fx=%s' -or
+        $coreTestsSource -notmatch
+            'Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only') {
+        throw 'C-H4-57 gate failed: exact H4EK/retail motion-suck identity, Halo-4/stereo isolation, telemetry, or unit coverage is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -243,7 +254,7 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H4-56: the Halo 4 camera core is not ON.'
+        throw 'Refusing to package C-H4-57: the Halo 4 camera core is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
@@ -296,7 +307,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h4-56-helmet-visor-frontend',
+        'c-h4-57-ghost-boost-motion-suck',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -343,7 +354,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 30
+        schema_version = 31
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -368,14 +379,14 @@ try {
             changes_config = $false
         }
         accepted_halo4_identity = [ordered]@{
-            candidate = 'C-H4-52'
+            candidate = 'C-H4-56'
             source_commit =
-                '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
+                '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-56'
+            id = 'C-H4-57'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'c-h4-55-native-reticle-plus-exact-v6-visor-shader-toggle-plus-complete-gameplay-cui-frontend-visor-root-transform'
+            behavior = 'accepted-c-h4-56-plus-exact-h4ek-retail-motion-suck-screen-effect-suppression'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -414,6 +425,19 @@ try {
             helmet_geometry_transform =
                 'complete-gameplay-cui-frontend-depth-excluding-private-reticle-replay-and-pause'
             helmet_failure_policy = 'stock-authored-helmet-art'
+            screen_effect_blackout_fix = $true
+            screen_effect_shader = 'screen-motion-suck'
+            screen_effect_shader_hash = '0x47668A1953271934'
+            screen_effect_scope =
+                'halo4-active-and-stereo-enabled-exact-pixel-shader-only'
+            screen_effect_policy =
+                'pssetshader-null-preserve-already-rendered-eye'
+            screen_effect_kept_native =
+                'm30-speed-line-tint-alpha-and-all-other-shaders'
+            screen_effect_evidence =
+                'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map'
+            screen_effect_failure_policy =
+                'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed'
             authored_crosshair = $true
             native_face_crosshair_suppressed = $true
             reticle_capture_boundary =
@@ -429,7 +453,7 @@ try {
             reticle_failure_policy =
                 'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed'
             parity_diagnostic = [ordered]@{
-                player_visible_behavior_changed = $false
+                player_visible_behavior_changed = $true
                 automatic_for_this_candidate = $true
                 command_bucket_count = 256
                 transform_identity_slots = 32
@@ -753,7 +777,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H4-56 carries forward headset-accepted C-H2-88 and the user-confirmed C-H4-55 native reticle, pause, effects, and adjustable HUD behavior. The supplied C-H4-55 log proves the exact visor shader and checkbox are live while the helmet geometry remains absent. The headset-working V6 donor applies HUD affine and curvature to the complete gameplay-CUI frontend depth; C-H4-56 restores that admission for H4EK container_visor/container_visor_glow sibling polyart while explicitly excluding the private stock-canvas reticle replay and pause. The exact shader hook remains default-visible and hidden nulls only hash 4BE62AC49C2BF210. Every optional feature fails open independently. This package does not install automatically. Halo 4 headset validation required.'
+        note = 'C-H4-57 carries forward headset-accepted C-H4-56, including its native reticle, adjustable HUD, helmet/visor toggle, pause, effects, camera, hands, and OpenXR behavior. The accepted C-H4-56 Ghost-run log proves the blackout is scene-painted while current stereo pairs and the XR session stay healthy. Official H4EK tags select the opaque seven-tap screen motion_suck material for the m30 supercharged-Ghost boost; its complete PC DXBC is byte-identical in the pinned retail mission map and hashes to 47668A1953271934. C-H4-57 nulls only that exact pixel shader while Halo 4 stereo is active, preserving the separate speed-line/tint effect and every other post-process. This also covers any other Halo 4 blackout produced by the same exact shader, without blanket suppression. The feature fails open independently. This package does not install automatically. Halo 4 target and Halo 3 regression headset validation are required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

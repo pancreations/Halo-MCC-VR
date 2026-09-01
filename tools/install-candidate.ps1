@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 30) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 31) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 30) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h4-56-helmet-visor-frontend-',
+            $head.Substring(0, 7) + '-c-h4-57-ghost-boost-motion-suck-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -180,18 +180,18 @@ if (-not (Test-ExactInt32 $manifest.schema_version 30) -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
         [string]$manifest.embedded_build_identity.halo2 -cne
             'BOTH_MODES_STEREO_6DOF' -or
-        [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-52' -or
+        [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-56' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
-            '8498ce96384ebe3d1f52959fb17fa6c12deb00f1' -or
+            '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25' -or
         # Producer and installer advance together. This prevents a package for
         # the new source from silently carrying the preceding Halo 4 candidate's
         # behavior block, which happened repeatedly during bring-up.
-        [string]$manifest.halo4_candidate.id -cne 'C-H4-56' -or
+        [string]$manifest.halo4_candidate.id -cne 'C-H4-57' -or
         [string]$manifest.halo4_candidate.status -cne
             'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo4_candidate.behavior -notmatch '\S' -or
         $manifest.halo4_candidate.parity_diagnostic.player_visible_behavior_changed -ne
-            $false -or
+            $true -or
         $manifest.halo4_candidate.parity_diagnostic.automatic_for_this_candidate -ne
             $true -or
         [int]$manifest.halo4_candidate.parity_diagnostic.command_bucket_count -ne
@@ -257,6 +257,21 @@ if (-not (Test-ExactInt32 $manifest.schema_version 30) -or
             'h4ek-container-visor-and-container-visor-glow-sibling-cui-polyart' -or
         [string]$manifest.halo4_candidate.helmet_geometry_transform -cne
             'complete-gameplay-cui-frontend-depth-excluding-private-reticle-replay-and-pause' -or
+        $manifest.halo4_candidate.screen_effect_blackout_fix -ne $true -or
+        [string]$manifest.halo4_candidate.screen_effect_shader -cne
+            'screen-motion-suck' -or
+        [string]$manifest.halo4_candidate.screen_effect_shader_hash -cne
+            '0x47668A1953271934' -or
+        [string]$manifest.halo4_candidate.screen_effect_scope -cne
+            'halo4-active-and-stereo-enabled-exact-pixel-shader-only' -or
+        [string]$manifest.halo4_candidate.screen_effect_policy -cne
+            'pssetshader-null-preserve-already-rendered-eye' -or
+        [string]$manifest.halo4_candidate.screen_effect_kept_native -cne
+            'm30-speed-line-tint-alpha-and-all-other-shaders' -or
+        [string]$manifest.halo4_candidate.screen_effect_evidence -cne
+            'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map' -or
+        [string]$manifest.halo4_candidate.screen_effect_failure_policy -cne
+            'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed' -or
         [string]$manifest.halo2_candidate.id -cne 'C-H2-88' -or
         [string]$manifest.halo2_candidate.status -cne
             'HEADSET_ACCEPTED_CARRIED_FORWARD' -or

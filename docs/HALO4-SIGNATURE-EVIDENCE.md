@@ -4018,3 +4018,59 @@ non-zero rate; any freedom publishes `PlayerControlled`, and a missing
 camera, wrong type, or out-of-range tick count publishes nothing (Unknown).
 Limits are tested as `|x| > 1e-4` on masked float bits, so non-finite values
 fail toward immersive gameplay. Headset-PENDING.
+
+## Mission 30 boosted-Ghost screen effect (C-H4-57, 2026-09-01)
+
+**Headset symptom and transaction boundary.** The accepted C-H4-56 Steam log
+for `m30_cryptum` reports the screen turning black whenever Cortana's
+supercharged Ghost boost is used. In the same intervals the OpenXR session is
+focused with `shouldRender=1`, the Halo 4 core reports geometry `TAKING`, and
+complete stereo pairs continue to publish with zero recoverable XR drops. The
+restoration line also reports `effects=LIVE`; it is not the local
+first-person-effect fallback. This is a black-painted eye, not loss of camera
+ownership, eye capture, or the OpenXR session.
+
+**H4EK tags.** Exporting the official tag
+`environments\solo\m30_cryptum\fx\screen\parts\fx_m30_ghost_boost.area_screen_effect`
+(SHA-256
+`FEA5AA7D6C2A29E28BB792CDC051A86A702A282700CFCF7A9302D22ABBE284D1`)
+shows two independent effects. `non_suck` selects
+`fx_m30_ghost_escape_scrn.material`, the native speed-line/tint presentation.
+`suck` selects `fx_m30_ghost_escape_blur.material` (SHA-256
+`BCA9F9A06D4C350BEE59314F5F1DB19DBC3A49531140AEE1F209ED98A4CE2771`),
+which is opaque, uses `color_black_alpha_black`, and binds the shared
+`shaders\material_shaders\screen\motion_suck` material shader with distance
+0.05 and strength 0.43. The ordinary Storm Ghost boost tag has only FOV and
+shake and does not bind this shader.
+
+**H4EK shader semantics.** The official `motion_suck.fx` defines
+`MOTION_SUCK` and routes through `calc_base_motion_suck`. `base.fx` samples
+the scene at the center and at six further radial offsets before averaging
+the seven taps. Its opaque black fallback explains why a scene-history
+assumption that is harmless on the flat swap chain can replace a VR eye with
+black. The separate mission speed/tint material uses `screen\tint_alpha`; it
+is not part of this correction.
+
+**Retail identity.** In the official H4EK
+`screen.material_shader_bank` (SHA-256
+`22A7C097A9A70648D1B0B38247C55110F237B8B532E968FB934C671A09234E01`),
+the PC `motion_suck` DXBC is the complete 0xEF8-byte blob at offset 0x101BD.
+It has SHA-256
+`91E1F3CDEF88EE643F8B6CAAD221CFBEAACAA003F357D3AA12CBF8DADB5D85E5`
+and the project's 3Dmigoto-compatible unseeded FNV-1 identity
+`0x47668A1953271934`. The complete blob is byte-identical at offset
+0x29C34B00 in the pinned retail `m30_cryptum.map` (map SHA-256
+`E64AE61587FCB0919173E8A899AE2764C96EF9378FD004A214D8786A5A31E8E1`).
+This is an exact H4EK-first binding verified against retail, not a copied
+address or guessed tag meaning.
+
+**C-H4-57 policy.** The existing optional D3D shader bridge records only the
+exact pixel-shader identity above. While, and only while, Halo 4 is active and
+VR stereo is enabled, binding that shader is forwarded as a null pixel shader
+for that draw. The already-rendered eye is retained. The mission's separate
+speed-line/tint shader and every other post-process remain native. This also
+fixes any other Halo 4 VR blackout caused by this exact shared `motion_suck`
+shader, but deliberately does not disable a broader class of effects. If the
+shader hooks or exact identity are unavailable, this feature alone stays
+stock; the camera core, HUD, reticle, helmet, stereo, and OpenXR remain armed.
+Headset-PENDING.

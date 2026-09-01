@@ -36318,10 +36318,15 @@ namespace
         uint64_t helmetSuppressions = 0;
         D3D_GetHalo4HelmetTelemetry(
             helmetShaders, helmetSuppressions);
-        LOG("Halo 4 C-H4-56 restorations: effects=%s (%lld local FP hides), "
+        uint64_t motionSuckShaders = 0;
+        uint64_t motionSuckSuppressions = 0;
+        D3D_GetHalo4ScreenEffectTelemetry(
+            motionSuckShaders, motionSuckSuppressions);
+        LOG("Halo 4 C-H4-57 restorations: effects=%s (%lld local FP hides), "
             "HUD=%s (%llu native affine writes, curvature=%s), pause=%s, "
             "helmet=%s/config-%s (%llu exact shaders, %llu suppressed binds; "
-            "full frontend root); "
+            "full frontend root), screen-fx=%s (%llu motion-suck shaders, "
+            "%llu suppressed binds); "
             "every unavailable feature stays stock",
             g_halo4Restoration.effectsInstalled.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
@@ -36337,7 +36342,11 @@ namespace
                 std::memory_order_acquire) ? "shader-LIVE" : "StockFallback",
             g_config.halo4_helmet ? "visible" : "hidden",
             static_cast<unsigned long long>(helmetShaders),
-            static_cast<unsigned long long>(helmetSuppressions));
+            static_cast<unsigned long long>(helmetSuppressions),
+            D3D_Halo4ScreenEffectShaderPathAvailable() ?
+                "exact-bridge-LIVE" : "StockFallback",
+            static_cast<unsigned long long>(motionSuckShaders),
+            static_cast<unsigned long long>(motionSuckSuppressions));
 
         const uint64_t cuiGameplayPasses =
             g_halo4Camera.cuiGameplayPasses.exchange(
