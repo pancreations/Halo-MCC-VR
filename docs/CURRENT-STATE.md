@@ -1,5 +1,19 @@
 # Current state
 
+> **ACCEPTED CUMULATIVE SOURCE BASELINE (user headset, 2026-09-01):
+> C-H2-88, source commit `bda7ecb93cdfcc982469e8ba92f888e05490511a`,
+> DLL SHA-256
+> `0cbf3615ef90f72562f07a6c4b55b22a6ac76b8f7913931effc332b6816096dc`.
+> The user explicitly reported "Halo 2 is working as expected, working as
+> wanted" and directed that Halo 2 be left as-is. This advances the cumulative
+> source pointer from C-H4-52 while preserving every accepted C-H4-52 behavior.
+> Headset result: Steam edition, SteamVR/OpenXR 2.17.7, Oculus runtime headset,
+> 120 Hz. The Microsoft Store install root was absent on this machine during
+> C-H2-88 deployment, so this result does not claim a Store-edition runtime
+> test. Open work above this pointer is now Halo 4 only: semantic pause/resume,
+> first-person muzzle/Promethean effect suppression, the working native HUD
+> layout controls, and the optional helmet overlay toggle.**
+
 > **ACCEPTED BASELINE (user headset, 2026-09-01): C-H4-52, DLL SHA-256
 > `69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973`,
 > installed on both editions (Steam + Microsoft Store), cumulative on
