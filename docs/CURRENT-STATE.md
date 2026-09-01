@@ -1,6 +1,19 @@
 # Current state
 
 > **ACCEPTED CUMULATIVE SOURCE BASELINE (user headset, 2026-09-01):
+> C-H4-56, source commit `271f6dffb8cf2e13dc4feafd85b9b4c61440ff25`,
+> DLL SHA-256
+> `9a28247337eac1509048884c35517c43328ffcb97f2b0190c95e6cf67976e309`.
+> The user reported “fantastic. You nailed it” after confirming that the native
+> Halo 4 reticle remained correct and the authored Mjolnir helmet/visor framing
+> was restored. This advances the cumulative pointer from C-H2-88 and protects
+> the C-H4-55 native-reticle, pause, effects, adjustable-HUD and helmet-toggle
+> behavior. Headset result: Steam edition, SteamVR/OpenXR 2.17.7, Oculus
+> runtime headset, 120 Hz. The Microsoft Store edition was not tested in this
+> result. Open work above this pointer is the Halo 4 `m30_cryptum` boosted-Ghost
+> blackout; the accepted HUD/reticle/helmet paths must not change.**
+
+> **ACCEPTED CUMULATIVE SOURCE BASELINE (user headset, 2026-09-01):
 > C-H2-88, source commit `bda7ecb93cdfcc982469e8ba92f888e05490511a`,
 > DLL SHA-256
 > `0cbf3615ef90f72562f07a6c4b55b22a6ac76b8f7913931effc332b6816096dc`.

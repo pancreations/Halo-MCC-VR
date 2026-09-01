@@ -1,9 +1,18 @@
 # C-H4-56 Halo 4 helmet visor frontend restoration
 
-Status: **ready for headset test; unaccepted**.
+Status: **accepted in the user's headset (2026-09-01)**.
 
-C-H4-56 is one Halo-4-only correction above C-H4-55. It does not advance
-`docs/CURRENT-STATE.md`, install into MCC, or publish to GitHub.
+C-H4-56 is one Halo-4-only correction above C-H4-55. It was packaged without
+installing into MCC and was not published to GitHub. The accepted source is
+`271f6dffb8cf2e13dc4feafd85b9b4c61440ff25`; the packaged DLL SHA-256 is
+`9a28247337eac1509048884c35517c43328ffcb97f2b0190c95e6cf67976e309`.
+
+## Accepted headset result
+
+Steam edition, SteamVR/OpenXR 2.17.7, Oculus runtime headset, 120 Hz. The user
+confirmed that C-H4-56 restored the authored helmet/visor framing while the
+native reticle and all other Halo 4 behavior remained correct: “fantastic. You
+nailed it.” The Microsoft Store edition was not exercised by this result.
 
 ## Headset result that selects this correction
 
