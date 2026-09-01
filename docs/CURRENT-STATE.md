@@ -1,5 +1,18 @@
 # Current state
 
+> **ACCEPTED BASELINE (user headset, 2026-09-01): C-H4-52, DLL SHA-256
+> `69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973`,
+> installed on both editions (Steam + Microsoft Store), cumulative on
+> C-H2-87 / C-TITLE-2 / C-TITLE-1 / Stage 3CX. The user confirmed that
+> exiting a Halo 4 level returns to the theatre presentation and declared
+> this build the baseline. Every future candidate continues THIS build.
+> GitHub `master` (github.com/pancreations/Halo-MCC-VR) mirrors this
+> folder at this state; pull requests are to be based on it. Manifest:
+> `CH452-CANDIDATE-MANIFEST.json` at the repository root (copy of
+> `out/candidates/CH452-halo4-heartbeat-retire/`). Still open on top of
+> it: Halo 2 Classic barrel-on-crosshair (read the C-H2-87 barrel meter
+> line from the next Halo 2 session first).**
+
 > **PROCESS RULE (user, 2026-08-31): never fork the build lineage. A
 > candidate must CONTINUE the accepted build - it may not drop any accepted
 > behavior, and a fresh compile that loses the accepted Halo 4 3CR/3CX
@@ -10,8 +23,8 @@
 > must be in the source build itself (or the change must be applied to the
 > accepted image), so one cumulative line continues.**
 
-> **UNACCEPTED C-H4-52 HALO 4 HEARTBEAT RETIRE, INSTALLED BOTH EDITIONS -
-> 2026-09-01.** Regression found on the source builds: after exiting a Halo
+> **C-H4-52 HALO 4 HEARTBEAT RETIRE - ACCEPTED BASELINE (user headset),
+> INSTALLED BOTH EDITIONS - 2026-09-01.** Regression found on the source builds: after exiting a Halo
 > 4 level the screen stayed head-locked (no theatre) and the stick went
 > sideways in the menu. The 07:58 Steam log: level ended ~07:59:06 (0
 > pairs, "no owned Halo 4 frame in the last 250 ms"), title re-detected

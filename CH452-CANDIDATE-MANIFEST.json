@@ -1,0 +1,28 @@
+{
+  "candidate": "C-H4-52",
+  "status": "HEADSET_ACCEPTED_BASELINE",
+  "candidate_kind": "source-built cumulative; continues C-H2-87, drops nothing",
+  "behavioral_change": "ONE: Halo 4's camera core retires on a stale camera heartbeat - armed, no owned camera frame (enginePitchSerial unchanged) for 2.5 s, not the pause screen -> armed cleared and teardown requested; the next worker tick removes the core, the title is re-detected, the runtime mode falls to unsupported and the menu/theatre presentation returns. This is the rule every other title already lives by ('once its heartbeat is absent for 500 ms, disarm per-eye rendering and release the retained scene target').",
+  "why": "User: after exiting a Halo 4 level the screen stayed head-locked instead of returning to the 3D theatre and the stick went sideways in the menu. The 2026-09-01 07:58 Steam log shows the cause: the level ended ~07:59:06 (pairs 0, 'no owned Halo 4 frame in the last 250 ms' at 07:59:08.6), the title was re-detected at 07:59:09.4, the mode went gameplay->loading->gameplay in 7 ms because the still-ARMED core republished Gameplay every tick, and it stayed armed for two minutes ('camera=not seen', 0 pairs) until the module unloaded. The accepted 3CX image tore down within ~1 s at the same moment (old log: stereo OFF -> gate re-armed -> core removed -> re-detected -> unsupported). Halo 4's level-load gate never closes on its own once open, so teardown depended on the core disarming at level end; on the source build it no longer did. The heartbeat rule restores the behaviour regardless of which upstream signal changed.",
+  "safety": "Exempts pause presentation; ignores the window before the first heartbeat of a generation; a hitch shorter than 2.5 s is untouched; a longer one re-earns the install through the existing level-load gate exactly as consecutive levels already do. Cinematics keep the heartbeat (the camera setup hook runs every owned frame).",
+  "log_line": "'Halo 4 camera core: no camera heartbeat for N ms while armed (the level closed) - retiring so presentation returns to the menu screen' followed by the existing 'Halo 4 camera core removed' and 'Runtime mode: ... -> unsupported'.",
+  "output_dll": "CH452-HaloMCCVR.dll",
+  "output_dll_sha256": "69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973",
+  "base_candidate": "C-H2-87 9eb07bf8a75f5c3233cfa133d43a878c4f3e07ba9604fbf7467e6eb533691c62",
+  "verification": {
+    "clean_release_build": "PASS",
+    "core_tests": "PASS 1/1",
+    "reach_consistency_gate": "PASS",
+    "mcc_headset_acceptance": "ACCEPTED 2026-09-01 - user: exiting a Halo 4 level returns to the theatre presentation; user declared this build the baseline"
+  },
+  "deployment": "INSTALLED_BOTH_2026-09-01, MCC closed, hash-verified, halomccvr.cfg untouched",
+  "steam_installed_dll_sha256": "69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973",
+  "store_installed_dll_sha256": "69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973",
+  "prior_installed_dll_sha256": "9eb07bf8a75f5c3233cfa133d43a878c4f3e07ba9604fbf7467e6eb533691c62",
+  "rollback": "out/deploy-backups/2026-09-01-pre-CH452",
+  "launcher_changed": false,
+  "cfg_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": true,
+  "github": "master mirrors the source folder at this state (github.com/pancreations/Halo-MCC-VR)"
+}
