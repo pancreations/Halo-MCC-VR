@@ -29841,7 +29841,6 @@ namespace
         uint64_t pauseMismatchSinceMs = 0;
         bool pauseMismatchValue = false;
         std::atomic<bool> helmetControlInstalled{false};
-        std::atomic<uint64_t> helmetHiddenTransforms{0};
         std::atomic<uint64_t> hudTransforms{0};
     } g_halo4Restoration;
 
@@ -33041,15 +33040,6 @@ namespace
         uint16_t payloadSize = 0;
     };
 
-    struct Halo4CuiTransformPayload
-    {
-        int32_t transformId = 0;
-        float x = 0.0f;
-        float y = 0.0f;
-    };
-    static_assert(
-        sizeof(Halo4CuiTransformPayload) == kHalo4CuiCommandBeginPayloadSize);
-
     struct Halo4CuiReticleEyeScope
     {
         bool active = false;
@@ -33078,10 +33068,8 @@ namespace
     {
         if (!renderer || !g_halo4Restoration.hudInstalled.load(
                 std::memory_order_acquire) ||
-            !Halo4NativeHudTransformsPass(
-                g_halo4CuiReticleEyeScope.gameplayPassActive,
-                g_halo4CuiReticleEyeScope.captureReplay,
-                VR_IsPausePresentationTarget()))
+            !g_halo4CuiReticleEyeScope.gameplayPassActive ||
+            VR_IsPausePresentationTarget())
         {
             return;
         }
@@ -33431,21 +33419,12 @@ namespace
             if (wantsCaptureReplay)
             {
                 scope.captureReplay = true;
-                // The capture replay must use the same stock affine and
-                // curvature that produced the headset-proven authored pixels.
-                // C-H4-53's Stage 3X HUD transform belongs only to the visible
-                // gameplay pass; applying it here moved the reticle subtree
-                // outside the private capture target and forced the procedural
-                // fallback. The affine checks captureReplay while the assembly
-                // curvature bridge checks this thread-ID gate.
-                g_halo4HudGameplayThreadId = 0;
                 scope.captureReplayAttempted = false;
                 scope.captureReplayRedirected = false;
                 scope.captureSelection = {};
                 original(windowIndex, renderBufferChannel, viewportBounds,
                          optionalProfileValue, renderMode, flag);
                 scope.captureReplay = false;
-                g_halo4HudGameplayThreadId = GetCurrentThreadId();
                 scope.captureSelection = {};
                 if (scope.redirectActive)
                     (void)Halo4EndCuiReticleRedirect(false);
@@ -33469,7 +33448,6 @@ namespace
             // enter this phase and therefore remain completely stock.
             if (scope.redirectActive)
                 (void)Halo4EndCuiReticleRedirect(true);
-            scope.captureReplay = false;
             g_halo4HudGameplayThreadId = 0;
             scope.gameplayPassActive = false;
         }
@@ -33510,15 +33488,13 @@ namespace
         Halo4CuiCommandHeader header{};
         const bool headerReadable = command &&
             Halo4SafeRead(command, &header, sizeof(header));
-        Halo4CuiTransformPayload transformPayload{};
-        const bool transformPayloadReadable = headerReadable &&
+        int32_t reticleTransformId = 0;
+        const bool beginPayloadReadable = headerReadable &&
             header.command == kHalo4CuiCommandBegin &&
             header.payloadSize == kHalo4CuiCommandBeginPayloadSize &&
             Halo4SafeRead(
                 static_cast<const uint8_t*>(command) + sizeof(header),
-                &transformPayload, sizeof(transformPayload));
-        const bool reticlePayloadReadable = transformPayloadReadable &&
-            Halo4CuiTransformPayloadIsReticle(transformPayload.x);
+                &reticleTransformId, sizeof(reticleTransformId));
         Halo4CuiReticleEyeScope& scope = g_halo4CuiReticleEyeScope;
         Halo4ParityRecordCommand(headerReadable, header);
 
@@ -33566,16 +33542,12 @@ namespace
             if (captureTargetWasActive)
             {
                 Halo4CuiCaptureAdvanceAfterDraw(
-                    scope.captureSelection,
-                    headerReadable &&
-                        (captureCommand != kHalo4CuiCommandBegin ||
-                         reticlePayloadReadable),
-                    captureCommand,
+                    scope.captureSelection, headerReadable, captureCommand,
                     header.payloadSize);
                 (void)Halo4EnforceCuiCaptureSelection(
                     renderer, scope.captureSelection);
             }
-            if (result && reticlePayloadReadable && renderer)
+            if (result && beginPayloadReadable && renderer)
             {
                 uint32_t count = 0;
                 if (Halo4SafeRead(
@@ -33592,8 +33564,7 @@ namespace
                     BoneMatrix transform{};
                     if (Halo4SafeRead(entry, &transform, sizeof(transform)))
                         Halo4ParityRecordTransform(
-                            transformPayload.transformId,
-                            header.payloadSize, count,
+                            reticleTransformId, header.payloadSize, count,
                             transform, true);
                 }
             }
@@ -33603,25 +33574,19 @@ namespace
         // This dispatcher executes the entire CUI stream. All non-reticle
         // commands stay a single trampoline call; ownership/config checks are
         // paid only for the exact H4EK-proven 0x28/0x0C marker.
-        const bool ownsStereo = Halo4OwnsCuiReticleEyeScope();
-        const bool nativeTransformLive =
-            Halo4CuiReticleNativeSuppressionLive();
-        const bool hideHelmetOverlay = Halo4CuiHelmetOverlayShouldHide(
-            ownsStereo, nativeTransformLive, transformPayloadReadable,
-            reticlePayloadReadable, g_config.halo4_helmet);
-        if (!reticlePayloadReadable && !hideHelmetOverlay)
+        if (!beginPayloadReadable)
             return original(
                 renderer, command, openRenderSections, renderContext);
 
-        const Halo4CuiReticleAction action = hideHelmetOverlay
-            ? Halo4CuiReticleAction::HideNative
-            : Halo4DecideCuiReticleAction(
-                ownsStereo, nativeTransformLive, reticlePayloadReadable,
-                headerReadable ? static_cast<uint32_t>(
-                               static_cast<uint16_t>(header.command)) : 0,
-                g_config.crosshair, g_config.kill_reticle,
-                g_stereoEye.load(std::memory_order_relaxed),
-                g_config.right_eye_first);
+        const bool ownsStereo = Halo4OwnsCuiReticleEyeScope();
+        const Halo4CuiReticleAction action = Halo4DecideCuiReticleAction(
+            ownsStereo, Halo4CuiReticleNativeSuppressionLive(),
+            beginPayloadReadable,
+            headerReadable ? static_cast<uint32_t>(
+                           static_cast<uint16_t>(header.command)) : 0,
+            g_config.crosshair, g_config.kill_reticle,
+            g_stereoEye.load(std::memory_order_relaxed),
+            g_config.right_eye_first);
 
         // Every command always runs. In the visible eye pass, type 0x28 pushes
         // the reticle-only 0x34 transform. Move only that native flat copy
@@ -33632,9 +33597,8 @@ namespace
         if (!result || action == Halo4CuiReticleAction::DrawStock)
             return result;
 
-        if (!hideHelmetOverlay)
-            g_halo4Camera.cuiReticleBegins.fetch_add(
-                1, std::memory_order_relaxed);
+        g_halo4Camera.cuiReticleBegins.fetch_add(
+            1, std::memory_order_relaxed);
         uint32_t count = 0;
         if (!renderer || !Halo4SafeRead(
                 static_cast<const uint8_t*>(renderer) +
@@ -33677,10 +33641,8 @@ namespace
         const float stockScale = transform.scale;
         const float baseX = transform.translation[0];
         const float baseY = transform.translation[1];
-        if (!hideHelmetOverlay)
-            Halo4ParityRecordTransform(
-                transformPayload.transformId, header.payloadSize, count,
-                transform, false);
+        Halo4ParityRecordTransform(
+            reticleTransformId, header.payloadSize, count, transform, false);
         // This path never receives or computes an aim coordinate. It only
         // removes the duplicate flat copy; the shared reticleQuad owns the
         // exact bullet-ray position for all four titles.
@@ -33698,12 +33660,6 @@ namespace
         if (!Halo4SafeWrite(entry, &transform, sizeof(transform)))
         {
             g_halo4Camera.cuiReticleRedirectFailures.fetch_add(
-                1, std::memory_order_relaxed);
-            return result;
-        }
-        if (hideHelmetOverlay)
-        {
-            g_halo4Restoration.helmetHiddenTransforms.fetch_add(
                 1, std::memory_order_relaxed);
             return result;
         }
@@ -33725,6 +33681,7 @@ namespace
             1, std::memory_order_relaxed);
         g_halo4Camera.cuiReticleEyeSerial[scope.eye].store(
             scope.preparedSerial, std::memory_order_release);
+        (void)reticleTransformId;
         return result;
     }
 
@@ -35631,22 +35588,10 @@ namespace
                 "missing, ambiguous, or moved; other H4 features stay live");
         }
 
-        const bool helmetControlInstalled =
-            g_halo4Camera.cuiReticleInstalled.load(
-                std::memory_order_acquire);
         g_halo4Restoration.helmetControlInstalled.store(
-            helmetControlInstalled, std::memory_order_release);
-        if (helmetControlInstalled)
-        {
-            LOG("Halo 4 helmet toggle Installed: the H4EK-proven reticle "
-                "payload-X discriminator leaves authored overlay transforms "
-                "stock/visible by default and hides them only when requested");
-        }
-        else
-        {
-            LOG("Halo 4 helmet toggle: StockFallback; the optional CUI "
-                "dispatcher is unavailable, so authored helmet art stays stock");
-        }
+            false, std::memory_order_release);
+        LOG("Halo 4 helmet toggle: StockFallback; no proven runtime binding "
+            "is active, so authored helmet art stays stock");
     }
 
     void Halo4RestorationWorkerTick()
@@ -35685,8 +35630,6 @@ namespace
         g_halo4Restoration.pauseMismatchSinceMs = 0;
         g_halo4Restoration.helmetControlInstalled.store(
             false, std::memory_order_release);
-        g_halo4Restoration.helmetHiddenTransforms.store(
-            0, std::memory_order_relaxed);
         if (!CleanupHalo4NativeHud(base) || !CleanupHalo4Effects(base))
             return false;
         g_halo4Restoration.cleanupRequired = false;
@@ -36089,7 +36032,8 @@ namespace
         (void)InstallHalo4CuiReticle(base, size, generation);
         // Four optional, independently fail-open restorations requested for
         // this cumulative test: Stage 3AI effects, Stage 3X native HUD,
-        // Stage 3AW pause semantics, and the CUI-isolated helmet toggle.
+        // Stage 3AW pause semantics. The failed transform-based helmet
+        // experiment is disabled until the proven shader binding is restored.
         InstallHalo4Restoration(base, size);
         PublishHalo4Lifecycle();
         LOG("Halo 4 camera core installed (generation %u): setup 0x%X and the "
@@ -36319,13 +36263,9 @@ namespace
         const uint64_t hudTransforms =
             g_halo4Restoration.hudTransforms.exchange(
                 0, std::memory_order_relaxed);
-        const uint64_t helmetHiddenTransforms =
-            g_halo4Restoration.helmetHiddenTransforms.exchange(
-                0, std::memory_order_relaxed);
-        LOG("Halo 4 C-H4-54 restorations: effects=%s (%lld local FP hides), "
+        LOG("Halo 4 C-H4-53 restorations: effects=%s (%lld local FP hides), "
             "HUD=%s (%llu native affine writes, curvature=%s), pause=%s, "
-            "helmet=%s/config-%s (%llu overlay hides); every unavailable "
-            "feature stays stock",
+            "helmet=%s/config-%s; every unavailable feature stays stock",
             g_halo4Restoration.effectsInstalled.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
             static_cast<long long>(hiddenEffects),
@@ -36336,12 +36276,8 @@ namespace
             g_halo4Restoration.pauseProven.load(
                 std::memory_order_acquire) ? "native-reason-3" :
                 "raw-edge-fallback",
-            g_halo4Restoration.helmetControlInstalled.load(
-                std::memory_order_acquire) &&
-                    Halo4CuiReticleNativeSuppressionLive()
-                ? "CUI-LIVE" : "StockFallback",
-            g_config.halo4_helmet ? "visible" : "hidden",
-            static_cast<unsigned long long>(helmetHiddenTransforms));
+            "StockFallback",
+            g_config.halo4_helmet ? "visible" : "hidden");
 
         const uint64_t cuiGameplayPasses =
             g_halo4Camera.cuiGameplayPasses.exchange(

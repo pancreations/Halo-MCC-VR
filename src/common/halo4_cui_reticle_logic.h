@@ -57,25 +57,6 @@ inline constexpr uint32_t kHalo4CuiCommandPolyart = 0x20;
 inline constexpr uint32_t kHalo4CuiCommandPolyartThreeColor = 0x1F;
 inline constexpr uint16_t kHalo4CuiCommandBeginPayloadSize = 0x0C;
 
-// H4EK ReticuleOffsetContainerWidget slot 27 emits payload
-// {int32 transformId; float2 offset}. It constructs the reticle offset as
-// {+/-0.0f, authoredY}; the other two 0x28/0x0C gameplay transforms observed
-// in the headset are not reticles. Classify on the proven payload X so
-// native-reticle suppression cannot silently consume unrelated HUD art.
-inline bool Halo4CuiTransformPayloadIsReticle(float payloadX) noexcept
-{
-    return std::isfinite(payloadX) && payloadX == 0.0f;
-}
-
-inline bool Halo4CuiHelmetOverlayShouldHide(
-    bool ownsStereoTransaction, bool nativeTransformLive,
-    bool payloadReadable, bool reticlePayload,
-    bool helmetVisible) noexcept
-{
-    return ownsStereoTransaction && nativeTransformLive && payloadReadable &&
-        !reticlePayload && !helmetVisible;
-}
-
 inline constexpr uint32_t kHalo4CuiReticleAnchorCount = 4;
 
 constexpr bool Halo4CuiReticleCallerTargetsDispatcher(

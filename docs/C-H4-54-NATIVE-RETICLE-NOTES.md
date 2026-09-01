@@ -1,6 +1,13 @@
 # C-H4-54 Halo 4 native-reticle correction
 
-Status: **unaccepted; headset test required**.
+Status: **rejected by headset test on 2026-09-01; behavior disabled**.
+
+The Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz result for source
+`18111adf27fbfccd508baec744262bb9387eb236` showed that the native authored
+reticle was still not restored and that the helmet frame remained absent with
+an inert toggle. The two premises below therefore remain historical leads, not
+accepted runtime facts. The transform-X helmet discriminator and the replay
+HUD exclusion were disabled before the next candidate was started.
 
 This candidate corrects the two connected CUI regressions reported on top of
 C-H4-53. The user's headset result confirmed the C-H4-53 pause/resume, local
