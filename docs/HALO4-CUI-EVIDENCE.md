@@ -845,3 +845,34 @@ Whether those two transforms exactly comprise the authored helmet/visor frame
 is the pending headset test; it is not recorded as an accepted engine fact.
 Failure remains local to the optional CUI feature and never disarms the camera,
 stereo, hands, effects, HUD, or OpenXR.
+
+### C-H4-54 headset result
+
+The 2026-09-01 Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz test of source
+`18111adf27fbfccd508baec744262bb9387eb236` rejected both premises above: the
+authored native reticle was still not restored, the helmet frame remained
+absent, and changing the helmet option had no visible effect. The zero-X
+transform classifier and transform-based helmet control are therefore negative
+results, not engine facts. Commit `3470728` disabled both behaviors before the
+next candidate.
+
+## C-H4-55 stock replay canvas and exact visor shader (2026-09-01)
+
+The last-known-good Halo 4 native-reticle log supplied for source
+`bda7ecb93cdfcc982469e8ba92f888e05490511a` contains nonblank authored uploads
+(six uploaded frames / 830 art pixels in one report) on a measured stock CUI
+base near `-1456.000/818.772`. The rejected C-H4-54 log instead used the
+Stage 3X visible-HUD base near `-763.818/336.072` and did not restore the
+native reticle. C-H4-55 therefore records the private replay transform
+separately and supplies that stock canvas to the existing capture framing;
+Stage 3X remains limited to the normal visible pass.
+
+The supplied known-good `7a24814` log identifies Halo 4's authored visor frame
+by exact 3DMigoto pixel-shader hash `4BE62AC49C2BF210`. It explicitly reports
+that no CUI/radar property is modified and that disabling the checkbox
+suppresses only that exact visor shader. Disassembly of the supplied V6 donor
+matches the log: CreatePixelShader computes unseeded 64-bit FNV-1 and
+PSSetShader nulls only the shader argument on an exact registered-pointer match,
+preserving the context and class-instance arguments. This is positive evidence
+for the C-H4-55 implementation, but its source-native port remains unaccepted
+until the user's headset test.

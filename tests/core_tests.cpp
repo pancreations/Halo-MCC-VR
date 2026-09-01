@@ -31,6 +31,7 @@
 #include "halo2_render_logic.h"
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
+#include "halo4_helmet_shader_logic.h"
 #include "halo4_hud_logic.h"
 #include "halo4_restoration_logic.h"
 #include "halo4_parity_trace_logic.h"
@@ -9586,6 +9587,23 @@ int main()
                   std::fabs(affine.horizontal - 0.5246f) < 0.0001f &&
                   std::fabs(affine.heightPixels - 16.0f) < 0.0001f,
             "Halo 4 native HUD affine matches Stage 3X size/aspect/height semantics");
+
+        Check(halo4_helmet_shader::IsVisorFramingShader(
+                  0x4BE62AC49C2BF210ULL) &&
+                  !halo4_helmet_shader::IsVisorFramingShader(
+                      0x4BE62AC49C2BF211ULL),
+            "Halo 4 helmet toggle admits only the headset-proven V6 visor shader hash");
+        Check(halo4_helmet_shader::ShouldSuppress(
+                  true, true, false, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      true, true, true, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      true, false, false, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      false, true, false, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      true, true, false, false),
+            "Halo 4 suppresses only the exact visor shader when the live checkbox is off");
     }
 
     Halo4CuiReticleInstallProof halo4CuiInstall{};
@@ -10011,6 +10029,24 @@ int main()
                   fabsf(directHidden.y) < 1.0e-4f &&
                   !Halo4BuildHiddenCuiTranslation(NAN, 1080.0f).valid,
             "Halo 4 native-copy hiding is independent of every aim coordinate");
+        float captureBaseY = 0.0f;
+        float captureHide = 0.0f;
+        Check(Halo4SelectCuiCaptureCanvas(
+                  -1456.0f, 818.772f, -763.818f, 336.072f,
+                  captureBaseY, captureHide) &&
+                  fabsf(captureBaseY - 818.772f) < 1.0e-4f &&
+                  fabsf(captureHide - 5824.0f) < 1.0e-4f,
+            "Halo 4 private reticle capture frames from its stock replay canvas instead of the scaled visible HUD canvas");
+        Check(Halo4SelectCuiCaptureCanvas(
+                  0.0f, 0.0f, -763.818f, 336.072f,
+                  captureBaseY, captureHide) &&
+                  fabsf(captureBaseY - 336.072f) < 1.0e-4f &&
+                  fabsf(captureHide - 3055.272f) < 1.0e-3f,
+            "Halo 4 capture keeps the accepted visible-canvas fallback before its first replay marker");
+        Check(!Halo4SelectCuiCaptureCanvas(
+                  NAN, 0.0f, 0.0f, NAN,
+                  captureBaseY, captureHide),
+            "Halo 4 capture canvas rejects invalid replay and visible samples without affecting camera VR");
         Check(!Halo4MapAimToCuiTranslation(
                    right, 0.0f, 1080.0f, false).valid &&
                   !Halo4MapAimToCuiTranslation(

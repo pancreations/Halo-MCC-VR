@@ -29721,6 +29721,11 @@ namespace
         std::atomic<uint32_t> parityLastFlag{0};
         std::atomic<float> cuiReticleBaseX{0.0f};
         std::atomic<float> cuiReticleBaseY{0.0f};
+        // Stock-transform canvas measured inside the private capture replay.
+        // It is separate from the visible canvas above because Stage 3X HUD
+        // controls intentionally affect only the visible gameplay pass.
+        std::atomic<float> cuiReticleCaptureBaseX{0.0f};
+        std::atomic<float> cuiReticleCaptureBaseY{0.0f};
         std::atomic<float> cuiReticleAimX{0.0f};
         std::atomic<float> cuiReticleAimY{0.0f};
         std::atomic<float> cuiReticleStockScale{0.0f};
@@ -33069,6 +33074,7 @@ namespace
         if (!renderer || !g_halo4Restoration.hudInstalled.load(
                 std::memory_order_acquire) ||
             !g_halo4CuiReticleEyeScope.gameplayPassActive ||
+            g_halo4CuiReticleEyeScope.captureReplay ||
             VR_IsPausePresentationTarget())
         {
             return;
@@ -33419,12 +33425,22 @@ namespace
             if (wantsCaptureReplay)
             {
                 scope.captureReplay = true;
+                // Match the last headset-confirmed native-reticle pass: the
+                // private replay uses stock CUI affine/curvature. Its own live
+                // canvas is published below so 3CX framing never mixes these
+                // stock coordinates with the scaled visible HUD coordinates.
+                g_halo4HudGameplayThreadId = 0;
+                g_halo4Camera.cuiReticleCaptureBaseX.store(
+                    0.0f, std::memory_order_relaxed);
+                g_halo4Camera.cuiReticleCaptureBaseY.store(
+                    0.0f, std::memory_order_relaxed);
                 scope.captureReplayAttempted = false;
                 scope.captureReplayRedirected = false;
                 scope.captureSelection = {};
                 original(windowIndex, renderBufferChannel, viewportBounds,
                          optionalProfileValue, renderMode, flag);
                 scope.captureReplay = false;
+                g_halo4HudGameplayThreadId = GetCurrentThreadId();
                 scope.captureSelection = {};
                 if (scope.redirectActive)
                     (void)Halo4EndCuiReticleRedirect(false);
@@ -33448,6 +33464,7 @@ namespace
             // enter this phase and therefore remain completely stock.
             if (scope.redirectActive)
                 (void)Halo4EndCuiReticleRedirect(true);
+            scope.captureReplay = false;
             g_halo4HudGameplayThreadId = 0;
             scope.gameplayPassActive = false;
         }
@@ -33563,9 +33580,23 @@ namespace
                             kHalo4CuiTransformStride;
                     BoneMatrix transform{};
                     if (Halo4SafeRead(entry, &transform, sizeof(transform)))
+                    {
+                        if (Halo4CuiCaptureKeepsTopTransform(
+                                scope.captureSelection) &&
+                            std::isfinite(transform.translation[0]) &&
+                            std::isfinite(transform.translation[1]))
+                        {
+                            g_halo4Camera.cuiReticleCaptureBaseX.store(
+                                transform.translation[0],
+                                std::memory_order_relaxed);
+                            g_halo4Camera.cuiReticleCaptureBaseY.store(
+                                transform.translation[1],
+                                std::memory_order_relaxed);
+                        }
                         Halo4ParityRecordTransform(
                             reticleTransformId, header.payloadSize, count,
                             transform, true);
+                    }
                 }
             }
             return result;
@@ -35588,10 +35619,20 @@ namespace
                 "missing, ambiguous, or moved; other H4 features stay live");
         }
 
+        const bool helmetShaderPath = D3D_Halo4HelmetShaderPathAvailable();
         g_halo4Restoration.helmetControlInstalled.store(
-            false, std::memory_order_release);
-        LOG("Halo 4 helmet toggle: StockFallback; no proven runtime binding "
-            "is active, so authored helmet art stays stock");
+            helmetShaderPath, std::memory_order_release);
+        if (helmetShaderPath)
+        {
+            LOG("Halo 4 helmet toggle Installed: exact known-good V6 visor "
+                "pixel-shader binding is active; authored frame stays visible "
+                "by default and no other HUD shader is modified");
+        }
+        else
+        {
+            LOG("Halo 4 helmet toggle: StockFallback; exact visor shader "
+                "binding is unavailable, so authored helmet art stays stock");
+        }
     }
 
     void Halo4RestorationWorkerTick()
@@ -36032,8 +36073,8 @@ namespace
         (void)InstallHalo4CuiReticle(base, size, generation);
         // Four optional, independently fail-open restorations requested for
         // this cumulative test: Stage 3AI effects, Stage 3X native HUD,
-        // Stage 3AW pause semantics. The failed transform-based helmet
-        // experiment is disabled until the proven shader binding is restored.
+        // Stage 3AW pause semantics, and the known-good V6 exact visor-shader
+        // toggle. Each path fails open independently of camera/OpenXR.
         InstallHalo4Restoration(base, size);
         PublishHalo4Lifecycle();
         LOG("Halo 4 camera core installed (generation %u): setup 0x%X and the "
@@ -36263,9 +36304,14 @@ namespace
         const uint64_t hudTransforms =
             g_halo4Restoration.hudTransforms.exchange(
                 0, std::memory_order_relaxed);
-        LOG("Halo 4 C-H4-53 restorations: effects=%s (%lld local FP hides), "
+        uint64_t helmetShaders = 0;
+        uint64_t helmetSuppressions = 0;
+        D3D_GetHalo4HelmetTelemetry(
+            helmetShaders, helmetSuppressions);
+        LOG("Halo 4 C-H4-55 restorations: effects=%s (%lld local FP hides), "
             "HUD=%s (%llu native affine writes, curvature=%s), pause=%s, "
-            "helmet=%s/config-%s; every unavailable feature stays stock",
+            "helmet=%s/config-%s (%llu exact shaders, %llu suppressed binds); "
+            "every unavailable feature stays stock",
             g_halo4Restoration.effectsInstalled.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
             static_cast<long long>(hiddenEffects),
@@ -36276,8 +36322,11 @@ namespace
             g_halo4Restoration.pauseProven.load(
                 std::memory_order_acquire) ? "native-reason-3" :
                 "raw-edge-fallback",
-            "StockFallback",
-            g_config.halo4_helmet ? "visible" : "hidden");
+            g_halo4Restoration.helmetControlInstalled.load(
+                std::memory_order_acquire) ? "shader-LIVE" : "StockFallback",
+            g_config.halo4_helmet ? "visible" : "hidden",
+            static_cast<unsigned long long>(helmetShaders),
+            static_cast<unsigned long long>(helmetSuppressions));
 
         const uint64_t cuiGameplayPasses =
             g_halo4Camera.cuiGameplayPasses.exchange(
@@ -36308,7 +36357,8 @@ namespace
             "passes, %llu begin markers, "
             "%llu completed actions (%llu authored captures / %llu native hides), %llu "
             "write failures, %llu forced restores, %llu exact capture OM reroutes "
-            "(%llu framing reasserts) in 2s; last native base %.3f/%.3f "
+            "(%llu framing reasserts) in 2s; last native base %.3f/%.3f, "
+            "capture base %.3f/%.3f "
             "+ offscreen hide %.3f/%.3f, scale %.4f -> %.4f; camera "
             "and OpenXR remain independently armed; the existing VR quad alone owns placement",
             Halo4CuiReticleTransformLive() ? "LIVE" : "stock fallback",
@@ -36323,6 +36373,10 @@ namespace
             static_cast<unsigned long long>(authoredFramingReasserts),
             g_halo4Camera.cuiReticleBaseX.load(std::memory_order_relaxed),
             g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed),
+            g_halo4Camera.cuiReticleCaptureBaseX.load(
+                std::memory_order_relaxed),
+            g_halo4Camera.cuiReticleCaptureBaseY.load(
+                std::memory_order_relaxed),
             g_halo4Camera.cuiReticleAimX.load(std::memory_order_relaxed),
             g_halo4Camera.cuiReticleAimY.load(std::memory_order_relaxed),
             g_halo4Camera.cuiReticleStockScale.load(std::memory_order_relaxed),
@@ -37754,16 +37808,14 @@ bool Game_Halo4OwnsLookPitch()
 bool Game_Halo4LiveCuiCanvas(float& baseY, float& hideShift)
 {
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
-    const float liveBaseY =
-        g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed);
-    const Halo4CuiAimOffset hide = Halo4BuildHiddenCuiTranslation(
+    return Halo4SelectCuiCaptureCanvas(
+        g_halo4Camera.cuiReticleCaptureBaseX.load(
+            std::memory_order_relaxed),
+        g_halo4Camera.cuiReticleCaptureBaseY.load(
+            std::memory_order_relaxed),
         g_halo4Camera.cuiReticleBaseX.load(std::memory_order_relaxed),
-        liveBaseY);
-    if (!hide.valid || !std::isfinite(liveBaseY) || liveBaseY <= 0.0f)
-        return false;
-    baseY = liveBaseY;
-    hideShift = hide.x;
-    return true;
+        g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed),
+        baseY, hideShift);
 #else
     baseY = 0.0f;
     hideShift = 0.0f;

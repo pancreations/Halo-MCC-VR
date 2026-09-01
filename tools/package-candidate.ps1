@@ -1,10 +1,15 @@
 ﻿[CmdletBinding()]
 param(
     # Force a from-scratch compile. Off by default: the packaged identity comes
-    # from the git commit check and the SHA-256 of the installed files, not from
+    # from the git commit check and the SHA-256 of the packaged files, not from
     # discarding object files, and a clean rebuild cost minutes on every single
     # candidate.
-    [switch]$Clean
+    [switch]$Clean,
+
+    # Packaging is intentionally non-deploying by default. Pass -Install only
+    # for an explicitly requested local deployment after the ZIP has been
+    # reviewed; ordinary headset-test handoffs stop at the candidate package.
+    [switch]$Install
 )
 
 # Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4,
@@ -13,9 +18,8 @@ param(
 # Reach's camera core is permanent while Halo 4 is still an explicitly
 # unaccepted bring-up line. Optional player-visible features fail open
 # independently. This stages one unaccepted local candidate under out/candidates
-# after a passing build and tests, then automatically installs those
-# exact manifest-verified bytes into the dedicated MCC mod directory. It never
-# launches MCC and never labels rebuilt bytes as an accepted release.
+# after a passing build and tests. It installs only when -Install is supplied,
+# never launches MCC, and never labels rebuilt bytes as an accepted release.
 
 $ErrorActionPreference = 'Stop'
 
@@ -165,6 +169,12 @@ try {
         (Join-Path $repoRoot 'src\common\halo4_restoration_logic.h'))
     $halo4RestoreAsmSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo4_restoration.asm'))
+    $halo4CuiSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_cui_reticle_logic.h'))
+    $halo4HelmetShaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_helmet_shader_logic.h'))
+    $d3dSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
     if ($gameSource -notmatch 'InstallHalo4Restoration' -or
         $gameSource -notmatch 'kHalo4EffectNegRva\s*=\s*0x1059A2' -or
         $gameSource -notmatch 'kHalo4PauseReasonRva\s*=\s*0xA0AE4' -or
@@ -175,17 +185,20 @@ try {
             'Halo4PauseReasonGetterMatches' -or
         $halo4RestoreLogicSource -notmatch
             'Halo4ComputeNativeHudAffine' -or
-        $halo4RestoreLogicSource -notmatch
-            'Halo4NativeHudTransformsPass' -or
+        $halo4CuiSource -notmatch 'Halo4SelectCuiCaptureCanvas' -or
+        $gameSource -notmatch 'cuiReticleCaptureBaseX' -or
+        $gameSource -notmatch 'cuiReticleCaptureBaseY' -or
         $gameSource -notmatch
-            'g_halo4HudGameplayThreadId\s*=\s*0;\s*\r?\n\s*scope\.captureReplayAttempted' -or
-        $gameSource -notmatch 'Halo4CuiTransformPayloadIsReticle' -or
-        $gameSource -notmatch 'Halo4CuiHelmetOverlayShouldHide' -or
+            'scope\.captureReplay\s*=\s*true;[\s\S]{0,800}g_halo4HudGameplayThreadId\s*=\s*0;' -or
+        $halo4HelmetShaderSource -notmatch
+            'kVisorFramingHash\s*=\s*0x4BE62AC49C2BF210ULL' -or
+        $d3dSource -notmatch 'PixelShaderSetHook' -or
+        $d3dSource -notmatch 'D3D_Halo4HelmetShaderPathAvailable' -or
         $halo4RestoreAsmSource -notmatch 'Halo4EffectTransientWrapper' -or
         $halo4RestoreAsmSource -notmatch 'Halo4CurvatureBridge' -or
         $configHeaderSource -notmatch 'bool halo4_helmet\s*=\s*true' -or
         $menuSource -notmatch 'Show Halo 4 helmet frame') {
-        throw 'C-H4-54 gate failed: the authored-reticle capture isolation, pause, effects, HUD, or helmet source is missing.'
+        throw 'C-H4-55 gate failed: the native-reticle replay canvas, exact visor-shader toggle, pause, effects, or adjustable HUD source is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -193,15 +206,13 @@ try {
         (Join-Path $repoRoot 'src\common\halo2_hud_logic.h'))
     $halo2HudShaderSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\halo2_hud_shader_logic.h'))
-    $d3dSource = [IO.File]::ReadAllText(
-        (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
     if ($halo2HudShaderSource -notmatch
             'kCrosshairHash\s*=\s*0x0a9b60d8f40268f6ULL' -or
         $halo2HudShaderSource -notmatch
             'kGameplayHudHashes' -or
         $halo2HudShaderSource -notmatch
             'MigotoFnv1' -or
-        $d3dSource -notmatch 'Halo2CreatePixelShaderHook' -or
+        $d3dSource -notmatch 'CreatePixelShaderHook' -or
         $d3dSource -notmatch 'Halo2NativeHud_GetRasterLayout' -or
         $halo2StereoSource -notmatch
             'VR_PrepareAuthoredReticleResources' -or
@@ -228,7 +239,7 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H4-54: the Halo 4 camera core is not ON.'
+        throw 'Refusing to package C-H4-55: the Halo 4 camera core is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
@@ -249,7 +260,7 @@ try {
     # Incremental. A clean rebuild was recompiling the whole tree for every
     # candidate, which is minutes per iteration for no safety: the packaged
     # identity is proven by the git commit check above plus the SHA-256 of the
-    # exact installed files, not by how the object files were produced. Use
+    # exact packaged files, not by how the object files were produced. Use
     # -Clean when a build-system change genuinely needs a from-scratch compile.
     $buildArgs = @('--build', '--preset', $packagePreset)
     if ($Clean) { $buildArgs += '--clean-first' }
@@ -281,7 +292,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h4-54-native-reticle',
+        'c-h4-55-reticle-helmet',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -328,7 +339,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 28
+        schema_version = 29
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -347,7 +358,7 @@ try {
             halo2 = 'BOTH_MODES_STEREO_6DOF'
         }
         deployment_policy = [ordered]@{
-            automatic_after_package = $true
+            automatic_after_package = $false
             installer = 'tools/install-candidate.ps1'
             launches_mcc = $false
             changes_config = $false
@@ -358,9 +369,9 @@ try {
                 '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-54'
+            id = 'C-H4-55'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'c-h4-53-restoration-plus-stock-transform-exact-authored-reticle-capture-plus-default-visible-toggleable-helmet-overlay'
+            behavior = 'c-h4-53-restoration-plus-private-stock-replay-canvas-native-reticle-plus-exact-v6-visor-shader-toggle'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -391,9 +402,9 @@ try {
             helmet_default_visible = $true
             helmet_control = 'halo4_helmet'
             helmet_binding =
-                'h4ek-reticle-payload-x-discriminator-non-reticle-overlay-transforms'
+                'exact-3dmigoto-pixel-shader-4BE62AC49C2BF210'
             helmet_hidden_policy =
-                'move-only-two-non-reticle-gameplay-cui-transforms-offscreen'
+                'pssetshader-null-only-exact-visor-shader'
             helmet_failure_policy = 'stock-authored-helmet-art'
             authored_crosshair = $true
             native_face_crosshair_suppressed = $true
@@ -401,10 +412,12 @@ try {
                 'bounded-capture-eye-full-gameplay-cui-replay-into-shared-authored-texture'
             reticle_capture_hud_transform =
                 'stock-affine-and-stock-curvature'
+            reticle_capture_canvas =
+                'private-replay-live-base-with-visible-pass-fallback'
             reticle_visible_pass_hud_transform =
                 'stage3x-adjustable-affine-and-curvature'
             reticle_visible_transform_discriminator =
-                'h4ek-reticule-offset-payload-x-plus-or-minus-zero'
+                'all-h4ek-type-0x28-payload-size-0x0c-markers-as-bda7-headset-confirmed'
             reticle_failure_policy =
                 'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed'
             parity_diagnostic = [ordered]@{
@@ -732,7 +745,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H4-54 carries forward headset-accepted C-H2-88 and the headset-confirmed C-H4-53 pause, effects, and adjustable HUD paths unchanged. It restores Halo 4 authored native reticle capture by excluding the private capture replay from Stage 3X HUD transforms and admits only H4EK-proven zero-X reticle payloads. The other two authored overlay transforms now remain stock/visible by default and are hidden only when halo4_helmet is disabled. Every optional feature fails open independently. Existing installed configs remain untouched. Halo 4 headset validation required.'
+        note = 'C-H4-55 carries forward headset-accepted C-H2-88 and headset-confirmed C-H4-53 pause, effects, and adjustable HUD paths unchanged. The native authored reticle uses the private stock-transform replay canvas proven by the bda7 headset log, while the visible HUD keeps its sliders. The helmet checkbox targets only the exact 3Dmigoto visor pixel shader 4BE62AC49C2BF210 proven by the supplied 7a24814 log and donor disassembly; visible is stock by default and hidden nulls only that shader pointer. Every optional feature fails open independently. This package does not install automatically. Halo 4 headset validation required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
@@ -748,11 +761,16 @@ try {
     Write-Host "Launcher: $launcherHash"
     Write-Host "Config:   $configHash"
 
-    & powershell -NoProfile -ExecutionPolicy Bypass -File `
-        (Join-Path $repoRoot 'tools\install-candidate.ps1') `
-        -CandidateDir $packageDir
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Candidate was packaged but automatic installation failed.'
+    if ($Install) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File `
+            (Join-Path $repoRoot 'tools\install-candidate.ps1') `
+            -CandidateDir $packageDir
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Candidate was packaged but the explicitly requested installation failed.'
+        }
+    }
+    else {
+        Write-Host 'Package-only mode: no MCC installation was performed.'
     }
 }
 finally {
