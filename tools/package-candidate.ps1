@@ -175,11 +175,17 @@ try {
             'Halo4PauseReasonGetterMatches' -or
         $halo4RestoreLogicSource -notmatch
             'Halo4ComputeNativeHudAffine' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4NativeHudTransformsPass' -or
+        $gameSource -notmatch
+            'g_halo4HudGameplayThreadId\s*=\s*0;\s*\r?\n\s*scope\.captureReplayAttempted' -or
+        $gameSource -notmatch 'Halo4CuiTransformPayloadIsReticle' -or
+        $gameSource -notmatch 'Halo4CuiHelmetOverlayShouldHide' -or
         $halo4RestoreAsmSource -notmatch 'Halo4EffectTransientWrapper' -or
         $halo4RestoreAsmSource -notmatch 'Halo4CurvatureBridge' -or
         $configHeaderSource -notmatch 'bool halo4_helmet\s*=\s*true' -or
         $menuSource -notmatch 'Show Halo 4 helmet frame') {
-        throw 'C-H4-53 gate failed: pause, Stage 3AI effects, Stage 3X HUD, or helmet control source is missing.'
+        throw 'C-H4-54 gate failed: the authored-reticle capture isolation, pause, effects, HUD, or helmet source is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -222,7 +228,7 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H4-53: the Halo 4 camera core is not ON.'
+        throw 'Refusing to package C-H4-54: the Halo 4 camera core is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
@@ -275,7 +281,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h4-53-restoration',
+        'c-h4-54-native-reticle',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -322,7 +328,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 27
+        schema_version = 28
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -352,9 +358,9 @@ try {
                 '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-53'
+            id = 'C-H4-54'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'stage3aw-native-pause-plus-stage3ai-local-fp-effect-hide-plus-stage3x-native-hud-plus-optional-authored-helmet-toggle'
+            behavior = 'c-h4-53-restoration-plus-stock-transform-exact-authored-reticle-capture-plus-default-visible-toggleable-helmet-overlay'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -384,12 +390,21 @@ try {
             effect_failure_policy = 'stock-effects-camera-hud-and-openxr-remain-armed'
             helmet_default_visible = $true
             helmet_control = 'halo4_helmet'
-            helmet_binding = 'name-and-type-resolved-helmet_armor-boolean'
+            helmet_binding =
+                'h4ek-reticle-payload-x-discriminator-non-reticle-overlay-transforms'
+            helmet_hidden_policy =
+                'move-only-two-non-reticle-gameplay-cui-transforms-offscreen'
             helmet_failure_policy = 'stock-authored-helmet-art'
             authored_crosshair = $true
             native_face_crosshair_suppressed = $true
             reticle_capture_boundary =
                 'bounded-capture-eye-full-gameplay-cui-replay-into-shared-authored-texture'
+            reticle_capture_hud_transform =
+                'stock-affine-and-stock-curvature'
+            reticle_visible_pass_hud_transform =
+                'stage3x-adjustable-affine-and-curvature'
+            reticle_visible_transform_discriminator =
+                'h4ek-reticule-offset-payload-x-plus-or-minus-zero'
             reticle_failure_policy =
                 'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed'
             parity_diagnostic = [ordered]@{
@@ -717,7 +732,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H4-53 carries forward headset-accepted C-H2-88 unchanged and restores Halo 4 Stage 3AW native pause ownership, Stage 3AI local first-person effect suppression, Stage 3X native adjustable HUD/curvature, and a default-on authored helmet toggle. Every optional feature fails open independently. Existing installed configs remain untouched. Halo 4 headset validation required.'
+        note = 'C-H4-54 carries forward headset-accepted C-H2-88 and the headset-confirmed C-H4-53 pause, effects, and adjustable HUD paths unchanged. It restores Halo 4 authored native reticle capture by excluding the private capture replay from Stage 3X HUD transforms and admits only H4EK-proven zero-X reticle payloads. The other two authored overlay transforms now remain stock/visible by default and are hidden only when halo4_helmet is disabled. Every optional feature fails open independently. Existing installed configs remain untouched. Halo 4 headset validation required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

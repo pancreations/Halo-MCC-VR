@@ -9586,6 +9586,11 @@ int main()
                   std::fabs(affine.horizontal - 0.5246f) < 0.0001f &&
                   std::fabs(affine.heightPixels - 16.0f) < 0.0001f,
             "Halo 4 native HUD affine matches Stage 3X size/aspect/height semantics");
+        Check(Halo4NativeHudTransformsPass(true, false, false) &&
+                  !Halo4NativeHudTransformsPass(true, true, false) &&
+                  !Halo4NativeHudTransformsPass(true, false, true) &&
+                  !Halo4NativeHudTransformsPass(false, false, false),
+            "Halo 4 native HUD transforms exclude authored-reticle capture replay and pause");
     }
 
     Halo4CuiReticleInstallProof halo4CuiInstall{};
@@ -9720,6 +9725,24 @@ int main()
               kHalo4CuiCommandPolyartThreeColor == 0x1F &&
               kHalo4CuiCommandBeginPayloadSize == 0x0C,
         "Stage 3BP keeps the evidence-backed Halo 4 CUI selector commands");
+    Check(Halo4CuiTransformPayloadIsReticle(0.0f) &&
+              Halo4CuiTransformPayloadIsReticle(-0.0f) &&
+              !Halo4CuiTransformPayloadIsReticle(1.0f) &&
+              !Halo4CuiTransformPayloadIsReticle(
+                  std::numeric_limits<float>::quiet_NaN()),
+        "Halo 4 identifies only the H4EK-proven zero-X reticle transform");
+    Check(!Halo4CuiHelmetOverlayShouldHide(
+              true, true, true, false, true) &&
+              Halo4CuiHelmetOverlayShouldHide(
+                  true, true, true, false, false) &&
+              !Halo4CuiHelmetOverlayShouldHide(
+                  true, true, true, true, false) &&
+              !Halo4CuiHelmetOverlayShouldHide(
+                  false, true, true, false, false) &&
+              !Halo4CuiHelmetOverlayShouldHide(
+                  true, false, true, false, false),
+        "Halo 4 keeps authored helmet overlays stock by default and hides "
+        "only proven non-reticle transforms when requested");
     {
         Halo4CuiCaptureSelectionState selection{};
         Check(!Halo4CuiCaptureKeepsTopTransform(selection) &&

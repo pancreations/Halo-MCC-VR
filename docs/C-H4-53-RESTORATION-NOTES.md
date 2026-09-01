@@ -2,6 +2,13 @@
 
 Status: **unaccepted; headset test required**.
 
+Runtime result (2026-09-01): pause/resume, local first-person effects, and the
+adjustable HUD passed in the user's Steam / SteamVR OpenXR / Oculus headset.
+The candidate is not accepted as a whole: authored-reticle capture regressed
+to the procedural fallback, and every log sample reported the attempted
+`helmet_armor` binding as `StockFallback`, leaving the new menu toggle inert.
+Those two CUI defects are addressed by C-H4-54.
+
 This cumulative candidate carries the headset-accepted C-H2-88 behavior
 forward unchanged. It does not advance `docs/CURRENT-STATE.md`.
 

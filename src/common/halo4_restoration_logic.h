@@ -5,9 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 
-// C-H4-53 ports only bindings that already existed in the headset-tested
-// Stage 3AI/3AW line. Keep the pure guards here so the package tests can prove
-// the exact retail contracts without loading halo4.dll.
+// C-H4-54 preserves the C-H4-53 restoration while keeping the private
+// authored-reticle capture replay on Halo 4's stock HUD transform. Keep the
+// pure guards here so package tests can prove the exact runtime contracts
+// without loading halo4.dll.
 
 inline constexpr size_t kHalo4PauseReasonGetterBytes = 51;
 
@@ -40,6 +41,13 @@ struct Halo4HudAffine
     float vertical = 1.0f;
     float heightPixels = 0.0f;
 };
+
+inline bool Halo4NativeHudTransformsPass(
+    bool gameplayPass, bool captureReplay,
+    bool pausePresentation) noexcept
+{
+    return gameplayPass && !captureReplay && !pausePresentation;
+}
 
 inline bool Halo4ComputeNativeHudAffine(
     float hudSize, float hudAspect, float heightPixels,

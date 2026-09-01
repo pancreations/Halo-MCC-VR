@@ -817,3 +817,31 @@ wins). This ordering is not independently confirmed by disassembly. New
 telemetry (`framing reasserts` alongside the existing `exact capture OM
 reroutes`) makes a silent reassert failure visible in the next log even if the
 result is still wrong.
+
+## C-H4-54 reticle/helmet transform separation (2026-09-01)
+
+The Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz C-H4-53 log supplied at
+13:35 records 139 main gameplay CUI passes and 417 type-`0x28` begin markers
+in one window, with all 417 reported as native hides. The 3.000 marker/pass
+ratio repeats. The user's simultaneous headset observation was that the
+authored helmet frame was absent while the rest of the HUD worked. The same
+run changed `config-visible` to `config-hidden` and back, but every sample
+remained `helmet=stock-fallback`; the attempted `helmet_armor` lookup was not
+a live HUD control and is rejected.
+
+The H4EK `ReticuleOffsetContainerWidget` evidence at lines 250-261 above is
+the positive identity available in the command stream: only that producer
+constructs payload float2 `{+/-0.0f, authoredY}`. C-H4-54 therefore narrows
+both visible native-reticle suppression and capture selection to a readable
+type-`0x28`, size-`0x0C` payload whose X is finite and exactly `+/-0.0f`.
+Unreadable, non-finite, or nonzero-X payloads are not reticles and stay stock
+under the default configuration.
+
+The C-H4-54 helmet toggle is a headset-unaccepted candidate based on the
+measured three-marker boundary: with `halo4_helmet=1`, the two non-reticle
+transforms stay stock; with `halo4_helmet=0`, only those two use the same
+offscreen transform operation that C-H4-53 already applied to all three.
+Whether those two transforms exactly comprise the authored helmet/visor frame
+is the pending headset test; it is not recorded as an accepted engine fact.
+Failure remains local to the optional CUI feature and never disarms the camera,
+stereo, hands, effects, HUD, or OpenXR.
