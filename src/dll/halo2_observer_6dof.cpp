@@ -76,6 +76,24 @@ namespace
     std::atomic<uintptr_t> g_observerResult{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
 
+    // E-H2-75 / Stage 3AK: Halo 2 Classic's first-person muzzle effect enters
+    // this particle renderer. The hook is optional and fail-open: its failure
+    // never changes camera ownership. Four 32-bit arguments preserve the
+    // pinned function's RCX/RDX/R8/R9 ABI; only RDX's low byte is classified.
+    using Halo2ParticleRendererFn = void(__fastcall*)(
+        uint32_t, uint32_t, uint32_t, uint32_t);
+    constexpr uint32_t kHalo2ParticleRendererRva = 0x0076DC90;
+    constexpr char kHalo2ParticleRendererPattern[] =
+        "48 8B C4 88 50 10 89 48 08 55 53 56 57 41 55";
+    void* g_particleTarget = nullptr;
+    std::atomic<uintptr_t> g_particleOriginal{0};
+    std::atomic<uint32_t> g_particleActiveCallbacks{0};
+    std::atomic<uint64_t> g_particleSuppressed{0};
+    std::atomic<uint64_t> g_particleReadFaults{0};
+    std::atomic<bool> g_particleHitPending{false};
+    uint32_t g_particleRejectedGeneration = 0;
+    bool g_particleHitLogged = false;
+
     // E-H2-23 (C-H2-31): the weapon tick witness. first_person_weapons runs
     // at the game tick (~60/s, the C-H2-30 log: 1890 placements against ~200
     // observer updates per second) and places the weapon against the observer
@@ -2347,6 +2365,61 @@ namespace
         }
     }
 
+    __declspec(noinline) void __fastcall Halo2ParticleRendererDetour(
+        uint32_t arg0, uint32_t currentUserFirstPerson, uint32_t arg2,
+        uint32_t arg3)
+    {
+        g_particleActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            const auto original = reinterpret_cast<Halo2ParticleRendererFn>(
+                g_particleOriginal.load(std::memory_order_acquire));
+            bool suppress = false;
+            if (original && g_armed.load(std::memory_order_acquire) &&
+                g_levelLive.load(std::memory_order_acquire) &&
+                !g_teardownRequested.load(std::memory_order_acquire))
+            {
+                const uintptr_t base =
+                    g_moduleBase.load(std::memory_order_acquire);
+                if (base)
+                {
+                    uint8_t classicDisabled = 1;
+                    bool readable = false;
+                    __try
+                    {
+                        classicDisabled = *reinterpret_cast<
+                            const volatile uint8_t*>(
+                                base + kHalo2ClassicRenderDisabledByteRva);
+                        readable = true;
+                    }
+                    __except (EXCEPTION_EXECUTE_HANDLER)
+                    {
+                        g_particleReadFaults.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    suppress = readable &&
+                        Halo2ShouldSuppressClassicFirstPersonParticle(
+                            classicDisabled,
+                            static_cast<uint8_t>(currentUserFirstPerson));
+                }
+            }
+
+            if (suppress)
+            {
+                g_particleSuppressed.fetch_add(1, std::memory_order_relaxed);
+                g_particleHitPending.store(true, std::memory_order_release);
+            }
+            else if (original)
+            {
+                original(arg0, currentUserFirstPerson, arg2, arg3);
+            }
+        }
+        __finally
+        {
+            g_particleActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
+
     bool IsReadableProtection(DWORD protect) noexcept
     {
         if (protect & (PAGE_GUARD | PAGE_NOACCESS))
@@ -2515,10 +2588,148 @@ namespace
         return false;
     }
 
+    bool InstallParticleGate(
+        uintptr_t base, size_t size, uint32_t generation) noexcept
+    {
+        if (g_particleTarget)
+            return true;
+        if (g_particleRejectedGeneration == generation)
+            return false;
+
+        uintptr_t match = 0;
+        uint32_t matchCount = 0;
+        if (!CountPatternMatches(
+                base, size, kHalo2ParticleRendererPattern, match,
+                matchCount) ||
+            matchCount != 1 || match != base + kHalo2ParticleRendererRva)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: particle "
+                "renderer signature matched %u times%s; camera and every "
+                "other feature remain active",
+                matchCount,
+                (matchCount == 1 &&
+                 match != base + kHalo2ParticleRendererRva)
+                    ? " but moved from its pinned RVA" : "");
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        bool gateReadable = false;
+        uint8_t gate = 0xFF;
+        __try
+        {
+            gate = *reinterpret_cast<const volatile uint8_t*>(
+                base + kHalo2ClassicRenderDisabledByteRva);
+            gateReadable = gate <= 1;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            gateReadable = false;
+        }
+        if (!gateReadable)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: live "
+                "renderer gate +0x%X was unreadable or invalid; camera and "
+                "every other feature remain active",
+                static_cast<unsigned>(kHalo2ClassicRenderDisabledByteRva));
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        void* trampoline = nullptr;
+        void* const target = reinterpret_cast<void*>(match);
+        const MH_STATUS created = MH_CreateHook(
+            target, reinterpret_cast<void*>(&Halo2ParticleRendererDetour),
+            &trampoline);
+        if (created != MH_OK || !trampoline)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: hook "
+                "create=%d; camera and every other feature remain active",
+                static_cast<int>(created));
+            if (created == MH_OK)
+                (void)MH_RemoveHook(target);
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        g_particleOriginal.store(
+            reinterpret_cast<uintptr_t>(trampoline),
+            std::memory_order_release);
+        const MH_STATUS enabled = MH_EnableHook(target);
+        if (enabled != MH_OK)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: hook "
+                "enable=%d; camera and every other feature remain active",
+                static_cast<int>(enabled));
+            (void)MH_RemoveHook(target);
+            g_particleOriginal.store(0, std::memory_order_release);
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        g_particleTarget = target;
+        g_particleSuppressed.store(0, std::memory_order_relaxed);
+        g_particleReadFaults.store(0, std::memory_order_relaxed);
+        g_particleHitPending.store(false, std::memory_order_release);
+        g_particleHitLogged = false;
+        LOG("Halo 2 Classic muzzle suppression Installed (Stage 3AK): "
+            "particle renderer +0x%X is skipped only for nonzero current-user "
+            "first-person calls while live renderer gate +0x%X is 0; "
+            "Anniversary and all stock/world callers remain stock",
+            static_cast<unsigned>(kHalo2ParticleRendererRva),
+            static_cast<unsigned>(kHalo2ClassicRenderDisabledByteRva));
+        return true;
+    }
+
+    bool RemoveParticleGate() noexcept
+    {
+        if (!g_particleTarget)
+        {
+            g_particleOriginal.store(0, std::memory_order_release);
+            return true;
+        }
+        const MH_STATUS disabled = MH_DisableHook(g_particleTarget);
+        if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+            disabled != MH_ERROR_DISABLED)
+        {
+            LOG("Halo 2 Classic muzzle suppression: disable failed (%d); "
+                "ownership retained for cleanup", static_cast<int>(disabled));
+            return false;
+        }
+        for (int attempt = 0; attempt < 200 &&
+             g_particleActiveCallbacks.load(std::memory_order_acquire);
+             ++attempt)
+        {
+            Sleep(10);
+        }
+        if (g_particleActiveCallbacks.load(std::memory_order_acquire))
+        {
+            LOG("Halo 2 Classic muzzle suppression: callbacks did not drain; "
+                "ownership retained for cleanup");
+            return false;
+        }
+        const MH_STATUS removed = MH_RemoveHook(g_particleTarget);
+        if (removed != MH_OK && removed != MH_ERROR_NOT_CREATED)
+        {
+            LOG("Halo 2 Classic muzzle suppression: remove failed (%d); "
+                "ownership retained for cleanup", static_cast<int>(removed));
+            return false;
+        }
+        g_particleTarget = nullptr;
+        g_particleOriginal.store(0, std::memory_order_release);
+        LOG("Halo 2 Classic muzzle suppression removed: %llu first-person "
+            "Classic particle calls suppressed; stock renderer restored",
+            static_cast<unsigned long long>(
+                g_particleSuppressed.load(std::memory_order_relaxed)));
+        return true;
+    }
+
     bool RemoveCore(const char* reason) noexcept
     {
         g_armed.store(false, std::memory_order_release);
         g_teardownRequested.store(true, std::memory_order_release);
+        if (!RemoveParticleGate())
+            return false;
         if (g_target)
         {
             const MH_STATUS disabled = MH_DisableHook(g_target);
@@ -3408,6 +3619,11 @@ namespace
             }
         }
 
+        // Optional feature transaction: refusal here leaves the proven camera,
+        // stereo, input and hand paths installed and loudly retains stock
+        // particles for this generation.
+        (void)InstallParticleGate(base, size, generation);
+
         g_coreState = CoreState::Installed;
         LOG("Halo 2 observer 6DOF installed: observer final transform "
             "+0x%X, observer results +0x%X stride 0x%X, user %u. Three "
@@ -3757,6 +3973,14 @@ bool Halo2Observer6Dof_Poll(
             "camera's position and orientation in BOTH graphics modes, "
             "because the observer is the one camera root the classic Blam "
             "renderer and the remastered Anniversary renderer both consume");
+    }
+    if (!g_particleHitLogged &&
+        g_particleHitPending.exchange(false, std::memory_order_acq_rel))
+    {
+        g_particleHitLogged = true;
+        LOG("Halo 2 Classic muzzle suppression HIT: first-person Classic "
+            "particle renderer calls are being skipped; Anniversary remains "
+            "stock");
     }
     ReportTelemetry();
     return true;

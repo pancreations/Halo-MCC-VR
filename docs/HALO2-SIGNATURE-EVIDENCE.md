@@ -4216,3 +4216,51 @@ in Classic, dials until it matches, presses Tab to compare with Anniversary,
 and saves. Whatever values land there are then a MEASUREMENT of the residual
 difference, in degrees and metres - the number this investigation could not
 obtain any other way, and the right input to a future engine-level fix.
+
+## E-H2-75 (C-H2-88, unaccepted): Stage 3AK Classic first-person particle suppression restored
+
+The user supplied the complete Stage 3AM source package whose DLL has SHA-256
+`D61E223898BBFC822568AE3EB9E0B7B1740235B6F2F521BFF5FDB98752B0F68C`;
+its embedded Stage 3AK path identifies the Classic muzzle
+effect at the particle renderer, not at a guessed weapon/tag field. The pinned
+retail Steam `halo2.dll` used by this repository has SHA-256
+`DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`.
+In its loaded-image layout the 15-byte entry signature
+
+    48 8B C4 88 50 10 89 48 08 55 53 56 57 41 55
+
+matches exactly once at RVA `0x0076DC90`. The live renderer-selection byte is
+the already evidenced gate at RVA `0x00E70CF8`: zero means the Classic render
+tree runs; one means Anniversary. The renderer's second register argument is
+the current-user/first-person classification used by the Stage 3AK donor.
+Three pinned callers reach the function; two populate that argument from their
+first-person classification and the unrelated caller supplies zero.
+
+C-H2-88 therefore skips the renderer only when both facts are true:
+
+- the second argument's low byte is nonzero; and
+- the live renderer gate is exactly zero.
+
+Anniversary, world particles, the unrelated zero-classification caller, an
+unreadable gate, and any non-Classic gate value all call the stock trampoline.
+The detour keeps no logging, allocation, locks, file I/O or scans in its hot
+path; it updates atomics only, and the worker logs the first witnessed hit.
+Signature zero/multiple/moved, invalid gate, or hook failure produces an
+explicit `StockFallback` for muzzle suppression only. It never disarms the
+observer, stereo, input, hand or OpenXR paths. Teardown disables the optional
+hook and drains its callbacks before releasing its trampoline.
+
+This candidate also exposes only the two user-requested Classic carrier dials
+from the existing E-H2-73 implementation (yaw and pitch, each -30 to +30
+degrees). It does not expose new roll/translation dials, does not alter
+Anniversary, and does not move the native reticle or shot ray. The six-field
+storage remains readable for compatibility and the two old Stage 3N/V5
+`h2_classic_*` aliases migrate to the canonical `halo2_classic_*` keys.
+
+Finally, the Stage 3AM performance gate is restored in source: full-resolution
+synchronous eye readback is bounded to capture-source discovery (or an
+explicit dump request), renderer switches no longer schedule BMP capture, and
+alternate-target copies retire with source validation. This is not yet a
+headset acceptance result. C-H2-88 must demonstrate the missing Classic flash,
+working two-dial visual alignment, stock Anniversary effects, and no recurring
+cutscene diagnostic hitch before any accepted pointer advances.

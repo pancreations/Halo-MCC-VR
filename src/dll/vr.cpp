@@ -447,6 +447,11 @@ namespace
     std::atomic<bool> g_halo2PrePairWanted{false};
     // E-H2-34: a one-shot eye-picture request (tick count it is due at).
     std::atomic<uint64_t> g_halo2EyeDumpDueMs{0};
+    // Stage 3AM: full-resolution GPU->CPU validation is bounded capture-source
+    // discovery, never steady-state telemetry. A source fallback rearms it.
+    std::atomic<bool> g_halo2HeavyValidationRetired{false};
+    std::atomic<int> g_halo2HeavyValidationSource{-1};
+    std::atomic<unsigned> g_halo2HeavyValidationChecks{0};
     std::atomic<bool> g_halo2PrePairHasImage{false};
     std::atomic<uint64_t> g_halo2PrePairSerial{0};
     D3D11_TEXTURE2D_DESC g_halo2ProbeDesc{};
@@ -4989,11 +4994,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     }
 
     // Halo 2 acceptance is "two different images from two different cameras",
-    // not "our hooks ran". This reads both eye caches back every two seconds
-    // while a live exact-serial pair is being presented and says, in the log,
-    // whether the engine actually rendered distinct eyes. Staging textures
-    // are created once per eye-cache shape and reused; the GPU stall of the
-    // readback is paid once every two seconds on the present path only.
+    // not "our hooks ran". Stage 3AM bounds this full-resolution synchronous
+    // readback to capture-source discovery, then retires it. A source fallback
+    // or an explicit diagnostic request rearms it.
     void ReportHalo2DrawCensus();
     void ValidateHalo2EyePairPeriodic()
     {
@@ -5002,7 +5005,26 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         static uint64_t lastCheckMs = 0;
         static unsigned identicalRuns = 0;
         const uint64_t nowMs = GetTickCount64();
-        if (nowMs - lastCheckMs < 2000)
+        const int sourceBefore =
+            g_halo2CaptureSource.load(std::memory_order_relaxed);
+        const int trackedSource =
+            g_halo2HeavyValidationSource.load(std::memory_order_relaxed);
+        if (sourceBefore != trackedSource)
+        {
+            g_halo2HeavyValidationSource.store(
+                sourceBefore, std::memory_order_relaxed);
+            g_halo2HeavyValidationChecks.store(0, std::memory_order_relaxed);
+            g_halo2HeavyValidationRetired.store(
+                false, std::memory_order_release);
+        }
+        const bool explicitDumpPending =
+            g_halo2EyeDumpDueMs.load(std::memory_order_acquire) != 0;
+        if (g_halo2HeavyValidationRetired.load(std::memory_order_acquire) &&
+            !explicitDumpPending)
+        {
+            return;
+        }
+        if (nowMs - lastCheckMs < 500)
             return;
         lastCheckMs = nowMs;
         ReportHalo2DrawCensus();
@@ -5163,19 +5185,16 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             const int worldShift = bestShift(
                 Wd * 30 / 100, Wd * 70 / 100, Hd * 8 / 100, Hd * 30 / 100,
                 64, 4, worldMatch, worldZero);
-            // E-H2-13: the picture itself, every 10 s, quarter size, next to
+            // E-H2-13: an explicitly requested picture, quarter size, next to
             // the log (HaloMCCVR-halo2-eye0.bmp / eye1.bmp). "Cropped" and
             // "goggles" are judged by looking at the frame the mod actually
             // published, not by counters. Staging is already mapped here.
             {
-                static uint64_t lastDumpMs = 0;
                 const uint64_t dueMs = g_halo2EyeDumpDueMs.load(std::memory_order_acquire);
                 const bool requested = dueMs != 0 && nowMs >= dueMs;
-                if ((nowMs - lastDumpMs >= 10000 || requested) && LogDirectory()[0])
+                if (requested && LogDirectory()[0])
                 {
-                    if (requested)
-                        g_halo2EyeDumpDueMs.store(0, std::memory_order_release);
-                    lastDumpMs = nowMs;
+                    g_halo2EyeDumpDueMs.store(0, std::memory_order_release);
                     const bool bgr =
                         g_eyeCacheDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
                         g_eyeCacheDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
@@ -5229,7 +5248,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     if (!loggedDump)
                     {
                         loggedDump = true;
-                        LOG("Halo 2 eye frames dumped every 10 s as "
+                        LOG("Halo 2 eye frames dumped on explicit request as "
                             "HaloMCCVR-halo2-eye0.bmp / eye1.bmp next to the log "
                             "(%ux%u, quarter size of the %ux%u capture)",
                             w, h, g_eyeCacheDesc.Width, g_eyeCacheDesc.Height);
@@ -5517,6 +5536,33 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                 g_halo2PrePairHasImage.store(false, std::memory_order_release);
             }
             g_halo2PrePairWanted.store(true, std::memory_order_release);
+            const int sourceAfter =
+                g_halo2CaptureSource.load(std::memory_order_relaxed);
+            const int validationSource =
+                g_halo2HeavyValidationSource.load(std::memory_order_relaxed);
+            if (sourceAfter != validationSource)
+            {
+                // The validator just learned a different source. Give that
+                // source one fresh comparison before retiring discovery.
+                g_halo2HeavyValidationSource.store(
+                    sourceAfter, std::memory_order_relaxed);
+                g_halo2HeavyValidationChecks.store(0, std::memory_order_relaxed);
+            }
+            else
+            {
+                const unsigned checks =
+                    g_halo2HeavyValidationChecks.fetch_add(
+                        1, std::memory_order_relaxed) + 1;
+                if (!identical || checks >= 6)
+                {
+                    g_halo2HeavyValidationRetired.store(
+                        true, std::memory_order_release);
+                    LOG("Halo 2 Stage 3AM performance gate: heavy eye validation "
+                        "retired after source %d was %s; periodic GPU readback "
+                        "and alternate-target probes are dormant",
+                        sourceAfter, identical ? "bounded" : "proven distinct");
+                }
+            }
             if (identical)
             {
                 LOG("Halo 2 eye-pair pixel check: IDENTICAL eyes (0/%u "
@@ -9452,7 +9498,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
                     const bool halo4Title = false;
                     const bool halo4Images = true;
 #endif
-                    if (!reachTitle)
+                    // Halo 2 has its own bounded source-learning validator;
+                    // running the generic full-resolution check as well is a
+                    // redundant synchronous GPU stall.
+                    if (!reachTitle && !halo2Title)
                         ValidateStereoImagesOnce();
 #if HALOMCCVR_HALO2_STEREO6DOF
                     if (halo2Title && halo2LiveExactPair)
@@ -13084,6 +13133,9 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
         source = 0;
         g_halo2CaptureSource.store(0, std::memory_order_relaxed);
         g_halo2ProbeRotation.store(0, std::memory_order_relaxed);
+        g_halo2HeavyValidationSource.store(0, std::memory_order_relaxed);
+        g_halo2HeavyValidationChecks.store(0, std::memory_order_relaxed);
+        g_halo2HeavyValidationRetired.store(false, std::memory_order_release);
     }
     if (censusGeneration != scope.generation)
     {
@@ -13133,7 +13185,8 @@ static bool Halo2CopyFinishedEyeFrame(const Halo2SynchronousEyeScope& scope)
     // Probe copies of the other two candidates, for the comparison that
     // decides the source. Same shape only; a differently shaped candidate
     // cannot be the finished eye.
-    if (Halo2EnsureProbeCaches(desc))
+    if (!g_halo2HeavyValidationRetired.load(std::memory_order_acquire) &&
+        Halo2EnsureProbeCaches(desc))
     {
         const int rotation = g_halo2ProbeRotation.load(std::memory_order_relaxed);
         for (int slot = 0; slot < 2; ++slot)

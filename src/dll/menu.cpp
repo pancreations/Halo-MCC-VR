@@ -1046,8 +1046,19 @@ namespace
         ImGui::TextDisabled("Gun-stock calibration on the weapon's post-rotation right/up axes.");
 
         ImGui::TextDisabled("All supported VR titles; visual only, shots/reticle remain on controller aim.");
+        ImGui::Spacing();
+        ImGui::Text("Halo 2 Classic gun alignment");
+        changed |= ImGui::SliderFloat(
+            "H2 Classic gun yaw (deg)",
+            &g_config.halo2_classic_gun_yaw_deg, -30.0f, 30.0f, "%.1f");
+        changed |= ImGui::SliderFloat(
+            "H2 Classic gun pitch (deg)",
+            &g_config.halo2_classic_gun_pitch_deg, -30.0f, 30.0f, "%.1f");
+        ImGui::TextDisabled(
+            "Classic/original graphics only; moves the visible gun and hands.\n"
+            "Anniversary, the VR reticle, and bullet direction stay unchanged.");
         changed |= ImGui::SliderFloat("Muzzle height (m)", &g_config.muzzle_height_m, -0.3f, 0.3f, "%.2f");
-        ImGui::TextDisabled("Reach: adjusts its secondary muzzle placement; H3/ODST marker effects follow the gun. H2 Classic muzzle attachment is unchanged in this candidate.");
+        ImGui::TextDisabled("Reach: adjusts its secondary muzzle placement; H3/ODST marker effects follow the gun. H2 Classic muzzle suppression is automatic and does not read this slider.");
         ImGui::TextDisabled("Raises supported muzzle/effect placement along the gun's own axis.");
         ImGui::TextDisabled("Where rounds LAND is unchanged. 0.11 is about four inches.");
 

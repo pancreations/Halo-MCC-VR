@@ -59,37 +59,34 @@ try {
         throw 'Could not resolve the candidate source commit.'
     }
 
-    # This development repository was reconstructed from the complete C50
-    # source ZIP, so the older upstream commit objects named in its evidence
-    # documents are deliberately absent from the local Git object database.
-    # Pin the immutable imported snapshot that contains those cumulative
-    # sources; all behavior-specific gates below still validate the live tree.
-    $importedC50Baseline =
-        'ac6b0a9bcfca8f09f06e32013aed2c64d9b36ae1'
-    & git -C $repoRoot merge-base --is-ancestor $importedC50Baseline $commit
+    # Every unaccepted continuation must descend from the authoritative
+    # user-accepted C-H4-52 source pointer. Older reconstructed-C50 commit ids
+    # are not objects in this repository and therefore cannot be ancestry
+    # anchors here.
+    $acceptedC52Baseline =
+        '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
+    & git -C $repoRoot merge-base --is-ancestor $acceptedC52Baseline $commit
     if ($LASTEXITCODE -ne 0) {
-        throw "Refusing to package: HEAD does not descend from the imported C50 source snapshot $importedC50Baseline."
+        throw "Refusing to package: HEAD does not descend from accepted C-H4-52 source $acceptedC52Baseline."
     }
 
-    # C-H2-55 shared loader-lifecycle and same-generation rehook gate. Game DLL mappings are identities,
-    # never references owned by the mod. A future title adapter must not bring
-    # back the exact refcount/unload race this candidate fixes.
-    $dllSources = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src\dll') `
-        -Filter '*.cpp' -File
-    $dllSourceText = ($dllSources | ForEach-Object {
-        [IO.File]::ReadAllText($_.FullName)
-    }) -join "`n"
-    if ($dllSourceText -match '(?m)^\s*FreeLibrary\s*\(') {
-        throw 'C-H2-55 gate failed: a title-DLL FreeLibrary call remains.'
+    # C-H2-55 observer identity is explicitly non-owning. Do not apply that
+    # rule globally: accepted ODST/Reach cores deliberately own loader pins,
+    # and Halo 2 stereo owns a short cleanup pin while its hooks drain.
+    $halo2ObserverSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo2_observer_6dof.cpp'))
+    if ($halo2ObserverSource -match '(?m)^\s*FreeLibrary\s*\(') {
+        throw 'C-H2-55 gate failed: the Halo 2 observer released a non-owning module identity.'
     }
     $moduleHandleCalls = [regex]::Matches(
-        $dllSourceText, 'GetModuleHandleExW\s*\((?<args>[\s\S]{0,320}?)\)')
+        $halo2ObserverSource,
+        'GetModuleHandleExW\s*\((?<args>[\s\S]{0,320}?)\)')
     foreach ($call in $moduleHandleCalls) {
         $argsText = $call.Groups['args'].Value
         if ($argsText -match 'GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS' -and
                 $argsText -notmatch
                     'GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT') {
-            throw 'C-H2-55 gate failed: a FROM_ADDRESS module lookup still increments the loader refcount.'
+            throw 'C-H2-55 gate failed: a Halo 2 observer FROM_ADDRESS lookup increments the loader refcount.'
         }
     }
     $gameSource = [IO.File]::ReadAllText(
@@ -143,6 +140,27 @@ try {
             'kHalo2C64GenericLeftPresentationEnabled\s*=\s*false') {
         throw 'C-H2-65 gate failed: the rejected C-H2-64 generic alignment is not disabled.'
     }
+    $configHeaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\config.h'))
+    $menuSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\menu.cpp'))
+    $vrSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\vr.cpp'))
+    if ($halo2ObserverSource -notmatch
+            'kHalo2ParticleRendererRva\s*=\s*0x0076DC90' -or
+        $halo2ObserverSource -notmatch
+            'Halo2ShouldSuppressClassicFirstPersonParticle' -or
+        $halo2LogicSource -notmatch
+            'currentUserFirstPerson\s*!=\s*0\s*&&\s*\r?\n\s*Halo2ClassicRenderTreeRuns' -or
+        $menuSource -notmatch 'H2 Classic gun yaw \(deg\)' -or
+        $menuSource -notmatch 'H2 Classic gun pitch \(deg\)' -or
+        $configHeaderSource -notmatch
+            'bool fit_desktop_window\s*=\s*true' -or
+        $configHeaderSource -notmatch 'float hud_size\s*=\s*0\.43f' -or
+        $configHeaderSource -notmatch 'bool show_welcome\s*=\s*true' -or
+        $vrSource -notmatch 'Halo 2 Stage 3AM performance gate') {
+        throw 'C-H2-88 gate failed: Classic muzzle isolation, the two alignment controls, V5 defaults, welcome, or bounded Stage 3AM diagnostics are missing.'
+    }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
     $halo2HudLogicSource = [IO.File]::ReadAllText(
@@ -159,7 +177,6 @@ try {
             'MigotoFnv1' -or
         $d3dSource -notmatch 'Halo2CreatePixelShaderHook' -or
         $d3dSource -notmatch 'Halo2NativeHud_GetRasterLayout' -or
-        $d3dSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
         $halo2StereoSource -notmatch
             'VR_PrepareAuthoredReticleResources' -or
         $halo2StereoSource -match '&NativeHudAnchorBasisDetour' -or
@@ -238,7 +255,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-77-stage3e-proven-hud-native-crosshair',
+        'c-h2-88-classic-restoration',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -251,11 +268,23 @@ try {
         throw 'Candidate staging failed.'
     }
 
+    $configGenerator = Join-Path $repoRoot `
+        "$packageBuildDir\Release\halomccvr-config-defaults.exe"
+    $configPath = Join-Path $packageDir 'halomccvr.cfg'
+    if (-not (Test-Path -LiteralPath $configGenerator -PathType Leaf)) {
+        throw "Default-config generator is missing: $configGenerator"
+    }
+    Invoke-Tool { & $configGenerator $configPath }
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Default config generation failed.'
+    }
+
     $dllPath = Join-Path $packageDir 'HaloMCCVR.dll'
     $launcherPath = Join-Path $packageDir 'HaloMCCVRLauncher.exe'
     foreach ($requiredPath in @(
             $dllPath,
             $launcherPath,
+            $configPath,
             (Join-Path $packageDir 'LICENSE'),
             (Join-Path $packageDir 'MANUAL-README.txt'))) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
@@ -265,9 +294,12 @@ try {
 
     $dll = Get-Item -LiteralPath $dllPath
     $launcher = Get-Item -LiteralPath $launcherPath
+    $config = Get-Item -LiteralPath $configPath
     $dllHash = (Get-FileHash -LiteralPath $dllPath -Algorithm SHA256).Hash
     $launcherHash =
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
+    $configHash =
+        (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
         schema_version = 26
@@ -295,9 +327,9 @@ try {
             changes_config = $false
         }
         accepted_halo4_identity = [ordered]@{
-            candidate = 'C-H4-43'
+            candidate = 'C-H4-52'
             source_commit =
-                'dd9946595511d65c9859b536e2727201c107da45'
+                '8498ce96384ebe3d1f52959fb17fa6c12deb00f1'
         }
         halo4_candidate = [ordered]@{
             id = 'C-H4-D1'
@@ -352,12 +384,22 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-77'
+            id = 'C-H2-88'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'proven-hud-pixel-shader-raster-transform-plus-native-crosshair-capture-shared-both-renderers'
+                'classic-muzzle-stage3ak-plus-two-slider-visual-alignment-plus-bounded-stage3am-diagnostics'
+            classic_muzzle_suppression = $true
+            classic_muzzle_particle_renderer_rva = '0x0076DC90'
+            classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
+            classic_muzzle_predicate =
+                'current-user-first-person-nonzero-and-live-classic-gate-zero'
+            anniversary_muzzle_behavior = 'stock'
+            classic_alignment_controls = @(
+                'halo2_classic_gun_yaw_deg',
+                'halo2_classic_gun_pitch_deg')
+            heavy_eye_validation = 'bounded-source-discovery-only'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -633,8 +675,12 @@ try {
                 bytes = $launcher.Length
                 sha256 = $launcherHash
             }
+            'halomccvr.cfg' = [ordered]@{
+                bytes = $config.Length
+                sha256 = $configHash
+            }
         }
-        note = 'C-H2-77 rejects Stage 3D after zero anchor callbacks and transforms only the exact Halo 2 HUD pixel shaders proven by a working v1.2 HUD mod, inside the live native CHUD scope. The separately identified native crosshair shader is captured into the existing controller-aim quad; the procedural marker remains until that capture succeeds. Headset validation required.'
+        note = 'C-H2-88 restores the Stage 3AK Classic-only first-person muzzle gate, the two Stage 3N Classic visual alignment controls, and Stage 3AM bounded eye-source diagnostics on the accepted C-H4-52 baseline. The packaged V5-default seed keeps show_welcome enabled; existing installed configs remain untouched. Headset validation required.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
@@ -648,6 +694,7 @@ try {
     Write-Host "Source:   $commit"
     Write-Host "DLL:      $dllHash"
     Write-Host "Launcher: $launcherHash"
+    Write-Host "Config:   $configHash"
 
     & powershell -NoProfile -ExecutionPolicy Bypass -File `
         (Join-Path $repoRoot 'tools\install-candidate.ps1') `

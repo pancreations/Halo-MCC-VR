@@ -2106,6 +2106,18 @@ constexpr bool Halo2ClassicRenderTreeRuns(
     return classicDisabledByte == 0;
 }
 
+// Stage 3AK: the particle renderer's second register argument is the engine's
+// current-user / first-person classification. Suppression is deliberately the
+// conjunction of that classification and the live Classic render gate: world
+// particles, non-player callers and Anniversary all retain stock behavior.
+constexpr bool Halo2ShouldSuppressClassicFirstPersonParticle(
+    uint8_t classicDisabledByte,
+    uint8_t currentUserFirstPerson) noexcept
+{
+    return currentUserFirstPerson != 0 &&
+        Halo2ClassicRenderTreeRuns(classicDisabledByte);
+}
+
 constexpr bool Halo2GraphicsModeIsCoherent(
     int32_t appliedMode, uint8_t classicDisabledByte) noexcept
 {

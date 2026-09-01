@@ -1048,9 +1048,8 @@ Halo2GraphicsMode Halo2ColdObservation_GraphicsMode(
             static_cast<unsigned>(live),
             Halo2ClassicRenderTreeRuns(live) ? "DOES" : "does NOT",
             recentButtons, guard);
-        // E-H2-34: a picture of the renderer we just switched TO, 3 s in,
-        // so a short visit still leaves eye pictures next to the log.
-        VR_Halo2RequestEyeDump(3000);
+        // Stage 3AM: a normal renderer switch must not schedule synchronous
+        // full-resolution GPU readback and BMP writes on the Present path.
     }
     return g_graphicsMode;
 #endif

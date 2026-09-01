@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h2-77-stage3e-proven-hud-native-crosshair-',
+            $head.Substring(0, 7) + '-c-h2-88-classic-restoration-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -180,9 +180,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
         [string]$manifest.embedded_build_identity.halo2 -cne
             'BOTH_MODES_STEREO_6DOF' -or
-        [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-43' -or
+        [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-52' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
-            'dd9946595511d65c9859b536e2727201c107da45' -or
+            '8498ce96384ebe3d1f52959fb17fa6c12deb00f1' -or
         # Producer and installer advance together. This prevents a package for
         # the new source from silently carrying the preceding Halo 4 candidate's
         # behavior block, which happened repeatedly during bring-up.
@@ -217,14 +217,30 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
             'stock-halo4-cui-layout' -or
         @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-77' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-88' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'proven-hud-pixel-shader-raster-transform-plus-native-crosshair-capture-shared-both-renderers' -or
+            'classic-muzzle-stage3ak-plus-two-slider-visual-alignment-plus-bounded-stage3am-diagnostics' -or
+        $manifest.halo2_candidate.classic_muzzle_suppression -ne $true -or
+        [string]$manifest.halo2_candidate.classic_muzzle_particle_renderer_rva -cne
+            '0x0076DC90' -or
+        [string]$manifest.halo2_candidate.classic_muzzle_live_renderer_gate_rva -cne
+            '0x00E70CF8' -or
+        [string]$manifest.halo2_candidate.classic_muzzle_predicate -cne
+            'current-user-first-person-nonzero-and-live-classic-gate-zero' -or
+        [string]$manifest.halo2_candidate.anniversary_muzzle_behavior -cne
+            'stock' -or
+        @($manifest.halo2_candidate.classic_alignment_controls).Count -ne 2 -or
+        [string]$manifest.halo2_candidate.classic_alignment_controls[0] -cne
+            'halo2_classic_gun_yaw_deg' -or
+        [string]$manifest.halo2_candidate.classic_alignment_controls[1] -cne
+            'halo2_classic_gun_pitch_deg' -or
+        [string]$manifest.halo2_candidate.heavy_eye_validation -cne
+            'bounded-source-discovery-only' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -644,10 +660,13 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
 
 $candidateDll = Join-Path $candidatePath 'HaloMCCVR.dll'
 $candidateLauncher = Join-Path $candidatePath 'HaloMCCVRLauncher.exe'
+$candidateConfig = Join-Path $candidatePath 'halomccvr.cfg'
 $dllHash = Assert-FileIdentity `
     $candidateDll $manifest.files.'HaloMCCVR.dll' 'Candidate DLL'
 $launcherHash = Assert-FileIdentity `
     $candidateLauncher $manifest.files.'HaloMCCVRLauncher.exe' 'Candidate launcher'
+$configHash = Assert-FileIdentity `
+    $candidateConfig $manifest.files.'halomccvr.cfg' 'Candidate seed config'
 
 $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
     $_.ProcessName -in @(
@@ -699,6 +718,9 @@ foreach ($target in $targets) {
         $seedConfig = $existingConfig
         break
     }
+}
+if ($null -eq $seedConfig) {
+    $seedConfig = $candidateConfig
 }
 
 $createdUtc = [DateTime]::UtcNow

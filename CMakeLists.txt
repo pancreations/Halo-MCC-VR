@@ -337,6 +337,20 @@ set_target_properties(reach_runtime_observer PROPERTIES
     OUTPUT_NAME "reach-runtime-observer")
 
 if(BUILD_TESTING)
+    # Packaging runs this tiny program against a nonexistent path to generate
+    # the current source tree's exact default config. It is intentionally not
+    # installed by CMake: package-candidate stages and hashes its output while
+    # install-candidate preserves every already-existing live config.
+    add_executable(halomccvr_config_defaults
+        tools/config_defaults.cpp
+        src/common/config.cpp
+        src/common/log.cpp)
+    target_include_directories(halomccvr_config_defaults PRIVATE src/common)
+    target_compile_definitions(halomccvr_config_defaults PRIVATE
+        UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    set_target_properties(halomccvr_config_defaults PROPERTIES
+        OUTPUT_NAME "halomccvr-config-defaults")
+
     add_executable(halomccvr_core_tests
         tests/core_tests.cpp
         src/common/input_logic.cpp

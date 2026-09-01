@@ -12316,6 +12316,23 @@ int main()
     Check(std::string_view(RuntimeModeName(RuntimeMode::Vehicle)) == "vehicle",
         "Runtime modes have stable diagnostic names");
 
+    Check(!Halo2ShouldSuppressClassicFirstPersonParticle(0, 0) &&
+              Halo2ShouldSuppressClassicFirstPersonParticle(0, 1) &&
+              Halo2ShouldSuppressClassicFirstPersonParticle(0, 0xFF) &&
+              !Halo2ShouldSuppressClassicFirstPersonParticle(1, 1) &&
+              !Halo2ShouldSuppressClassicFirstPersonParticle(2, 1),
+        "Halo 2 muzzle suppression requires both the live Classic gate and "
+        "a nonzero current-user first-person particle classification");
+
+    {
+        const Config fresh;
+        Check(fresh.show_welcome && fresh.fit_desktop_window &&
+                  fresh.hud_size == 0.43f &&
+                  fresh.base_tunables.hud_size == 0.43f,
+            "The V5 seed defaults keep the welcome visible, fit the desktop "
+            "window, and use the V5 HUD size");
+    }
+
     wchar_t tempPath[MAX_PATH]{};
     GetTempPathW(MAX_PATH, tempPath);
     const std::filesystem::path configDir = std::filesystem::path(tempPath) /
@@ -12351,6 +12368,33 @@ int main()
     Check(organizedConfig.find("This ONE file is shared by every supported MCC game") !=
               std::string::npos,
         "The generated config explains that preferences are shared across titles");
+    Check(CountText(organizedConfig, "\nhalo2_classic_gun_pitch_deg = ") == 1 &&
+              CountText(organizedConfig, "\nhalo2_classic_gun_yaw_deg = ") == 1,
+        "The generated config persists the two Halo 2 Classic alignment sliders");
+
+    {
+        std::ofstream file(primary);
+        file << "config_version = 5\n";
+        file << "h2_classic_gun_yaw_deg = 7.5\n";
+        file << "h2_classic_gun_pitch_deg = -4.25\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.halo2_classic_gun_yaw_deg == 7.5f &&
+              g_config.halo2_classic_gun_pitch_deg == -4.25f,
+        "Stage 3N/V5 Halo 2 Classic alignment aliases load into the current fields");
+    ConfigSave();
+    const std::string halo2AlignmentConfig = ReadTextFile(primary);
+    Check(CountText(
+              halo2AlignmentConfig,
+              "\nhalo2_classic_gun_yaw_deg = 7.50") == 1 &&
+              CountText(
+                  halo2AlignmentConfig,
+                  "\nhalo2_classic_gun_pitch_deg = -4.25") == 1 &&
+              halo2AlignmentConfig.find("\nh2_classic_gun_yaw_deg = ") ==
+                  std::string::npos &&
+              halo2AlignmentConfig.find("\nh2_classic_gun_pitch_deg = ") ==
+                  std::string::npos,
+        "Saving migrates the two V5 aliases to one canonical assignment each");
     // C-TITLE-1 (user directive 2026-08-31): the one universal file now
     // carries a per-title profile section for the thirteen weapon/hand/HUD
     // tunables - every game, Halo 2's two renderers separately, and a

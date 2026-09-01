@@ -328,7 +328,7 @@ struct TitleTunables
     float gun_right_m = 0.0f;
     float gun_up_m = 0.0f;
     float left_hand_forward_m = -0.063f;
-    float hud_size = 0.38f;
+    float hud_size = 0.43f;
     float hud_aspect = 1.22f;
     float hud_curvature = 0.48f;
     float hud_vertical_offset = 16.0f;
@@ -668,10 +668,10 @@ struct Config
     // mouse can't reach them. With this on, MCC still draws the full-size frame
     // (so the headset picture and the gun alignment never change) but the visible
     // window is shrunk to fit and the GPU downscales the picture into it for free
-    // -- no extra render pass, no measurable cost. OFF by default; when off the
-    // desktop window behaves exactly as it always has. Like resolution_scale,
-    // this takes effect on the next game start (close MCC and relaunch).
-    bool fit_desktop_window = false;
+    // -- no extra render pass, no measurable cost. V5 ships this ON; when
+    // disabled the desktop window behaves exactly as it always has. Like
+    // resolution_scale, this takes effect on the next game start.
+    bool fit_desktop_window = true;
 
     // The VR frame is submitted inside MCC's desktop Present, so MCC's own
     // V-Sync would pace the HEADSET at the DESKTOP monitor's refresh -- a 60 Hz
@@ -752,7 +752,7 @@ struct Config
     // re-lays the HUD out the same frame the floats change). 0.87 = the game's
     // stock value (mod applies nothing); smaller pulls shields/radar/ammo
     // toward the screen center where both VR eyes can see them.
-    float hud_size = 0.38f;
+    float hud_size = 0.43f;
 
     // Extra horizontal trim after the runtime headset-aspect correction.
     // 1 = automatic shape, lower = narrower, higher = wider.
