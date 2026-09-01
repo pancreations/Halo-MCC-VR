@@ -1,0 +1,33 @@
+{
+  "stage": "3AZ",
+  "status": "HEADSET_FAILED_FATAL",
+  "base_stage": "3AY headset-failed crash; behavior rebuilt from guarded 3AX base",
+  "base_dll_sha256": "0d32751585670c28bb7b98110a35b04817ec4f683fcc3ab3301c0941a4613053",
+  "failed_stage3ay_sha256": "44850c02a97e284b35f00585479d9b0391bc190c758f15efd88bce733c2e50ad",
+  "output_dll_sha256": "76727356f3ce4b053b09eccde6783a82ea5249d7ebfb9df9bc949b8822affb10",
+  "output_dll_size": 2923520,
+  "payload_sha256": "a4c2f2ee62cc237b0887fd260b89001caf13ba10a617f11d3c25583a25016316",
+  "payload_size": 2072,
+  "pause_payload_byte_identical": true,
+  "features": [
+    "Halo 4 authored reticle isolated by same-frame full-minus-reticle CUI difference capture",
+    "Capture wrapper tail transfers preserve the original Windows x64 ABI frame",
+    "Nested compiled call has balanced shadow space and alignment",
+    "Shader selector preserves nonvolatile RBX and title pixel-resource slot 1",
+    "ODST optional cinematic-state scan isolated at measured post-preflight stall boundary"
+  ],
+  "failure_log_sha256": "e65e146cd78c63274ef0273e062a30610f99a4eeb6b6000069552241b272646d",
+  "failure_wer_sha256": "aef733542d047c911508305327108526a51fbc661e671ddf81c7e330332e1c5b",
+  "stage3az_failure_log_sha256": "f5e355bbcff32c7de06228d97bd3e1855e8a17a4c9325e457b918dbfb584b09a",
+  "stage3az_failure_wer_sha256": "0605ab2d65ffeb0891e5a92432a30e7142ab1af3e6e8454d62e6da17dd279bc1",
+  "stage3az_failure": "Five unsafe replay attempts produced zero capture markers, four guarded write failures, a camera transaction exception, and halo4.dll c0000005 at +0x5FB95",
+  "deployment": "INSTALLED_BOTH_2026-08-28",
+  "superseded_after_failure_by": "3BA",
+  "steam_installed_dll_sha256": "76727356f3ce4b053b09eccde6783a82ea5249d7ebfb9df9bc949b8822affb10",
+  "store_installed_dll_sha256": "76727356f3ce4b053b09eccde6783a82ea5249d7ebfb9df9bc949b8822affb10",
+  "backup": "out/deploy-backups/2026-08-28-pre-3AZ",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

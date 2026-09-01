@@ -1,0 +1,23 @@
+{
+  "stage": "3BB",
+  "status": "HEADSET_PENDING",
+  "base_stage": "3BA stable safety baseline with rejected face-centred native reticle",
+  "base_dll_sha256": "03c5ff6e384428a1757008a1d2ae3b30c539267096b1f8a8619e955edefb48d8",
+  "output_dll_sha256": "10e39cf66862f4e88eba245fc22da750c0817c4684a1af114c466703722a8192",
+  "output_dll_size": 2923520,
+  "features": [
+    "Halo 4 reticle-only type-0x28 transform hook restored",
+    "Halo 4 native face-centred reticle moved offscreen",
+    "All CUI replay and differential-capture behavior hard-disabled",
+    "Procedural weapon-ray quad retained pending proven single-pass authored extraction",
+    "Pause and ODST isolation preserved byte-identically"
+  ],
+  "deployment": "INSTALLED_BOTH_2026-08-28",
+  "steam_installed_dll_sha256": "10e39cf66862f4e88eba245fc22da750c0817c4684a1af114c466703722a8192",
+  "store_installed_dll_sha256": "10e39cf66862f4e88eba245fc22da750c0817c4684a1af114c466703722a8192",
+  "backup": "out/deploy-backups/2026-08-28-pre-3BB",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

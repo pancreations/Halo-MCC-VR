@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <string>
 #include <algorithm>
+#include <atomic>
 #include "config.h"
 #include "log.h"
 
@@ -386,6 +387,18 @@ static void Clamp()
     g_config.gun_forward_m = std::clamp(g_config.gun_forward_m, -0.3f, 0.5f);
     g_config.gun_right_m = std::clamp(g_config.gun_right_m, -0.3f, 0.3f);
     g_config.gun_up_m = std::clamp(g_config.gun_up_m, -0.3f, 0.3f);
+    g_config.halo2_classic_gun_pitch_deg =
+        std::clamp(g_config.halo2_classic_gun_pitch_deg, -180.0f, 180.0f);
+    g_config.halo2_classic_gun_yaw_deg =
+        std::clamp(g_config.halo2_classic_gun_yaw_deg, -180.0f, 180.0f);
+    g_config.halo2_classic_gun_roll_deg =
+        std::clamp(g_config.halo2_classic_gun_roll_deg, -180.0f, 180.0f);
+    g_config.halo2_classic_gun_forward_m =
+        std::clamp(g_config.halo2_classic_gun_forward_m, -0.5f, 0.5f);
+    g_config.halo2_classic_gun_right_m =
+        std::clamp(g_config.halo2_classic_gun_right_m, -0.3f, 0.3f);
+    g_config.halo2_classic_gun_up_m =
+        std::clamp(g_config.halo2_classic_gun_up_m, -0.3f, 0.3f);
     g_config.muzzle_height_m = std::clamp(g_config.muzzle_height_m, -0.3f, 0.3f);
     g_config.scope_zoom = std::clamp(g_config.scope_zoom, 6.0f, 24.0f);
     g_config.scope_screen_width_m = std::clamp(g_config.scope_screen_width_m, 0.04f, 0.25f);
@@ -395,8 +408,175 @@ static void Clamp()
     g_config.scope_refresh_divisor = std::clamp(g_config.scope_refresh_divisor, 1, 4);
 }
 
+
+// C-TITLE-1: per-title weapon/hand/HUD profiles. One descriptor per
+// tunable: its cfg suffix, its slot in a TitleTunables, its live field in
+// Config, and its load clamp (the same ranges the shared field gets).
+namespace
+{
+struct TunableField
+{
+    const char* suffix;
+    float TitleTunables::*member;
+    float Config::*live;
+    float minimum;
+    float maximum;
+};
+
+const TunableField kTunableFields[] = {
+    {"gun_scale", &TitleTunables::gun_scale, &Config::gun_scale, 0.30f, 3.00f},
+    {"left_hand_scale", &TitleTunables::left_hand_scale,
+     &Config::left_hand_scale, 0.30f, 3.00f},
+    {"gun_pitch_deg", &TitleTunables::gun_pitch_deg, &Config::gun_pitch_deg,
+     -180.0f, 180.0f},
+    {"gun_yaw_deg", &TitleTunables::gun_yaw_deg, &Config::gun_yaw_deg,
+     -180.0f, 180.0f},
+    {"gun_roll_deg", &TitleTunables::gun_roll_deg, &Config::gun_roll_deg,
+     -180.0f, 180.0f},
+    {"gun_forward_m", &TitleTunables::gun_forward_m, &Config::gun_forward_m,
+     -0.30f, 0.50f},
+    {"gun_right_m", &TitleTunables::gun_right_m, &Config::gun_right_m,
+     -0.30f, 0.30f},
+    {"gun_up_m", &TitleTunables::gun_up_m, &Config::gun_up_m, -0.30f, 0.30f},
+    {"left_hand_forward_m", &TitleTunables::left_hand_forward_m,
+     &Config::left_hand_forward_m, -0.15f, 0.30f},
+    {"hud_size", &TitleTunables::hud_size, &Config::hud_size, 0.30f, 1.00f},
+    {"hud_aspect", &TitleTunables::hud_aspect, &Config::hud_aspect,
+     kHudAspectMin, kHudAspectMax},
+    {"hud_curvature", &TitleTunables::hud_curvature, &Config::hud_curvature,
+     kHudCurvatureMin, kHudCurvatureMax},
+    {"hud_vertical_offset", &TitleTunables::hud_vertical_offset,
+     &Config::hud_vertical_offset, kHudHeightMin, kHudHeightMax},
+    {"barrel_pitch_deg", &TitleTunables::barrel_pitch_deg,
+     &Config::barrel_pitch_deg, -180.0f, 180.0f},
+    {"barrel_yaw_deg", &TitleTunables::barrel_yaw_deg,
+     &Config::barrel_yaw_deg, -180.0f, 180.0f},
+    {"barrel_roll_deg", &TitleTunables::barrel_roll_deg,
+     &Config::barrel_roll_deg, -180.0f, 180.0f},
+};
+constexpr int kTunableFieldCount =
+    static_cast<int>(sizeof(kTunableFields) / sizeof(kTunableFields[0]));
+
+const char* const kTitleProfilePrefixes[kTitleProfileCount] = {
+    "halo3_", "odst_", "reach_", "halo4_", "halo2a_", "halo2c_", "halo1_"};
+const char* const kTitleProfileTitles[kTitleProfileCount] = {
+    "Halo 3", "Halo 3: ODST", "Halo: Reach", "Halo 4",
+    "Halo 2 Anniversary", "Halo 2 Classic",
+    "Halo: Combat Evolved (future bring-up)"};
+
+bool g_profileFieldSet[kTitleProfileCount][kTunableFieldCount]{};
+std::atomic<int> g_activeTitleProfile{-1};
+
+void ResetTitleProfileTracking()
+{
+    for (int profile = 0; profile < kTitleProfileCount; ++profile)
+        for (int field = 0; field < kTunableFieldCount; ++field)
+            g_profileFieldSet[profile][field] = false;
+}
+
+// A halo3_gun_scale-style key. Returns true when consumed.
+bool ParseTitleProfileKey(const char* key, const char* val)
+{
+    for (int profile = 0; profile < kTitleProfileCount; ++profile)
+    {
+        const char* prefix = kTitleProfilePrefixes[profile];
+        const size_t length = strlen(prefix);
+        if (strncmp(key, prefix, length) != 0)
+            continue;
+        const char* suffix = key + length;
+        for (int field = 0; field < kTunableFieldCount; ++field)
+        {
+            if (strcmp(suffix, kTunableFields[field].suffix) != 0)
+                continue;
+            ParseFloatSetting(
+                key, val,
+                g_config.title_profiles[profile].*kTunableFields[field].member);
+            g_profileFieldSet[profile][field] = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+// After the shared fields are parsed and clamped: snapshot them as the
+// shared defaults, fill every profile field the cfg did not name from those
+// defaults, clamp every profile field with the same range its shared field
+// gets, and re-assert the active profile if one is live (a reload during
+// gameplay must not leave stale values in the live fields).
+void ResolveTitleProfiles()
+{
+    for (int field = 0; field < kTunableFieldCount; ++field)
+        g_config.base_tunables.*kTunableFields[field].member =
+            g_config.*kTunableFields[field].live;
+    for (int profile = 0; profile < kTitleProfileCount; ++profile)
+    {
+        for (int field = 0; field < kTunableFieldCount; ++field)
+        {
+            const TunableField& descriptor = kTunableFields[field];
+            float& value = g_config.title_profiles[profile].*descriptor.member;
+            if (!g_profileFieldSet[profile][field])
+                value = g_config.base_tunables.*descriptor.member;
+            value = std::clamp(value, descriptor.minimum, descriptor.maximum);
+        }
+    }
+    const int active = g_activeTitleProfile.load(std::memory_order_acquire);
+    if (active >= 0 && active < kTitleProfileCount)
+    {
+        for (int field = 0; field < kTunableFieldCount; ++field)
+            g_config.*kTunableFields[field].live =
+                g_config.title_profiles[active].*kTunableFields[field].member;
+    }
+}
+} // namespace
+
+const char* Config_TitleProfileName(int profile)
+{
+    if (profile >= 0 && profile < kTitleProfileCount)
+        return kTitleProfileTitles[profile];
+    return "shared defaults (no game active)";
+}
+
+int Config_ActiveTitleProfile()
+{
+    return g_activeTitleProfile.load(std::memory_order_acquire);
+}
+
+void Config_ApplyTitleProfile(int profile)
+{
+    if (profile < -1 || profile >= kTitleProfileCount)
+        profile = -1;
+    const int previous =
+        g_activeTitleProfile.exchange(profile, std::memory_order_acq_rel);
+    if (previous == profile)
+        return;
+    const TitleTunables& source = profile >= 0
+        ? g_config.title_profiles[profile]
+        : g_config.base_tunables;
+    for (int field = 0; field < kTunableFieldCount; ++field)
+        g_config.*kTunableFields[field].live =
+            source.*kTunableFields[field].member;
+    LOG("config: weapon/hand/HUD tunables now follow %s",
+        Config_TitleProfileName(profile));
+}
+
+void Config_StoreLiveTunables()
+{
+    const int active = g_activeTitleProfile.load(std::memory_order_acquire);
+    TitleTunables& destination =
+        active >= 0 && active < kTitleProfileCount
+            ? g_config.title_profiles[active]
+            : g_config.base_tunables;
+    for (int field = 0; field < kTunableFieldCount; ++field)
+    {
+        const TunableField& descriptor = kTunableFields[field];
+        destination.*descriptor.member = std::clamp(
+            g_config.*descriptor.live, descriptor.minimum, descriptor.maximum);
+    }
+}
+
 void ConfigLoad(const wchar_t* path)
 {
+    ResetTitleProfileTracking();
     g_config = Config{};
     g_path = path;
     FILE* f = nullptr;
@@ -428,6 +608,42 @@ void ConfigLoad(const wchar_t* path)
         };
         const char* key = trim(line);
         const char* val = trim(eq + 1);
+        // C-TITLE-1: per-title profile keys, handled by table.
+        if (ParseTitleProfileKey(key, val))
+            continue;
+        // C-H2-85: handled by table, not by the else-if chain below - that
+        // chain is at MSVC's block nesting limit and cannot take more arms.
+        {
+            struct FloatKey { const char* name; float* destination; };
+            const FloatKey kFloatKeys[] = {
+                {"halo2_classic_gun_pitch_deg",
+                 &g_config.halo2_classic_gun_pitch_deg},
+                {"halo2_classic_gun_yaw_deg",
+                 &g_config.halo2_classic_gun_yaw_deg},
+                {"halo2_classic_gun_roll_deg",
+                 &g_config.halo2_classic_gun_roll_deg},
+                {"halo2_classic_gun_forward_m",
+                 &g_config.halo2_classic_gun_forward_m},
+                {"halo2_classic_gun_right_m",
+                 &g_config.halo2_classic_gun_right_m},
+                {"halo2_classic_gun_up_m",
+                 &g_config.halo2_classic_gun_up_m},
+                {"barrel_pitch_deg", &g_config.barrel_pitch_deg},
+                {"barrel_yaw_deg", &g_config.barrel_yaw_deg},
+                {"barrel_roll_deg", &g_config.barrel_roll_deg},
+            };
+            bool handled = false;
+            for (const FloatKey& entry : kFloatKeys)
+            {
+                if (strcmp(key, entry.name) != 0)
+                    continue;
+                ParseFloatSetting(key, val, *entry.destination);
+                handled = true;
+                break;
+            }
+            if (handled)
+                continue;
+        }
         if (!strcmp(key, "config_version"))
         {
             char* end = nullptr;
@@ -782,6 +998,7 @@ void ConfigLoad(const wchar_t* path)
         g_config.hud_curvature = (0.30f - legacyDelta) / 0.60f;
     }
     Clamp();
+    ResolveTitleProfiles();
     LOG("config: loaded (screen %.2fm wide at %.2fm)", g_config.screen_width_m, g_config.screen_distance_m);
 }
 
@@ -809,6 +1026,9 @@ void ConfigSave()
     if (g_path.empty())
         return;
     Clamp();
+    // C-TITLE-1: whatever the player just tuned belongs to the active
+    // title's profile (or the shared defaults when no game is active).
+    Config_StoreLiveTunables();
     FILE* f = nullptr;
     _wfopen_s(&f, g_path.c_str(), L"wt");
     if (!f)
@@ -1024,28 +1244,34 @@ void ConfigSave()
     fprintf(f, "# Size of the right hand and the weapon it holds. Home/End adjust it\n");
     fprintf(f, "# in-game. 1.00 = the size the active game authored the model at.\n");
     fprintf(f, "# (default %.2f, range 0.3 to 3)\n", d.gun_scale);
-    fprintf(f, "gun_scale = %.2f\n\n", g_config.gun_scale);
+    fprintf(f, "gun_scale = %.2f\n\n", g_config.base_tunables.gun_scale);
     fprintf(f, "# Size of the LEFT hand, and of the second gun when dual-wielding.\n");
     fprintf(f, "# Separate from gun_scale because the left hand is usually empty.\n");
     fprintf(f, "# Set it to the same number as gun_scale for matching hands.\n");
     fprintf(f, "# (default %.2f, range 0.3 to 3)\n", d.left_hand_scale);
-    fprintf(f, "left_hand_scale = %.2f\n\n", g_config.left_hand_scale);
+    fprintf(f, "left_hand_scale = %.2f\n\n", g_config.base_tunables.left_hand_scale);
     fprintf(f, "# Weapon mounting rotation on the controller, in degrees. Rotates only\n");
     fprintf(f, "# the visible gun; the cursor/bullet ray stays fixed on the controller.\n");
     fprintf(f, "# (defaults %.0f / %.0f / %.0f, range -180 to 180)\n",
             d.gun_pitch_deg, d.gun_yaw_deg, d.gun_roll_deg);
-    fprintf(f, "gun_pitch_deg = %.0f\n", g_config.gun_pitch_deg);
-    fprintf(f, "gun_yaw_deg = %.0f\n", g_config.gun_yaw_deg);
-    fprintf(f, "gun_roll_deg = %.0f\n\n", g_config.gun_roll_deg);
+    fprintf(f, "gun_pitch_deg = %.0f\n", g_config.base_tunables.gun_pitch_deg);
+    fprintf(f, "gun_yaw_deg = %.0f\n", g_config.base_tunables.gun_yaw_deg);
+    fprintf(f, "gun_roll_deg = %.0f\n\n", g_config.base_tunables.gun_roll_deg);
+    fprintf(f, "# Mesh-only barrel trim: rotates the visible gun + hands about the\n");
+    fprintf(f, "# controller without moving the crosshair or the shot. Lay the drawn\n");
+    fprintf(f, "# barrel on the crosshair line. Saved per game below.\n");
+    fprintf(f, "barrel_pitch_deg = %.1f\n", g_config.base_tunables.barrel_pitch_deg);
+    fprintf(f, "barrel_yaw_deg = %.1f\n", g_config.base_tunables.barrel_yaw_deg);
+    fprintf(f, "barrel_roll_deg = %.1f\n\n", g_config.base_tunables.barrel_roll_deg);
     fprintf(f, "# Push the gun forward of the controller, in meters.\n");
     fprintf(f, "# Negative seats the gun back into your fist.\n");
     fprintf(f, "# (default %.2f, range -0.3 to 0.5)\n", d.gun_forward_m);
-    fprintf(f, "gun_forward_m = %.2f\n\n", g_config.gun_forward_m);
+    fprintf(f, "gun_forward_m = %.2f\n\n", g_config.base_tunables.gun_forward_m);
     fprintf(f, "# Sideways and vertical gun-stock offsets in controller-local meters.\n");
     fprintf(f, "# Applied after weapon mount rotation; visual only, aim is unchanged.\n");
     fprintf(f, "# (defaults 0.00 / 0.00, range -0.3 to 0.3)\n");
-    fprintf(f, "gun_right_m = %.2f\n", g_config.gun_right_m);
-    fprintf(f, "gun_up_m = %.2f\n\n", g_config.gun_up_m);
+    fprintf(f, "gun_right_m = %.2f\n", g_config.base_tunables.gun_right_m);
+    fprintf(f, "gun_up_m = %.2f\n\n", g_config.base_tunables.gun_up_m);
     fprintf(f, "# Raise the muzzle flash / bullet spawn point along the gun's\n");
     fprintf(f, "# own up axis, in meters. Reach only. Does NOT change where\n");
     fprintf(f, "# rounds land - only where they appear to come from.\n");
@@ -1368,24 +1594,24 @@ void ConfigSave()
     fprintf(f, "# shields/radar/ammo toward the center so both VR eyes see them.\n");
     fprintf(f, "# Halo 3, ODST, and Reach write this into their own HUD layout data.\n");
     fprintf(f, "# (default %.2f = calibrated stock layout, range 0.30 to 1.00)\n", d.hud_size);
-    fprintf(f, "hud_size = %.2f\n\n", g_config.hud_size);
+    fprintf(f, "hud_size = %.2f\n\n", g_config.base_tunables.hud_size);
     fprintf(f, "# HUD width/aspect trim after automatic headset correction.\n");
     fprintf(f, "# 1 = automatic, lower = narrower, higher = wider.\n");
     fprintf(f, "# Applies to Halo 3, ODST, and Reach.\n");
     fprintf(f, "# (default %.2f, range %.2f to %.2f)\n",
             d.hud_aspect, kHudAspectMin, kHudAspectMax);
-    fprintf(f, "hud_aspect = %.2f\n\n", g_config.hud_aspect);
+    fprintf(f, "hud_aspect = %.2f\n\n", g_config.base_tunables.hud_aspect);
     fprintf(f, "# HUD curvature: 0 = flat, 1 = fully curved.\n");
     fprintf(f, "# 0.50 keeps the active game's authored curvature.\n");
     fprintf(f, "# Applies to Halo 3 and ODST; not Halo: Reach or Halo 4 yet.\n");
     fprintf(f, "# (default %.2f, range %.2f to %.2f)\n",
             d.hud_curvature, kHudCurvatureMin, kHudCurvatureMax);
-    fprintf(f, "hud_curvature = %.2f\n\n", g_config.hud_curvature);
+    fprintf(f, "hud_curvature = %.2f\n\n", g_config.base_tunables.hud_curvature);
     fprintf(f, "# HUD height in virtual-screen pixels. Positive = higher, negative = lower.\n");
     fprintf(f, "# Halo 3 and ODST; Reach and Halo 4 are not active here yet.\n");
     fprintf(f, "# (default %+.0f, range %+.0f to %+.0f)\n",
              d.hud_vertical_offset, kHudHeightMin, kHudHeightMax);
-    fprintf(f, "hud_vertical_offset = %+.0f\n\n", g_config.hud_vertical_offset);
+    fprintf(f, "hud_vertical_offset = %+.0f\n\n", g_config.base_tunables.hud_vertical_offset);
     fprintf(f, "# Game camera motion blur: 0 = off (VR default; also removes\n");
     fprintf(f, "# repeating stereo echo artifacts), 1 = the game's normal blur.\n");
     fprintf(f, "# (default %d)\n", d.motion_blur ? 1 : 0);
@@ -1407,7 +1633,7 @@ void ConfigSave()
     fprintf(f, "# Left controller wrist-to-palm correction, shared by support-hand IK\n");
     fprintf(f, "# and the two-hand aim point, in meters.\n");
     fprintf(f, "# (default %.3f, range -0.15 to 0.30)\n", d.left_hand_forward_m);
-    fprintf(f, "left_hand_forward_m = %.3f\n\n", g_config.left_hand_forward_m);
+    fprintf(f, "left_hand_forward_m = %.3f\n\n", g_config.base_tunables.left_hand_forward_m);
     fprintf(f, "# Sideways nudge of the two-hand grab zone (+ = player's right), so the\n");
     fprintf(f, "# grab line sits on the visible barrel, in meters.\n");
     fprintf(f, "# (default %.3f, range -0.10 to 0.10)\n", d.two_hand_zone_right_m);
@@ -1464,5 +1690,25 @@ void ConfigSave()
     fprintf(f, "# Ghosting diagnostic: 1 renders the right eye first.\n");
     fprintf(f, "# (default %d)\n", d.right_eye_first ? 1 : 0);
     fprintf(f, "right_eye_first = %d\n", g_config.right_eye_first ? 1 : 0);
+    fprintf(f, "# --- Per-title weapon/hand/HUD profiles (C-TITLE-1) ---\n");
+    fprintf(f, "# Every supported game - and Halo 2 Anniversary vs Classic\n");
+    fprintf(f, "# separately - keeps its OWN copy of the thirteen tunables\n");
+    fprintf(f, "# below. The F1 sliders edit the profile of whichever game\n");
+    fprintf(f, "# is running; the shared keys above are only the defaults a\n");
+    fprintf(f, "# fresh profile starts from. Edit these by hand freely.\n\n");
+    for (int profile = 0; profile < kTitleProfileCount; ++profile)
+    {
+        fprintf(f, "# %s\n", kTitleProfileTitles[profile]);
+        for (int field = 0; field < kTunableFieldCount; ++field)
+        {
+            fprintf(f, "%s%s = %.4f\n",
+                    kTitleProfilePrefixes[profile],
+                    kTunableFields[field].suffix,
+                    static_cast<double>(
+                        g_config.title_profiles[profile].*
+                        kTunableFields[field].member));
+        }
+        fprintf(f, "\n");
+    }
     fclose(f);
 }

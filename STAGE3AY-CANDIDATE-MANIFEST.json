@@ -1,0 +1,30 @@
+{
+  "stage": "3AY",
+  "status": "HEADSET_FAILED_CRASH",
+  "base_stage": "3AX rejected: visor fragment remained and ODST stopped after preflight",
+  "base_dll_sha256": "0d32751585670c28bb7b98110a35b04817ec4f683fcc3ab3301c0941a4613053",
+  "output_dll_sha256": "44850c02a97e284b35f00585479d9b0391bc190c758f15efd88bce733c2e50ad",
+  "output_dll_size": 2923520,
+  "payload_sha256": "da1d3247366f40a78c12eec8d1df0a6a098756c7e1621e13c5341ad3cfd5ccb1",
+  "payload_size": 2040,
+  "pause_payload_byte_identical": true,
+  "features": [
+    "Halo 4 authored reticle isolated by same-frame full-minus-reticle CUI difference capture",
+    "Halo 4 title pixel-shader resource slot 1 saved and restored exactly",
+    "ODST optional cinematic-state scan isolated at measured post-preflight stall boundary",
+    "ODST proven readiness edge restored"
+  ],
+  "source_log_sha256": "ab1ee7cff7491a9d2d7e80dedbb6cfb8b0acffe9f8d9a5c42140b65181189907",
+  "failure_log_sha256": "e65e146cd78c63274ef0273e062a30610f99a4eeb6b6000069552241b272646d",
+  "failure_wer_sha256": "aef733542d047c911508305327108526a51fbc661e671ddf81c7e330332e1c5b",
+  "failure": "Steam Halo 4 first gameplay CUI pass crashed with c0000005 at HaloMCCVR+0x20A25 because the new capture wrapper nested a compiled call without Windows x64 shadow space/alignment",
+  "deployment": "INSTALLED_BOTH_2026-08-28",
+  "superseded_after_failure_by": "3AZ",
+  "steam_installed_dll_sha256": "44850c02a97e284b35f00585479d9b0391bc190c758f15efd88bce733c2e50ad",
+  "store_installed_dll_sha256": "44850c02a97e284b35f00585479d9b0391bc190c758f15efd88bce733c2e50ad",
+  "backup": "out/deploy-backups/2026-08-28-pre-3AY",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

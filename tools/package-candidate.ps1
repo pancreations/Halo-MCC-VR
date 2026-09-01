@@ -59,34 +59,38 @@ try {
         throw 'Could not resolve the candidate source commit.'
     }
 
-    # The handoff was imported on top of the last local Alpha 0.3.5 commit.
-    # Keep the ancestry guard on a commit that exists in this repository; the
-    # handoff's historical source-tree commit names are not local Git objects.
+    # This development repository was reconstructed from the complete C50
+    # source ZIP, so the older upstream commit objects named in its evidence
+    # documents are deliberately absent from the local Git object database.
+    # Pin the immutable imported snapshot that contains those cumulative
+    # sources; all behavior-specific gates below still validate the live tree.
     $importedC50Baseline =
-        '8ea6fa4301378c274d28e524975196e958d64b59'
+        'ac6b0a9bcfca8f09f06e32013aed2c64d9b36ae1'
     & git -C $repoRoot merge-base --is-ancestor $importedC50Baseline $commit
     if ($LASTEXITCODE -ne 0) {
         throw "Refusing to package: HEAD does not descend from the imported C50 source snapshot $importedC50Baseline."
     }
 
-    # C-H2-55 shared loader-lifecycle and same-generation rehook gate. Most
-    # title lookups remain identity-only. The explicit Stage3T/Stage3V/Stage3AL
-    # post-proof ownership pins are the deliberate exception: they retain the
-    # exact image while MinHook/native bytes are owned and release it only
-    # after verified teardown. The old blanket checks below would reject the
-    # lifetime fixes this handoff is deploying.
+    # C-H2-55 shared loader-lifecycle and same-generation rehook gate. Game DLL mappings are identities,
+    # never references owned by the mod. A future title adapter must not bring
+    # back the exact refcount/unload race this candidate fixes.
     $dllSources = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src\dll') `
         -Filter '*.cpp' -File
     $dllSourceText = ($dllSources | ForEach-Object {
         [IO.File]::ReadAllText($_.FullName)
     }) -join "`n"
-    $hasVerifiedOwnerPin =
-        $dllSourceText -match 'Stage 3AL owns exactly one post-preflight loader reference' -and
-        $dllSourceText -match 'FreeLibrary\(retiredModuleReference\)' -and
-        $dllSourceText -match 'Stage 3T: once Reach has passed its normal level/liveness proof'
-    if ($dllSourceText -match '(?m)^\s*FreeLibrary\s*\(' -and
-            -not $hasVerifiedOwnerPin) {
-        throw 'C-H2-55 gate failed: an unverified title-DLL FreeLibrary call remains.'
+    if ($dllSourceText -match '(?m)^\s*FreeLibrary\s*\(') {
+        throw 'C-H2-55 gate failed: a title-DLL FreeLibrary call remains.'
+    }
+    $moduleHandleCalls = [regex]::Matches(
+        $dllSourceText, 'GetModuleHandleExW\s*\((?<args>[\s\S]{0,320}?)\)')
+    foreach ($call in $moduleHandleCalls) {
+        $argsText = $call.Groups['args'].Value
+        if ($argsText -match 'GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS' -and
+                $argsText -notmatch
+                    'GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT') {
+            throw 'C-H2-55 gate failed: a FROM_ADDRESS module lookup still increments the loader refcount.'
+        }
     }
     $gameSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\game.cpp'))
@@ -147,8 +151,6 @@ try {
         (Join-Path $repoRoot 'src\common\halo2_hud_shader_logic.h'))
     $d3dSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
-    $vrSource = [IO.File]::ReadAllText(
-        (Join-Path $repoRoot 'src\dll\vr.cpp'))
     if ($halo2HudShaderSource -notmatch
             'kCrosshairHash\s*=\s*0x0a9b60d8f40268f6ULL' -or
         $halo2HudShaderSource -notmatch
@@ -157,7 +159,7 @@ try {
             'MigotoFnv1' -or
         $d3dSource -notmatch 'Halo2CreatePixelShaderHook' -or
         $d3dSource -notmatch 'Halo2NativeHud_GetRasterLayout' -or
-        $vrSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
+        $d3dSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
         $halo2StereoSource -notmatch
             'VR_PrepareAuthoredReticleResources' -or
         $halo2StereoSource -match '&NativeHudAnchorBasisDetour' -or

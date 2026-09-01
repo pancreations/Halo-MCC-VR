@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -52,6 +53,8 @@ inline constexpr uint32_t kHalo4CuiGameplayCallerReturnRva = 0x00375C6E;
 
 inline constexpr uint32_t kHalo4CuiCommandBegin = 0x28;
 inline constexpr uint32_t kHalo4CuiCommandEnd = 0x29;
+inline constexpr uint32_t kHalo4CuiCommandPolyart = 0x20;
+inline constexpr uint32_t kHalo4CuiCommandPolyartThreeColor = 0x1F;
 inline constexpr uint16_t kHalo4CuiCommandBeginPayloadSize = 0x0C;
 
 inline constexpr uint32_t kHalo4CuiReticleAnchorCount = 4;
@@ -107,6 +110,15 @@ struct Halo4CuiReticleLifecycleAction
     bool disarmCameraCore = false;
     bool endOpenXrSession = false;
 };
+
+// Hook installation alone is not enough to own native suppression. If the
+// prepared reticle chain later fails, both CUI hooks remain installed only as
+// pass-through trampolines and the title's stock reticle is left visible.
+constexpr bool Halo4CuiReticleOwnsNativeSuppression(
+    bool hooksLive, bool captureResourcesHealthy) noexcept
+{
+    return hooksLive && captureResourcesHealthy;
+}
 
 // Even a partially-created optional two-hook transaction owns only its own
 // cleanup. Camera ownership and the OpenXR session are never lifecycle
@@ -165,6 +177,259 @@ inline constexpr uint32_t kHalo4CuiTransformStackEntriesOffset = 0x878;
 inline constexpr uint32_t kHalo4CuiTransformStride = 0x34;
 inline constexpr uint32_t kHalo4CuiTransformTranslationOffset = 0x28;
 inline constexpr uint32_t kHalo4CuiTransformStackMaximum = 0x60;
+
+constexpr bool Halo4CuiTransformStackCountValid(uint32_t count) noexcept
+{
+    return count != 0 && count <= kHalo4CuiTransformStackMaximum;
+}
+// Stage 3BH measured these from Halo 4's own live CUI framing. Stage 3BR then
+// enlarged the selected weapon reticle 2.5x around the 512x512 capture centre.
+// These are Halo 4 measurements, not values copied from another title.
+inline constexpr float kHalo4CuiCaptureWidth = 4134.312f;
+inline constexpr float kHalo4CuiCaptureHeight = 1346.196f;
+inline constexpr float kHalo4CuiCaptureTextureExtent = 512.0f;
+inline constexpr float kHalo4CuiCaptureCenter = 256.0f;
+inline constexpr float kHalo4CuiCaptureVerticalBias = 104.0f;
+inline constexpr float kHalo4CuiCaptureVerticalBiasRatio =
+    kHalo4CuiCaptureVerticalBias / kHalo4CuiCaptureHeight;
+inline constexpr float kHalo4CuiCaptureScale = 2.5f;
+
+// Stage 3CR/3CX source fold-in (2026-08-31). Halo 4 re-picks its HUD layout
+// class per level load, so the calibrated selector displacement, vertical
+// bias and presentation scale above are exact only on the calibrated canvas
+// (baseY 336.549, hide 4134.312). The accepted 3CX image (7fdf539a...)
+// computes all three live per capture from the values the visible-pass hide
+// records, and falls back to the calibrated constants whenever a live value
+// is invalid (the payload skips its refresh):
+//   selector un-hide = live hide shift 4*|baseX|                     (3CR)
+//   bias ratio       = clamp(P + Q*u + R*u^2, 0, f_cal), u = 1/baseY (3CX)
+//   capture scale    = ZA + ZB/hide                                  (3CX)
+// Anchors are on-disk capture-dump measurements pinned by the 3CX builder
+// (tools/build_stage3cx_h4_three_point_bias.py):
+//   f(336.549) = f_cal (bit-exact), f(731.878) = 0.003274,
+//   f(582.373) = 0.006040;  z(4134.312) = 2.5, z(6543.256) = 2.5*185/286.
+inline constexpr double kHalo4CuiBiasAnchorY1 = 336.549;
+inline constexpr double kHalo4CuiBiasAnchorY2 = 731.878;
+inline constexpr double kHalo4CuiBiasAnchorY3 = 582.373;
+inline constexpr double kHalo4CuiBiasAnchorF1 =
+    static_cast<double>(kHalo4CuiCaptureVerticalBiasRatio);
+inline constexpr double kHalo4CuiBiasAnchorF2 = 0.003274;
+inline constexpr double kHalo4CuiBiasAnchorF3 = 0.006040;
+
+namespace halo4_cui_detail
+{
+// The exact quadratic in u = 1/y through the three anchors, the same
+// algebra the 3CX builder runs before welding the constants into the image.
+inline constexpr double kBiasU1 = 1.0 / kHalo4CuiBiasAnchorY1;
+inline constexpr double kBiasU2 = 1.0 / kHalo4CuiBiasAnchorY2;
+inline constexpr double kBiasU3 = 1.0 / kHalo4CuiBiasAnchorY3;
+inline constexpr double kBiasR =
+    ((kHalo4CuiBiasAnchorF3 - kHalo4CuiBiasAnchorF2) / (kBiasU3 - kBiasU2) -
+     (kHalo4CuiBiasAnchorF1 - kHalo4CuiBiasAnchorF2) / (kBiasU1 - kBiasU2)) /
+    (kBiasU3 - kBiasU1);
+inline constexpr double kBiasQ =
+    (kHalo4CuiBiasAnchorF1 - kHalo4CuiBiasAnchorF2) / (kBiasU1 - kBiasU2) -
+    kBiasR * (kBiasU1 + kBiasU2);
+inline constexpr double kBiasP = kHalo4CuiBiasAnchorF2 -
+    kBiasQ * kBiasU2 - kBiasR * kBiasU2 * kBiasU2;
+inline constexpr double kZoomCalWidth = 4134.312;
+inline constexpr double kZoomCalScale = 2.5;
+inline constexpr double kZoomNewWidth = 6543.256;
+inline constexpr double kZoomNewScale = 2.5 * 185.0 / 286.0;
+inline constexpr double kZoomA =
+    (kZoomCalScale * kZoomCalWidth - kZoomNewScale * kZoomNewWidth) /
+    (kZoomCalWidth - kZoomNewWidth);
+inline constexpr double kZoomB = (kZoomCalScale - kZoomA) * kZoomCalWidth;
+}
+
+inline constexpr float kHalo4CuiBiasQuadP =
+    static_cast<float>(halo4_cui_detail::kBiasP);
+inline constexpr float kHalo4CuiBiasQuadQ =
+    static_cast<float>(halo4_cui_detail::kBiasQ);
+inline constexpr float kHalo4CuiBiasQuadR =
+    static_cast<float>(halo4_cui_detail::kBiasR);
+inline constexpr float kHalo4CuiZoomA =
+    static_cast<float>(halo4_cui_detail::kZoomA);
+inline constexpr float kHalo4CuiZoomB =
+    static_cast<float>(halo4_cui_detail::kZoomB);
+
+// The 3CX payload's bias refresh: valid only for a finite positive baseY
+// (the stock centre is (-halfWidth, +halfHeight), so live baseY > 0);
+// otherwise the calibrated ratio stands.
+inline float Halo4CuiLiveVerticalBiasRatio(float liveBaseY) noexcept
+{
+    if (!std::isfinite(liveBaseY) || liveBaseY <= 0.0f)
+        return kHalo4CuiCaptureVerticalBiasRatio;
+    const float u = 1.0f / liveBaseY;
+    // Horner order, matching the 3CX payload's instruction sequence
+    // ((R*u)+Q)*u+P so the produced bias is bit-identical to the image's.
+    const float f =
+        (kHalo4CuiBiasQuadR * u + kHalo4CuiBiasQuadQ) * u + kHalo4CuiBiasQuadP;
+    if (!std::isfinite(f))
+        return kHalo4CuiCaptureVerticalBiasRatio;
+    return std::min(std::max(f, 0.0f), kHalo4CuiCaptureVerticalBiasRatio);
+}
+
+// The 3CX payload's zoom refresh: z = ZA + ZB/hide, exact at both measured
+// size anchors; the calibrated 2.5x stands for an invalid live hide.
+inline float Halo4CuiLiveCaptureScale(float liveHideShift) noexcept
+{
+    if (!std::isfinite(liveHideShift) || liveHideShift <= 0.0f)
+        return kHalo4CuiCaptureScale;
+    const float scale = kHalo4CuiZoomA + kHalo4CuiZoomB / liveHideShift;
+    if (!std::isfinite(scale) || scale <= 0.0f)
+        return kHalo4CuiCaptureScale;
+    return scale;
+}
+
+struct Halo4CuiCaptureSelectionState
+{
+    bool insideReticleContainer = false;
+    bool polyartContainer = false;
+};
+
+// H4EK proves the grenade and damage indicators are PolyartWidget children of
+// reticule_offset_container, while weapon reticles use bitmap widgets. Mark a
+// polyart container before its draw so its vertices bake with the hidden
+// transform, then keep it hidden through the matching 0x29.
+inline bool Halo4CuiCaptureMarkPolyartBeforeDraw(
+    Halo4CuiCaptureSelectionState& state, bool headerReadable,
+    uint32_t command) noexcept
+{
+    if (!headerReadable || !state.insideReticleContainer ||
+        (command != kHalo4CuiCommandPolyart &&
+         command != kHalo4CuiCommandPolyartThreeColor))
+    {
+        return false;
+    }
+    state.polyartContainer = true;
+    return true;
+}
+
+inline void Halo4CuiCaptureAdvanceAfterDraw(
+    Halo4CuiCaptureSelectionState& state, bool headerReadable,
+    uint32_t command, uint16_t payloadSize) noexcept
+{
+    if (!headerReadable)
+        return;
+    if (command == kHalo4CuiCommandBegin &&
+        payloadSize == kHalo4CuiCommandBeginPayloadSize)
+    {
+        state.insideReticleContainer = true;
+        state.polyartContainer = false;
+    }
+    else if (command == kHalo4CuiCommandEnd)
+    {
+        state = {};
+    }
+}
+
+constexpr bool Halo4CuiCaptureKeepsTopTransform(
+    const Halo4CuiCaptureSelectionState& state) noexcept
+{
+    return state.insideReticleContainer && !state.polyartContainer;
+}
+
+// 3CR: the un-hide displacement is the LIVE hide shift the visible pass
+// baked (4*|baseX|), not the calibrated canvas width - a frozen 4134.312
+// under-shot the live hide by 2409 units on other canvases and left the
+// reticle outside the capture window (byte-empty captures). An invalid
+// live value falls back to the calibrated width.
+inline bool Halo4CuiCaptureAdjustedTranslationX(
+    float currentX, bool keepOnTarget, float liveHideShift,
+    float& adjustedX) noexcept
+{
+    adjustedX = currentX;
+    if (!std::isfinite(currentX))
+        return false;
+    const float hideShift =
+        std::isfinite(liveHideShift) && liveHideShift >= 4.0f
+            ? liveHideShift
+            : kHalo4CuiCaptureWidth;
+    const float offscreenThreshold = hideShift * 0.5f;
+    if (keepOnTarget)
+    {
+        if (currentX >= offscreenThreshold)
+            adjustedX = currentX - hideShift;
+    }
+    else if (currentX < offscreenThreshold)
+    {
+        adjustedX = currentX + hideShift;
+    }
+    return std::isfinite(adjustedX);
+}
+
+inline bool Halo4CuiCaptureAdjustedTranslationX(
+    float currentX, bool keepOnTarget, float& adjustedX) noexcept
+{
+    return Halo4CuiCaptureAdjustedTranslationX(
+        currentX, keepOnTarget, kHalo4CuiCaptureWidth, adjustedX);
+}
+
+struct Halo4CuiCaptureViewport
+{
+    float topLeftX = 0.0f;
+    float topLeftY = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    float minDepth = 0.0f;
+    float maxDepth = 1.0f;
+};
+
+// 3CX: the vertical bias ratio and the presentation scale are supplied by
+// the caller from the live layout (Halo4CuiLiveVerticalBiasRatio /
+// Halo4CuiLiveCaptureScale); the 104-unit absolute fallback for a missing
+// backbuffer description stays fixed exactly as the accepted 3BR thunk
+// keeps its k104 slot.
+inline bool Halo4BuildCuiCaptureDrawViewport(
+    const Halo4CuiCaptureViewport& base, uint32_t backbufferWidth,
+    uint32_t backbufferHeight, float verticalBiasRatio, float captureScale,
+    Halo4CuiCaptureViewport& output) noexcept
+{
+    output = base;
+    if (!std::isfinite(base.topLeftX) || !std::isfinite(base.topLeftY) ||
+        !std::isfinite(base.width) || !std::isfinite(base.height) ||
+        base.width <= 0.0f || base.height <= 0.0f ||
+        !std::isfinite(verticalBiasRatio) || verticalBiasRatio < 0.0f ||
+        !std::isfinite(captureScale) || captureScale <= 0.0f)
+    {
+        return false;
+    }
+
+    if (backbufferWidth != 0 && backbufferHeight != 0)
+    {
+        output.height = output.width *
+            static_cast<float>(backbufferHeight) /
+            static_cast<float>(backbufferWidth);
+        output.topLeftY =
+            (kHalo4CuiCaptureTextureExtent - output.height) * 0.5f -
+            output.height * verticalBiasRatio;
+    }
+    else
+    {
+        output.topLeftY -= kHalo4CuiCaptureVerticalBias;
+    }
+
+    output.width *= captureScale;
+    output.height *= captureScale;
+    output.topLeftX = kHalo4CuiCaptureCenter - captureScale *
+        (kHalo4CuiCaptureCenter - output.topLeftX);
+    output.topLeftY = kHalo4CuiCaptureCenter - captureScale *
+        (kHalo4CuiCaptureCenter - output.topLeftY);
+    return std::isfinite(output.topLeftX) &&
+        std::isfinite(output.topLeftY) && std::isfinite(output.width) &&
+        std::isfinite(output.height) && output.width > 0.0f &&
+        output.height > 0.0f;
+}
+
+inline bool Halo4BuildCuiCaptureDrawViewport(
+    const Halo4CuiCaptureViewport& base, uint32_t backbufferWidth,
+    uint32_t backbufferHeight, Halo4CuiCaptureViewport& output) noexcept
+{
+    return Halo4BuildCuiCaptureDrawViewport(
+        base, backbufferWidth, backbufferHeight,
+        kHalo4CuiCaptureVerticalBiasRatio, kHalo4CuiCaptureScale, output);
+}
 // Both canonical H4EK weapon CUI exports carry this nominal authored reticle
 // height in their widescreen overlay. It is a Halo 4 content measurement, not
 // a copied CHUD/capture calibration. Mapping that height through the live CUI
@@ -350,17 +615,11 @@ constexpr bool Halo4CuiReticleNeedsProceduralBootstrap(
         killNativeReticle;
 }
 
-// C-H4-50 fail-closed reticle policy. 7a24814 headset logs proved that the
-// whole-CUI replay can be blank for long stretches and can occasionally
-// produce unrelated opaque content that passes the generic alpha-only guard.
-// Once that false-positive image reaches the OpenXR quad, later blank captures
-// are correctly held -- which also means the bad image stays visible.
-//
-// Halo 4 already has a title-independent procedural bullet-ray reticle that is
-// known to stay correctly placed while the native flat type-0x28 copy is
-// suppressed. Until the authored H4 capture has a narrower, independently
-// proven widget boundary, keep that procedural art as the only H4 quad content.
-// The CUI hooks remain live for native-reticle suppression and diagnostics.
+// Stage 3BU deliberately retained this conservative raw bootstrap request.
+// EnsureReticleChain's measured-art and held-art guards run before any repaint,
+// so a validated authored upload still replaces the procedural pixels and is
+// retained. Stage 3BJ forced this false before capture framing/selection was
+// proven and was rejected; do not repeat that isolated change.
 constexpr bool Halo4CuiReticleUsesProceduralFallback(
     bool authoredCaptureLive, bool crosshairEnabled,
     bool killNativeReticle) noexcept

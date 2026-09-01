@@ -145,6 +145,15 @@ namespace
     std::atomic<uint64_t> g_reanchorBusy{0};
     std::atomic<uint64_t> g_reanchorBadSlot{0};
     std::atomic<uint64_t> g_publicationIndex{0};
+    // E-H2-70 (C-H2-82): the camera the ENGINE handed the packet builder for
+    // the pass whose packets the mod just owned - the frame the final
+    // first-person nodes are composed against. Seqlocked; read by each
+    // stereo core to compare with the camera its renderer will actually
+    // draw those nodes from. Separate per renderer, because the two
+    // builder calls are distinct engine calls with their own arguments.
+    std::atomic<uint32_t> g_packetCameraVersion[2]{};
+    Halo2CameraBasis g_packetCamera[2]{};
+    std::atomic<bool> g_packetCameraValid[2]{};
     // C-H2-71: independent fail-open visibility-cover telemetry. The observer
     // pose remains owned even when this optional one-float write is refused.
     std::atomic<uint64_t> g_visibilityCoverApplied{0};
@@ -194,6 +203,80 @@ namespace
         uint32_t*, uint8_t);
     void* g_packetBuilderTarget = nullptr;
     std::atomic<uintptr_t> g_packetBuilderOriginal{0};
+    // E-H2-71 (C-H2-83): the interpolated first-person FRAME getter the
+    // builder prefers for Classic only. While the mod's Classic build runs,
+    // it reports "none", which makes the builder compose against
+    // user_data+0x20C8 - the exact frame Anniversary composes against.
+    void* g_interpFrameTarget = nullptr;
+    std::atomic<uintptr_t> g_interpFrameOriginal{0};
+    std::atomic<uint32_t> g_interpFrameActiveCallbacks{0};
+    std::atomic<uint64_t> g_interpFrameCalls{0};
+    std::atomic<uint64_t> g_interpFrameForcedCurrent{0};
+    thread_local bool g_classicBuildInProgress = false;
+    // C-H2-85: Halo 2 classic-only mount trim application counters.
+    std::atomic<uint64_t> g_classicTrimApplied{0};
+    std::atomic<uint64_t> g_classicTrimRefused{0};
+    // E-H2-74 (C-H2-87): barrel meter, per consumer (0 classic, 1
+    // anniversary), millidegrees, last sample. Measured at the packet
+    // build from the numbers actually in play - no theory:
+    //   carrierVsCompose  angle(carrier.forward, compose camera forward)
+    //   carrierElevation  signed elevation of carrier.forward above the
+    //                     compose camera's forward, about its right axis
+    //   stockVsCompose    angle(stock gun root +X, compose camera forward)
+    //   stockElevation    signed elevation of the stock root +X likewise
+    // If the classic gun is drawn tipped, one of these says by how much.
+    std::atomic<int32_t> g_meterCarrierVsCompose[2]{};
+    std::atomic<int32_t> g_meterCarrierElevation[2]{};
+    std::atomic<int32_t> g_meterStockVsCompose[2]{};
+    std::atomic<int32_t> g_meterStockElevation[2]{};
+
+    void PublishBarrelMeter(
+        int slot, const Halo2CameraBasis& compose,
+        const Halo2CameraBasis& carrier, const float* gunRootNode) noexcept
+    {
+        if (slot < 0 || slot > 1) return;
+        auto unit = [](const float v[3], float out[3]) -> bool {
+            const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            if (!std::isfinite(l) || l < 1e-5f) return false;
+            out[0] = v[0] / l; out[1] = v[1] / l; out[2] = v[2] / l;
+            return true;
+        };
+        float f[3], u[3];
+        if (!unit(compose.forward, f) || !unit(compose.up, u)) return;
+        const float r[3] = {
+            f[1] * u[2] - f[2] * u[1], f[2] * u[0] - f[0] * u[2],
+            f[0] * u[1] - f[1] * u[0]};
+        auto publish = [&](const float dirIn[3], std::atomic<int32_t>& angle,
+                           std::atomic<int32_t>& elevation) {
+            float d[3];
+            if (!unit(dirIn, d)) return;
+            const float c = std::clamp(d[0] * f[0] + d[1] * f[1] + d[2] * f[2],
+                                       -1.0f, 1.0f);
+            const float total = std::acos(c) * 57.29578f;
+            // elevation: angle of the direction above the compose forward
+            // within the vertical plane (forward, up) - positive = higher
+            const float upC = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+            const float fwdC = c;
+            const float elev = std::atan2(upC, fwdC) * 57.29578f;
+            (void)r;
+            if (std::isfinite(total))
+                angle.store(static_cast<int32_t>(total * 1000.0f),
+                            std::memory_order_relaxed);
+            if (std::isfinite(elev))
+                elevation.store(static_cast<int32_t>(elev * 1000.0f),
+                                std::memory_order_relaxed);
+        };
+        publish(carrier.forward, g_meterCarrierVsCompose[slot],
+                g_meterCarrierElevation[slot]);
+        if (gunRootNode)
+        {
+            // node layout: [0] scale, [1..3] column 0 (= root +X axis in
+            // packet space, kHalo2FirstPersonNodeFloats stride)
+            const float rootX[3] = {gunRootNode[1], gunRootNode[2], gunRootNode[3]};
+            publish(rootX, g_meterStockVsCompose[slot],
+                    g_meterStockElevation[slot]);
+        }
+    }
     std::atomic<uint32_t> g_packetBuilderActiveCallbacks{0};
     std::atomic<uint64_t> g_packetBuilderCalls{0};
     std::atomic<uint64_t> g_packetBuilderApplied{0};
@@ -1083,6 +1166,9 @@ namespace
                           ownerObject == context.weaponObject)
                 {
                     Halo2FinalPacketOwnershipResult result{};
+                    PublishBarrelMeter(
+                        1, context.renderCamera, context.rightCarrier,
+                        matrices);
                     if (Halo2OwnFinalFirstPersonPackets(
                             context.handsMatrices, context.handsCount,
                             context.handsRemap, context.binding, matrices,
@@ -1164,6 +1250,42 @@ namespace
             }
         }
         g_visibleConsumerActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    // E-H2-71 (C-H2-83). Signature: bool(user_index, position_index, out).
+    using Halo2InterpolatedFrameFn = uint8_t(__fastcall*)(int, int, void*);
+
+    __declspec(noinline) uint8_t __fastcall Halo2InterpolatedFrameDetour(
+        int userIndex, int positionIndex, void* out)
+    {
+        g_interpFrameActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_interpFrameCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original = reinterpret_cast<Halo2InterpolatedFrameFn>(
+            g_interpFrameOriginal.load(std::memory_order_acquire));
+        uint8_t result = 0;
+        // Only the mod's own Classic first-person packet build is changed.
+        // Every other caller - the world, the other renderer, any other
+        // user - keeps the engine's interpolated frame exactly.
+        const bool forceCurrent = g_classicBuildInProgress &&
+            userIndex == static_cast<int>(kOwnedUser) &&
+            g_armed.load(std::memory_order_acquire) &&
+            g_levelLive.load(std::memory_order_acquire) &&
+            !g_teardownRequested.load(std::memory_order_acquire);
+        if (forceCurrent)
+        {
+            g_interpFrameForcedCurrent.fetch_add(1, std::memory_order_relaxed);
+        }
+        else if (original)
+        {
+            __try { result = original(userIndex, positionIndex, out); }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_exceptions.fetch_add(1, std::memory_order_relaxed);
+                result = 0;
+            }
+        }
+        g_interpFrameActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        return result;
     }
 
     __declspec(noinline) int __fastcall Halo2FirstPersonPacketBuilderDetour(
@@ -1279,6 +1401,50 @@ namespace
                 }
                 else
                 {
+                    // Mesh-only barrel trim from the ACTIVE title profile
+                    // (Anniversary and Classic each carry their own): rotates
+                    // the carriers, so the gun and the hands holding it turn
+                    // together about the controller while the crosshair and
+                    // the shot ray - which never read the carriers - stay
+                    // put. The legacy halo2_classic_* keys add on top for
+                    // Classic only. An invalid trim leaves the carriers as
+                    // built.
+                    {
+                        const float extraPitch = classicConsumer
+                            ? g_config.halo2_classic_gun_pitch_deg : 0.0f;
+                        const float extraYaw = classicConsumer
+                            ? g_config.halo2_classic_gun_yaw_deg : 0.0f;
+                        const float extraRoll = classicConsumer
+                            ? g_config.halo2_classic_gun_roll_deg : 0.0f;
+                        const float extraForward = classicConsumer
+                            ? g_config.halo2_classic_gun_forward_m : 0.0f;
+                        const float extraRight = classicConsumer
+                            ? g_config.halo2_classic_gun_right_m : 0.0f;
+                        const float extraUp = classicConsumer
+                            ? g_config.halo2_classic_gun_up_m : 0.0f;
+                        const float pitch = g_config.barrel_pitch_deg + extraPitch;
+                        const float yaw = g_config.barrel_yaw_deg + extraYaw;
+                        const float roll = g_config.barrel_roll_deg + extraRoll;
+                        const float worldScale = Game_GetWorldScale();
+                        Halo2CameraBasis trimmedRight{}, trimmedLeft{};
+                        if (Halo2ApplyCarrierTrim(
+                                rightCarrier, pitch, yaw, roll, extraForward,
+                                extraRight, extraUp, worldScale, trimmedRight) &&
+                            Halo2ApplyCarrierTrim(
+                                leftCarrier, pitch, yaw, roll, extraForward,
+                                extraRight, extraUp, worldScale, trimmedLeft))
+                        {
+                            rightCarrier = trimmedRight;
+                            leftCarrier = trimmedLeft;
+                            g_classicTrimApplied.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                        else
+                        {
+                            g_classicTrimRefused.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    }
                     auto& context = candidate;
                     context.valid = true;
                     context.user = user;
@@ -1289,6 +1455,17 @@ namespace
                     context.handsRemap = handsRemap;
                     context.binding = binding;
                     context.renderCamera = renderCamera;
+                    // E-H2-70: publish this renderer's packet-build camera.
+                    {
+                        const int slot = anniversaryConsumer ? 1 : 0;
+                        g_packetCameraVersion[slot].fetch_add(
+                            1, std::memory_order_acq_rel);
+                        g_packetCamera[slot] = renderCamera;
+                        g_packetCameraVersion[slot].fetch_add(
+                            1, std::memory_order_acq_rel);
+                        g_packetCameraValid[slot].store(
+                            true, std::memory_order_release);
+                    }
                     context.rightCarrier = rightCarrier;
                     context.leftCarrier = leftCarrier;
                     context.twoHandAimActive =
@@ -1327,6 +1504,17 @@ namespace
         int packetCount = 0;
         if (original)
         {
+            // E-H2-71 (C-H2-83): for the CLASSIC build only, the engine
+            // prefers the frame-INTERPOLATED first-person frame while
+            // Anniversary always composes against the current tick frame
+            // (user_data+0x20C8). Identical packets expressed in two
+            // different frames read as a rotation - the muzzle rise. Mark
+            // the classic build so the interpolated-frame getter reports
+            // none, which is the engine's own documented fallback to that
+            // same current frame.
+            const bool markClassicBuild = classicConsumer;
+            if (markClassicBuild)
+                g_classicBuildInProgress = true;
             __try
             {
                 packetCount = original(
@@ -1337,6 +1525,8 @@ namespace
             {
                 g_finalPaletteRefused.fetch_add(1, std::memory_order_relaxed);
             }
+            if (markClassicBuild)
+                g_classicBuildInProgress = false;
         }
         // The Anniversary callback normally publishes hands then gun. If a
         // malformed/empty packet set omits the gun, fail this optional alignment
@@ -1417,6 +1607,9 @@ namespace
                 {
                     std::memcpy(stockHands, handsMatrices, handsBytes);
                     std::memcpy(stockGun, gunMatrices, gunBytes);
+                    PublishBarrelMeter(
+                        0, candidate.renderCamera, candidate.rightCarrier,
+                        stockGun);
                 }
                 if (packetBoundsValid && Halo2OwnFinalFirstPersonPackets(
                         handsMatrices, candidate.handsCount,
@@ -2352,6 +2545,15 @@ namespace
             g_target = nullptr;
         }
         g_finalPaletteReady.store(false, std::memory_order_release);
+        if (g_interpFrameTarget)
+        {
+            (void)MH_DisableHook(g_interpFrameTarget);
+            while (g_interpFrameActiveCallbacks.load(std::memory_order_acquire))
+                Sleep(1);
+            (void)MH_RemoveHook(g_interpFrameTarget);
+            g_interpFrameTarget = nullptr;
+            g_interpFrameOriginal.store(0, std::memory_order_release);
+        }
         if (g_packetBuilderTarget)
         {
             const MH_STATUS disabled = MH_DisableHook(g_packetBuilderTarget);
@@ -3018,6 +3220,81 @@ namespace
                 g_visibleConsumerTarget = consumerTarget;
                 g_packetBuilderTarget = packetTarget;
                 g_finalPaletteReady.store(true, std::memory_order_release);
+                // E-H2-71 (C-H2-83): the Classic-only interpolated frame.
+                // Optional and fail-open: without it the hands/gun keep
+                // C-H2-81 behaviour; nothing else is gated on it.
+                {
+                    uintptr_t frameMatch = 0;
+                    uint32_t frameMatchCount = 0;
+                    // 28 bytes: the 23-byte prologue is shared with the
+                    // sibling getter at +0x7227A0 (that is what made
+                    // C-H2-83 match twice and refuse to install).
+                    constexpr char kInterpFramePattern[] =
+                        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 "
+                        "48 83 EC 20 48 83 3D D4 8B F2 00 00";
+                    if (!CountPatternMatches(
+                            base, size, kInterpFramePattern, frameMatch,
+                            frameMatchCount) ||
+                        frameMatchCount != 1 ||
+                        frameMatch !=
+                            base + kHalo2FrameInterpolatorFirstPersonFrameRva)
+                    {
+                        LOG("Halo 2 classic composition frame NOT owned: the "
+                            "interpolated first-person frame getter matched "
+                            "%u times (expected 1 at +0x%X); Classic keeps "
+                            "the engine's interpolated frame",
+                            frameMatchCount,
+                            static_cast<unsigned>(
+                                kHalo2FrameInterpolatorFirstPersonFrameRva));
+                    }
+                    else
+                    {
+                        void* frameTrampoline = nullptr;
+                        void* const frameTarget =
+                            reinterpret_cast<void*>(frameMatch);
+                        const MH_STATUS frameCreated = MH_CreateHook(
+                            frameTarget,
+                            reinterpret_cast<void*>(
+                                &Halo2InterpolatedFrameDetour),
+                            &frameTrampoline);
+                        if (frameCreated == MH_OK && frameTrampoline)
+                        {
+                            g_interpFrameOriginal.store(
+                                reinterpret_cast<uintptr_t>(frameTrampoline),
+                                std::memory_order_release);
+                            if (MH_EnableHook(frameTarget) == MH_OK)
+                            {
+                                g_interpFrameTarget = frameTarget;
+                                LOG("Halo 2 classic composition frame OWNED "
+                                    "(C-H2-83, E-H2-71): +0x%X reports no "
+                                    "interpolated first-person frame during "
+                                    "the mod's Classic packet build, so the "
+                                    "builder composes the weapon against "
+                                    "user_data+0x%X - the exact frame "
+                                    "Anniversary composes against. Hands and "
+                                    "gun therefore carry the same orientation "
+                                    "in both renderers",
+                                    static_cast<unsigned>(
+                                        kHalo2FrameInterpolatorFirstPersonFrameRva),
+                                    static_cast<unsigned>(
+                                        kHalo2FirstPersonCurrentFrameOffset));
+                            }
+                            else
+                            {
+                                (void)MH_RemoveHook(frameTarget);
+                                g_interpFrameOriginal.store(
+                                    0, std::memory_order_release);
+                                LOG("Halo 2 classic composition frame NOT "
+                                    "owned: enable failed");
+                            }
+                        }
+                        else
+                        {
+                            LOG("Halo 2 classic composition frame NOT owned: "
+                                "create failed %d", static_cast<int>(frameCreated));
+                        }
+                    }
+                }
                 LOG("Halo 2 renderer-selected hands ARMED (C-H2-65): builder "
                      "+0x%X establishes exact packet context; Anniversary "
                      "consumer +0x%X owns matrices before copy, while Classic "
@@ -3214,7 +3491,13 @@ namespace
             "%llu changed, %llu right, %llu left, %llu collapsed (%llu Elite "
             "arm records co-located), %llu refused; "
             "visible consumer: %llu calls, %llu hands owned, %llu guns owned; "
-            "classic packet: %llu calls, %llu owned; classic eyes: %llu calls, "
+            "barrel meter [classic] carrier vs compose %.2f deg (elev %+.2f), "
+            "stock root+X vs compose %.2f deg (elev %+.2f); [anniv] carrier "
+            "vs compose %.2f deg (elev %+.2f), stock root+X vs compose %.2f "
+            "deg (elev %+.2f); "
+            "classic trim %llu applied / %llu refused; "
+            "classic composition frame forced to current %llu of %llu "
+            "getter calls; classic packet: %llu calls, %llu owned; classic eyes: %llu calls, "
             "%llu compensated, %llu no-packet, %llu no-pass, %llu refused; "
             "native aim: %llu calls, %llu applied, %llu non-owned, %llu refused",
             static_cast<unsigned long long>(
@@ -3352,6 +3635,22 @@ namespace
                 g_visibleConsumerHandsApplied.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_visibleConsumerGunsApplied.load(std::memory_order_relaxed)),
+            g_meterCarrierVsCompose[0].load(std::memory_order_relaxed) / 1000.0,
+            g_meterCarrierElevation[0].load(std::memory_order_relaxed) / 1000.0,
+            g_meterStockVsCompose[0].load(std::memory_order_relaxed) / 1000.0,
+            g_meterStockElevation[0].load(std::memory_order_relaxed) / 1000.0,
+            g_meterCarrierVsCompose[1].load(std::memory_order_relaxed) / 1000.0,
+            g_meterCarrierElevation[1].load(std::memory_order_relaxed) / 1000.0,
+            g_meterStockVsCompose[1].load(std::memory_order_relaxed) / 1000.0,
+            g_meterStockElevation[1].load(std::memory_order_relaxed) / 1000.0,
+            static_cast<unsigned long long>(
+                g_classicTrimApplied.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_classicTrimRefused.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_interpFrameForcedCurrent.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_interpFrameCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_classicPacketCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
@@ -3572,6 +3871,49 @@ void Halo2Observer6Dof_SetFirstPersonPassCameras(
     g_passCamerasSet.store(true, std::memory_order_release);
 }
 
+// E-H2-67 (C-H2-79): the camera the classic weapon pass was MEASURED to
+// hold at draw time, replacing whichever camera the core predicted. Only
+// the viewing term changes; the frame/correct cameras the owning core
+// named stand.
+bool Halo2Observer6Dof_ReadPacketBuildCamera(
+    bool anniversary, Halo2CameraBasis& out) noexcept
+{
+    const int slot = anniversary ? 1 : 0;
+    if (!g_packetCameraValid[slot].load(std::memory_order_acquire))
+        return false;
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        const uint32_t before =
+            g_packetCameraVersion[slot].load(std::memory_order_acquire);
+        if (before & 1u) continue;
+        const Halo2CameraBasis candidate = g_packetCamera[slot];
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (g_packetCameraVersion[slot].load(std::memory_order_acquire) ==
+            before)
+        {
+            if (!Halo2ValidateCameraBasis(candidate))
+                return false;
+            out = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+void Halo2Observer6Dof_SetMeasuredFirstPersonViewingCamera(
+    const Halo2CameraBasis& viewing, bool admitCompensation) noexcept
+{
+    if (!g_passCamerasSet.load(std::memory_order_acquire) ||
+        !Halo2ValidateCameraBasis(viewing))
+        return;
+    // The owning core decides admission (E-H2-69). A measurement can only
+    // name the camera; it can never turn on a transform the core refused.
+    g_passCamerasVersion.fetch_add(1, std::memory_order_acq_rel);
+    g_passCameras.viewing = viewing;
+    g_passCameras.compensate = admitCompensation && g_passCameras.frameValid;
+    g_passCamerasVersion.fetch_add(1, std::memory_order_acq_rel);
+}
+
 bool Halo2Observer6Dof_BeginClassicFirstPersonEye() noexcept
 {
     g_classicEyeCalls.fetch_add(1, std::memory_order_relaxed);
@@ -3733,6 +4075,10 @@ bool Halo2Observer6Dof_WeaponTickPublication(
 }
 void Halo2Observer6Dof_SetFirstPersonPassCameras(
     const Halo2FirstPersonPassCameras*) noexcept {}
+void Halo2Observer6Dof_SetMeasuredFirstPersonViewingCamera(
+    const Halo2CameraBasis&, bool) noexcept {}
+bool Halo2Observer6Dof_ReadPacketBuildCamera(
+    bool, Halo2CameraBasis&) noexcept { return false; }
 bool Halo2Observer6Dof_BeginClassicFirstPersonEye() noexcept { return false; }
 void Halo2Observer6Dof_EndClassicFirstPersonEye() noexcept {}
 void Halo2Observer6Dof_RequestRecenter() noexcept {}

@@ -1,0 +1,14 @@
+{
+  "input_sha256": "2baf0a3e7d654a0cda701399d672cec7c582202e138537f8193e34e5d72aca16",
+  "output_sha256": "ad0c6bbca337f2436a258cb4a0cb9da5884b20270bc2f9dadf7a06daba1ed676",
+  "file_size": 2919424,
+  "changed_bytes": 470,
+  "unchanged_outside_allowed_regions": true,
+  "allowed_regions": [
+    {"name": "capture begin splice", "rva": "0x538D3", "size": 7},
+    {"name": "reticle framing call", "rva": "0x539C0", "size": 10},
+    {"name": "pause stock gate", "rva": "0x58BED", "size": 8},
+    {"name": "H4 viewport constant", "rva": "0x1BF0C0", "size": 16},
+    {"name": "Stage3AW payload", "rva": "0x2FA790", "size": 513}
+  ]
+}

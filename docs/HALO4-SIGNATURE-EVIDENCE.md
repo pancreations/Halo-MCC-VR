@@ -3925,3 +3925,96 @@ Unique/pinned signatures, both rel32 decodes, executable range, stable mapping,
 hook creation, and atomic two-hook enable remain mandatory and still reject
 only this optional feature when they fail. The native CUI pixels are captured
 without recoloring, preserving Halo 4's own target and hit colour states.
+
+## Cinematic globals and the in-progress byte (Stage 3BV, 2026-08-30)
+
+Halo 4's first cinematic-state evidence, gathered H4EK-first per the mod-tools-
+only rule; the retail module was used only to match and verify.
+
+**Kit.** `halo4_tag_test.exe` registers the game-state members
+`cinematic globals` (0x54 bytes) and `cinematic globals non deterministic`
+(0x28 bytes) at one site (kit RVA 0x234D00). The adjacent RTTI carries
+`__tls_set_g_cinematic_globals_allocator` /
+`__tls_set_g_cinematic_globals_non_deterministic_allocator`, and the assert
+string block names
+`c:\mcc\release\h4\shared\engine\source\blofeld\cutscene\cinematics.cpp`.
+The kit caches the member pointer in the engine TLS block at +0x550 and the
+non-deterministic member at +0x558. The null-checked leaf getter at kit
+0x234CD0 (161 callers) returns **byte +5** of `cinematic globals`; dozens of
+kit sites gate on `cmp byte [member+5], 0`. This is the same "+5 = cinematic
+active" layout the accepted Halo 3/ODST detector uses on their engines.
+
+**Retail** (`halo4.dll`
+`7c53e7d5bc9848545a1b70e2768242479336fba1b7630d7ab955f7fd0c34fa84`).
+The unique registration site at 0x12CA24 registers the same two names with
+the same sizes: engine module TLS index dword at `halo4+0x1057218`; member
+pointer cached at TLS block **+0xC8** (`cinematic globals`) and +0x1E0
+(non-deterministic); member-slot dwords stored at 0xED82D0/0xED82E0. The
+retail leaf getter at 0x12EF68 null-checks TLS+0xC8 and returns byte +5; the
+teardown path at 0x12CCE2 writes byte +5 = 0. The hs name/id table pairs id
+0x2AF with `cinematic_in_progress` in both kit and retail. The 12-byte
+verification pattern `8B 15 8D A7 F2 00 41 B9 28 00 00 00` at 0x12CA85
+matches exactly once in the module and is byte-verified at runtime before
+any offset is trusted.
+
+**Runtime status.** Stage 3BV
+(`e98e9502516ea0166c7bcb528fca5e10ba2ec1db1275f8a62bae449001fe44d9`) ships a
+log-only, fail-open probe of that byte (H4CINE transitions, 250 ms sample
+gate, on the claimed-eye path). The byte's live semantics (0 through
+gameplay, 1 across an authored cutscene) are HEADSET-PENDING; only after
+that log confirmation may a detector publish `AuthoredLocked` or the
+registry advertise `TitleCapability_CutsceneTheater` for Halo 4.
+
+**Runtime confirmation (2026-08-30, Steam, live session).** The 3BV probe's
+headset run proved the byte's semantics: `H4CINE: state 0 -> 4` at 18:13:28,
+holding through the prologue video and the authored intro cutscene, and
+`state 4 -> 3` at 18:18:04 with the user confirming from inside the headset
+that camera control returned at exactly that moment. Byte +4 stayed 0
+throughout. The same log shows the cinematic runs as fully claimed stereo
+pairs (C-H4-9: 168 completed pairs, no mid-cutscene stock windows). On this
+acceptance Stage 3BW
+(`9d6bba764e93dd6cd7b2482e0131765057196f92da725836277497f4996620f1`)
+publishes `CinematicControl` (AuthoredLocked/PlayerControlled) and the
+raster projection aspect for Halo 4 and grants
+`TitleCapability_CutsceneTheater` in both compiled masks (0xF3 -> 0x1F3 at
+0x68112 and 0x1890D4). The theatre presentation itself remains the shared
+title-blind compositor. Still open: the authored-camera lock during theatre
+(the capture carries head-look until then) and the pre-rendered bink video
+path, which draws only to the flat backbuffer while frames stay claimed.
+
+## Cinematic user-input constraints (Stage 3BX, 2026-08-30)
+
+Halo 4's live look-constraint state, the title-native distinction ODST needed
+before its theatre could be trusted. Derived independently for Halo 4; no
+ODST offset was assumed.
+
+**Kit.** `halo4_tag_test.exe` carries ODST's authored block verbatim:
+`cinematic_shot_user_input_constraints_block`
+(`sizeof(s_scene_shot_user_input_constraints)`) with the fields `ticks`,
+`maximum look angles` and `frictional force`, plus the script external
+`cinematic_scripting_set_user_input_constraints` ("Set user input constraints
+from a cinematic tag").
+
+**Retail** `halo4.dll` (`7c53e7d5…`). The external is registered at
+`halo4+0x15EC5B`; its implementation `0x2C9314` resolves the current
+scene/shot constraint record (bounds-checked against `+0x3C`/`+0x9C` counts)
+and calls the live writer `0x28D18C`. That writer resolves the engine module
+TLS index (`halo4+0x1057218`), takes the cinematic camera from TLS block
+**+0x58**, requires camera type word `[cam+2] == 6`, and computes four
+per-tick rates into **+0xD8/+0xDC/+0xE0/+0xE4** from the authored targets
+minus the CURRENT maximum look angles at **+0xC8/+0xCC/+0xD0/+0xD4**, with
+friction at +0xE8/+0xEC and the remaining tick count at **+0xF0**. The paired
+reset `0x28D00B` zeroes both vectors (`movdqu` at +0xC8 and +0xD8), clears
++0xEC/+0xF0 and stamps type 6, proving all-zero limits is the engine's own
+"no look freedom" state. The per-tick consumer `0x28C91B` reads the same
+block. ODST's proven analogue is the same structure at TLS+0x50, camera
+type 5.
+
+**Runtime policy.** Stage 3BX
+(`54130fd5a37b2d5e19e610aad712fa8595501849cc27ead7753b132de7dfbd9e`) retains
+`AuthoredLocked` only when the cinematic byte is set AND all four current
+limits are zero AND no active interpolation (`0 < ticks <= 360000`) carries a
+non-zero rate; any freedom publishes `PlayerControlled`, and a missing
+camera, wrong type, or out-of-range tick count publishes nothing (Unknown).
+Limits are tested as `|x| > 1e-4` on masked float bits, so non-finite values
+fail toward immersive gameplay. Headset-PENDING.

@@ -1,0 +1,15 @@
+{
+  "input_sha256": "ad0c6bbca337f2436a258cb4a0cb9da5884b20270bc2f9dadf7a06daba1ed676",
+  "output_sha256": "0d32751585670c28bb7b98110a35b04817ec4f683fcc3ab3301c0941a4613053",
+  "file_size": 2919424,
+  "changed_bytes": 222,
+  "unchanged_outside_allowed_regions": true,
+  "allowed_regions": [
+    {"name": "reticle framing call", "rva": "0x539C0", "size": 10},
+    {"name": "ODST post-liveness install edge", "rva": "0x67CE5", "size": 1},
+    {"name": "Stage3AX relocated reticle helper", "rva": "0x2FA9A0", "size": 254}
+  ],
+  "unchanged_regions": [
+    {"name": "Stage3AW pause helper and latch", "rva": "0x2FA890", "size": 257}
+  ]
+}

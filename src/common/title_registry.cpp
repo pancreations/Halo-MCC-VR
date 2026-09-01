@@ -69,14 +69,17 @@ namespace
     // same shared code paths. C-H4-44's HUD-basis writer is headset-rejected
     // and dormant. C-H4-34 replaces the
     // rejected arm solve with rigid floating hands, so ArmIk is deliberately
-    // absent. CutsceneTheater remains withheld: it has no Halo 4 evidence.
+    // absent. Halo 4's H4EK-derived cinematic globals and live authored-shot
+    // look constraints now publish the common CutsceneTheater contract from
+    // its claimed camera scope; unknown proof remains immersive.
     constexpr uint32_t kHalo4Capabilities =
         TitleCapability_Stereo |
         TitleCapability_ControllerAim |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |
-        TitleCapability_Haptics;
+        TitleCapability_Haptics |
+        TitleCapability_CutsceneTheater;
     constexpr uint32_t kHalo4AdmissionCapabilities =
         TitleCapability_ControllerInput;
 #if HALOMCCVR_HALO2_STEREO6DOF

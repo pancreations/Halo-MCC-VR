@@ -62,6 +62,61 @@ constexpr bool VrBlitResourcesReady(
         (directCopy || destinationRtv);
 }
 
+// Stage 3BO: Halo 4's authored CUI capture carries visible RGB with zero alpha.
+// A 512x512 Halo 4 reticle upload must therefore use the shader path, where
+// alpha is reconstructed, even when CopyResource would otherwise be legal.
+constexpr bool VrBlitNeedsHalo4ReticleAlphaRepair(
+    bool halo4Title, uint32_t destinationWidth,
+    uint32_t destinationHeight) noexcept
+{
+    return halo4Title && destinationWidth == 512 && destinationHeight == 512;
+}
+
+// Stage 3BQ's explicit typed RTV retry belongs only to Halo 4's authored
+// reticle upload. Other swapchain consumers retain their established default-
+// descriptor behavior even if their first view creation fails.
+constexpr bool VrHalo4ReticleRtvNeedsTypedFallback(
+    bool halo4ReticleUpload, bool defaultCreationFailed,
+    bool viewStillMissing) noexcept
+{
+    return halo4ReticleUpload && defaultCreationFailed && viewStillMissing;
+}
+
+// Stage 3BL keeps the accepted alpha-only metric for every other title. Halo
+// 4 alone admits RGB ink because its CUI target was measured writing visible
+// colour with a zero alpha channel.
+constexpr uint32_t VrResolveAuthoredReticleCoverage(
+    bool halo4Title, uint32_t alphaInk, uint32_t colorInk) noexcept
+{
+    return halo4Title && colorInk > alphaInk ? colorInk : alphaInk;
+}
+
+// Stage 3BU writes a completed Halo 4 eye back only in steady state. The
+// caller supplies the already-latched scene-target fact from before target
+// discovery runs, so a learning eye can never pass this gate.
+constexpr bool VrHalo4SceneWritebackEligible(
+    bool halo4Title, int eye, bool contextReady, bool sceneTargetAlreadyLatched,
+    bool eyeCacheReady) noexcept
+{
+    return halo4Title && (eye == 0 || eye == 1) && contextReady &&
+        sceneTargetAlreadyLatched && eyeCacheReady;
+}
+
+// Allocation-free equivalent of Stage 3BH's actual OM target gate.  The D3D
+// hooks keep slot 0 current across every state-changing entry point used by
+// MCC; the Draw hook may reframe only the exact private target selected for
+// this capture mode.  In particular, authored and discard targets are not
+// interchangeable.
+constexpr bool VrHalo4AuthoredReticleDrawTargetMatches(
+    bool halo4Title, bool captureActive, bool framingCaptured,
+    bool publishesAuthored, uintptr_t boundSlot0, uintptr_t authoredRtv,
+    uintptr_t discardRtv) noexcept
+{
+    const uintptr_t expected = publishesAuthored ? authoredRtv : discardRtv;
+    return halo4Title && captureActive && framingCaptured && expected != 0 &&
+        boundSlot0 == expected;
+}
+
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO || \
     HALOMCCVR_HALO2_STEREO6DOF
 // One immutable, exact-prepared-serial tracking sample for Halo 2's two-eye
@@ -324,6 +379,14 @@ struct Halo4VrRenderSnapshot
     float leftControllerOrientation[4]{0.0f, 0.0f, 0.0f, 1.0f};
     float leftControllerPosition[3]{};
 };
+
+static_assert(sizeof(Halo4VrEyeSnapshot) == 0x30);
+static_assert(offsetof(Halo4VrRenderSnapshot, eyes) +
+                  offsetof(Halo4VrEyeSnapshot, fovValid) == 0x34);
+static_assert(offsetof(Halo4VrRenderSnapshot, eyes) +
+                  sizeof(Halo4VrEyeSnapshot) +
+                  offsetof(Halo4VrEyeSnapshot, fovValid) == 0x64);
+static_assert(offsetof(Halo4VrRenderSnapshot, headPoseValid) == 0x84);
 #endif
 
 #if HALOMCCVR_EXPERIMENTAL_HALO2_TEMPORAL_STEREO
@@ -577,6 +640,17 @@ float VR_GetScopeZoom();
 bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
                               ID3D11RenderTargetView* const* input,
                               ID3D11RenderTargetView** output);
+// The D3D hook reports the effective OM targets without querying COM state on
+// every Draw. During a Halo 4 authored capture, the existing shared Draw hooks
+// then reassert Stage 3BR's proven framing immediately before vertices bake.
+void VR_Halo4NoteBoundRenderTargets(
+    ID3D11DeviceContext* context, UINT count,
+    ID3D11RenderTargetView* const* rtvs);
+void VR_Halo4PrepareAuthoredReticleDraw(ID3D11DeviceContext* context);
+// The optional H4 hooks pass through completely after a fatal reticle-resource
+// failure, leaving the stock CUI reticle visible without affecting camera,
+// theatre, stereo, or OpenXR ownership.
+bool VR_Halo4AuthoredReticleFeatureHealthy();
 uint64_t VR_TakeAuthoredReticleOmReroutes();
 uint64_t VR_TakeAuthoredReticleFramingReasserts();
 

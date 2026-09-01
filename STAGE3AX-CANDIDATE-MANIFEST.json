@@ -1,0 +1,23 @@
+{
+  "stage": "3AX",
+  "status": "HEADSET_PENDING",
+  "base_stage": "3AW pause headset-pass; reticle/ODST rejected",
+  "base_dll_sha256": "ad0c6bbca337f2436a258cb4a0cb9da5884b20270bc2f9dadf7a06daba1ed676",
+  "output_dll_sha256": "0d32751585670c28bb7b98110a35b04817ec4f683fcc3ab3301c0941a4613053",
+  "output_dll_size": 2919424,
+  "changed_bytes": 222,
+  "pause_payload_byte_identical": true,
+  "features": [
+    "Halo 4 selected-transform centre capture tightened from 2x to 4x authored magnification",
+    "ODST installs after frozen-then-ticking liveness proof without depending on tail-boolean poll phase"
+  ],
+  "source_log_sha256": "3ac9df41c8e47664f36b48ebed12f9ef49d170f002f670b5f5f962fcf9ad63be",
+  "deployment": "INSTALLED_BOTH_2026-08-28",
+  "steam_installed_dll_sha256": "0d32751585670c28bb7b98110a35b04817ec4f683fcc3ab3301c0941a4613053",
+  "store_installed_dll_sha256": "0d32751585670c28bb7b98110a35b04817ec4f683fcc3ab3301c0941a4613053",
+  "backup": "out/deploy-backups/2026-08-28-pre-3AX",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

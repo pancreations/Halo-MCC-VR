@@ -57,9 +57,9 @@ uint64_t Game_GetReachAuthoredCrosshairKey();
 // so the captured widget is the crosshair and the procedural reticle must stay
 // invisible. False means the procedural reticle IS the crosshair.
 bool Game_TitleCapturesAuthoredCrosshair();
-// True when Halo 4's native animated/coloured CUI reticle is moved onto the
-// controller ray inside each eye. The compositor must then omit its procedural
-// crosshair quad; the game reticle itself is the only visible crosshair.
+// True only when a title places its native crosshair in 3D itself. Halo 4's
+// native flat CUI copy is hidden while its captured animated/coloured pixels
+// are presented by the shared controller-ray OpenXR quad, so it returns false.
 bool Game_TitlePositionsNativeCrosshair();
 uint64_t Game_GetAuthoredCrosshairKey();
 // How many class-2 widget pieces reached the capture surface this frame.
@@ -208,6 +208,12 @@ bool Game_Halo4OwnsLookPitch();
 // Advances Halo 4's own VR turn (snap or smooth, per config) from one shared
 // pad sample. Inert unless Halo 4's motion aim is active.
 void Game_Halo4UpdateVrTurn(const VrPadState& pad);
+// 3CR/3CX fold-in: the live Halo 4 CUI canvas values the visible-pass hide
+// last recorded - the positive base half-height (baseY) and the hide shift
+// 4*|baseX|. Returns false until a hide has run (callers then keep the
+// calibrated 3BR constants, exactly like the 3CX payload skipping its
+// refresh).
+bool Game_Halo4LiveCuiCanvas(float& baseY, float& hideShift);
 // The closed-loop right-stick Y that keeps Halo 4's own look pitch - and so its
 // shot line - under the headset. Returns false when the loop has nothing to
 // command; the caller must still hold the axis at zero.

@@ -38,6 +38,17 @@ typedef HRESULT(STDMETHODCALLTYPE* Present1Fn)(IDXGISwapChain1*, UINT, UINT, con
 typedef HRESULT(STDMETHODCALLTYPE* ResizeBuffersFn)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 typedef void(STDMETHODCALLTYPE* OMSetRenderTargetsFn)(ID3D11DeviceContext*, UINT,
     ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+typedef void(STDMETHODCALLTYPE* OMSetRenderTargetsAndUnorderedAccessViewsFn)(
+    ID3D11DeviceContext*, UINT, ID3D11RenderTargetView* const*,
+    ID3D11DepthStencilView*, UINT, UINT,
+    ID3D11UnorderedAccessView* const*, const UINT*);
+typedef void(STDMETHODCALLTYPE* ClearStateFn)(ID3D11DeviceContext*);
+static std::atomic<bool> g_halo4AuthoredReticleDrawPathAvailable{false};
+static OMSetRenderTargetsAndUnorderedAccessViewsFn
+    g_origOMSetRenderTargetsAndUnorderedAccessViews = nullptr;
+static ClearStateFn g_origClearState = nullptr;
+#endif
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
 typedef void(STDMETHODCALLTYPE* DrawIndexedFn)(ID3D11DeviceContext*, UINT, UINT, INT);
 #endif
@@ -288,6 +299,7 @@ static void STDMETHODCALLTYPE Halo2DrawIndexedCensusHook(
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         VR_Halo2NoteDraw();
     Halo2HudDrawMutation mutation = BeginHalo2HudDraw(context);
+    VR_Halo4PrepareAuthoredReticleDraw(context);
     g_origHalo2DrawIndexed(context, indexCount, startIndex, baseVertex);
     EndHalo2HudDraw(context, mutation);
 }
@@ -298,8 +310,32 @@ static void STDMETHODCALLTYPE Halo2DrawCensusHook(
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo2)
         VR_Halo2NoteDraw();
     Halo2HudDrawMutation mutation = BeginHalo2HudDraw(context);
+    VR_Halo4PrepareAuthoredReticleDraw(context);
     g_origHalo2Draw(context, vertexCount, startVertex);
     EndHalo2HudDraw(context, mutation);
+}
+#endif
+
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA && !HALOMCCVR_HALO2_STEREO6DOF
+typedef void(STDMETHODCALLTYPE* Halo4DrawIndexedFn)(
+    ID3D11DeviceContext*, UINT, UINT, INT);
+typedef void(STDMETHODCALLTYPE* Halo4DrawFn)(ID3D11DeviceContext*, UINT, UINT);
+static Halo4DrawIndexedFn g_origHalo4DrawIndexed = nullptr;
+static Halo4DrawFn g_origHalo4Draw = nullptr;
+
+static void STDMETHODCALLTYPE Halo4DrawIndexedFramingHook(
+    ID3D11DeviceContext* context, UINT indexCount, UINT startIndex,
+    INT baseVertex)
+{
+    VR_Halo4PrepareAuthoredReticleDraw(context);
+    g_origHalo4DrawIndexed(context, indexCount, startIndex, baseVertex);
+}
+
+static void STDMETHODCALLTYPE Halo4DrawFramingHook(
+    ID3D11DeviceContext* context, UINT vertexCount, UINT startVertex)
+{
+    VR_Halo4PrepareAuthoredReticleDraw(context);
+    g_origHalo4Draw(context, vertexCount, startVertex);
 }
 #endif
 
@@ -322,6 +358,16 @@ bool D3D_Halo2HudShaderPathAvailable()
 {
 #if HALOMCCVR_HALO2_STEREO6DOF
     return g_halo2ShaderHooksAvailable.load(std::memory_order_acquire);
+#else
+    return false;
+#endif
+}
+
+bool D3D_Halo4AuthoredReticleDrawPathAvailable()
+{
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    return g_halo4AuthoredReticleDrawPathAvailable.load(
+        std::memory_order_acquire);
 #else
     return false;
 #endif
@@ -887,8 +933,10 @@ static HRESULT STDMETHODCALLTYPE CreateSwapChainHook(IDXGIFactory* self, IUnknow
 // only the source with the already-owned eye cache; it does no discovery.
 //   PSSetShaderResources - cross-pass history discovery promoted 0 targets in
 //     two sessions.
-//   OMSetRenderTargetsAndUnorderedAccessViews - frame-level RTV discovery
-//     promoted 0 targets.
+//   OMSetRenderTargetsAndUnorderedAccessViews frame-level RTV *discovery*
+//     promoted 0 targets. The current H4 reticle path hooks that setter only
+//     to mirror its already-known slot-0 pointer after a real state change; it
+//     performs no discovery, COM query, logging, or allocation.
 //   PSSetShader/VSSetShader/Draw* - the CHUD steal-and-requad classifier
 //     (2026-07-18): removed the native HUD from both eyes, never displayed
 //     its hand quad, and its calibration retry loop cost ~30 fps.
@@ -902,10 +950,38 @@ static void STDMETHODCALLTYPE OMSetRenderTargetsHook(ID3D11DeviceContext* contex
         VR_RedirectRenderTargets(context, count, rtvs, redirected))
     {
         g_origOMSetRenderTargets(context, count, redirected, dsv);
+        // Publish only after the void D3D state mutation has completed, so the
+        // cached slot exactly describes the state a later Draw will consume.
+        VR_Halo4NoteBoundRenderTargets(context, count, redirected);
         return;
     }
     g_origOMSetRenderTargets(context, count, rtvs, dsv);
+    VR_Halo4NoteBoundRenderTargets(context, count, rtvs);
 }
+
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+static void STDMETHODCALLTYPE OMSetRenderTargetsAndUnorderedAccessViewsHook(
+    ID3D11DeviceContext* context, UINT renderTargetCount,
+    ID3D11RenderTargetView* const* rtvs, ID3D11DepthStencilView* dsv,
+    UINT uavStartSlot, UINT uavCount,
+    ID3D11UnorderedAccessView* const* uavs, const UINT* initialCounts)
+{
+    g_origOMSetRenderTargetsAndUnorderedAccessViews(
+        context, renderTargetCount, rtvs, dsv, uavStartSlot, uavCount, uavs,
+        initialCounts);
+    // The KEEP sentinel leaves OM render targets untouched. Every real RTV
+    // mutation replaces slot 0 (or clears it), so update the allocation-free
+    // Stage 3BH-equivalent tracker after the actual call.
+    if (renderTargetCount != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
+        VR_Halo4NoteBoundRenderTargets(context, renderTargetCount, rtvs);
+}
+
+static void STDMETHODCALLTYPE ClearStateHook(ID3D11DeviceContext* context)
+{
+    g_origClearState(context);
+    VR_Halo4NoteBoundRenderTargets(context, 0, nullptr);
+}
+#endif
 
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
 // Diagnostic only, and deliberately far more conservative than the retired
@@ -1439,6 +1515,10 @@ bool InstallD3D11Hooks()
 #if HALOMCCVR_HALO2_STEREO6DOF
     bool halo2ShaderPathCreated = false;
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    bool halo4ReticleDrawPathCreated = false;
+    bool halo4ReticleBindingStatePathCreated = false;
+#endif
     bool ok = MH_CreateHook(vtbl[8], (void*)&PresentHook, (void**)&g_origPresent) == MH_OK &&
               MH_CreateHook(vtbl[13], (void*)&ResizeBuffersHook, (void**)&g_origResizeBuffers) == MH_OK &&
               MH_CreateHook(contextVtbl[33], (void*)&OMSetRenderTargetsHook,
@@ -1446,6 +1526,27 @@ bool InstallD3D11Hooks()
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     ok = ok && MH_CreateHook(contextVtbl[47], (void*)&CopyResourceHook,
                              (void**)&g_origCopyResource) == MH_OK;
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    // Slot 34 is the alternate OM RTV/UAV setter and slot 110 is ClearState.
+    // Stage 3BH admitted framing only when its selected private RTV was truly
+    // bound. Tracking all MCC-used OM mutation paths preserves that evidence
+    // without an OMGetRenderTargets AddRef/Release in every admitted Draw.
+    const MH_STATUS halo4OmRtUav = MH_CreateHook(
+        contextVtbl[34],
+        (void*)&OMSetRenderTargetsAndUnorderedAccessViewsHook,
+        (void**)&g_origOMSetRenderTargetsAndUnorderedAccessViews);
+    const MH_STATUS halo4ClearState = MH_CreateHook(
+        contextVtbl[110], (void*)&ClearStateHook, (void**)&g_origClearState);
+    halo4ReticleBindingStatePathCreated =
+        halo4OmRtUav == MH_OK && halo4ClearState == MH_OK;
+    if (!halo4ReticleBindingStatePathCreated)
+    {
+        LOG("Halo 4 authored-reticle OM state tracking unavailable: "
+            "OMSetRTV/UAV=%d ClearState=%d; only the reticle feature stays stock",
+            static_cast<int>(halo4OmRtUav),
+            static_cast<int>(halo4ClearState));
+    }
 #endif
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
     // ID3D11DeviceContext::DrawIndexed is vtable slot 12. The old HUD probe is
@@ -1480,6 +1581,11 @@ bool InstallD3D11Hooks()
     halo2ShaderPathCreated =
         halo2CreatePixelShader == MH_OK &&
         halo2DrawIndexed == MH_OK && halo2Draw == MH_OK;
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    halo4ReticleDrawPathCreated =
+        halo2DrawIndexed == MH_OK && halo2Draw == MH_OK &&
+        halo4ReticleBindingStatePathCreated;
+#endif
     if (!halo2ShaderPathCreated)
     {
         LOG("Halo 2 proven HUD shader path unavailable: CreatePS=%d "
@@ -1488,6 +1594,28 @@ bool InstallD3D11Hooks()
             static_cast<int>(halo2CreatePixelShader),
             static_cast<int>(halo2DrawIndexed),
             static_cast<int>(halo2Draw));
+    }
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA && !HALOMCCVR_HALO2_STEREO6DOF
+    // Stage 3BH/3BR pin Halo 4's proven capture viewport immediately before
+    // vertices bake. This optional path is independent of Present/camera
+    // ownership and fails open to the stock CUI reticle if either draw hook is
+    // unavailable.
+    const MH_STATUS halo4DrawIndexed = MH_CreateHook(
+        contextVtbl[12], (void*)&Halo4DrawIndexedFramingHook,
+        (void**)&g_origHalo4DrawIndexed);
+    const MH_STATUS halo4Draw = MH_CreateHook(
+        contextVtbl[13], (void*)&Halo4DrawFramingHook,
+        (void**)&g_origHalo4Draw);
+    halo4ReticleDrawPathCreated =
+        halo4DrawIndexed == MH_OK && halo4Draw == MH_OK &&
+        halo4ReticleBindingStatePathCreated;
+    if (!halo4ReticleDrawPathCreated)
+    {
+        LOG("Halo 4 authored-reticle draw framing unavailable: "
+            "DrawIndexed=%d Draw=%d; only the reticle feature stays stock",
+            static_cast<int>(halo4DrawIndexed),
+            static_cast<int>(halo4Draw));
     }
 #endif
 
@@ -1655,6 +1783,10 @@ bool InstallD3D11Hooks()
             "receive slider raster transforms; native crosshair shader is "
             "captured for the controller-aim quad");
     }
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    g_halo4AuthoredReticleDrawPathAvailable.store(
+        enabled && halo4ReticleDrawPathCreated, std::memory_order_release);
 #endif
     return enabled;
 }

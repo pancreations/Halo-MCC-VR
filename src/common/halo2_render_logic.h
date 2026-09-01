@@ -2866,6 +2866,36 @@ inline constexpr uint32_t kHalo2FrameInterpolatorFactorRva = 0x0164B300;
 // the first-person render 0x8181F0) run per FRAME, after the tick placed the
 // weapon - the single point where the drawn weapon geometry can be re-anchored
 // from the tick's camera to the frame's.
+// E-H2-71 (C-H2-83): the interpolated FIRST-PERSON FRAME getter - the one
+// the packet builder prefers for Classic and never uses for Anniversary.
+// Kit homolog `halo_frame_interpolator.cpp` FUN_004d7a90 (kit RVA 0xD7A90);
+// matched to the pinned retail module by the builder's own call order
+// (build frame 0x729BA0 -> THIS -> inverse 0x729C90 -> compose 0x72A150,
+// exactly the kit's sequence) and verified by body: identical 0x38 bank
+// stride, identical bank/validity bases 0x1A39D44 / 0x1A39D48, the same
+// validity-pair test, the same blend call, bool return.
+//
+// Retail call site 0x81843F inside the pinned builder 0x8181F0:
+//     lea rbx, [r13 + 0x20C8]     ; the CURRENT tick frame
+//     test r15b, r15b / je        ; renderer selector
+//     call 0x7226F0               ; the interpolated frame
+//     test al, al / cmove rdx, rbx; a FALSE result selects +0x20C8
+// So reporting false makes the builder compose against exactly the frame
+// Anniversary composes against.
+inline constexpr uint32_t kHalo2FrameInterpolatorFirstPersonFrameRva =
+    0x007226F0;
+// The first 23 bytes are NOT unique: the immediately following sibling
+// getter at 0x7227A0 shares that prologue, which is why C-H2-83's 23-byte
+// pattern matched twice and the hook correctly refused to install. 24 bytes
+// is the shortest unique prefix in the LOADED IMAGE (the raw file is not
+// the right thing to count in); 28 is used for margin.
+inline constexpr uint8_t
+    kHalo2FrameInterpolatorFirstPersonFrameEntryBytes[] = {
+        0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10,
+        0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x48, 0x83, 0xEC, 0x20,
+        0x48, 0x83, 0x3D, 0xD4, 0x8B, 0xF2, 0x00, 0x00};
+inline constexpr uint32_t kHalo2FirstPersonCurrentFrameOffset = 0x20C8;
+
 inline constexpr uint32_t kHalo2FrameInterpolatorReadRva = 0x00722850;
 inline constexpr uint8_t kHalo2FrameInterpolatorReadEntryBytes[] = {
     0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18,
@@ -3397,14 +3427,69 @@ inline bool Halo2BuildRigidSupportWristTarget(
     return true;
 }
 
-// Halo 2 authors the firing axis in the held render model, not in either wrist.
-// H2EK's shotgun render_model proves local +X is the primary_trigger direction;
-// its root and pump-mounted left_hand marker are then carried by the same final
-// packet matrices.  Map that live authored +X/+Z frame onto the controller aim
-// frame and pivot the complete assembly at the physical right hand.
+// Minimal rotation taking unit vector `from` onto unit vector `to`, stored
+// column-major like every other basis here. The same construction Halo 3,
+// ODST and Reach use for their automatic barrel alignment.
+inline void Halo2ShortestArcRotation(
+    const float from[3], const float to[3], float out[9]) noexcept
+{
+    const float c = from[0] * to[0] + from[1] * to[1] + from[2] * to[2];
+    const float v[3] = {
+        from[1] * to[2] - from[2] * to[1],
+        from[2] * to[0] - from[0] * to[2],
+        from[0] * to[1] - from[1] * to[0]};
+    for (int i = 0; i < 9; ++i) out[i] = 0.0f;
+    if (c > 0.99999f)
+    {
+        out[0] = out[4] = out[8] = 1.0f;
+        return;
+    }
+    if (c < -0.99999f)
+    {
+        // 180 degrees: rotate about any axis perpendicular to `from`.
+        float ax[3] = {1.0f, 0.0f, 0.0f};
+        if (std::fabs(from[0]) > 0.9f) { ax[0] = 0.0f; ax[1] = 1.0f; }
+        float p[3] = {
+            from[1] * ax[2] - from[2] * ax[1],
+            from[2] * ax[0] - from[0] * ax[2],
+            from[0] * ax[1] - from[1] * ax[0]};
+        const float pl = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+        if (pl < 1e-5f) { out[0] = out[4] = out[8] = 1.0f; return; }
+        for (float& e : p) e /= pl;
+        for (int col = 0; col < 3; ++col)
+            for (int row = 0; row < 3; ++row)
+                out[col * 3 + row] = 2.0f * p[row] * p[col] - (row == col ? 1.0f : 0.0f);
+        return;
+    }
+    // Rodrigues: R = I + [v]x + [v]x^2 / (1 + c)
+    const float k = 1.0f / (1.0f + c);
+    const float vx[9] = {  // column-major [v]x
+        0.0f,  v[2], -v[1],
+       -v[2],  0.0f,  v[0],
+        v[1], -v[0],  0.0f};
+    float vx2[9];
+    Halo2MultiplyFirstPersonBases(vx, vx, vx2);
+    for (int i = 0; i < 9; ++i)
+        out[i] = vx[i] + vx2[i] * k;
+    out[0] += 1.0f; out[4] += 1.0f; out[8] += 1.0f;
+}
+
+// Halo 2's controller mount. First the held gun's authored root frame is
+// mapped onto the controller aim frame and the whole assembly pivots at the
+// physical right hand. Then - exactly as Halo 3, ODST and Reach do - the
+// STOCK barrel direction is swung onto the aim ray: in the stock game the
+// first-person weapon points down the camera it was composed against (that
+// is where its shots go), so `composeCamera.forward` IS the authored barrel
+// line in packet space. The minimal rotation that carries it onto
+// `rightCarrier.forward` - the same ray the crosshair and the shot use -
+// puts the drawn barrel on the crosshair by construction. Classic and
+// Anniversary each supply their own compose camera, so each renderer's art
+// is aligned on its own terms. The user's weapon pitch/yaw/roll remain
+// mount calibration that moves gun and crosshair together, as everywhere.
 inline bool Halo2BuildAuthoredBarrelDelta(
     const Halo2FirstPersonTransform& stockRight,
     const Halo2FirstPersonTransform& stockGunRoot,
+    const Halo2CameraBasis& composeCamera,
     const Halo2CameraBasis& rightCarrier, float rightScale,
     Halo2FirstPersonTransform& delta,
     Halo2FirstPersonTransform& desiredRight) noexcept
@@ -3432,8 +3517,53 @@ inline bool Halo2BuildAuthoredBarrelDelta(
                 stockGunRoot.rotation[row * 3 + column];
     Halo2FirstPersonTransform result{};
     result.scale = rightScale;
-    Halo2MultiplyFirstPersonBases(
-        targetGun, inverseStockGun, result.rotation);
+    float rootMapped[9]{};
+    Halo2MultiplyFirstPersonBases(targetGun, inverseStockGun, rootMapped);
+    std::memcpy(result.rotation, rootMapped, sizeof(rootMapped));
+    // C-H2-86's automatic swing (stock barrel = compose camera forward) is
+    // DISABLED: the headset showed it tilting Anniversary, which had been
+    // correct, so its premise is false for the packet as built. The barrel
+    // meter (E-H2-74) now measures the real relationship instead of
+    // assuming it. Disabled, not deleted.
+    constexpr bool kHalo2AutoBarrelSwing = false;
+    if (kHalo2AutoBarrelSwing && Halo2ValidateCameraBasis(composeCamera))
+    {
+        float stockBarrel[3] = {
+            composeCamera.forward[0], composeCamera.forward[1],
+            composeCamera.forward[2]};
+        float ray[3] = {
+            rightCarrier.forward[0], rightCarrier.forward[1],
+            rightCarrier.forward[2]};
+        const float bl = std::sqrt(stockBarrel[0] * stockBarrel[0] +
+            stockBarrel[1] * stockBarrel[1] + stockBarrel[2] * stockBarrel[2]);
+        const float rl = std::sqrt(ray[0] * ray[0] + ray[1] * ray[1] +
+            ray[2] * ray[2]);
+        if (std::isfinite(bl) && bl > 1e-4f && std::isfinite(rl) && rl > 1e-4f)
+        {
+            for (float& e : stockBarrel) e /= bl;
+            for (float& e : ray) e /= rl;
+            float mountedBarrel[3] = {0.0f, 0.0f, 0.0f};
+            for (int column = 0; column < 3; ++column)
+                for (int row = 0; row < 3; ++row)
+                    mountedBarrel[row] += rootMapped[column * 3 + row] *
+                        stockBarrel[column];
+            const float ml = std::sqrt(mountedBarrel[0] * mountedBarrel[0] +
+                mountedBarrel[1] * mountedBarrel[1] +
+                mountedBarrel[2] * mountedBarrel[2]);
+            if (std::isfinite(ml) && ml > 1e-4f)
+            {
+                for (float& e : mountedBarrel) e /= ml;
+                float swing[9], aligned[9];
+                Halo2ShortestArcRotation(mountedBarrel, ray, swing);
+                Halo2MultiplyFirstPersonBases(swing, rootMapped, aligned);
+                bool finite = true;
+                for (int i = 0; i < 9; ++i)
+                    if (!std::isfinite(aligned[i])) { finite = false; break; }
+                if (finite)
+                    std::memcpy(result.rotation, aligned, sizeof(aligned));
+            }
+        }
+    }
     for (int row = 0; row < 3; ++row)
     {
         float rotated = 0.0f;
@@ -4151,8 +4281,8 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     if (kHalo2C70CorrectedHandFrameEnabled)
     {
         if (!Halo2BuildAuthoredBarrelDelta(
-                stockRight, stockGunRoot, rightCarrier, rightScale,
-                rightDelta, desiredRight))
+                stockRight, stockGunRoot, authoredRoot, rightCarrier,
+                rightScale, rightDelta, desiredRight))
             return false;
         if (twoHandAimActive)
         {
@@ -4171,8 +4301,8 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     else if (kHalo2C68RigMarkerAlignmentEnabled)
     {
         if (!Halo2BuildAuthoredBarrelDelta(
-                stockRight, stockGunRoot, rightCarrier, rightScale,
-                rightDelta, desiredRight))
+                stockRight, stockGunRoot, authoredRoot, rightCarrier,
+                rightScale, rightDelta, desiredRight))
             return false;
         if (twoHandAimActive)
         {
@@ -4204,8 +4334,8 @@ inline bool Halo2OwnFinalFirstPersonPackets(
     {
         if (thumbDestination < 0 ||
             !Halo2BuildAuthoredBarrelDelta(
-                stockRight, stockGunRoot, rightCarrier, rightScale,
-                rightDelta, desiredRight))
+                stockRight, stockGunRoot, authoredRoot, rightCarrier,
+                rightScale, rightDelta, desiredRight))
             return false;
         if (twoHandAimActive)
         {
@@ -4343,6 +4473,147 @@ inline bool Halo2CameraBasesNearlyEqual(
 // resolution), so the placement is taken from the other. Both are centred.
 inline constexpr uint32_t kHalo2ClassicFirstPersonCameraGlobalRva = 0x01996A28;
 inline constexpr uint32_t kHalo2ClassicRenderCameraGlobalRva = 0x0165C260;
+
+// E-H2-69 (C-H2-81): when the classic per-eye compensation may run at all.
+//
+// The compensation `x' = R_v R_c^T (x - c) + v` is the ONLY mechanism that
+// can give the classic weapon its own per-eye parallax (E-H2-68: writing the
+// camera globals at draw time was measured inert, and a projection change
+// cannot create parallax). It is also what displaced and rotated the rig in
+// C-H2-63/78 when the viewing camera was predicted wrongly. This admits it
+// only in the exact shape that can add depth without being able to move the
+// rig anywhere the user would see as displaced:
+//
+//   * the viewing camera's ORIENTATION must equal the correct eye's, so the
+//     delta rotation is the identity and no rotation can ever be introduced;
+//   * its POSITION may differ by at most `maxSeparation` - the live distance
+//     between this eye and the pair centre, i.e. one half-IPD, which is
+//     exactly the parallax being restored. Anything larger is a stale or
+//     foreign camera and is refused.
+//
+// A refusal leaves the packet byte-identical to Anniversary's (C-H2-80
+// parity). An admission reproduces the image the correct eye camera would
+// have produced of that same packet - which is the image Anniversary draws -
+// so placement and rotation are preserved while the eyes differ by the true
+// eye offset.
+inline bool Halo2ClassicEyeCompensationAdmissible(
+    const Halo2CameraBasis& correct, const Halo2CameraBasis& viewing,
+    float maxSeparation) noexcept
+{
+    if (!Halo2ValidateCameraBasis(correct) ||
+        !Halo2ValidateCameraBasis(viewing) ||
+        !std::isfinite(maxSeparation) || maxSeparation <= 0.0f)
+    {
+        return false;
+    }
+    // Orientation must agree to within float noise on both axes.
+    constexpr float kAxisTolerance = 1.0e-4f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (std::fabs(correct.forward[axis] - viewing.forward[axis]) >
+                kAxisTolerance ||
+            std::fabs(correct.up[axis] - viewing.up[axis]) > kAxisTolerance)
+        {
+            return false;
+        }
+    }
+    float separationSquared = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const float delta = viewing.position[axis] - correct.position[axis];
+        separationSquared += delta * delta;
+    }
+    if (!std::isfinite(separationSquared))
+        return false;
+    return separationSquared <= maxSeparation * maxSeparation;
+}
+
+// C-H2-85: the Halo 2 CLASSIC-only trim. Rotates and offsets a controller
+// carrier about its OWN axes, so the visible gun and the hands riding it
+// move together and Classic can be lined up with what Anniversary shows.
+// Anniversary never calls this. All-zero returns the carrier unchanged, so
+// the default is exactly the previous behaviour.
+//
+// Axes are the carrier's own: forward (barrel), right, up. Pitch raises or
+// lowers the muzzle, yaw swings it sideways, roll spins it about the barrel.
+// Offsets are metres along the same axes, converted by the caller's world
+// scale. The pivot is the carrier's position - the physical controller - so
+// the grip stays in the hand while the muzzle swings, which is what a mount
+// correction should do.
+inline bool Halo2ApplyCarrierTrim(
+    const Halo2CameraBasis& carrier, float pitchDegrees, float yawDegrees,
+    float rollDegrees, float forwardMeters, float rightMeters,
+    float upMeters, float worldScale, Halo2CameraBasis& out) noexcept
+{
+    out = carrier;
+    if (!Halo2ValidateCameraBasis(carrier) || !std::isfinite(pitchDegrees) ||
+        !std::isfinite(yawDegrees) || !std::isfinite(rollDegrees) ||
+        !std::isfinite(forwardMeters) || !std::isfinite(rightMeters) ||
+        !std::isfinite(upMeters) || !std::isfinite(worldScale) ||
+        worldScale <= 0.0f)
+    {
+        return false;
+    }
+    const bool identity = pitchDegrees == 0.0f && yawDegrees == 0.0f &&
+        rollDegrees == 0.0f && forwardMeters == 0.0f &&
+        rightMeters == 0.0f && upMeters == 0.0f;
+    if (identity)
+        return true;
+
+    float right[3] = {
+        carrier.forward[1] * carrier.up[2] - carrier.forward[2] * carrier.up[1],
+        carrier.forward[2] * carrier.up[0] - carrier.forward[0] * carrier.up[2],
+        carrier.forward[0] * carrier.up[1] - carrier.forward[1] * carrier.up[0]};
+    float forward[3] = {
+        carrier.forward[0], carrier.forward[1], carrier.forward[2]};
+    float up[3] = {carrier.up[0], carrier.up[1], carrier.up[2]};
+
+    constexpr float kRadians = 0.01745329252f;
+    // Rotate the axis triple about its own axes, in a fixed order so the
+    // sliders stay predictable: roll (about forward), then pitch (about
+    // right), then yaw (about up).
+    auto rotateAbout = [](const float axis[3], float degrees, float vector[3]) {
+        if (degrees == 0.0f) return;
+        const float angle = degrees * kRadians;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        const float dot = axis[0] * vector[0] + axis[1] * vector[1] +
+            axis[2] * vector[2];
+        const float cross[3] = {
+            axis[1] * vector[2] - axis[2] * vector[1],
+            axis[2] * vector[0] - axis[0] * vector[2],
+            axis[0] * vector[1] - axis[1] * vector[0]};
+        for (int component = 0; component < 3; ++component)
+        {
+            vector[component] = vector[component] * c + cross[component] * s +
+                axis[component] * dot * (1.0f - c);
+        }
+    };
+
+    const float rollAxis[3] = {forward[0], forward[1], forward[2]};
+    rotateAbout(rollAxis, rollDegrees, up);
+    rotateAbout(rollAxis, rollDegrees, right);
+    const float pitchAxis[3] = {right[0], right[1], right[2]};
+    rotateAbout(pitchAxis, pitchDegrees, forward);
+    rotateAbout(pitchAxis, pitchDegrees, up);
+    const float yawAxis[3] = {up[0], up[1], up[2]};
+    rotateAbout(yawAxis, yawDegrees, forward);
+    rotateAbout(yawAxis, yawDegrees, right);
+
+    Halo2CameraBasis trimmed{};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        trimmed.forward[axis] = forward[axis];
+        trimmed.up[axis] = up[axis];
+        trimmed.position[axis] = carrier.position[axis] +
+            (forward[axis] * forwardMeters + right[axis] * rightMeters +
+             up[axis] * upMeters) * worldScale;
+    }
+    if (!Halo2ValidateCameraBasis(trimmed))
+        return false;
+    out = trimmed;
+    return true;
+}
 
 // Blends two camera bases the way the interpolator blends the weapon, and
 // re-orthonormalises, so the result is always a valid basis.
@@ -4494,6 +4765,11 @@ inline bool Halo2CompensateClassicFirstPersonEye(
     std::memcpy(matrices, staged, bytes);
     return true;
 }
+
+// E-H2-66 (C-H2-78): the classic pass draws BOTH eyes' weapons from one
+// common camera (the tracked centre), so the stereo core names that centre
+// as `viewing` for every pass; the previous-eye model doubled the weapon's
+// disparity (measured 2026-08-31).
 
 enum class Halo2FirstPersonNodeSpace : uint8_t
 {

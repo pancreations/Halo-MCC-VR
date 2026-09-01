@@ -286,6 +286,7 @@ namespace
         bool framingCaptured = false;
     };
     ReticleCaptureState g_reticleCaptureState{};
+    std::atomic<bool> g_halo4AuthoredReticleTargetBound{false};
     std::atomic<uint64_t> g_authoredReticleOmReroutes{0};
     std::atomic<uint64_t> g_authoredReticleFramingReasserts{0};
 
@@ -1634,14 +1635,22 @@ VSOut vs_main(uint id : SV_VertexID)
     return o;
 }
 float lin(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+float4 fix(float4 c)
+{
+    uint w, h;
+    srcTex.GetDimensions(w, h);
+    if (w != 512 || h != 512) return c;
+    float a = max(c.a, max(c.r, max(c.g, c.b)));
+    return float4(a > 0 ? c.rgb / a : c.rgb, a);
+}
 float4 ps_linearize(VSOut i) : SV_Target
 {
-    float4 c = srcTex.Sample(smp, i.uv);
+    float4 c = fix(srcTex.Sample(smp, i.uv));
     return float4(lin(c.r), lin(c.g), lin(c.b), c.a);
 }
 float4 ps_pass(VSOut i) : SV_Target
 {
-    return srcTex.Sample(smp, i.uv);
+    return fix(srcTex.Sample(smp, i.uv));
 }
 )";
         ID3DBlob* blob = nullptr;
@@ -1892,7 +1901,12 @@ float4 ps_pass(VSOut i) : SV_Target
               ID3D11Texture2D* dst, uint32_t dstW, uint32_t dstH,
               ID3D11RenderTargetView* dstRtv)
     {
-        const bool fastPath = VrBlitCanUseDirectCopy(
+        const bool halo4ReticleAlphaRepair =
+            VrBlitNeedsHalo4ReticleAlphaRepair(
+                TitleAdapter_GetActiveTitle() == GameTitle::Halo4,
+                dstW, dstH);
+        const bool fastPath = !halo4ReticleAlphaRepair &&
+            VrBlitCanUseDirectCopy(
             srcDesc.Width, srcDesc.Height, srcDesc.Format,
             srcDesc.SampleDesc.Count, dstW, dstH,
             static_cast<DXGI_FORMAT>(g_xrFormat));
@@ -1915,7 +1929,8 @@ float4 ps_pass(VSOut i) : SV_Target
         // FRAME at full render size, which is exactly the kind of cost that
         // halves the frame rate the moment a level loads.
         static int loggedPath = -1;
-        if (loggedPath != (fastPath ? 1 : 0))
+        if (!halo4ReticleAlphaRepair &&
+            loggedPath != (fastPath ? 1 : 0))
         {
             loggedPath = fastPath ? 1 : 0;
             LOG("PERF: eye blit uses %s path (src %ux%u fmt %d samples %u -> "
@@ -3260,13 +3275,31 @@ float4 ps_main(VSOut i) : SV_Target
         return true;
     }
 
-    ID3D11RenderTargetView* GetRtv(std::vector<ID3D11Texture2D*>& images,
-                                   std::vector<ID3D11RenderTargetView*>& rtvs, uint32_t idx)
+    ID3D11RenderTargetView* GetRtv(
+        std::vector<ID3D11Texture2D*>& images,
+        std::vector<ID3D11RenderTargetView*>& rtvs, uint32_t idx,
+        bool halo4ReticleUpload = false)
     {
-        if (idx >= images.size())
+        if (!g_device || idx >= images.size() || idx >= rtvs.size())
             return nullptr;
         if (!rtvs[idx])
-            g_device->CreateRenderTargetView(images[idx], nullptr, &rtvs[idx]);
+        {
+            const HRESULT defaultResult = g_device->CreateRenderTargetView(
+                images[idx], nullptr, &rtvs[idx]);
+            if (VrHalo4ReticleRtvNeedsTypedFallback(
+                    halo4ReticleUpload, FAILED(defaultResult), !rtvs[idx]))
+            {
+                // Stage 3BQ: SteamVR may expose a TYPELESS OpenXR image. Such
+                // a resource has no default RTV, but the negotiated XR format
+                // is the exact concrete view format the runtime expects.
+                D3D11_RENDER_TARGET_VIEW_DESC desc{};
+                desc.Format = static_cast<DXGI_FORMAT>(g_xrFormat);
+                desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                desc.Texture2D.MipSlice = 0;
+                (void)g_device->CreateRenderTargetView(
+                    images[idx], &desc, &rtvs[idx]);
+            }
+        }
         return rtvs[idx];
     }
 
@@ -6193,16 +6226,25 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         {
             return 0;
         }
-        uint32_t ink = 0;
+        uint32_t alphaInk = 0;
+        uint32_t colorInk = 0;
         const auto* rows = static_cast<const uint8_t*>(mapped.pData);
         for (uint32_t y = 0; y < kAuthoredReticleProbeSize; ++y)
         {
             const uint8_t* texel = rows + static_cast<size_t>(y) * mapped.RowPitch;
             for (uint32_t x = 0; x < kAuthoredReticleProbeSize; ++x, texel += 4)
-                ink += texel[3];
+            {
+                alphaInk += texel[3];
+                colorInk += static_cast<uint32_t>(texel[0]) + texel[1] +
+                    texel[2];
+            }
         }
         g_context->Unmap(g_authoredReticleProbeStaging, 0);
-        return ink;
+        // Stage 3BL: Halo 4's authored CUI writes RGB art with zero alpha.
+        // Other titles retain their accepted alpha-only coverage metric.
+        return VrResolveAuthoredReticleCoverage(
+            TitleAdapter_GetActiveTitle() == GameTitle::Halo4,
+            alphaInk, colorInk);
     }
     bool EnsureReticleChain()
     {
@@ -6326,6 +6368,12 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
     bool UploadAuthoredReticle(bool requireSuccessfulRelease,
                                bool identityChanged)
     {
+        // Stage 3BS: Halo 4 publishes the fixed sentinel identity 1 while its
+        // legitimate bloom and target tint can swing ink by more than 10x.
+        // Treat each H4 sample like a fresh identity so the shared half-ink
+        // guard cannot freeze animation. The absolute nonblank bar remains.
+        if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
+            identityChanged = true;
         const bool probePending = g_authoredReticleProbePending;
         if ((!probePending && (!g_authoredReticleReady ||
                                g_authoredReticleSerial != g_preparedFrame.serial)) ||
@@ -6467,7 +6515,10 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         const bool copied = Blit(source, sourceDesc,
                                  g_reticleImages[index], kReticleSize,
                                  kReticleSize,
-                                 GetRtv(g_reticleImages, g_reticleRtvs, index));
+                                 GetRtv(
+                                     g_reticleImages, g_reticleRtvs, index,
+                                     TitleAdapter_GetActiveTitle() ==
+                                         GameTitle::Halo4));
         const XrResult releaseResult =
             xrReleaseSwapchainImage(g_reticleChain, &release);
         const bool released = requireSuccessfulRelease
@@ -13305,11 +13356,39 @@ void VR_Halo2LogTargetCensusOnce(
 
 void VR_EndRasterEye()
 {
+    const int completedEye = g_rasterEye.load(std::memory_order_relaxed);
+    const bool halo4CompletedEye =
+        (completedEye == 0 || completedEye == 1) &&
+        TitleAdapter_GetActiveTitle() == GameTitle::Halo4;
+    // Stage3BU deliberately writes back only after the scene target was
+    // already proven before this eye began.  The eye that first latches the
+    // target remains a learning eye; treating it as steady state would copy an
+    // eye cache that was not produced by the redirect transaction.
+    const bool halo4HadSceneTarget =
+        halo4CompletedEye && g_sceneColorRtv != nullptr;
     if constexpr (kEnableRetiredRasterTrace)
-        VR_TraceEvent("eye-end", g_rasterEye.load(), 0);
-    if (g_rasterEye.load() >= 0 &&
-        TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
+        VR_TraceEvent("eye-end", completedEye, 0);
+    if (halo4CompletedEye)
         Halo4ResolveSceneTargetAtEyeEnd();
+
+    // Retained Stage3BU behavior: once the real Halo 4 scene target is known,
+    // put the completed per-eye image back into the texture behind it.  The
+    // engine consumes that texture after render_view returns for the desktop
+    // mirror and damage effects.  This is intentionally in addition to the VR
+    // eye cache, not an alternative capture path.
+    if (VrHalo4SceneWritebackEligible(
+            halo4CompletedEye, completedEye, g_context != nullptr,
+            halo4HadSceneTarget && g_sceneColorRtv != nullptr,
+            halo4CompletedEye && g_eyeCache[completedEye] != nullptr))
+    {
+        ID3D11Resource* sceneResource = nullptr;
+        g_sceneColorRtv->GetResource(&sceneResource);
+        if (sceneResource)
+        {
+            g_context->CopyResource(sceneResource, g_eyeCache[completedEye]);
+            sceneResource->Release();
+        }
+    }
 #if HALOMCCVR_HALO2_STEREO6DOF
     Halo2SynchronousEyeScope& halo2Scope = g_halo2SynchronousEyeScope;
     if (halo2Scope.active && halo2Scope.eye >= 0 && halo2Scope.eye <= 1)
@@ -13766,6 +13845,91 @@ static void ProbeFsrTargets(ID3D11DeviceContext* context, UINT count,
             seen[seenCount++] = {slot, desc.Width, desc.Height, descFormat,
                                  desc.BindFlags, rasterEye};
     }
+}
+
+void VR_Halo4NoteBoundRenderTargets(
+    ID3D11DeviceContext* context, UINT count,
+    ID3D11RenderTargetView* const* rtvs)
+{
+    if (context != g_context)
+        return;
+    if (!g_reticleCaptureState.active ||
+        !g_reticleCaptureState.framingCaptured)
+    {
+        g_halo4AuthoredReticleTargetBound.store(
+            false, std::memory_order_release);
+        return;
+    }
+    const uintptr_t boundSlot0 = count && rtvs
+        ? reinterpret_cast<uintptr_t>(rtvs[0]) : 0;
+    // D3D11 immediate-context calls are ordered on one render thread. The D3D
+    // hooks publish this only after the real state mutation and invalidate it
+    // on the alternate RTV/UAV setter and ClearState as well. This retains
+    // Stage 3BH's exact slot-0, mode-selected target gate without putting an
+    // OMGetRenderTargets AddRef/Release pair in every admitted Draw.
+    g_halo4AuthoredReticleTargetBound.store(
+        VrHalo4AuthoredReticleDrawTargetMatches(
+            TitleAdapter_GetActiveTitle() == GameTitle::Halo4,
+            g_reticleCaptureState.active,
+            g_reticleCaptureState.framingCaptured,
+            g_reticleCaptureState.publishesAuthored,
+            boundSlot0,
+            reinterpret_cast<uintptr_t>(g_authoredReticleRtv),
+            reinterpret_cast<uintptr_t>(g_authoredReticleDiscardRtv)),
+        std::memory_order_release);
+}
+
+void VR_Halo4PrepareAuthoredReticleDraw(ID3D11DeviceContext* context)
+{
+    if (context != g_context ||
+        !g_reticleCaptureState.active ||
+        !g_reticleCaptureState.framingCaptured ||
+        !g_halo4AuthoredReticleTargetBound.load(std::memory_order_acquire) ||
+        TitleAdapter_GetActiveTitle() != GameTitle::Halo4)
+    {
+        return;
+    }
+
+    const D3D11_VIEWPORT& base = g_reticleCaptureState.captureViewport;
+    const Halo4CuiCaptureViewport input{
+        base.TopLeftX, base.TopLeftY, base.Width, base.Height,
+        base.MinDepth, base.MaxDepth};
+    Halo4CuiCaptureViewport framed{};
+    const uint32_t backbufferWidth = g_gameBackbufferDescValid
+        ? g_gameBackbufferDesc.Width : 0;
+    const uint32_t backbufferHeight = g_gameBackbufferDescValid
+        ? g_gameBackbufferDesc.Height : 0;
+    // 3CX fold-in: the vertical bias and the presentation zoom follow the
+    // LIVE layout the visible-pass hide recorded; before any hide runs the
+    // helpers return the calibrated 3BR constants.
+    float liveBaseY = 0.0f;
+    float liveHideShift = 0.0f;
+    (void)Game_Halo4LiveCuiCanvas(liveBaseY, liveHideShift);
+    if (!Halo4BuildCuiCaptureDrawViewport(
+            input, backbufferWidth, backbufferHeight,
+            Halo4CuiLiveVerticalBiasRatio(liveBaseY),
+            Halo4CuiLiveCaptureScale(liveHideShift), framed))
+    {
+        return;
+    }
+
+    const D3D11_VIEWPORT viewport{
+        framed.topLeftX, framed.topLeftY, framed.width, framed.height,
+        framed.minDepth, framed.maxDepth};
+    context->RSSetViewports(1, &viewport);
+    context->RSSetScissorRects(
+        1, &g_reticleCaptureState.captureScissor);
+    g_authoredReticleFramingReasserts.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+bool VR_Halo4AuthoredReticleFeatureHealthy()
+{
+    // InstallHalo4CuiReticle arms only after every capture/suppression resource
+    // is prepared. The only permanent runtime invalidation is this atomic
+    // latch; checking it from the CUI hook is sufficient and avoids racing on
+    // the render thread's raw D3D/OpenXR resource pointers.
+    return !g_reticleChainFailed.load(std::memory_order_acquire);
 }
 
 bool VR_RedirectRenderTargets(ID3D11DeviceContext* context, UINT count,
@@ -14347,8 +14511,11 @@ static bool BeginAuthoredReticleCaptureInternal(
     // meaningful, timing-independent source for Halo 4 alone.
     if (captureTitle == GameTitle::Halo4)
     {
-        captureViewport.Width = static_cast<float>(kReticleSize) * 4.0f;
-        captureViewport.Height = static_cast<float>(kReticleSize) * 4.0f;
+        // Stage 3BH: use Halo 4's own measured CUI framing, not the rejected
+        // square 2048x2048 guess. The draw hook derives raster aspect and the
+        // accepted 2.5x scale from this immutable per-capture base.
+        captureViewport.Width = kHalo4CuiCaptureWidth;
+        captureViewport.Height = kHalo4CuiCaptureHeight;
         captureViewport.MinDepth = 0.0f;
         captureViewport.MaxDepth = 1.0f;
     }
@@ -14391,9 +14558,6 @@ static bool BeginAuthoredReticleCaptureInternal(
     const D3D11_RECT captureScissor{
         0, 0, static_cast<LONG>(kReticleSize),
         static_cast<LONG>(kReticleSize)};
-    g_context->OMSetRenderTargets(1, &redirectRtv, nullptr);
-    g_context->RSSetViewports(1, &captureViewport);
-    g_context->RSSetScissorRects(1, &captureScissor);
     saved.publishesAuthored = publishAuthored;
     // Retained so a later Halo-4 scene-target rebind DURING this same capture
     // (see VR_RedirectRenderTargets) can put the SAME viewport back instead of
@@ -14402,21 +14566,17 @@ static bool BeginAuthoredReticleCaptureInternal(
     saved.captureScissor = captureScissor;
     saved.framingCaptured = true;
     saved.active = true;
+    // Publish the complete capture mode before the OM hook observes this bind;
+    // otherwise its exact selected-target comparison would use the preceding
+    // capture's authored/discard mode and miss the first required draw pin.
+    g_context->OMSetRenderTargets(1, &redirectRtv, nullptr);
+    g_context->RSSetViewports(1, &captureViewport);
+    g_context->RSSetScissorRects(1, &captureScissor);
     return true;
 }
 
 bool VR_ShouldCaptureAuthoredReticleThisFrame()
 {
-    // C-H4-50: Halo 4's whole-CUI replay is not a proven authored-reticle
-    // boundary. In the 7a24814 Steam log it spent minutes at art=0, then one
-    // isolated opaque capture was promoted and held -- matching the reported
-    // black-square-after-zoom failure. The Game Pass log likewise starts with
-    // a long blank capture interval. Keep the already-proven procedural
-    // bullet-ray reticle for Halo 4 and leave these hooks responsible only for
-    // hiding the duplicate native flat copy. Halo 3/ODST/Reach are unchanged.
-    if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
-        return false;
-
     // Until valid art is held there is nothing to fall back on, so never skip.
     if (!g_reticleContainsAuthored)
         return true;

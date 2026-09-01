@@ -64,6 +64,23 @@ struct Halo2FirstPersonPassCameras;
 void Halo2Observer6Dof_SetFirstPersonPassCameras(
     const Halo2FirstPersonPassCameras* cameras) noexcept;
 
+// E-H2-67 (C-H2-79): the camera the classic weapon pass actually holds,
+// read from the engine's own first-person camera global at draw time and
+// published here, so the compensation targets a MEASURED camera instead of
+// a predicted one. Ignored when no core has named a pass.
+struct Halo2CameraBasis;
+void Halo2Observer6Dof_SetMeasuredFirstPersonViewingCamera(
+    const Halo2CameraBasis& viewing, bool admitCompensation) noexcept;
+
+// E-H2-70 (C-H2-82): the camera the ENGINE handed the packet builder for
+// the named renderer's own build - the frame the final first-person nodes
+// were composed against. Each stereo core compares it with the camera its
+// renderer will actually draw those nodes from; a difference in
+// ORIENTATION tips the weapon in that renderer alone. False until that
+// renderer has owned a packet this session.
+bool Halo2Observer6Dof_ReadPacketBuildCamera(
+    bool anniversary, Halo2CameraBasis& out) noexcept;
+
 // C-H2-63: draw_first_person brackets the exact Classic-only visible palette
 // consumer with these calls. Begin temporarily compensates the controller-owned
 // persistent packet for the current eye; End restores its controller-owned

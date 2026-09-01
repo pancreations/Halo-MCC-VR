@@ -623,12 +623,100 @@ namespace
     // the camera the classic first-person pass draws the NEXT pass from.
     thread_local Halo2CameraBasis g_lastPassEyeCamera{};
     thread_local bool g_lastPassEyeCameraValid = false;
+    // E-H2-67 (C-H2-79): the eye whose render_view is running, so the draw
+    // hook can name which camera it measured. -1 outside an eye pass.
+    thread_local int g_currentPassEye = -1;
+    // What the classic weapon pass was MEASURED to hold at draw time.
+    std::atomic<uint64_t> g_fpCameraMeasured{0};
+    std::atomic<uint64_t> g_fpCameraUnreadable{0};
+    std::atomic<uint64_t> g_fpCameraMatchedCentre{0};
+    std::atomic<uint64_t> g_fpCameraMatchedThisEye{0};
+    std::atomic<uint64_t> g_fpCameraMatchedOtherEye{0};
+    std::atomic<uint64_t> g_fpCameraMatchedNone{0};
+    // E-H2-69: per-eye weapon parallax admitted / refused by the guard.
+    std::atomic<uint64_t> g_fpDepthAdmitted{0};
+    std::atomic<uint64_t> g_fpDepthRefused{0};
+    // E-H2-70: angle between the camera the weapon's nodes were composed
+    // against (the engine's packet-build camera for this renderer) and the
+    // camera this renderer's first-person pass draws them from. Non-zero
+    // means the weapon is tipped in this renderer alone. Millidegrees.
+    std::atomic<uint32_t> g_fpPitchMilliDegrees{0};
+    std::atomic<uint32_t> g_fpPitchMaxMilliDegrees{0};
+
+    // Angle between two camera forward axes, published as millidegrees
+    // (last and running maximum). Allocation-free; hot-path safe.
+    void PublishCameraOrientationDelta(
+        const Halo2CameraBasis& reference, const Halo2CameraBasis& actual,
+        std::atomic<uint32_t>& last, std::atomic<uint32_t>& maximum) noexcept
+    {
+        float dot = 0.0f;
+        for (int axis = 0; axis < 3; ++axis)
+            dot += reference.forward[axis] * actual.forward[axis];
+        if (!std::isfinite(dot))
+            return;
+        dot = std::clamp(dot, -1.0f, 1.0f);
+        const float degrees = std::acos(dot) * 57.29578f;
+        if (!std::isfinite(degrees) || degrees < 0.0f || degrees > 180.0f)
+            return;
+        const uint32_t milli = static_cast<uint32_t>(degrees * 1000.0f);
+        last.store(milli, std::memory_order_relaxed);
+        uint32_t previous = maximum.load(std::memory_order_relaxed);
+        while (previous < milli &&
+               !maximum.compare_exchange_weak(
+                   previous, milli, std::memory_order_relaxed,
+                   std::memory_order_relaxed))
+        {
+        }
+    }
     // E-H2-31/E-H2-34: centring the camera globals inside draw_first_person
     // never moved the weapon (the pass draws from the previous render_view's
     // popped camera, not from the globals at draw time) and the Saber
     // first-person pass has a real eye separation anyway. Disabled, not
     // deleted; the hook stays pinned.
     constexpr bool kHalo2ClassicCentreFirstPersonCameras = false;
+    // C-H2-78 (E-H2-66): the camera the classic first-person pass actually
+    // draws from is ONE common camera for both eyes - the tracked centre -
+    // never a written per-eye camera. C-H2-40's eye pictures measured it
+    // (weapon 0 px between the eyes while the world carried parallax), and
+    // the 2026-08-31 Steam parity run measured what the E-H2-34
+    // previous-eye model does to the compensation: every stable Classic
+    // sample showed the weapon box at -16 px between the eyes against the
+    // world band's / Anniversary's steady -8 px - exactly doubled
+    // disparity, each pass over-shifted by half the eye baseline, the
+    // whole hands/gun rig fusing at half its true distance ("barrel too
+    // high"). With this ON, both passes compensate correct eye -> centre,
+    // so the common camera's image is exactly this eye's image and Classic
+    // places the rig where Anniversary does. OFF restores the E-H2-34
+    // previous-eye model (disabled, not deleted).
+    constexpr bool kHalo2ClassicCommonFirstPersonCamera = true;
+    // C-H2-80 (E-H2-68): the user's requirement is that Halo 2 Classic show
+    // the hands and gun at VISUALLY the same position and rotation as
+    // Anniversary. Both renderers already consume the SAME final packet
+    // (E-H2-45); Anniversary draws it untouched, while Classic alone then
+    // applied this per-eye compensation - a rotation AND a translation of
+    // the whole rig. Any such transform makes Classic differ from
+    // Anniversary by construction, so no choice of viewing camera can
+    // deliver parity; only applying none can. With this false,
+    // BeginClassicFirstPersonEye finds no compensating pass and leaves the
+    // packet exactly as the shared mount produced it, which is the same
+    // geometry Anniversary draws - parity by construction, not by tuning.
+    //
+    // Known cost, stated plainly: this is C-H2-40's classic behavior, where
+    // the weapon carried no per-eye disparity of its own (it is drawn from
+    // whatever single camera the pass holds - see the fpCamIs* counters).
+    // Placement parity is the user's explicit priority over that depth.
+    // The complete compensation implementation, its measured viewing camera
+    // and its telemetry all remain compiled and inert.
+    constexpr bool kHalo2ClassicFirstPersonEyeCompensation = false;
+    // C-H2-81 (E-H2-69): the user asked for that depth back on top of
+    // parity. The compensation is the only mechanism that can produce it
+    // (camera-global writes at draw time were measured inert - E-H2-31/34;
+    // a projection change cannot create parallax), so it is admitted again
+    // - but only in the shape that provably cannot displace or rotate the
+    // rig: the measured viewing camera must share the eye's orientation
+    // exactly, and sit within one live half-IPD of it. Every other case
+    // keeps C-H2-80's byte-identical Anniversary parity for that pass.
+    constexpr bool kHalo2ClassicFirstPersonEyeDepth = true;
 
     void ResetHeadReferenceAtomic() noexcept
     {
@@ -1416,6 +1504,96 @@ namespace
             if (centred)
                 g_firstPersonCentred.fetch_add(1, std::memory_order_relaxed);
         }
+        // E-H2-67 (C-H2-79): READ the camera this pass will draw the weapon
+        // from, instead of predicting it. draw_first_person copies the
+        // first-person camera global whole (E-H2-20/E-H2-31), so its
+        // position/forward/up at entry IS the pass's camera. Publishing it
+        // makes the compensation exact whichever camera the engine left
+        // there - centre, an eye, or a stale one - and the counters below
+        // record which of those it matched, as evidence rather than theory.
+        if (scope && g_innerDepth && base)
+        {
+            Halo2CameraBasis measured{};
+            const uintptr_t camera =
+                base + kHalo2ClassicFirstPersonCameraGlobalRva;
+            if (GuardedCopyExact(
+                    measured.position,
+                    reinterpret_cast<const float*>(
+                        camera + kHalo2CameraPositionOffset),
+                    kHalo2CameraVectorBytes) &&
+                GuardedCopyExact(
+                    measured.forward,
+                    reinterpret_cast<const float*>(
+                        camera + kHalo2CameraForwardOffset),
+                    kHalo2CameraVectorBytes) &&
+                GuardedCopyExact(
+                    measured.up,
+                    reinterpret_cast<const float*>(
+                        camera + kHalo2CameraUpOffset),
+                    kHalo2CameraVectorBytes) &&
+                Halo2ValidateCameraBasis(measured))
+            {
+                const int eye = g_currentPassEye;
+                const bool eyeKnown = eye == 0 || eye == 1;
+                if (Halo2CameraBasesNearlyEqual(measured, scope->renderCenter))
+                    g_fpCameraMatchedCentre.fetch_add(
+                        1, std::memory_order_relaxed);
+                else if (eyeKnown && Halo2CameraBasesNearlyEqual(
+                             measured, scope->eyes[eye].render))
+                    g_fpCameraMatchedThisEye.fetch_add(
+                        1, std::memory_order_relaxed);
+                else if (eyeKnown && Halo2CameraBasesNearlyEqual(
+                             measured, scope->eyes[1 - eye].render))
+                    g_fpCameraMatchedOtherEye.fetch_add(
+                        1, std::memory_order_relaxed);
+                else
+                    g_fpCameraMatchedNone.fetch_add(
+                        1, std::memory_order_relaxed);
+                // E-H2-69 (C-H2-81): restore the weapon's own per-eye
+                // parallax, but only in the shape that cannot displace or
+                // rotate the rig - identical orientation, and a position
+                // difference no larger than this eye's own offset from the
+                // pair centre (one half-IPD, live). Anything else keeps
+                // C-H2-80's exact Anniversary parity for that pass.
+                bool admit = false;
+                if (kHalo2ClassicFirstPersonEyeDepth && eyeKnown)
+                {
+                    float separation = 0.0f;
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        const float d = scope->eyes[eye].render.position[axis] -
+                            scope->renderCenter.position[axis];
+                        separation += d * d;
+                    }
+                    separation = std::sqrt(separation);
+                    admit = Halo2ClassicEyeCompensationAdmissible(
+                        scope->eyes[eye].render, measured,
+                        separation * 1.5f + 1.0e-4f);
+                    (admit ? g_fpDepthAdmitted : g_fpDepthRefused)
+                        .fetch_add(1, std::memory_order_relaxed);
+                }
+                Halo2Observer6Dof_SetMeasuredFirstPersonViewingCamera(
+                    measured, admit);
+                g_fpCameraMeasured.fetch_add(1, std::memory_order_relaxed);
+                // E-H2-70: the weapon's nodes were composed against the
+                // camera the engine handed THIS renderer's packet build.
+                // If the camera this pass draws them from points elsewhere,
+                // the weapon is tipped in this renderer alone - a muzzle
+                // rise no repositioning can remove. Publish that angle.
+                Halo2CameraBasis packetCamera{};
+                if (Halo2Observer6Dof_ReadPacketBuildCamera(
+                        false, packetCamera))
+                {
+                    PublishCameraOrientationDelta(
+                        packetCamera, measured, g_fpPitchMilliDegrees,
+                        g_fpPitchMaxMilliDegrees);
+                }
+            }
+            else
+            {
+                g_fpCameraUnreadable.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         const bool classicPaletteOwned =
             Halo2Observer6Dof_BeginClassicFirstPersonEye();
         __try { original(); }
@@ -1888,7 +2066,23 @@ namespace
                     passCameras.frame = scope->renderCenter;
                     passCameras.frameValid = scope->rasterCenterValid;
                     passCameras.correct = scope->eyes[eye].render;
-                    if (pass == 0)
+                    if (!kHalo2ClassicFirstPersonEyeCompensation)
+                    {
+                        // C-H2-80: no Classic-only transform, so the packet
+                        // Classic draws is the packet Anniversary draws.
+                        passCameras.viewing = passCameras.correct;
+                        passCameras.compensate = false;
+                    }
+                    else if (kHalo2ClassicCommonFirstPersonCamera)
+                    {
+                        // C-H2-78: both passes draw the weapon from the
+                        // common tracked centre, so that is the camera the
+                        // geometry must be moved to for this eye's image
+                        // to be correct. See the constant's evidence note.
+                        passCameras.viewing = scope->renderCenter;
+                        passCameras.compensate = scope->rasterCenterValid;
+                    }
+                    else if (pass == 0)
                     {
                         passCameras.viewing = g_lastPassEyeCamera;
                         passCameras.compensate = g_lastPassEyeCameraValid;
@@ -1901,6 +2095,7 @@ namespace
                     if (!passCameras.compensate)
                         g_firstPersonUncompensated.fetch_add(1, std::memory_order_relaxed);
                     Halo2Observer6Dof_SetFirstPersonPassCameras(&passCameras);
+                    g_currentPassEye = eye;
                 }
 
                 // E-H2-29: the world pass's target id 0 resolves through the
@@ -2061,6 +2256,7 @@ namespace
         __finally
         {
             Halo2Observer6Dof_SetFirstPersonPassCameras(nullptr);
+            g_currentPassEye = -1;
             finalSpansRestored = RestoreOwnedSpans(*scope);
             --g_innerDepth;
         }
@@ -2586,6 +2782,10 @@ namespace
                 "fpFovUnreadable=%llu sceneLatchRearmed=%llu "
                 "sceneLatchUnreadable=%llu nativeHudScopedDraws=%llu "
                 "nativeHudAnchorsMapped=%llu nativeHudReticlesStock=%llu "
+                "fpCamMeasured=%llu fpCamUnreadable=%llu "
+                "fpCamIsCentre=%llu fpCamIsThisEye=%llu fpCamIsOtherEye=%llu "
+                "fpCamIsOther=%llu fpDepthOn=%llu fpDepthOff=%llu "
+                "fpComposeVsDraw=%.3f deg (max %.3f) "
                 "poseOwner=%s "
                 "posePublished=%llu poseRederived=%llu poseSelf=%llu "
                 "poseUnavailable=%llu",
@@ -2631,6 +2831,24 @@ namespace
                     g_nativeHudAnchorsAdjusted.load(std::memory_order_relaxed)),
                 static_cast<unsigned long long>(
                     g_nativeHudCrosshairsPreserved.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpCameraMeasured.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpCameraUnreadable.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpCameraMatchedCentre.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpCameraMatchedThisEye.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpCameraMatchedOtherEye.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpCameraMatchedNone.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpDepthAdmitted.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    g_fpDepthRefused.load(std::memory_order_relaxed)),
+                g_fpPitchMilliDegrees.load(std::memory_order_relaxed) / 1000.0,
+                g_fpPitchMaxMilliDegrees.load(std::memory_order_relaxed) / 1000.0,
                 Halo2Observer6Dof_Armed() ? "observer" : "classicCore",
                 static_cast<unsigned long long>(current.posePublished),
                 static_cast<unsigned long long>(current.poseRederived),

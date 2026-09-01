@@ -1,0 +1,37 @@
+{
+  "stage": "3CO",
+  "status": "HEADSET_PENDING",
+  "base_stage": "3CB exact headset-working Halo 4 cutscene theatre base",
+  "base_dll_sha256": "9ee60ca1b97934002473a0f970c4af8e94a79aa34cfc92116f1c06b4f5690885",
+  "output_dll_sha256": "7ebfc2e137e81d34d913489a776cc244bade74cd9f019bec2d05a94c613e0ef9",
+  "output_dll_size": 2923520,
+  "source_snapshot": "518aebed9c3d986dcc4c8eb2dbbfa2c9585f15eb",
+  "features": [
+    "complete Stage 3BU/3BT Halo 4 authored-reticle capture and presentation chain retained",
+    "Stage 3BU scene write-back retained for desktop mirror and damage effects",
+    "Stage 3BV/3BW/3BX cinematic classifier and shared theatre publication retained",
+    "Stage 3CB authored-camera 3D cutscene theatre retained",
+    "capture selector un-hide follows the current proven type-0x28 container",
+    "capture viewport follows live Halo 4 baseY/hide layout and falls back to accepted Stage 3BR on invalid input",
+    "Stage 3CN payload-size discriminator removal excluded"
+  ],
+  "verification": {
+    "release_build": "PASS",
+    "core_tests": "PASS 1/1",
+    "focused_binary_tests": "PASS 6/6",
+    "stage3co_independent_byte_verifier": "PASS",
+    "mcc_headset_acceptance": "PENDING"
+  },
+  "deployment": "INSTALLED_BOTH_2026-08-31",
+  "steam_installed_dll_sha256": "7ebfc2e137e81d34d913489a776cc244bade74cd9f019bec2d05a94c613e0ef9",
+  "store_installed_dll_sha256": "7ebfc2e137e81d34d913489a776cc244bade74cd9f019bec2d05a94c613e0ef9",
+  "prior_installed_dll_sha256": "9ee60ca1b97934002473a0f970c4af8e94a79aa34cfc92116f1c06b4f5690885",
+  "backup": "out/deploy-backups/2026-08-31-pre-3CO",
+  "launcher_sha256_unchanged": "8e1da430132f34030a1b463ac91567fe48a255c9b6cc2d73c99c10c8f77fe26c",
+  "steam_cfg_sha256_unchanged": "8ef63b1839002ba513f1c49920e7d7e2c2b72f377a8b01083293b57e4f74093c",
+  "store_cfg_sha256_unchanged": "1afd2f98c8ef2606889c874f30ffa8e158dad2df3d5fb2b02e1f15aba86657db",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

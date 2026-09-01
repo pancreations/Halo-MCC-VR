@@ -3861,3 +3861,358 @@ ownership does not switch from the procedural fallback until a capture finishes
 for the current `halo2.dll` generation. Unknown/missing hashes and every
 resource/capture failure remain stock for that feature and never disarm stereo,
 input, window fitting, or OpenXR.
+
+## E-H2-66 (C-H2-78): the classic first-person pass draws BOTH eyes from one common camera; the previous-eye compensation model doubled the weapon's disparity - 2026-08-31
+
+Measured, not read. Two independent measurements agree and the second is from
+the user's own parity run.
+
+**C-H2-40 pictures (fa1f642, preserved run):** with per-eye world stereo
+proven, the classic weapon and arms were pixel-identical between the eyes
+(best shift 0 px) while the world carried parallax. Both first-person passes
+therefore drew the weapon from ONE common camera that is neither written eye
+camera - the tracked camera WITHOUT the per-eye offset, exactly what the
+E-H2-31 StereoScope note recorded ("the first-person weapon is drawn from
+this, so both eyes place it identically"). E-H2-34 instead inferred a
+previous-eye viewing camera from the C-H2-36 pictures; those were taken with
+the FOV pin failed and the C-H2-36/37 centring experiments active, and
+E-H2-34 itself marks the mechanism as inferred.
+
+**2026-08-31 Steam parity run** (`out/test-runs/h2-parity-20260831-1541-steam`,
+log SHA-256 `F187928A6F3C8611A09E5BF533FFC0FDEFFC227FDB00BB4EC1204A1D32223664`,
+SteamVR/OpenXR 2.17.7, oculus headset): with the C-H2-63/70 code live and
+healthy (classic packet 3418/3418 owned, classic eyes 3251 compensated /
+0 refused, fpFovHeld 1474/1474, fpFovLost 0/0), every stable Classic
+weapon-box sample measured **-16 px** between the eyes against the world
+band's and Anniversary's steady **-8 px**. Exactly doubled disparity is the
+signature the common-camera model predicts for the E-H2-34 compensation:
+each pass moves the geometry a full eye baseline (correct eye -> other eye),
+the common camera then contributes no baseline of its own, so each eye's
+image is over-shifted by half the baseline in opposite directions - the
+weapon's disparity doubles and the whole hands/gun rig fuses at about half
+its true distance. A rig fused too near, below eye level, is perceived
+displaced up toward the face: the user's "the barrel is too high up compared
+to the rest", reported identically for the hands.
+
+**C-H2-78:** the stereo core names the pair's tracked centre
+(`scope->renderCenter`) as the pass's `viewing` camera for BOTH eye passes,
+so the compensation moves the packet from this eye's correct camera to the
+camera the pass actually draws from. Steady-state prediction: Classic weapon
+disparity equals Anniversary's, and Classic hands/gun land visually where
+Anniversary places them, driven by the same cfg offsets. The E-H2-34
+previous-eye model remains in the source, disabled behind
+`kHalo2ClassicCommonFirstPersonCamera = false`. The pixel check's
+`weapon box ... best shift` line against the `world band` line is the
+non-headset regression instrument: same sign as the world and about twice
+the world band's magnitude at gun distance is correct; twice the
+Anniversary weapon value is the old defect.
+
+## E-H2-67 (C-H2-79): stop predicting the classic weapon pass's camera - read it - 2026-08-31
+
+E-H2-34 (previous eye) and E-H2-66 (common centre) are both MODELS of which
+camera `draw_first_person` draws the weapon from, each inferred from eye
+pictures. C-H2-78B shipped the second model and the user reports the Classic
+hands/gun still offset from Anniversary in BOTH position and rotation. That
+symptom pair is exactly what a wrong viewing camera produces: the
+compensation applies `x' = R_v R_c^T (x - c) + v`, so an error in the viewing
+camera rotates AND translates the whole rig, hands included, while
+Anniversary - which needs no compensation, because the engine rebuilds its
+Saber view per eye - stays correct.
+
+E-H2-20/E-H2-31 already establish that `draw_first_person` copies the
+first-person camera global `0x1996A28` whole and rebuilds its projection from
+it. That global therefore IS the pass's camera, and it is readable at the
+draw hook the mod already owns. C-H2-79 reads its position/forward/up at
+detour entry, validates the basis, and publishes it as the compensation's
+viewing term (`Halo2Observer6Dof_SetMeasuredFirstPersonViewingCamera`) before
+`BeginClassicFirstPersonEye` consumes it. The compensation then maps this
+eye's correct camera onto the camera the engine actually holds, whichever it
+is; no model is required and none can be wrong.
+
+The same read publishes the answer as evidence, in the stereo core telemetry
+line: `fpCamMeasured`, `fpCamUnreadable`, `fpCamIsCentre`, `fpCamIsThisEye`,
+`fpCamIsOtherEye`, `fpCamIsOther`. Read those first in the next log:
+- `fpCamIsThisEye` dominant means the engine already draws each eye's weapon
+  from that eye's own camera, so the correct compensation is NONE and both
+  earlier models were adding a spurious offset.
+- `fpCamIsCentre` dominant confirms E-H2-66's model.
+- `fpCamIsOtherEye` dominant confirms E-H2-34's model.
+- `fpCamIsOther` dominant means it is a camera none of the three predicted
+  (for example a stale pair's eye); the measured value is still used, so the
+  rig is placed correctly regardless.
+
+An unreadable or non-finite camera leaves the core-named pass cameras
+untouched and counts `fpCamUnreadable`; the feature degrades to C-H2-78B
+behavior and never disarms an eye, the camera core, or OpenXR.
+
+## E-H2-68 (C-H2-80): parity with Anniversary is only reachable by applying NO Classic-only transform - 2026-08-31
+
+The user's requirement, stated three times and finally unambiguously: Halo 2
+Classic must show the hands and gun at VISUALLY the same position and
+rotation as Anniversary. Not "adjusted", not "re-anchored" - the same.
+
+This is decidable from the code alone, without another headset run:
+
+1. E-H2-45/E-H2-55: both renderers consume the SAME final first-person
+   packet. The controller mount (`Halo2OwnFinalFirstPersonPackets`) writes
+   those matrices once, from the same carriers and the same cfg offsets.
+2. Anniversary draws that packet untouched (the engine rebuilds its Saber
+   first-person view per eye; the mod applies no geometry transform there).
+3. Classic alone then applied `Halo2CompensateClassicFirstPersonEye`:
+   `x' = R_v R_c^T (x - c) + v`. That is a rotation AND a translation of the
+   whole rig - hands, arms and gun together.
+
+Therefore ANY non-identity compensation makes Classic differ from
+Anniversary in exactly the two ways reported. Choosing a different viewing
+camera (E-H2-34 previous-eye, E-H2-66 common centre, E-H2-67 measured) only
+changes HOW MUCH it differs; parity is reachable only when the transform is
+the identity - that is, when Classic applies none at all.
+
+C-H2-80 sets `kHalo2ClassicFirstPersonEyeCompensation = false`. The pass is
+published with `compensate = false`, `BeginClassicFirstPersonEye` finds no
+compensating pass, returns false, and the packet reaches the classic
+renderer byte-identical to the one Anniversary draws. Parity is then a
+property of the construction, not of a tuned value, and cfg offsets move
+both renderers identically because they move the one shared mount.
+
+**The cost, stated plainly rather than discovered later:** this restores
+C-H2-40's classic weapon behavior, in which the weapon carried no per-eye
+disparity of its own - the classic first-person pass draws it from one
+camera (which `fpCamIsCentre/ThisEye/OtherEye/Other`, added in C-H2-79, now
+measures and logs). The gun may therefore read as flatter in depth than
+Anniversary's while sitting in the same place. The user's explicit priority
+is identical placement and rotation; depth parity, if wanted later, must be
+solved WITHOUT a rig-wide transform - the only candidate that preserves
+placement is per-eye projection/camera work inside the pass itself, not
+moving the geometry.
+
+The complete compensation implementation, C-H2-79's measured viewing camera
+and all its telemetry remain compiled and inert behind the constant.
+
+## E-H2-69 (C-H2-81): the weapon's own per-eye depth, in the only shape that cannot break parity - 2026-08-31
+
+The user accepted C-H2-80's construction ("they must be the exact same") and
+then asked for the weapon depth as well, with the explicit constraint that it
+must still look like Anniversary and must not sit closer to the face.
+
+Both are obtainable, and only one mechanism can deliver the depth:
+
+- Writing the classic camera globals at draw time was MEASURED inert
+  (E-H2-31 -> E-H2-34: C-H2-36/37 centred them and the weapon's disparity did
+  not move). It is not a lever; do not retry it.
+- A projection/FOV change (the fp FOV constant, E-H2-35) alters scale, not
+  eye parallax. Parallax requires a per-eye camera POSITION difference.
+- Therefore the per-eye compensation `x' = R_v R_c^T (x - c) + v` is the only
+  remaining mechanism - the same one C-H2-80 disabled.
+
+The compensation is not wrong in principle: rendered from the pass's real
+camera it reproduces `view_correct(x)`, which is exactly the image
+Anniversary produces of the same packet. Its whole history of failure
+(C-H2-63, C-H2-78) is that the viewing camera was PREDICTED. C-H2-79 reads
+it instead (E-H2-67), and C-H2-81 admits the transform only in the shape that
+cannot express the reported defect:
+
+  * the measured viewing camera's orientation must equal this eye's exactly
+    (axis-wise, 1e-4), so the delta rotation is the identity and NO rotation
+    can be introduced - the user's rotation complaint becomes unrepresentable;
+  * its position must lie within 1.5x this eye's own live offset from the
+    pair centre - one half-IPD, exactly the parallax being restored - so the
+    largest displacement the feature can ever apply is the eye offset itself,
+    never the full-baseline or stale-frame errors seen before.
+
+Refusal is not a failure: the packet then reaches the renderer byte-identical
+to Anniversary's (C-H2-80 parity). Admission reproduces Anniversary's own
+image with the correct eye offset. Counted as `fpDepthOn` / `fpDepthOff`
+beside the `fpCamIs*` measurement in the stereo core line, so the next log
+states how often the weapon's depth was actually restored and, when it was
+not, which camera the pass was holding instead.
+
+## E-H2-70 (C-H2-82): the gun's tip is NOT in the packet - the compose-vs-draw camera angle, measured per renderer - 2026-08-31
+
+Decisive negative result from the user's own three headset tests: across
+C-H2-78B (centre model), C-H2-79 (measured camera) and C-H2-80 (NO Classic
+transform at all - the classic renderer receiving the byte-identical packet
+Anniversary receives), the reported Classic weapon defect did not change.
+"Nothing has changed on the gun ... the muzzle is too high."
+
+That eliminates the packet geometry as the cause, by construction: under
+C-H2-80 the two renderers consume identical matrices, so identical matrices
+still produce a tipped gun in Classic and a correct one in Anniversary.
+Everything the compensation work touched is therefore ruled out, and the
+three candidates that changed it were changing the wrong quantity.
+
+A tipped muzzle is also an ORIENTATION error, not a placement one: no
+translation of the rig can raise a barrel tip while leaving its root. The
+remaining difference between the renderers is the frame the final nodes are
+COMPOSED against versus the camera each renderer DRAWS them from:
+
+- The engine calls the packet builder separately per renderer (E-H2-45/55:
+  Anniversary with publish_to_renderer=1, Classic with 0), each with its own
+  position/forward/up arguments. Those arguments are the frame the final
+  first-person nodes are composed against.
+- Anniversary then draws them with the eye camera the mod writes into the
+  Saber record; Classic draws them with whatever its first-person pass holds
+  (C-H2-79 reads that camera).
+- If a renderer's draw camera points differently from its own build camera,
+  its weapon is rotated by exactly that angle - in that renderer alone.
+  Halo 2's observer core owns head pitch (C-H2-23), so a pitch difference
+  between an engine-supplied build camera and a headset-owned draw camera is
+  a concrete mechanism for a muzzle that rides high.
+
+C-H2-82 measures precisely that angle, in both renderers, from live data:
+the observer publishes each renderer's packet-build camera (seqlocked,
+per-renderer slot), and each stereo core reports the angle between it and
+the camera that core's pass draws from. Classic reports
+`fpComposeVsDraw=%.3f deg (max %.3f)` in the stereo core line; Anniversary
+reports `weapon compose-vs-draw angle %.3f deg (max %.3f)` in its own line.
+
+Read the two numbers together in the next log:
+- Classic non-zero while Anniversary is ~0 confirms the mechanism and gives
+  the exact correction, which then belongs at compose time (build the
+  packet against the camera that renderer will draw from) - never as another
+  rig-wide transform, which E-H2-68 proved cannot preserve parity.
+- Both ~0 refutes it, and the divergence is in the projection the classic
+  first-person pass rebuilds (E-H2-35's FOV constant) rather than in any
+  camera; that is the next thing to instrument.
+
+No behavior changes in this candidate: it adds only measurement, on top of
+C-H2-81's parity plus guarded depth.
+
+## E-H2-71 (found statically in H2EK, 2026-08-31): the two renderers compose the first-person weapon in DIFFERENT frames - interpolated vs current
+
+Discovered with Ghidra on the official H2EK `halo2_tag_test.exe` only
+(project `N:\dev\halo3-openxr\out\ghidra-projects\H2EK`, script
+`tools/ghidra/DumpH2FirstPersonCamera.java` / `DumpH2Recon.java`). Retail
+`halo2.dll` was not opened. This supersedes the runtime-probe approach that
+failed twice (E-H2-67, E-H2-70) and it explains every headset result since
+C-H2-63.
+
+Kit `first_person_weapons.cpp` packet builder `FUN_00706e04` (kit RVA
+`0x306E04`, the E-H2-45 outer builder; final argument `param_8` is
+`publish_to_renderer`) composes the weapon like this:
+
+    FUN_004b9c80(camera, position, forward, up);   // 4x3 frame from the
+                                                   // builder's camera args
+    if ((user_data[0] & 4) != 0) {                 // first-person weapon live
+        chosen = user_data + 0x20C8;               // the CURRENT tick frame
+        if (param_8 == 0) {                        // <-- CLASSIC ONLY
+            if (FUN_004d7a90(user_index, 1, tmp))  // interpolated frame
+                chosen = tmp;                      //     ... preferred
+        }
+        FUN_004b9da0(chosen, inverse);             // inverse(chosen)
+        FUN_004ba290(camera);                      // compose into the frame
+    }
+
+`FUN_004b9c80` builds a frame (scale, forward, right = forward x up, up,
+position); `FUN_004b9da0` inverts one. `FUN_004d7a90` is named by its own
+asserts and source path:
+`c:\mcc\release\h2\prjh2a2\original\source\main\halo_frame_interpolator.cpp`,
+`position_index >= 0 && position_index < S3D_INTERPOLATION_POSITIONS_COUNT`,
+`user_index >= 0 && user_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS`. It BLENDS
+the two stored interpolation positions and returns 1 only when it produced a
+blended result; otherwise the builder keeps `user_data + 0x20C8`.
+
+**Therefore, by the engine's own construction:**
+- Anniversary (`publish_to_renderer = 1`) composes the first-person weapon
+  against the CURRENT tick's first-person frame.
+- Classic (`publish_to_renderer = 0`) composes it against the FRAME-
+  INTERPOLATED first-person frame - a blend between the previous and current
+  tick - and only falls back to the current frame when interpolation is
+  unavailable.
+
+The final packet matrices are therefore expressed in two DIFFERENT frames.
+The mod's controller-owned mount writes the same desired matrices into both
+(E-H2-45/E-H2-68 proved the packets are byte-identical), so those identical
+numbers are interpreted in two different frames, and the visible difference
+is exactly a ROTATION - the reported muzzle rise - which no rig translation
+can remove. While the observer owns head pitch (C-H2-23) and the head is
+moving, the interpolated frame's pitch differs from the current frame's, so
+the classic weapon is tipped relative to Anniversary's.
+
+This also explains, retroactively, why C-H2-63/78/79/80/81 changed nothing:
+every one of them altered the post-build per-eye compensation, which is
+downstream of the composition frame and cannot correct a frame difference
+baked in during the build.
+
+**The fix follows from the engine's own fallback:** make the Classic build
+compose against the same current frame Anniversary uses, which is precisely
+what the builder already does when the interpolator reports nothing. That
+requires the retail homolog of kit `FUN_004d7a90`
+(`halo_frame_interpolator` interpolated-position getter, kit RVA `0xd7a90`,
+callers kit `0x306ABC` and `0x306E04`), located by matching against the
+pinned retail module and verified before use - never by copying the kit RVA.
+Reporting 0 from it while, and only while, the mod's own Classic packet
+build is in progress makes both renderers compose in one frame; any failure
+leaves the engine's own behavior untouched.
+
+## E-H2-72 (C-H2-84): C-H2-83 never installed - a 23-byte prologue is shared with the sibling getter
+
+C-H2-83 shipped and the user reported no change. The log says why, and it is
+not the mechanism:
+
+    Halo 2 classic composition frame NOT owned: the interpolated first-person
+    frame getter matched 2 times (expected 1 at +0x7226F0)
+    classic composition frame forced to current 0 of 0
+
+The hook never installed, so E-H2-71's fix never ran and the headset result
+says nothing about it either way. The uniqueness guard did exactly its job.
+
+The mistake was in how uniqueness was checked, not in the binding. The
+candidate's pattern was 23 bytes, and it was verified by counting in the RAW
+FILE. The runtime scanner walks the LOADED IMAGE (sections at their virtual
+addresses). Counting the same bytes in a correct loaded-image layout:
+
+    23 bytes -> 2 matches: 0x7226F0 AND 0x7227A0
+    24 bytes -> 1 match:   0x7226F0
+    28 bytes -> 1 match:   0x7226F0
+
+`0x7227A0` is the immediately following sibling getter, which shares the
+prologue `48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20 48 83
+3D`. The pinned target is still `0x7226F0`, unchanged and independently
+verified (E-H2-71: the builder's own call order and the body's `0x38` stride
+and `0x1A39D44`/`0x1A39D48` bases).
+
+C-H2-84 uses 28 bytes, unique with margin. `tools/h2-interp-signature.py`
+builds the loaded-image layout and reports match counts per prefix length;
+use it - not a file search - for every future Halo 2 signature.
+
+**Rule this establishes:** count signature matches in the LOADED IMAGE
+layout, never in the file, and never ship a pattern whose uniqueness was
+proven the other way. A hook that refuses to install produces exactly the
+same headset report as a fix that does not work; always read the arm line
+and the feature's own counter before drawing any conclusion from a run.
+
+## E-H2-73 (C-H2-85): the composition frame is NOT the visible offset, and the Classic match is a dial
+
+C-H2-84 installed and ran: the log shows `Halo 2 classic composition frame
+OWNED` and `classic composition frame forced to current 674 of 1826`. The
+user reports the Classic gun and hands unchanged. **E-H2-71's mechanism is
+therefore disproven as the cause of the visible offset** - it is a real
+difference between the renderers, but not the one the player sees. Do not
+retry it; the hook remains, inert in effect, and can be removed later as its
+own understood change.
+
+That closes the last engine-level hypothesis available without new evidence.
+Five candidates (C-H2-78 centre model, C-H2-79 measured camera, C-H2-80 no
+transform at all, C-H2-81 guarded depth, C-H2-83/84 composition frame) each
+changed a different stage of the pipeline and none moved the gun, while the
+packets were proven byte-identical to Anniversary's (E-H2-68). The remaining
+difference is inside the classic renderer's own draw of that data, which the
+mod does not own and which no further guess should be spent on.
+
+C-H2-85 therefore stops theorising and gives the player direct control, which
+is what was asked for: six CLASSIC-ONLY dials
+(`halo2_classic_gun_pitch_deg` / `yaw` / `roll` /
+`halo2_classic_gun_forward_m` / `right_m` / `up_m`) that rotate and offset
+the visible gun AND the hands together, applied to both controller carriers
+in the Classic packet path only. Anniversary never takes that branch and no
+other title reads the keys. `Halo2ApplyCarrierTrim` rotates about the
+carrier's own axes - roll, pitch, yaw - pivoting at the controller position
+so the grip stays in the hand while the muzzle swings, then offsets along
+those axes scaled by world scale. All-zero is byte-identical to C-H2-84.
+
+They are live in the F1 menu ("Halo 2 Classic match"), so the player stands
+in Classic, dials until it matches, presses Tab to compare with Anniversary,
+and saves. Whatever values land there are then a MEASUREMENT of the residual
+difference, in degrees and metres - the number this investigation could not
+obtain any other way, and the right input to a future engine-level fix.

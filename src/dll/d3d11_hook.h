@@ -14,6 +14,9 @@ bool InstallD3D11Hooks();
 // leave the player without any aiming marker.
 bool D3D_Halo2NativeCrosshairCaptured();
 bool D3D_Halo2HudShaderPathAvailable();
+// Stage 3BH/3BR's Draw/DrawIndexed framing pin is required before Halo 4's
+// optional authored-reticle hooks may hide the native flat CUI copy.
+bool D3D_Halo4AuthoredReticleDrawPathAvailable();
 void D3D_GetHalo2HudTelemetry(
     uint64_t& gameplayShadersRegistered,
     uint64_t& crosshairShadersRegistered,

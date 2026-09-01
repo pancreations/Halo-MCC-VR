@@ -4328,6 +4328,26 @@ int main()
                   locked, GameTitle::HaloCE, 77, capability, 1100) ==
                   CinematicControlState::AuthoredLocked,
             "a mock future title receives the generic theatre contract without a title check");
+        const CinematicControlPublication halo4Locked{
+            GameTitle::Halo4, 91,
+            CinematicControlState::AuthoredLocked, 2000};
+        Check(ResolveCinematicControl(
+                  halo4Locked, GameTitle::Halo4, 91, capability, 2250) ==
+                  CinematicControlState::AuthoredLocked &&
+              ResolveCinematicControl(
+                  halo4Locked, GameTitle::Halo3, 91, capability, 2250) ==
+                  CinematicControlState::Unknown &&
+              ResolveCinematicControl(
+                  halo4Locked, GameTitle::Halo4, 92, capability, 2250) ==
+                  CinematicControlState::Unknown &&
+              ResolveCinematicControl(
+                  halo4Locked, GameTitle::Halo4, 91, 0, 2250) ==
+                  CinematicControlState::Unknown &&
+              ResolveCinematicControl(
+                  halo4Locked, GameTitle::Halo4, 91, capability, 2501) ==
+                  CinematicControlState::Unknown,
+            "Stage 3CB admits Halo 4 theatre only for the matching live title, "
+            "generation, capability, and fresh publication");
         Check(CutsceneTheaterRequested(
                   true, CinematicControlState::AuthoredLocked) &&
               !CutsceneTheaterRequested(
@@ -4386,6 +4406,104 @@ int main()
                   nullptr, nullptr, -1) ==
                   CinematicControlState::PlayerControlled,
             "ODST missing or invalid look proof fails closed without weakening known gameplay state");
+        const float halo4LockedLook[4] = {};
+        const float halo4NoLookRate[4] = {};
+        const float halo4FreeLook[4] = {
+            0.0f, -0.001f, 0.0f, 0.0f};
+        const float halo4OpeningLookRate[4] = {
+            0.0f, 0.001f, 0.0f, 0.0f};
+        const float halo4BoundaryLook[4] = {
+            kHalo4CinematicLookFreedomEpsilon,
+            -kHalo4CinematicLookFreedomEpsilon, 0.0f, 0.0f};
+        const float halo4BoundaryRate[4] = {
+            0.0f, kHalo4CinematicLookFreedomEpsilon,
+            -kHalo4CinematicLookFreedomEpsilon, 0.0f};
+        const float halo4InvalidLook[4] = {
+            0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
+        const float halo4InvalidRate[4] = {
+            0.0f, 0.0f, std::numeric_limits<float>::infinity(), 0.0f};
+        Check(kHalo4CinematicCameraType == 6 &&
+                  kHalo4CinematicMaximumTicks == 360000 &&
+                  std::fabs(
+                      kHalo4CinematicLookFreedomEpsilon - 0.0001f) < 1.0e-8f,
+            "Stage 3BX preserves Halo 4's proven camera type, tick bound, and "
+            "look-freedom epsilon");
+        Check(ClassifyHalo4CinematicControl(
+                  false, false, false, 0, nullptr, nullptr, 0) ==
+                  CinematicControlState::Unknown &&
+              ClassifyHalo4CinematicControl(
+                  true, false, false, 0, nullptr, nullptr, -1) ==
+                  CinematicControlState::PlayerControlled,
+            "Stage 3BX requires cinematic globals but treats a proven inactive "
+            "cinematic as player-controlled before consulting camera state");
+        Check(ClassifyHalo4CinematicControl(
+                  true, true, false, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4NoLookRate, 0) ==
+                  CinematicControlState::Unknown &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType - 1,
+                  halo4LockedLook, halo4NoLookRate, 0) ==
+                  CinematicControlState::Unknown &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  nullptr, halo4NoLookRate, 0) ==
+                  CinematicControlState::Unknown &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4NoLookRate, -1) ==
+                  CinematicControlState::Unknown &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4NoLookRate,
+                  kHalo4CinematicMaximumTicks + 1) ==
+                  CinematicControlState::Unknown,
+            "Stage 3BX leaves theatre unknown for missing or wrong camera state, "
+            "missing look limits, and invalid interpolation ticks");
+        Check(ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, nullptr, 0) ==
+                  CinematicControlState::AuthoredLocked &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4InvalidRate, 0) ==
+                  CinematicControlState::AuthoredLocked,
+            "Stage 3BX locks a zero-tick authored shot without requiring or "
+            "consulting look-rate storage");
+        Check(ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4FreeLook, halo4NoLookRate, 0) ==
+                  CinematicControlState::PlayerControlled &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4InvalidLook, halo4NoLookRate, 0) ==
+                  CinematicControlState::PlayerControlled,
+            "Stage 3BX treats finite or malformed live look freedom as player "
+            "control, never as room-fixed theatre");
+        Check(ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, nullptr, 1) ==
+                  CinematicControlState::Unknown &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4OpeningLookRate, 1) ==
+                  CinematicControlState::PlayerControlled &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4InvalidRate, 1) ==
+                  CinematicControlState::PlayerControlled &&
+              ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4LockedLook, halo4NoLookRate,
+                  kHalo4CinematicMaximumTicks) ==
+                  CinematicControlState::AuthoredLocked,
+            "Stage 3BX requires finite zero look rates only while interpolation "
+            "is pending, including at the proven maximum tick count");
+        Check(ClassifyHalo4CinematicControl(
+                  true, true, true, kHalo4CinematicCameraType,
+                  halo4BoundaryLook, halo4BoundaryRate, 1) ==
+                  CinematicControlState::AuthoredLocked,
+            "Stage 3BX keeps exact epsilon-boundary angle and rate noise inside "
+            "the authored-lock classification");
         Check(ClassifyReachCinematicControl(true, 1) ==
                   CinematicControlState::AuthoredLocked &&
               ClassifyReachCinematicControl(true, 0) ==
@@ -5946,6 +6064,90 @@ int main()
                   2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB),
         "Blit direct-copy admission exactly requires equal dimensions, "
         "matching format families, and an unmultisampled source");
+    {
+        Check(VrBlitNeedsHalo4ReticleAlphaRepair(true, 512, 512) &&
+                  !VrBlitNeedsHalo4ReticleAlphaRepair(false, 512, 512) &&
+                  !VrBlitNeedsHalo4ReticleAlphaRepair(true, 511, 512) &&
+                  !VrBlitNeedsHalo4ReticleAlphaRepair(true, 512, 511) &&
+                  !VrBlitNeedsHalo4ReticleAlphaRepair(true, 2912, 2100),
+            "Stage 3BO alpha repair selects only Halo 4's 512x512 authored "
+            "reticle destination");
+        const bool halo4ReticleFastPath =
+            !VrBlitNeedsHalo4ReticleAlphaRepair(true, 512, 512) &&
+            VrBlitCanUseDirectCopy(
+                512, 512, DXGI_FORMAT_R8G8B8A8_UNORM, 1,
+                512, 512, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+        const bool otherTitleReticleFastPath =
+            !VrBlitNeedsHalo4ReticleAlphaRepair(false, 512, 512) &&
+            VrBlitCanUseDirectCopy(
+                512, 512, DXGI_FORMAT_R8G8B8A8_UNORM, 1,
+                512, 512, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+        const bool halo4EyeFastPath =
+            !VrBlitNeedsHalo4ReticleAlphaRepair(true, 2912, 2100) &&
+            VrBlitCanUseDirectCopy(
+                2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM, 1,
+                2912, 2100, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+        Check(!halo4ReticleFastPath && otherTitleReticleFastPath &&
+                  halo4EyeFastPath,
+            "Stage 3BO forces the Halo 4 reticle through the alpha-repair "
+            "shader without disabling direct copies for other blits");
+        Check(VrResolveAuthoredReticleCoverage(false, 17, 900) == 17 &&
+                  VrResolveAuthoredReticleCoverage(true, 17, 900) == 900 &&
+                  VrResolveAuthoredReticleCoverage(true, 901, 900) == 901,
+            "Stage 3BL uses RGB coverage only for Halo 4 and never discards "
+            "stronger alpha coverage");
+        Check(VrHalo4ReticleRtvNeedsTypedFallback(true, true, true) &&
+                  !VrHalo4ReticleRtvNeedsTypedFallback(false, true, true) &&
+                  !VrHalo4ReticleRtvNeedsTypedFallback(true, false, true) &&
+                  !VrHalo4ReticleRtvNeedsTypedFallback(true, true, false),
+            "Stage 3BQ retries a typed RTV only for a failed Halo 4 authored-"
+            "reticle view creation");
+        bool writebackTruthTable = true;
+        for (uint32_t bits = 0; bits < 16; ++bits)
+        {
+            const bool halo4Title = (bits & 1u) != 0;
+            const bool contextReady = (bits & 2u) != 0;
+            const bool sceneAlreadyLatched = (bits & 4u) != 0;
+            const bool eyeCacheReady = (bits & 8u) != 0;
+            for (int eye = -1; eye <= 2; ++eye)
+            {
+                const bool expected = halo4Title && (eye == 0 || eye == 1) &&
+                    contextReady && sceneAlreadyLatched && eyeCacheReady;
+                writebackTruthTable = writebackTruthTable &&
+                    VrHalo4SceneWritebackEligible(
+                        halo4Title, eye, contextReady, sceneAlreadyLatched,
+                        eyeCacheReady) == expected;
+            }
+        }
+        Check(writebackTruthTable,
+            "Stage 3BU scene writeback requires Halo 4, a completed eye, "
+            "context, a pre-existing scene target, and that eye's cache");
+        constexpr uintptr_t authoredTarget = 0x1000;
+        constexpr uintptr_t discardTarget = 0x2000;
+        Check(VrHalo4AuthoredReticleDrawTargetMatches(
+                  true, true, true, true, authoredTarget,
+                  authoredTarget, discardTarget) &&
+                  !VrHalo4AuthoredReticleDrawTargetMatches(
+                      true, true, true, true, discardTarget,
+                      authoredTarget, discardTarget) &&
+                  VrHalo4AuthoredReticleDrawTargetMatches(
+                      true, true, true, false, discardTarget,
+                      authoredTarget, discardTarget) &&
+                  !VrHalo4AuthoredReticleDrawTargetMatches(
+                      true, true, true, false, authoredTarget,
+                      authoredTarget, discardTarget) &&
+                  !VrHalo4AuthoredReticleDrawTargetMatches(
+                      false, true, true, true, authoredTarget,
+                      authoredTarget, discardTarget) &&
+                  !VrHalo4AuthoredReticleDrawTargetMatches(
+                      true, false, true, true, authoredTarget,
+                      authoredTarget, discardTarget) &&
+                  !VrHalo4AuthoredReticleDrawTargetMatches(
+                      true, true, false, true, authoredTarget,
+                      authoredTarget, discardTarget),
+            "Stage 3BH/3BR draw framing admits only the active mode-selected "
+            "slot-0 private target");
+    }
     Check(VrBlitResourcesReady(true, true, false, true) &&
               !VrBlitResourcesReady(false, true, true, true) &&
               !VrBlitResourcesReady(true, false, true, true) &&
@@ -7896,8 +8098,12 @@ int main()
                 right.up[2] = 1.0f;
                 Halo2CameraBasis left = right;
                 left.position[0] = -10.0f;
+                // The compose camera: in the stock game the weapon points down
+                // it, and this synthetic identity root's barrel is +X, so the
+                // camera looks down +X. (C-H2-86's automatic barrel swing is
+                // then the identity here; it has its own test.)
                 Halo2CameraBasis authoredRoot{};
-                authoredRoot.forward[1] = 1.0f;
+                authoredRoot.forward[0] = 1.0f;
                 authoredRoot.up[2] = 1.0f;
                 Halo2FinalPacketOwnershipResult result{};
                 const bool ownedPackets = Halo2OwnFinalFirstPersonPackets(
@@ -8042,8 +8248,14 @@ int main()
                 Halo2FirstPersonTransform visibleRightDelta{};
                 Halo2FinalPacketOwnershipResult visibleHands{};
                 Halo2FinalPacketOwnershipResult visibleGun{};
+                // The legacy C-H2-63/65 visible-consumer path maps the render
+                // camera's frame onto the carrier; its expectations assume the
+                // camera looks down the carrier's own +Y.
+                Halo2CameraBasis legacyCamera{};
+                legacyCamera.forward[1] = 1.0f;
+                legacyCamera.up[2] = 1.0f;
                 const bool ownedVisibleHands = Halo2OwnVisibleFirstPersonHands(
-                    hands, kPacketNodes, remap, packetBinding, authoredRoot,
+                    hands, kPacketNodes, remap, packetBinding, legacyCamera,
                     right, left, false, 2.0f, 0.5f, 1.0f,
                     visibleRightDelta, visibleHands);
                 const bool ownedVisibleGun = ownedVisibleHands &&
@@ -8093,6 +8305,132 @@ int main()
                 std::memcpy(
                     invalidClassicBefore, invalidClassic,
                     sizeof(invalidClassic));
+                // C-H2-86: automatic barrel alignment. Whatever the
+                // authored root frame says, the stock barrel line (the
+                // compose camera's forward) must land exactly on the aim ray.
+                {
+                    Halo2FirstPersonTransform wrist{}, root{};
+                    wrist.scale = 1.0f; root.scale = 1.0f;
+                    // identity wrist at a grip offset; root frame tipped 12
+                    // degrees so its +X is NOT the camera forward
+                    wrist.rotation[0] = wrist.rotation[4] = wrist.rotation[8] = 1.0f;
+                    wrist.translation[0] = 0.4f; wrist.translation[2] = -0.1f;
+                    const float t = 12.0f * 0.0174533f;
+                    root.rotation[0] = std::cos(t);  root.rotation[2] = -std::sin(t);
+                    root.rotation[4] = 1.0f;
+                    root.rotation[6] = std::sin(t);  root.rotation[8] = std::cos(t);
+                    Halo2CameraBasis compose{};
+                    compose.forward[0] = 1.0f;      // stock barrel = +X
+                    compose.up[2] = 1.0f;
+                    Halo2CameraBasis carrier{};
+                    carrier.forward[0] = 0.6f; carrier.forward[1] = 0.8f;  // aim ray
+                    carrier.up[2] = 1.0f;
+                    carrier.position[1] = 2.0f;
+                    Halo2FirstPersonTransform delta{}, desired{};
+                    Check(Halo2BuildAuthoredBarrelDelta(
+                              wrist, root, compose, carrier, 1.0f, delta, desired),
+                        "C-H2-86 barrel delta builds");
+                    float barrel[3] = {0.0f, 0.0f, 0.0f};
+                    for (int c = 0; c < 3; ++c)
+                        for (int r = 0; r < 3; ++r)
+                            barrel[r] += delta.rotation[c * 3 + r] * compose.forward[c];
+                    const float dot = barrel[0] * carrier.forward[0] +
+                        barrel[1] * carrier.forward[1] + barrel[2] * carrier.forward[2];
+                    // The swing is disabled (headset: it tilted Anniversary);
+                    // the mount must again map the root +X onto the ray
+                    // exactly, with no dependence on the compose camera.
+                    float rootX[3] = {0.0f, 0.0f, 0.0f};
+                    const float unitX[3] = {1.0f, 0.0f, 0.0f};
+                    for (int c = 0; c < 3; ++c)
+                        for (int r = 0; r < 3; ++r)
+                            rootX[r] += delta.rotation[c * 3 + r] *
+                                (root.rotation[0 * 3 + c] * unitX[0] +
+                                 root.rotation[1 * 3 + c] * unitX[1] +
+                                 root.rotation[2 * 3 + c] * unitX[2]);
+                    (void)dot;
+                    const float rootDot = rootX[0] * carrier.forward[0] +
+                        rootX[1] * carrier.forward[1] + rootX[2] * carrier.forward[2];
+                    Check(rootDot > 0.9999f,
+                        "C-H2-87 the authored root +X lands exactly on the aim "
+                        "ray (C-H2-86 swing disabled)");
+                    Check(std::fabs(desired.translation[1] - 2.0f) < 1e-4f &&
+                              std::fabs(desired.translation[0]) < 1e-4f,
+                        "C-H2-86 the wrist still pivots at the controller");
+                }
+                // C-H2-85: the Halo 2 Classic-only mount trim.
+                {
+                    Halo2CameraBasis base{};
+                    base.forward[1] = 1.0f;      // +Y forward
+                    base.up[2] = 1.0f;           // +Z up
+                    base.position[0] = 1.0f;
+                    Halo2CameraBasis out{};
+                    Check(Halo2ApplyCarrierTrim(
+                              base, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                              0.33f, out) &&
+                              Halo2CameraBasesNearlyEqual(out, base),
+                        "C-H2-85 all-zero trim leaves the carrier identical");
+                    // +90 deg pitch about the carrier's right axis takes
+                    // forward from +Y to +Z (muzzle up).
+                    Check(Halo2ApplyCarrierTrim(
+                              base, 90.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                              0.33f, out) &&
+                              std::fabs(out.forward[2] - 1.0f) < 1e-4f &&
+                              std::fabs(out.forward[1]) < 1e-4f,
+                        "C-H2-85 pitch raises the muzzle about the gun's own "
+                        "right axis");
+                    // Offsets ride the carrier's own axes and scale to world.
+                    Check(Halo2ApplyCarrierTrim(
+                              base, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f,
+                              0.5f, out) &&
+                              std::fabs(out.position[1] - 1.0f) < 1e-4f &&
+                              std::fabs(out.position[0] - 1.0f) < 1e-4f,
+                        "C-H2-85 forward offset moves along the gun's own "
+                        "forward axis, scaled to world units");
+                    Halo2CameraBasis invalid{};
+                    Check(!Halo2ApplyCarrierTrim(
+                              invalid, 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                              0.33f, out) &&
+                              !Halo2ApplyCarrierTrim(
+                                  base, std::numeric_limits<float>::quiet_NaN(),
+                                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.33f, out),
+                        "C-H2-85 refuses an invalid basis or trim");
+                }
+                // E-H2-69 (C-H2-81): the depth guard. Parity is the floor -
+                // the compensation may run only when it cannot rotate the
+                // rig and cannot move it further than one half-IPD.
+                Halo2CameraBasis correctEye{};
+                correctEye.position[0] = 0.03f;
+                correctEye.forward[1] = 1.0f;
+                correctEye.up[2] = 1.0f;
+                Halo2CameraBasis sameOrientation = correctEye;
+                sameOrientation.position[0] = 0.0f;   // the pair centre
+                Check(Halo2ClassicEyeCompensationAdmissible(
+                          correctEye, sameOrientation, 0.045f),
+                    "C-H2-81 admits a half-IPD viewing camera that shares the "
+                    "eye's orientation - the parallax it must restore");
+                Halo2CameraBasis farAway = sameOrientation;
+                farAway.position[0] = -0.40f;
+                Check(!Halo2ClassicEyeCompensationAdmissible(
+                          correctEye, farAway, 0.045f),
+                    "C-H2-81 refuses a viewing camera beyond one half-IPD, so "
+                    "no measurement can displace the rig");
+                Halo2CameraBasis rotated = sameOrientation;
+                rotated.forward[0] = 0.05f;
+                rotated.forward[1] = 0.9987f;
+                Check(!Halo2ClassicEyeCompensationAdmissible(
+                          correctEye, rotated, 0.045f),
+                    "C-H2-81 refuses any viewing camera whose orientation "
+                    "differs, so no measurement can rotate the rig");
+                Halo2CameraBasis invalidBasis{};
+                Check(!Halo2ClassicEyeCompensationAdmissible(
+                          correctEye, invalidBasis, 0.045f) &&
+                          !Halo2ClassicEyeCompensationAdmissible(
+                              correctEye, sameOrientation, 0.0f) &&
+                          !Halo2ClassicEyeCompensationAdmissible(
+                              correctEye, sameOrientation,
+                              std::numeric_limits<float>::quiet_NaN()),
+                    "C-H2-81 refuses an invalid basis or bound and falls back "
+                    "to Anniversary parity");
                 Check(!Halo2CompensateClassicFirstPersonEye(
                           invalidClassic, 1, classicPass) &&
                           std::memcmp(
@@ -9292,6 +9630,16 @@ int main()
                   halo4CuiInstall)
                    .cleanupFeature,
         "A partial Halo 4 CUI install requests feature-local cleanup only");
+    Check(Halo4CuiReticleOwnsNativeSuppression(true, true) &&
+              !Halo4CuiReticleOwnsNativeSuppression(true, false) &&
+              !Halo4CuiReticleOwnsNativeSuppression(false, true) &&
+              Halo4DecideCuiReticleAction(
+                  true,
+                  Halo4CuiReticleOwnsNativeSuppression(true, false),
+                  true, kHalo4CuiCommandBegin, true, true, 0, false) ==
+                  Halo4CuiReticleAction::DrawStock,
+        "A fatal Halo 4 reticle-resource failure makes both optional hooks "
+        "pass through to the stock CUI reticle without touching camera/OpenXR");
     for (const Halo4CuiReticleOptionalInstallState state : {
              Halo4CuiReticleOptionalInstallState::StockFallback,
              Halo4CuiReticleOptionalInstallState::CleanupRequired,
@@ -9324,6 +9672,214 @@ int main()
                   true, true, false),
         "Halo 4 fail-closes to the procedural bullet-ray reticle whenever "
         "the authored hook is live and native-reticle suppression is enabled");
+
+    Check(Halo4CuiReticleUsesProceduralFallback(true, true, true) &&
+              Halo4CuiReticleNeedsProceduralBootstrap(
+                  true, false, true, true) &&
+              !Halo4CuiReticleNeedsProceduralBootstrap(
+                  true, true, true, true) &&
+              !AuthoredReticleLayerHasContent(true, false) &&
+              AuthoredReticleLayerHasContent(true, true),
+        "Stage 3BU's raw procedural request is effective only during authored "
+        "bootstrap; validated held Halo 4 art replaces it");
+
+    Check(kHalo4CuiCommandBegin == 0x28 &&
+              kHalo4CuiCommandEnd == 0x29 &&
+              kHalo4CuiCommandPolyart == 0x20 &&
+              kHalo4CuiCommandPolyartThreeColor == 0x1F &&
+              kHalo4CuiCommandBeginPayloadSize == 0x0C,
+        "Stage 3BP keeps the evidence-backed Halo 4 CUI selector commands");
+    {
+        Halo4CuiCaptureSelectionState selection{};
+        Check(!Halo4CuiCaptureKeepsTopTransform(selection) &&
+                  !Halo4CuiCaptureMarkPolyartBeforeDraw(
+                      selection, true, kHalo4CuiCommandPolyart),
+            "Stage 3BP ignores Polyart outside the reticle container");
+        Halo4CuiCaptureAdvanceAfterDraw(
+            selection, false, kHalo4CuiCommandBegin,
+            kHalo4CuiCommandBeginPayloadSize);
+        Halo4CuiCaptureAdvanceAfterDraw(
+            selection, true, kHalo4CuiCommandBegin,
+            kHalo4CuiCommandBeginPayloadSize - 1);
+        Check(!selection.insideReticleContainer &&
+                  !selection.polyartContainer,
+            "Stage 3BP admits only a readable 0x28/0x0C reticle container");
+        Halo4CuiCaptureAdvanceAfterDraw(
+            selection, true, kHalo4CuiCommandBegin,
+            kHalo4CuiCommandBeginPayloadSize);
+        Check(selection.insideReticleContainer &&
+                  !selection.polyartContainer &&
+                  Halo4CuiCaptureKeepsTopTransform(selection) &&
+                  !Halo4CuiCaptureMarkPolyartBeforeDraw(
+                      selection, true, 0x0B),
+            "Stage 3BP keeps bitmap weapon art on target inside the selected "
+            "reticle container");
+        Check(Halo4CuiCaptureMarkPolyartBeforeDraw(
+                  selection, true, kHalo4CuiCommandPolyart) &&
+                  selection.polyartContainer &&
+                  !Halo4CuiCaptureKeepsTopTransform(selection),
+            "Stage 3BP moves 0x20 Polyart indicators out of the authored "
+            "weapon-reticle capture");
+        Halo4CuiCaptureAdvanceAfterDraw(
+            selection, true, kHalo4CuiCommandEnd, 0);
+        Check(!selection.insideReticleContainer &&
+                  !selection.polyartContainer,
+            "Stage 3BP clears both selector flags at the matching CUI end");
+        Halo4CuiCaptureAdvanceAfterDraw(
+            selection, true, kHalo4CuiCommandBegin,
+            kHalo4CuiCommandBeginPayloadSize);
+        Check(Halo4CuiCaptureMarkPolyartBeforeDraw(
+                  selection, true, kHalo4CuiCommandPolyartThreeColor) &&
+                  !Halo4CuiCaptureKeepsTopTransform(selection),
+            "Stage 3BP applies the same exclusion to 0x1F three-colour "
+            "Polyart indicators");
+    }
+    {
+        const float threshold = kHalo4CuiCaptureWidth * 0.5f;
+        float adjusted = 0.0f;
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  0.0f, false, adjusted) &&
+                  std::fabs(adjusted - 4134.312f) < 0.001f,
+            "Stage 3BP shifts an unwanted on-screen child one measured CUI "
+            "capture width off screen");
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  adjusted, false, adjusted) &&
+                  std::fabs(adjusted - 4134.312f) < 0.001f,
+            "Stage 3BP translation is idempotent for an already hidden child");
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  kHalo4CuiCaptureWidth, true, adjusted) &&
+                  std::fabs(adjusted) < 0.001f &&
+                  Halo4CuiCaptureAdjustedTranslationX(
+                      0.0f, true, adjusted) &&
+                  std::fabs(adjusted) < 0.001f,
+            "Stage 3BP restores selected weapon art exactly once and leaves "
+            "already-visible art fixed");
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  threshold, true, adjusted) &&
+                  std::fabs(adjusted + threshold) < 0.001f &&
+                  Halo4CuiCaptureAdjustedTranslationX(
+                      threshold, false, adjusted) &&
+                  std::fabs(adjusted - threshold) < 0.001f,
+            "Stage 3BP owns the measured half-width boundary without "
+            "oscillation");
+        Check(!Halo4CuiCaptureAdjustedTranslationX(
+                  std::numeric_limits<float>::quiet_NaN(), true, adjusted),
+            "Stage 3BP rejects a non-finite CUI translation");
+    }
+    Check(std::fabs(kHalo4CuiCaptureWidth - 4134.312f) < 0.001f &&
+              std::fabs(kHalo4CuiCaptureHeight - 1346.196f) < 0.001f &&
+              std::fabs(kHalo4CuiCaptureTextureExtent - 512.0f) < 0.001f &&
+              std::fabs(kHalo4CuiCaptureCenter - 256.0f) < 0.001f &&
+              std::fabs(kHalo4CuiCaptureVerticalBias - 104.0f) < 0.001f &&
+              std::fabs(kHalo4CuiCaptureScale - 2.5f) < 0.001f,
+        "Stages 3BN and 3BR preserve Halo 4's measured capture framing");
+    {
+        const Halo4CuiCaptureViewport base{
+            56.0f, 10.0f, 400.0f, 200.0f, 0.125f, 0.875f};
+        Halo4CuiCaptureViewport viewport{};
+        Check(Halo4BuildCuiCaptureDrawViewport(base, 4, 3, viewport) &&
+                  std::fabs(viewport.topLeftX - (-244.0f)) < 0.001f &&
+                  std::fabs(viewport.topLeftY - (-176.941f)) < 0.002f &&
+                  std::fabs(viewport.width - 1000.0f) < 0.001f &&
+                  std::fabs(viewport.height - 750.0f) < 0.001f &&
+                  std::fabs(viewport.minDepth - 0.125f) < 0.001f &&
+                  std::fabs(viewport.maxDepth - 0.875f) < 0.001f &&
+                  std::fabs(base.topLeftX - 56.0f) < 0.001f &&
+                  std::fabs(base.topLeftY - 10.0f) < 0.001f &&
+                  std::fabs(base.width - 400.0f) < 0.001f &&
+                  std::fabs(base.height - 200.0f) < 0.001f,
+            "Stages 3BN and 3BR derive aspect-correct 2.5x Halo 4 capture "
+            "framing without mutating the base viewport");
+        Check(Halo4BuildCuiCaptureDrawViewport(base, 0, 3, viewport) &&
+                  std::fabs(viewport.topLeftX - (-244.0f)) < 0.001f &&
+                  std::fabs(viewport.topLeftY - (-619.0f)) < 0.001f &&
+                  std::fabs(viewport.width - 1000.0f) < 0.001f &&
+                  std::fabs(viewport.height - 500.0f) < 0.001f,
+            "Stage 3BN preserves the measured 104-pixel fallback bias when "
+            "backbuffer aspect is unavailable");
+        Halo4CuiCaptureViewport invalid = base;
+        invalid.width = 0.0f;
+        Check(!Halo4BuildCuiCaptureDrawViewport(invalid, 4, 3, viewport),
+            "Halo 4 capture framing rejects a zero-width viewport");
+        invalid = base;
+        invalid.topLeftY = std::numeric_limits<float>::quiet_NaN();
+        Check(!Halo4BuildCuiCaptureDrawViewport(invalid, 4, 3, viewport),
+            "Halo 4 capture framing rejects non-finite viewport input");
+    }
+    {
+        // Stage 3CX fold-in: the live bias law hits every capture-dump
+        // anchor the 3CX builder pinned, with the builder's own tolerances.
+        Check(std::fabs(Halo4CuiLiveVerticalBiasRatio(336.549f) -
+                  kHalo4CuiCaptureVerticalBiasRatio) < 2e-5f,
+            "3CX live bias reproduces the calibrated layout bit-tight");
+        Check(std::fabs(Halo4CuiLiveVerticalBiasRatio(731.878f) -
+                  0.003274f) < 2e-5f,
+            "3CX live bias hits the 731.878 capture-dump anchor");
+        Check(std::fabs(Halo4CuiLiveVerticalBiasRatio(582.373f) -
+                  0.006040f) < 2e-5f,
+            "3CX live bias hits the 582.373 capture-dump anchor");
+        float previous = std::numeric_limits<float>::infinity();
+        bool monotone = true;
+        for (int step = 0; step < 80; ++step)
+        {
+            const float y = 336.549f +
+                (731.878f - 336.549f) * static_cast<float>(step) / 79.0f;
+            const float f = Halo4CuiLiveVerticalBiasRatio(y);
+            if (f > previous + 1e-4f)
+                monotone = false;
+            previous = f;
+        }
+        Check(monotone,
+            "3CX live bias is monotone decreasing across the observed "
+            "layout range (sub-pixel tolerance)");
+        Check(Halo4CuiLiveVerticalBiasRatio(300.0f) <=
+                      kHalo4CuiCaptureVerticalBiasRatio &&
+                  Halo4CuiLiveVerticalBiasRatio(100000.0f) >= 0.0f,
+            "3CX live bias clamps to [0, calibrated] outside the anchors");
+        Check(Halo4CuiLiveVerticalBiasRatio(0.0f) ==
+                      kHalo4CuiCaptureVerticalBiasRatio &&
+                  Halo4CuiLiveVerticalBiasRatio(-582.373f) ==
+                      kHalo4CuiCaptureVerticalBiasRatio &&
+                  Halo4CuiLiveVerticalBiasRatio(
+                      std::numeric_limits<float>::quiet_NaN()) ==
+                      kHalo4CuiCaptureVerticalBiasRatio,
+            "3CX live bias keeps the calibrated ratio for an invalid live "
+            "baseY, exactly like the payload skipping its refresh");
+        Check(std::fabs(Halo4CuiLiveCaptureScale(4134.312f) - 2.5f) < 1e-4f,
+            "3CX live zoom reproduces the accepted 2.5x on the calibrated "
+            "canvas");
+        Check(std::fabs(Halo4CuiLiveCaptureScale(6543.256f) -
+                  2.5f * 185.0f / 286.0f) < 1e-4f,
+            "3CX live zoom hits the measured 6543.256 size anchor");
+        Check(Halo4CuiLiveCaptureScale(0.0f) == kHalo4CuiCaptureScale &&
+                  Halo4CuiLiveCaptureScale(-1.0f) == kHalo4CuiCaptureScale &&
+                  Halo4CuiLiveCaptureScale(
+                      std::numeric_limits<float>::quiet_NaN()) ==
+                      kHalo4CuiCaptureScale,
+            "3CX live zoom keeps the calibrated 2.5x for an invalid live "
+            "hide");
+    }
+    {
+        // Stage 3CR fold-in: the selector un-hides by the LIVE hide shift.
+        // On the 6543.256 canvas the hidden reticle sits at 3*halfWidth =
+        // 4907.442; a frozen 4134.312 left it outside the window.
+        const float liveHide = 6543.256f;
+        float adjusted = 0.0f;
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  4907.442f, true, liveHide, adjusted) &&
+                  std::fabs(adjusted - (-1635.814f)) < 0.01f,
+            "3CR restores the hidden reticle to its stock -halfWidth on a "
+            "live canvas");
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  -1635.814f, false, liveHide, adjusted) &&
+                  std::fabs(adjusted - 4907.442f) < 0.01f,
+            "3CR pushes an unwanted visible child off screen by the live "
+            "hide shift");
+        Check(Halo4CuiCaptureAdjustedTranslationX(
+                  kHalo4CuiCaptureWidth, true, 0.0f, adjusted) &&
+                  std::fabs(adjusted) < 0.001f,
+            "3CR falls back to the calibrated width when no hide is live");
+    }
 
     using CuiAction = Halo4CuiReticleAction;
     Check(Halo4DecideCuiReticleAction(
@@ -11681,8 +12237,10 @@ int main()
         "transaction on the proven first-person return site");
     Check(halo4Row && !(halo4Row->capabilities & TitleCapability_Hud),
         "Halo 4 withholds Hud while C-H4-44's rejected basis writer is dormant");
-    Check(halo4Row && !(halo4Row->capabilities & TitleCapability_CutsceneTheater),
-        "Halo 4 withholds CutsceneTheater: it has no cinematic evidence yet");
+    Check(halo4Row &&
+              (halo4Row->capabilities & TitleCapability_CutsceneTheater),
+        "Halo 4 advertises CutsceneTheater after its evidence-backed cinematic "
+        "classifier and publication path are installed");
     Check(TitleRegistry_AllowsSharedControllerInput(
               GameTitle::Halo4, false, false, false, true),
         "Explicit Halo 4 receives the virtual pad through its own admission");
@@ -11793,10 +12351,52 @@ int main()
     Check(organizedConfig.find("This ONE file is shared by every supported MCC game") !=
               std::string::npos,
         "The generated config explains that preferences are shared across titles");
-    Check(organizedConfig.find("\nreach_") == std::string::npos &&
-          organizedConfig.find("\nhalo3_") == std::string::npos &&
-          organizedConfig.find("\nodst_") == std::string::npos,
-        "The universal config contains no title-prefixed assignments");
+    // C-TITLE-1 (user directive 2026-08-31): the one universal file now
+    // carries a per-title profile section for the thirteen weapon/hand/HUD
+    // tunables - every game, Halo 2's two renderers separately, and a
+    // reserved Halo 1 slot. This replaces the older no-title-prefix rule
+    // for exactly these keys; everything else stays shared.
+    for (const char* profilePrefix :
+         {"\nhalo3_gun_scale = ", "\nodst_gun_scale = ",
+          "\nreach_gun_scale = ", "\nhalo4_gun_scale = ",
+          "\nhalo2a_gun_scale = ", "\nhalo2c_gun_scale = ",
+          "\nhalo1_gun_scale = ", "\nhalo2a_hud_size = ",
+          "\nhalo2c_hud_size = ", "\nhalo3_left_hand_forward_m = ",
+          "\nhalo2c_barrel_pitch_deg = ", "\nhalo3_barrel_roll_deg = "})
+    {
+        Check(organizedConfig.find(profilePrefix) != std::string::npos,
+            "The universal config carries every per-title tunable profile");
+    }
+    {
+        // Round trip: a Halo 2 Classic value persists independently and
+        // switching profiles swaps the live tunables.
+        g_config.title_profiles[5].gun_pitch_deg = -21.0f;
+        g_config.title_profiles[4].gun_pitch_deg = 7.0f;
+        ConfigSave();
+        g_config.title_profiles[5].gun_pitch_deg = 0.0f;
+        g_config.title_profiles[4].gun_pitch_deg = 0.0f;
+        ConfigLoad(primary.c_str());
+        Check(g_config.title_profiles[5].gun_pitch_deg == -21.0f &&
+                  g_config.title_profiles[4].gun_pitch_deg == 7.0f,
+            "Per-title tunables survive a save/load round trip "
+            "independently for Halo 2's two renderers");
+        const float sharedPitch = g_config.base_tunables.gun_pitch_deg;
+        Config_ApplyTitleProfile(5);
+        Check(g_config.gun_pitch_deg == -21.0f,
+            "Applying the Halo 2 Classic profile swaps the live weapon "
+            "tunables");
+        Config_ApplyTitleProfile(4);
+        Check(g_config.gun_pitch_deg == 7.0f,
+            "Applying the Halo 2 Anniversary profile swaps them again");
+        g_config.gun_pitch_deg = -33.0f;
+        Config_StoreLiveTunables();
+        Check(g_config.title_profiles[4].gun_pitch_deg == -33.0f &&
+                  g_config.title_profiles[5].gun_pitch_deg == -21.0f,
+            "A live edit lands in the active profile only");
+        Config_ApplyTitleProfile(-1);
+        Check(g_config.gun_pitch_deg == sharedPitch,
+            "Leaving every title restores the shared defaults");
+    }
     constexpr const char* universalKeys[] = {
         "config_version", "haptic_intensity", "headset_smoothing",
         "aim_stabilization", "screen_width_m", "screen_distance_m",

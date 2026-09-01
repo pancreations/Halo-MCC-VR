@@ -312,6 +312,34 @@ inline constexpr int kConfigReachShippedSeatTrimCount =
     sizeof(kConfigReachShippedSeatTrims) /
     sizeof(kConfigReachShippedSeatTrims[0]);
 
+// C-TITLE-1: the thirteen weapon/hand/HUD tunables every title keeps its
+// own copy of - one struct so a profile is copied whole. Defaults mirror
+// the shared fields' defaults so an untouched profile behaves identically.
+inline constexpr int kTitleProfileCount = 7;
+
+struct TitleTunables
+{
+    float gun_scale = 0.96f;
+    float left_hand_scale = 0.96f;
+    float gun_pitch_deg = -3.0f;
+    float gun_yaw_deg = 0.0f;
+    float gun_roll_deg = 0.0f;
+    float gun_forward_m = -0.14f;
+    float gun_right_m = 0.0f;
+    float gun_up_m = 0.0f;
+    float left_hand_forward_m = -0.063f;
+    float hud_size = 0.38f;
+    float hud_aspect = 1.22f;
+    float hud_curvature = 0.48f;
+    float hud_vertical_offset = 16.0f;
+    // Mesh-only barrel trim: rotates the visible gun (and the hands on it)
+    // about the controller WITHOUT moving the crosshair or the shot ray.
+    // Per game, like everything else here. 0 = untouched.
+    float barrel_pitch_deg = 0.0f;
+    float barrel_yaw_deg = 0.0f;
+    float barrel_roll_deg = 0.0f;
+};
+
 struct Config
 {
     // Stamps the Halo 3, ODST and Reach shipped seat tables into their
@@ -546,6 +574,14 @@ struct Config
     float gun_yaw_deg = 0.0f;
     float gun_roll_deg = 0.0f;
 
+    // Mesh-only barrel trim (degrees): rotates the visible gun and the hands
+    // holding it about the controller, leaving the crosshair and the shot
+    // ray exactly where they are. Use it to lay the drawn barrel on the
+    // crosshair line. Saved per game (see title_profiles). 0 = untouched.
+    float barrel_pitch_deg = 0.0f;
+    float barrel_yaw_deg = 0.0f;
+    float barrel_roll_deg = 0.0f;
+
     // Push the whole arms+gun assembly along the controller's forward axis,
     // in meters. 0 = anchored at the controller; negative seats the gun back
     // into/behind your fist (the practical "gun feels too long" trim);
@@ -558,6 +594,20 @@ struct Config
     // controller ray. 0 = previous placement.
     float gun_right_m = 0.0f;
     float gun_up_m = 0.0f;
+
+    // Halo 2 CLASSIC ONLY: extra rotation and offset applied to the visible
+    // gun AND hands together, so Classic can be lined up with what
+    // Anniversary shows. Anniversary is never touched by these; every other
+    // title ignores them. 0 = identical to before. Tune LIVE in the F1 menu
+    // while standing in Classic, then switch to Anniversary to compare.
+    // Degrees, about the held weapon's own axes (pitch raises/lowers the
+    // muzzle), then meters along its own forward/right/up.
+    float halo2_classic_gun_pitch_deg = 0.0f;
+    float halo2_classic_gun_yaw_deg = 0.0f;
+    float halo2_classic_gun_roll_deg = 0.0f;
+    float halo2_classic_gun_forward_m = 0.0f;
+    float halo2_classic_gun_right_m = 0.0f;
+    float halo2_classic_gun_up_m = 0.0f;
 
     // Raise the muzzle EFFECT origin — the flash and the point bullets appear
     // to leave — along the gun's own up axis, in meters. Reach only; Halo 3 and
@@ -831,9 +881,31 @@ struct Config
     // left-eye ghost bug on demand: render the right eye first and the trails
     // move to the right lens. See docs/CONTINUATION.md "KNOWN MAJOR BUG".
     bool right_eye_first = false;
+
+    // C-TITLE-1: per-title weapon/hand/HUD profiles. Every supported game -
+    // and Halo 2's Anniversary and Classic renderers separately - keeps its
+    // OWN copy of the thirteen tunables below, exactly like the per-vehicle
+    // seat trims. The gun_*/left_hand_*/hud_* fields ABOVE are the live
+    // values the engine reads; the title worker copies the active game's
+    // profile into them when the game (or Halo 2 renderer) changes, and the
+    // F1 sliders edit the active game's profile. `base_tunables` holds the
+    // shared defaults a new profile starts from. Stored in the one
+    // halomccvr.cfg as halo3_/odst_/reach_/halo4_/halo2a_/halo2c_ keys.
+    TitleTunables base_tunables{};
+    TitleTunables title_profiles[kTitleProfileCount]{};
 };
 
 extern Config g_config;
+
+// C-TITLE-1 profile control. `profile` is 0..5 (Halo 3, ODST, Reach,
+// Halo 4, Halo 2 Anniversary, Halo 2 Classic) or -1 for the shared
+// defaults. Apply copies that profile into the live tunables (no-op when
+// already active); Store copies the live tunables back into the active
+// profile (the F1 save path). Both are cheap and safe on any thread.
+const char* Config_TitleProfileName(int profile);
+int Config_ActiveTitleProfile();
+void Config_ApplyTitleProfile(int profile);
+void Config_StoreLiveTunables();
 
 // The trim a given SEAT actually uses: its own override when one has been
 // set, the universal trim otherwise. `slot` comes from ConfigSeatTrimSlot;

@@ -1044,6 +1044,7 @@ namespace
         ImGui::SameLine();
         if (ImGui::SmallButton("Center##gnux")) { g_config.gun_up_m = 0.0f; changed = true; }
         ImGui::TextDisabled("Gun-stock calibration on the weapon's post-rotation right/up axes.");
+
         ImGui::TextDisabled("All supported VR titles; visual only, shots/reticle remain on controller aim.");
         changed |= ImGui::SliderFloat("Muzzle height (m)", &g_config.muzzle_height_m, -0.3f, 0.3f, "%.2f");
         ImGui::TextDisabled("Reach: adjusts its secondary muzzle placement; H3/ODST marker effects follow the gun. H2 Classic muzzle attachment is unchanged in this candidate.");

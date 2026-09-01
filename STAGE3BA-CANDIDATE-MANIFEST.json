@@ -1,0 +1,28 @@
+{
+  "stage": "3BA",
+  "status": "HEADSET_REJECTED_H4_FACE_RETICLE",
+  "base_stage": "3AZ headset-failed fatal in unsafe optional Halo 4 CUI replay",
+  "base_dll_sha256": "76727356f3ce4b053b09eccde6783a82ea5249d7ebfb9df9bc949b8822affb10",
+  "output_dll_sha256": "03c5ff6e384428a1757008a1d2ae3b30c539267096b1f8a8619e955edefb48d8",
+  "output_dll_size": 2923520,
+  "changed_bytes": 10,
+  "features": [
+    "Halo 4 optional authored-reticle hook initial install disabled",
+    "Halo 4 optional authored-reticle hook retry disabled",
+    "Procedural weapon-ray crosshair retained as feature-local safe fallback",
+    "Pause implementation preserved byte-identically",
+    "ODST optional-scan isolation and teardown protections preserved"
+  ],
+  "failure_log_sha256": "f5e355bbcff32c7de06228d97bd3e1855e8a17a4c9325e457b918dbfb584b09a",
+  "failure_wer_sha256": "0605ab2d65ffeb0891e5a92432a30e7142ab1af3e6e8454d62e6da17dd279bc1",
+  "deployment": "INSTALLED_BOTH_2026-08-28",
+  "headset_result": "All games work, but disabling the entire optional H4 CUI feature exposed the native face-centred reticle alongside the procedural gun-ray crosshair",
+  "superseded_by": "3BB",
+  "steam_installed_dll_sha256": "03c5ff6e384428a1757008a1d2ae3b30c539267096b1f8a8619e955edefb48d8",
+  "store_installed_dll_sha256": "03c5ff6e384428a1757008a1d2ae3b30c539267096b1f8a8619e955edefb48d8",
+  "backup": "out/deploy-backups/2026-08-28-pre-3BA",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

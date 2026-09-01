@@ -4489,6 +4489,22 @@ namespace
             MultiplyBases(mounted, mount, trimmed);
             memcpy(mounted, trimmed, sizeof(trimmed));
         }
+        else if (g_config.barrel_pitch_deg != 0.0f ||
+                 g_config.barrel_yaw_deg != 0.0f ||
+                 g_config.barrel_roll_deg != 0.0f)
+        {
+            // Mesh-only barrel trim (per title profile): turns the drawn
+            // gun about the controller after the automatic barrel
+            // alignment; the aim ray and crosshair are untouched.
+            float mount[9], trimmed[9];
+            BasisFromAngles(-g_config.barrel_yaw_deg * 0.0174533f,
+                             g_config.barrel_pitch_deg * 0.0174533f,
+                            -g_config.barrel_roll_deg * 0.0174533f, mount);
+            MultiplyBases(mounted, mount, trimmed);
+            bool finite = true;
+            for (int j = 0; j < 9; ++j) if (!isfinite(trimmed[j])) { finite = false; break; }
+            if (finite) memcpy(mounted, trimmed, sizeof(trimmed));
+        }
         out = BoneMatrix{};
         out.scale = 1.0f;
         memcpy(out.rotation, mounted, sizeof(mounted));
@@ -21864,6 +21880,20 @@ namespace
             MultiplyBases(basis,mount,trimmed);
             memcpy(basis,trimmed,sizeof(basis));
         }
+        else if (g_config.barrel_pitch_deg!=0.0f ||
+                 g_config.barrel_yaw_deg!=0.0f ||
+                 g_config.barrel_roll_deg!=0.0f)
+        {
+            // Mesh-only barrel trim (per title profile); aim ray untouched.
+            float mount[9],trimmed[9];
+            BasisFromAngles(-g_config.barrel_yaw_deg*0.0174533f,
+                             g_config.barrel_pitch_deg*0.0174533f,
+                            -g_config.barrel_roll_deg*0.0174533f,mount);
+            MultiplyBases(basis,mount,trimmed);
+            bool finite=true;
+            for(int j=0;j<9;++j) if(!isfinite(trimmed[j])){finite=false;break;}
+            if(finite) memcpy(basis,trimmed,sizeof(basis));
+        }
         const float dx=p[0]-g_headPosRef[0];
         const float dy=p[1]-g_headPosRef[1];
         const float dz=p[2]-g_headPosRef[2];
@@ -29423,16 +29453,18 @@ namespace
     // C-H4-1/C-H4-7/C-H4-9 line. ControllerAim, Haptics, RuntimeModes and
     // RoomScale join them now that Halo 4 publishes the three things the shared
     // paths need from a title: a runtime mode, a yaw reference pair, and the
-    // engine's own aim direction. C-H4-44's HUD-basis writer is headset-
-    // rejected and remains dormant. ArmIk and CutsceneTheater stay out because
-    // neither has Halo 4 evidence. C-H4-35
+    // engine's own aim direction. The H4EK-derived cinematic globals plus
+    // title-native authored-shot look constraints also prove the shared theatre
+    // contract. C-H4-44's HUD-basis writer is headset-rejected and remains
+    // dormant. ArmIk stays out because C-H4-35
     // deliberately uses rigid floating hands only, so advertising ArmIk here
     // would grant a capability Halo 4 does not implement.
     constexpr uint32_t kHalo4RuntimeCapabilities =
         TitleCapability_Stereo | TitleCapability_ControllerInput |
         TitleCapability_ControllerAim | TitleCapability_Haptics |
         TitleCapability_RuntimeModes |
-        TitleCapability_RoomScale;
+        TitleCapability_RoomScale |
+        TitleCapability_CutsceneTheater;
 
     // C-H4-14. Argument 7 of the final-palette call is a per-render-model
     // count, and the first-person assembly submits about a dozen records per
@@ -29479,6 +29511,14 @@ namespace
         uintptr_t elementAddress = 0;
         uintptr_t setupReturnAddress = 0;
         uintptr_t wrapperReturnAddress = 0;
+        // Cold-install proof for the H4EK cinematic-globals registration. This
+        // gates only CutsceneTheater; a missing/ambiguous match never affects
+        // the camera core, reticle, or OpenXR ownership.
+        std::atomic<bool> cinematicTheaterProof{false};
+        // Render-scope theatre samples are rate-limited independently from
+        // camera ownership. A bad sample publishes nothing and therefore lets
+        // the shared 500 ms freshness gate return to immersive presentation.
+        std::atomic<uint64_t> cinematicNextPublishMs{0};
         std::atomic<uint64_t> vrikSolvedPalettes{0};
         std::atomic<uint64_t> vrikStockPalettes{0};
         std::atomic<uint64_t> vrikAlignmentRefusals{0};
@@ -31982,6 +32022,29 @@ namespace
         }
         memcpy(placement.controllerOrientation, controllerQuaternion,
                sizeof(placement.controllerOrientation));
+        // Mesh-only barrel trim (per title profile): rotate the hands/gun
+        // rig about the controller in its OWN frame (OpenXR: +X right,
+        // +Y up, -Z forward). The aim ray and crosshair never read this.
+        if (g_config.barrel_pitch_deg != 0.0f ||
+            g_config.barrel_yaw_deg != 0.0f ||
+            g_config.barrel_roll_deg != 0.0f)
+        {
+            constexpr float kHalfRadians = 0.5f * 0.0174533f;
+            const float hp = g_config.barrel_pitch_deg * kHalfRadians;
+            const float hy = g_config.barrel_yaw_deg * kHalfRadians;
+            const float hr = g_config.barrel_roll_deg * kHalfRadians;
+            const float qPitch[4] = {sinf(hp), 0.0f, 0.0f, cosf(hp)};   // about +X
+            const float qYaw[4] = {0.0f, sinf(hy), 0.0f, cosf(hy)};     // about +Y
+            const float qRoll[4] = {0.0f, 0.0f, -sinf(hr), cosf(hr)};   // about -Z (forward)
+            float qPY[4], qLocal[4], trimmed[4];
+            Halo4MultiplyQuaternion(qYaw, qPitch, qPY);
+            Halo4MultiplyQuaternion(qPY, qRoll, qLocal);
+            Halo4MultiplyQuaternion(placement.controllerOrientation, qLocal, trimmed);
+            bool finite = true;
+            for (int j = 0; j < 4; ++j) if (!isfinite(trimmed[j])) { finite = false; break; }
+            if (finite)
+                memcpy(placement.controllerOrientation, trimmed, sizeof(trimmed));
+        }
         placement.worldScale = g_worldScale.load(std::memory_order_relaxed);
         placement.forwardTrim = g_config.halo4_hand_forward_m;
         placement.verticalTrim = g_config.halo4_hand_vertical_m;
@@ -32241,6 +32304,162 @@ namespace
         __try { memcpy(destination, source, bytes); }
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
         return 1;
+    }
+
+    // H4EK's cinematic_scripting_set_user_input_constraints writer proves this
+    // title's live authored-shot block: cinematic globals live at TLS+0xC8;
+    // the camera is TLS+0x58, type 6, with current limits at +0xC8..+0xD4,
+    // rates at +0xD8..+0xE4, and interpolation ticks at +0xF0.  This reader
+    // consumes only the engine-TLS index already uniquely resolved by the
+    // camera-core install proof.  A bad read deliberately produces Unknown;
+    // the compositor then stays immersive when the publication goes stale.
+    constexpr uint32_t kHalo4CinematicTlsGlobalsOffset = 0xC8;
+    constexpr uint32_t kHalo4CinematicTlsCameraOffset = 0x58;
+    constexpr uint32_t kHalo4CinematicCameraTypeOffset = 0x02;
+    constexpr uint32_t kHalo4CinematicLookLimitsOffset = 0xC8;
+    constexpr uint32_t kHalo4CinematicLookRatesOffset = 0xD8;
+    constexpr uint32_t kHalo4CinematicLookTicksOffset = 0xF0;
+    constexpr uint32_t kHalo4CinematicTlsSlotLimit = 256;
+    constexpr uint64_t kHalo4CinematicPublishPeriodMs = 250;
+
+    CinematicControlState ReadHalo4CinematicControl() noexcept
+    {
+        if (!g_halo4Camera.cinematicTheaterProof.load(
+                std::memory_order_acquire) ||
+            !g_halo4EngineTlsIndex || !g_halo4Camera.base ||
+            reinterpret_cast<uintptr_t>(g_halo4EngineTlsIndex) !=
+                g_halo4Camera.base + kHalo4EngineTlsIndexRva)
+        {
+            return CinematicControlState::Unknown;
+        }
+
+        uint32_t slot = 0;
+        if (!Halo4SafeRead(g_halo4EngineTlsIndex, &slot, sizeof(slot)) ||
+            slot >= kHalo4CinematicTlsSlotLimit)
+        {
+            return CinematicControlState::Unknown;
+        }
+
+        auto** const slots = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+        uintptr_t tls = 0;
+        if (!slots || !Halo4SafeRead(
+                slots + slot, &tls, sizeof(tls)) || !tls)
+            return CinematicControlState::Unknown;
+        uintptr_t globals = 0;
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    tls + kHalo4CinematicTlsGlobalsOffset),
+                &globals, sizeof(globals)) || !globals)
+        {
+            return CinematicControlState::Unknown;
+        }
+
+        uint8_t cinematicInProgress = 0;
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(globals + 5),
+                &cinematicInProgress, sizeof(cinematicInProgress)))
+        {
+            return CinematicControlState::Unknown;
+        }
+        if (!cinematicInProgress)
+        {
+            return ClassifyHalo4CinematicControl(
+                true, false, false, 0, nullptr, nullptr, 0);
+        }
+
+        uintptr_t camera = 0;
+        uint16_t cameraType = 0;
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    tls + kHalo4CinematicTlsCameraOffset),
+                &camera, sizeof(camera)) || !camera ||
+            !Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    camera + kHalo4CinematicCameraTypeOffset),
+                &cameraType, sizeof(cameraType)) ||
+            cameraType != kHalo4CinematicCameraType)
+        {
+            return CinematicControlState::Unknown;
+        }
+
+        float limits[4]{};
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    camera + kHalo4CinematicLookLimitsOffset),
+                limits, sizeof(limits)))
+        {
+            return CinematicControlState::Unknown;
+        }
+        const CinematicControlState currentLimits =
+            ClassifyHalo4CinematicControl(
+                true, true, true, cameraType, limits, nullptr, 0);
+        if (currentLimits == CinematicControlState::PlayerControlled)
+            return currentLimits;
+
+        int32_t ticks = 0;
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    camera + kHalo4CinematicLookTicksOffset),
+                &ticks, sizeof(ticks)) || ticks < 0 ||
+            ticks > kHalo4CinematicMaximumTicks)
+        {
+            return CinematicControlState::Unknown;
+        }
+        if (ticks == 0)
+            return currentLimits;
+
+        float rates[4]{};
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    camera + kHalo4CinematicLookRatesOffset),
+                rates, sizeof(rates)))
+        {
+            return CinematicControlState::Unknown;
+        }
+        return ClassifyHalo4CinematicControl(
+            true, true, true, cameraType, limits, rates, ticks);
+    }
+
+    void PublishHalo4CinematicTheater() noexcept
+    {
+        const uint64_t now = GetTickCount64();
+        const uint64_t next = g_halo4Camera.cinematicNextPublishMs.load(
+            std::memory_order_relaxed);
+        if (now < next)
+            return;
+        g_halo4Camera.cinematicNextPublishMs.store(
+            now + kHalo4CinematicPublishPeriodMs, std::memory_order_relaxed);
+
+        const uint32_t generation = g_halo4Camera.generation.load(
+            std::memory_order_acquire);
+        if (!generation ||
+            g_halo4Camera.teardownRequested.load(std::memory_order_acquire) ||
+            TitleAdapter_GetGeneration(GameTitle::Halo4) != generation)
+        {
+            return;
+        }
+
+        const CinematicControlState control = ReadHalo4CinematicControl();
+        if (control == CinematicControlState::Unknown)
+            return;
+
+        if (!TitleAdapter_PublishCinematicControl(
+                GameTitle::Halo4, generation, control, now))
+        {
+            return;
+        }
+
+        // Stage 3BX publishes the control verdict independently of the
+        // optional projection sample.  Aspect can be transiently unavailable
+        // while a scene target is being learned; withholding PlayerControlled
+        // in that window would leave a previous AuthoredLocked sample live
+        // until the shared stale timeout and could hold theatre across a real
+        // return to gameplay.
+        float authoredAspect = 0.0f;
+        if (!VR_GetGameRenderAspect(authoredAspect))
+            return;
+        (void)TitleAdapter_PublishCutsceneTheaterProjection(
+            GameTitle::Halo4, generation, authoredAspect, now);
     }
 
     // ---- C-H4-44: native CUI HUD layout --------------------------------
@@ -32660,6 +32879,7 @@ namespace
         bool captureReplay = false;
         bool captureReplayAttempted = false;
         bool captureReplayRedirected = false;
+        Halo4CuiCaptureSelectionState captureSelection{};
         int eye = -1;
         uint32_t generation = 0;
         uint32_t depth = 0;
@@ -32686,6 +32906,13 @@ namespace
                 std::memory_order_acquire) &&
             !g_halo4Camera.teardownRequested.load(
                 std::memory_order_acquire);
+    }
+
+    bool Halo4CuiReticleNativeSuppressionLive()
+    {
+        return Halo4CuiReticleOwnsNativeSuppression(
+            Halo4CuiReticleTransformLive(),
+            VR_Halo4AuthoredReticleFeatureHealthy());
     }
 
     bool Halo4OwnsCuiReticleEyeTransaction()
@@ -32725,6 +32952,7 @@ namespace
             : VR_EndPreparedAuthoredReticleSuppression();
         scope.redirectActive = false;
         scope.captureAuthored = false;
+        scope.captureSelection = {};
         scope.depth = 0;
         scope.renderer = nullptr;
 
@@ -32870,6 +33098,48 @@ namespace
             .fetch_add(1, std::memory_order_relaxed);
     }
 
+    bool Halo4EnforceCuiCaptureSelection(
+        void* renderer, const Halo4CuiCaptureSelectionState& selection)
+    {
+        if (!renderer)
+            return false;
+        uint32_t count = 0;
+        if (!Halo4SafeRead(
+                static_cast<const uint8_t*>(renderer) +
+                    kHalo4CuiTransformStackCountOffset,
+                &count, sizeof(count)) ||
+            !Halo4CuiTransformStackCountValid(count))
+        {
+            return false;
+        }
+
+        uint8_t* const translationX = static_cast<uint8_t*>(renderer) +
+            kHalo4CuiTransformStackEntriesOffset +
+            static_cast<size_t>(count - 1) * kHalo4CuiTransformStride +
+            kHalo4CuiTransformTranslationOffset;
+        float currentX = 0.0f;
+        if (!Halo4SafeRead(translationX, &currentX, sizeof(currentX)))
+            return false;
+        float adjustedX = currentX;
+        // 3CR fold-in: un-hide by the LIVE hide shift the visible pass baked
+        // for this layout (4*|baseX| from the recorded base translation);
+        // the helper falls back to the calibrated width when none is live.
+        const Halo4CuiAimOffset liveHide = Halo4BuildHiddenCuiTranslation(
+            g_halo4Camera.cuiReticleBaseX.load(std::memory_order_relaxed),
+            g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed));
+        if (!Halo4CuiCaptureAdjustedTranslationX(
+                currentX, Halo4CuiCaptureKeepsTopTransform(selection),
+                liveHide.valid ? liveHide.x : 0.0f,
+                adjustedX))
+        {
+            return false;
+        }
+        if (adjustedX == currentX)
+            return true;
+        return Halo4SafeWrite(
+                   translationX, &adjustedX, sizeof(adjustedX)) != 0;
+    }
+
     void Halo4CuiGameplayRenderBody(
         uintptr_t caller, uint32_t windowIndex, uint32_t renderBufferChannel,
         const void* viewportBounds, const void* optionalProfileValue,
@@ -32886,7 +33156,7 @@ namespace
         const bool ownsGameplayPass = caller == expectedCaller &&
             !scope.gameplayPassActive &&
             Halo4OwnsCuiReticleEyeTransaction() &&
-            Halo4CuiReticleTransformLive();
+            Halo4CuiReticleNativeSuppressionLive();
         if (!ownsGameplayPass)
         {
             original(windowIndex, renderBufferChannel, viewportBounds,
@@ -32925,9 +33195,11 @@ namespace
                 scope.captureReplay = true;
                 scope.captureReplayAttempted = false;
                 scope.captureReplayRedirected = false;
+                scope.captureSelection = {};
                 original(windowIndex, renderBufferChannel, viewportBounds,
                          optionalProfileValue, renderMode, flag);
                 scope.captureReplay = false;
+                scope.captureSelection = {};
                 if (scope.redirectActive)
                     (void)Halo4EndCuiReticleRedirect(false);
 
@@ -33001,8 +33273,9 @@ namespace
 
         // Capture replay owns the whole CUI command stream, not the logical
         // reticle subtree. Start before its first command and retain the private
-        // target until user_interface_render returns. The centred 512x512
-        // viewport clips the outer HUD away and keeps the authored centre art.
+        // target until user_interface_render returns. Stage 3BP's state machine
+        // then keeps only a 0x28/0x0c bitmap reticle container on-target and
+        // rejects grenade/damage polyart before its vertices are baked.
         if (scope.captureReplay)
         {
             if (!scope.captureReplayAttempted)
@@ -33022,16 +33295,39 @@ namespace
                         1, std::memory_order_relaxed);
                 }
             }
+            const uint32_t captureCommand = headerReadable
+                ? static_cast<uint32_t>(
+                      static_cast<uint16_t>(header.command))
+                : 0xFFFFFFFFu;
+            const bool captureTargetWasActive = scope.redirectActive;
+            if (captureTargetWasActive &&
+                Halo4CuiCaptureMarkPolyartBeforeDraw(
+                    scope.captureSelection, headerReadable, captureCommand))
+            {
+                // Polyart vertices bake the current transform during this
+                // command, so damage/grenade art must be hidden before the
+                // original dispatcher executes it (Stage 3BP).
+                (void)Halo4EnforceCuiCaptureSelection(
+                    renderer, scope.captureSelection);
+            }
             const bool result = original(
                 renderer, command, openRenderSections, renderContext);
+            if (captureTargetWasActive)
+            {
+                Halo4CuiCaptureAdvanceAfterDraw(
+                    scope.captureSelection, headerReadable, captureCommand,
+                    header.payloadSize);
+                (void)Halo4EnforceCuiCaptureSelection(
+                    renderer, scope.captureSelection);
+            }
             if (result && beginPayloadReadable && renderer)
             {
                 uint32_t count = 0;
                 if (Halo4SafeRead(
                         static_cast<const uint8_t*>(renderer) +
                             kHalo4CuiTransformStackCountOffset,
-                        &count, sizeof(count)) && count != 0 &&
-                    count <= kHalo4CuiTransformStackMaximum)
+                        &count, sizeof(count)) &&
+                    Halo4CuiTransformStackCountValid(count))
                 {
                     const uint8_t* const entry =
                         static_cast<const uint8_t*>(renderer) +
@@ -33057,7 +33353,8 @@ namespace
 
         const bool ownsStereo = Halo4OwnsCuiReticleEyeScope();
         const Halo4CuiReticleAction action = Halo4DecideCuiReticleAction(
-            ownsStereo, Halo4CuiReticleTransformLive(), beginPayloadReadable,
+            ownsStereo, Halo4CuiReticleNativeSuppressionLive(),
+            beginPayloadReadable,
             headerReadable ? static_cast<uint32_t>(
                            static_cast<uint16_t>(header.command)) : 0,
             g_config.crosshair, g_config.kill_reticle,
@@ -33079,8 +33376,8 @@ namespace
         if (!renderer || !Halo4SafeRead(
                 static_cast<const uint8_t*>(renderer) +
                     kHalo4CuiTransformStackCountOffset,
-                &count, sizeof(count)) || count == 0 ||
-            count > kHalo4CuiTransformStackMaximum)
+                &count, sizeof(count)) ||
+            !Halo4CuiTransformStackCountValid(count))
         {
             g_halo4Camera.cuiReticleRedirectFailures.fetch_add(
                 1, std::memory_order_relaxed);
@@ -33523,6 +33820,19 @@ namespace
             return Halo4StereoResult::NotStarted;
         }
 
+        // Publish only from the proven claimed camera transaction. The shared
+        // resolver owns theatre admission; a missing/unknown H4 sample simply
+        // expires and never changes this stereo transaction's ownership.
+        PublishHalo4CinematicTheater();
+
+        // The shared theatre switches only at full black.  Once it owns the
+        // presentation, Halo 4's pristine observer is the authored cutscene
+        // camera: keep the stereo eye split below, but do not compose the HMD
+        // midpoint pose or replace the authored projection with the gameplay
+        // OpenXR cover.  Sampling this once keeps both eyes in one camera mode
+        // for the complete transaction and preserves the existing transition.
+        const bool authoredTheater = VR_IsCutsceneTheaterActive();
+
         unsigned char savedObserver[kHalo4ObserverSnapshotBytes];
         if (!Halo4SafeRead(reinterpret_cast<const void*>(args.observer),
                            savedObserver, sizeof(savedObserver)))
@@ -33601,7 +33911,7 @@ namespace
         // the eyes still render from the engine's camera. It never drops a pair.
         const float worldScale = g_worldScale.load(std::memory_order_acquire);
         bool headTracked = false;
-        if (snapshot.headPoseValid)
+        if (!authoredTheater && snapshot.headPoseValid)
         {
             Halo4HeadPoseInput headInput{};
             memcpy(headInput.quaternion, snapshot.headOrientation,
@@ -33744,9 +34054,17 @@ namespace
         Halo4CameraBasis eyeCameras[2]{};
         for (int eye = 0; eye < 2; ++eye)
         {
+            float eyePosition[3]{};
+            float eyeOrientation[4]{};
+            memcpy(eyePosition, snapshot.eyes[eye].position,
+                   sizeof(eyePosition));
+            memcpy(eyeOrientation, snapshot.eyes[eye].orientation,
+                   sizeof(eyeOrientation));
+            ApplyCutsceneTheaterEyeTransform(
+                authoredTheater, g_config.cutscene_theater_depth,
+                eyePosition, eyeOrientation);
             if (!Halo4BuildEyeCamera(
-                    stock, snapshot.eyes[eye].position,
-                    snapshot.eyes[eye].orientation, worldScale,
+                    stock, eyePosition, eyeOrientation, worldScale,
                     eyeCameras[eye]))
             {
                 Halo4NoteRejection(
@@ -33807,7 +34125,8 @@ namespace
         bool widenFov[2] = {false, false};
         for (int eye = 0; eye < 2; ++eye)
         {
-            widenFov[eye] = snapshot.eyes[eye].fovValid &&
+            widenFov[eye] = !authoredTheater &&
+                snapshot.eyes[eye].fovValid &&
                 Halo4SolveCoverVerticalFov(
                     snapshot.eyes[eye].fov, calibration,
                     kHalo4CoverMargin, verticalFovWrite[eye],
@@ -34227,6 +34546,11 @@ namespace
         lifecycle.enabledCapabilities =
             lifecycle.installed && !lifecycle.teardownRequested
                 ? kHalo4RuntimeCapabilities : TitleCapability_None;
+        if (!g_halo4Camera.cinematicTheaterProof.load(
+                std::memory_order_acquire))
+        {
+            lifecycle.enabledCapabilities &= ~TitleCapability_CutsceneTheater;
+        }
         // Publish only on a real state change: republishing identical state
         // every poll keeps the shared snapshot permanently "pending", which is
         // the Reach "gameplay -> loading" flap.
@@ -34442,6 +34766,19 @@ namespace
         if (g_halo4Camera.cuiReticleRejectedGeneration == generation)
             return Halo4CuiReticleOptionalInstallState::StockFallback;
 
+        if (!D3D_Halo4AuthoredReticleDrawPathAvailable())
+        {
+            static uint32_t drawPathWaitLoggedGeneration = 0;
+            if (drawPathWaitLoggedGeneration != generation)
+            {
+                drawPathWaitLoggedGeneration = generation;
+                LOG("Halo 4 authored CUI reticle: Stage3BR draw-time framing "
+                    "hooks are unavailable; native/procedural reticle stays "
+                    "stock while camera, theatre and OpenXR remain armed");
+            }
+            return Halo4CuiReticleOptionalInstallState::StockFallback;
+        }
+
         if (!VR_CanPrepareAuthoredReticleResources())
             return Halo4CuiReticleOptionalInstallState::StockFallback;
         constexpr uint64_t kHalo4CuiResourceRetryMs = 500;
@@ -34632,12 +34969,13 @@ namespace
         g_halo4Camera.cuiReticleInstalled.store(
             true, std::memory_order_release);
         LOG("Halo 4 C-H4-43q authored CUI reticle installed: gameplay scope "
-            "+0x%X (exact caller return +0x%X) and dispatcher +0x%X (sole "
-            "caller edge +0x%X) matched uniquely; auxiliary/menu CUI stays "
-            "stock; bounded capture replays hold the centred authored target "
-            "through the batching boundary, visible passes move only the flat "
-            "type-0x28 copy offscreen, and the pixels ride the existing exact "
-            "OpenXR reticle quad",
+             "+0x%X (exact caller return +0x%X) and dispatcher +0x%X (sole "
+             "caller edge +0x%X) matched uniquely; auxiliary/menu CUI stays "
+             "stock; bounded capture replays select the weapon bitmap container, "
+             "reject grenade/damage polyart, and retain the Stage3BR draw framing "
+             "through the batching boundary; visible passes hide only the flat "
+             "type-0x28 copy and the authored pixels ride the existing exact "
+             "OpenXR weapon-ray quad",
             kHalo4CuiGameplayRenderRva,
             kHalo4CuiGameplayCallerReturnRva,
             kHalo4CuiReticleDispatcherRva, kHalo4CuiReticleCallerRva);
@@ -34646,6 +34984,16 @@ namespace
 
     bool RemoveHalo4CameraCore()
     {
+        const uint32_t generation =
+            g_halo4Camera.generation.load(std::memory_order_acquire);
+        // The module can stay resident across levels, so capability withdrawal
+        // alone is not enough: do not let a new core for the same module
+        // generation inherit an old AuthoredLocked/aspect publication.
+        TitleAdapter_ClearCinematicControl(GameTitle::Halo4, generation);
+        g_halo4Camera.cinematicNextPublishMs.store(
+            0, std::memory_order_release);
+        g_halo4Camera.cinematicTheaterProof.store(
+            false, std::memory_order_release);
         g_halo4Camera.teardownRequested.store(true, std::memory_order_release);
         g_halo4Camera.armed.store(false, std::memory_order_release);
         g_halo4Camera.cuiReticleInstalled.store(
@@ -34665,6 +35013,10 @@ namespace
         // module reference is released.
         if (g_halo4Camera.activeCallbacks.load(std::memory_order_acquire) != 0)
             return false;
+        // A callback admitted immediately before teardown can have published
+        // after the first clear above. Clear again after quiescence so this
+        // resident module generation cannot carry theatre into its next level.
+        TitleAdapter_ClearCinematicControl(GameTitle::Halo4, generation);
         if (g_halo4Camera.setupTarget)
             MH_RemoveHook(g_halo4Camera.setupTarget);
         if (g_halo4Camera.wrapperTarget)
@@ -34708,8 +35060,6 @@ namespace
         g_halo4Camera.fpSquishApplied=false;
         g_halo4Camera.fpSquishSlot=nullptr;
         g_halo4Camera.fpSquishStock=0;
-        const uint32_t generation =
-            g_halo4Camera.generation.load(std::memory_order_acquire);
         g_halo4Camera.moduleReference = nullptr;
         g_halo4Camera.setupTarget = nullptr;
         g_halo4Camera.wrapperTarget = nullptr;
@@ -34727,6 +35077,7 @@ namespace
         g_halo4OrigCuiGameplayRender = nullptr;
         g_halo4RenderModelTagIndexPointerSlot=0;
         g_halo4RenderModelGroupBaseTable=0;
+        g_halo4EngineTlsIndex = nullptr;
         g_halo4Camera.base = 0;
         g_halo4Camera.size = 0;
         g_halo4Camera.elementAddress = 0;
@@ -34760,6 +35111,9 @@ namespace
         // C-H4-2's verdict for THIS module instance is the entry condition.
         if (!Halo4ColdObservation_Passed(generation))
             return false;
+
+        g_halo4Camera.cinematicTheaterProof.store(
+            false, std::memory_order_release);
 
         Halo4CameraInstallProof proof{};
         proof.coldObservationPassed = true;
@@ -34860,6 +35214,30 @@ namespace
             return false;
         }
 
+        // H4EK-first theatre evidence: the cinematic globals registration
+        // loads the engine TLS index and registers a 0x28-byte member. Keep
+        // this as a cold, unique signature proof rather than a render-time
+        // scan or a bare retail address. Its failure withholds only theatre.
+        constexpr char kHalo4CinematicRegistrationSignature[] =
+            "8B 15 8D A7 F2 00 41 B9 28 00 00 00";
+        constexpr uint32_t kHalo4CinematicRegistrationRva = 0x12CA85;
+        const uintptr_t cinematicRegistration = sig::Find(
+            base, size, kHalo4CinematicRegistrationSignature);
+        const bool cinematicTheaterProof = cinematicRegistration &&
+            cinematicRegistration - base == kHalo4CinematicRegistrationRva &&
+            !sig::Find(cinematicRegistration + 1,
+                       base + size - cinematicRegistration - 1,
+                       kHalo4CinematicRegistrationSignature);
+        if (!cinematicTheaterProof)
+        {
+            LOG("Halo 4 cutscene theatre: cinematic-globals registration is %s; "
+                "theatre remains immersive while camera/reticle/OpenXR stay armed",
+                cinematicRegistration
+                    ? (cinematicRegistration - base ==
+                       kHalo4CinematicRegistrationRva ? "ambiguous" : "moved")
+                    : "missing");
+        }
+
         HMODULE moduleReference = nullptr;
         if (!GetModuleHandleExW(
                 GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -34907,6 +35285,10 @@ namespace
         g_halo4OrigWrapper = originalWrapper;
         g_halo4Camera.generation.store(generation, std::memory_order_release);
         g_halo4Camera.teardownRequested.store(false, std::memory_order_release);
+        g_halo4Camera.cinematicTheaterProof.store(
+            cinematicTheaterProof, std::memory_order_release);
+        g_halo4Camera.cinematicNextPublishMs.store(
+            0, std::memory_order_release);
         Halo4ResetTelemetry();
         g_halo4Camera.sceneTargetMissing.store(
             false, std::memory_order_release);
@@ -34983,7 +35365,9 @@ namespace
         LOG("Halo 4 camera core installed (generation %u): setup 0x%X and the "
             "render wrapper 0x%X are hooked at their pinned RVAs, both proven "
             "to be the per-window loop 0x%X's own call targets; per-eye "
-            "substitution happens at the observer result, before setup",
+            "substitution happens at the observer result, before setup; when "
+            "the H4EK cinematic proof is present, locked cinematics publish "
+            "the shared theatre while look-free or unknown samples remain immersive",
             generation, kHalo4SetupRva, kHalo4WrapperRva,
             kHalo4PerWindowLoopRva);
         return true;
@@ -35025,6 +35409,10 @@ namespace
         if (g_vrRuntimeFailureLatched.load(std::memory_order_acquire))
         {
             g_halo4Camera.armed.store(false, std::memory_order_release);
+            TitleAdapter_ClearCinematicControl(
+                GameTitle::Halo4,
+                g_halo4Camera.generation.load(std::memory_order_acquire));
+            PublishHalo4Lifecycle();
             return;
         }
         if (!installed)
@@ -35040,8 +35428,8 @@ namespace
                 kReachRenderSafetyIntervalMs)
         {
             g_halo4Camera.armed.store(true, std::memory_order_release);
-            LOG("Halo 4 camera core armed: C-H4-46 native art on the shared bullet-ray VR crosshair, current-eye controller-rerooted "
-                "Storm hands, H3/ODST/Reach left_hand-marker parity free pose, exact C-H4-38 shared-right-aim support pose, and "
+            LOG("Halo 4 camera core armed: complete Stage3BU authored CUI weapon-reticle capture on the shared bullet-ray VR crosshair, current-eye controller-rerooted "
+                 "Storm hands, H3/ODST/Reach left_hand-marker parity free pose, exact C-H4-38 shared-right-aim support pose, and "
                 "same-frame held-model carry (no arm IK) on C-H4-10 motion aim, VR "
                 "turn and rumble on C-H4-9's headset-owned look, C-H4-8's 6DOF and "
                 "native headset-FOV coverage. The hand steers Halo 4's own aim "
@@ -35055,9 +35443,12 @@ namespace
                 "runtime mode for the first time, which is what the shared "
                 "paths gate rumble and head-relative movement on. Insert "
                 "returns aim to C-H4-9's stick yaw + headset pitch; F2 returns "
-                "everything to C-H4-8. Rejected CUI replay and HUD-basis writes "
-                "are dormant; the crosshair is C-H4-43's shared procedural "
-                "weapon-ray quad. A floating-hand transaction "
+                 "everything to C-H4-8. The weapon-only 0x28/0x0C selector, "
+                 "polyart rejection, Stage3BR framing, RGB/alpha repair, typeless "
+                 "XR view fallback, held-art policy and scene write-back are live; "
+                 "the H4EK look-constraint classifier publishes the retained "
+                 "Stage3CB 3D cutscene theatre without changing reticle ownership. "
+                 "The rejected HUD-basis writer remains dormant. A floating-hand transaction "
                 "refusal submits no alternate hand algorithm and never "
                 "disarms stereo or OpenXR");
         }
@@ -35068,6 +35459,57 @@ namespace
     {
         if (!g_halo4Camera.installed.load(std::memory_order_acquire))
             return;
+        // C-H4-52: retire on a stale camera heartbeat, exactly the rule every
+        // other title lives by ("once its heartbeat is absent for 500 ms,
+        // disarm per-eye rendering and release the retained scene target").
+        // The camera setup hook advances enginePitchSerial on every owned
+        // frame, in gameplay and cinematics alike; at the main menu it stops.
+        // The 2026-09-01 07:58 Steam run showed an armed core with zero
+        // owned frames for two minutes after a level exit: presentation stayed
+        // head-locked and the stick stayed owned in the shell. This puts the
+        // level-exit teardown back: armed + no heartbeat for 2.5 s + not the
+        // pause screen -> request teardown; the next tick removes the core,
+        // the title is re-detected, the mode falls to unsupported and the
+        // menu/theatre presentation returns. Loading hitches shorter than
+        // 2.5 s are untouched; a longer one re-earns the install through the
+        // normal level-load gate, as every consecutive level already does.
+        {
+            static uint32_t heartbeatSerial = 0;
+            static uint64_t heartbeatMs = 0;
+            static uint32_t heartbeatGeneration = 0;
+            const uint32_t generation =
+                g_halo4Camera.generation.load(std::memory_order_acquire);
+            const uint32_t serial =
+                g_halo4Camera.enginePitchSerial.load(std::memory_order_acquire);
+            const uint64_t nowMs = GetTickCount64();
+            if (generation != heartbeatGeneration)
+            {
+                heartbeatGeneration = generation;
+                heartbeatSerial = serial;
+                heartbeatMs = nowMs;
+            }
+            else if (serial != heartbeatSerial)
+            {
+                heartbeatSerial = serial;
+                heartbeatMs = nowMs;
+            }
+            else if (serial != 0 && heartbeatMs != 0 &&
+                     g_halo4Camera.armed.load(std::memory_order_acquire) &&
+                     !g_halo4Camera.teardownRequested.load(
+                         std::memory_order_acquire) &&
+                     !VR_IsPausePresentation() &&
+                     nowMs - heartbeatMs > 2500)
+            {
+                LOG("Halo 4 camera core: no camera heartbeat for %llu ms while "
+                    "armed (the level closed) - retiring so presentation "
+                    "returns to the menu screen, exactly like the other titles",
+                    static_cast<unsigned long long>(nowMs - heartbeatMs));
+                g_halo4Camera.armed.store(false, std::memory_order_release);
+                g_halo4Camera.teardownRequested.store(
+                    true, std::memory_order_release);
+                heartbeatMs = nowMs;
+            }
+        }
         // Trip the flat-screen fallback from the worker, never from the hot
         // detour: the detour only counts.
         if (!g_halo4Camera.sceneTargetMissing.load(std::memory_order_acquire) &&
@@ -35774,6 +36216,34 @@ namespace
                     Halo2ColdObservation_Passed(halo2HudGeneration));
             }
             {
+                // C-TITLE-1: the weapon/hand/HUD tunables follow the ACTIVE
+                // title's own profile; Halo 2 splits into Anniversary and
+                // Classic on the live gate byte. No active supported title =
+                // the shared defaults. Config_ApplyTitleProfile no-ops when
+                // the profile is unchanged, so this is one atomic compare
+                // per 50 ms tick.
+                {
+                    const GameTitle tunableTitle =
+                        TitleAdapter_GetActiveTitle();
+                    int tunableProfile = -1;
+                    switch (tunableTitle)
+                    {
+                    case GameTitle::Halo3: tunableProfile = 0; break;
+                    case GameTitle::Halo3ODST: tunableProfile = 1; break;
+                    case GameTitle::HaloReach: tunableProfile = 2; break;
+                    case GameTitle::Halo4: tunableProfile = 3; break;
+                    case GameTitle::Halo2:
+                        tunableProfile =
+                            Halo2ColdObservation_ClassicRenderTreeRuns(
+                                TitleAdapter_GetGeneration(GameTitle::Halo2))
+                                ? 5
+                                : 4;
+                        break;
+                    case GameTitle::HaloCE: tunableProfile = 6; break;
+                    default: break;
+                    }
+                    Config_ApplyTitleProfile(tunableProfile);
+                }
                 // C-H2-10. The classic core cannot serve Anniversary: with
                 // those graphics selected render_player_window is never
                 // called at all. This runs the remastered scene render once
@@ -36429,7 +36899,7 @@ bool Game_TitleCapturesAuthoredCrosshair()
 #endif
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     if (activeTitle == GameTitle::Halo4)
-        return Halo4CuiReticleTransformLive();
+        return Halo4CuiReticleNativeSuppressionLive();
 #endif
 #if HALOMCCVR_EXPERIMENTAL_REACH_RENDER_CANDIDATE
     if (activeTitle == GameTitle::HaloReach)
@@ -36580,6 +37050,26 @@ bool Game_Halo4OwnsLookPitch()
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     return Halo4LookPitchOwned();
 #else
+    return false;
+#endif
+}
+
+bool Game_Halo4LiveCuiCanvas(float& baseY, float& hideShift)
+{
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    const float liveBaseY =
+        g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed);
+    const Halo4CuiAimOffset hide = Halo4BuildHiddenCuiTranslation(
+        g_halo4Camera.cuiReticleBaseX.load(std::memory_order_relaxed),
+        liveBaseY);
+    if (!hide.valid || !std::isfinite(liveBaseY) || liveBaseY <= 0.0f)
+        return false;
+    baseY = liveBaseY;
+    hideShift = hide.x;
+    return true;
+#else
+    baseY = 0.0f;
+    hideShift = 0.0f;
     return false;
 #endif
 }

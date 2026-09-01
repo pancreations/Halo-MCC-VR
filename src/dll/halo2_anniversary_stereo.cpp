@@ -129,6 +129,13 @@ namespace
     std::atomic<uint64_t> g_projectionReadbacks{0};
     std::atomic<uint64_t> g_projectionUnreadable{0};
     std::atomic<uint64_t> g_projectionMismatches{0};
+    // E-H2-70 (C-H2-82): angle between the camera the engine handed THIS
+    // renderer's packet build (the frame the weapon nodes were composed
+    // against) and the eye camera this renderer draws them from. The
+    // classic core publishes the same number; comparing the two names the
+    // renderer whose weapon is tipped. Millidegrees, last and maximum.
+    std::atomic<uint32_t> g_annivPitchMilliDegrees{0};
+    std::atomic<uint32_t> g_annivPitchMaxMilliDegrees{0};
     std::atomic<uint32_t> g_projectionReadbackWrittenBits[2]{};
     std::atomic<uint32_t> g_projectionReadbackEngineBits[2]{};
     std::atomic<uint32_t> g_projectionReadbackStatus{0};
@@ -864,6 +871,41 @@ namespace
                 ok = false;
                 break;
             }
+            {
+                // E-H2-70: measure this renderer's own compose-vs-draw
+                // camera angle, the exact quantity the classic core
+                // publishes, so the two are directly comparable.
+                Halo2CameraBasis packetCamera{};
+                if (Halo2Observer6Dof_ReadPacketBuildCamera(true, packetCamera))
+                {
+                    float dot = 0.0f;
+                    for (int axis = 0; axis < 3; ++axis)
+                        dot += packetCamera.forward[axis] * eyes[eye].forward[axis];
+                    if (std::isfinite(dot))
+                    {
+                        dot = dot < -1.0f ? -1.0f : (dot > 1.0f ? 1.0f : dot);
+                        const float degrees = std::acos(dot) * 57.29578f;
+                        if (std::isfinite(degrees) && degrees >= 0.0f &&
+                            degrees <= 180.0f)
+                        {
+                            const uint32_t milli =
+                                static_cast<uint32_t>(degrees * 1000.0f);
+                            g_annivPitchMilliDegrees.store(
+                                milli, std::memory_order_relaxed);
+                            uint32_t previous = g_annivPitchMaxMilliDegrees.load(
+                                std::memory_order_relaxed);
+                            while (previous < milli &&
+                                   !g_annivPitchMaxMilliDegrees
+                                        .compare_exchange_weak(
+                                            previous, milli,
+                                            std::memory_order_relaxed,
+                                            std::memory_order_relaxed))
+                            {
+                            }
+                        }
+                    }
+                }
+            }
             if (!VR_Halo2BeginSynchronousEye(generation, serial, eye))
             {
                 CountBail(Bail::EyeBeginRefused);
@@ -1528,7 +1570,8 @@ namespace
             "the ring %llu times (weapon view applied %llu, engine's own view "
             "kept %llu; the interpolator reported a mid-tick blend %llu times, "
             "the tick pose %llu times); views seen mask=0x%X "
-            "last=%u; bail reasons: %s",
+            "last=%u; weapon compose-vs-draw angle %.3f deg (max %.3f); "
+            "bail reasons: %s",
             static_cast<unsigned long long>(g_callbacks.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(pairs),
             static_cast<unsigned long long>(g_drops.load(std::memory_order_relaxed)),
@@ -1548,6 +1591,8 @@ namespace
             static_cast<unsigned long long>(g_weaponViewUnblended.load(std::memory_order_relaxed)),
             g_viewIndexMask.load(std::memory_order_relaxed),
             g_lastViewIndex.load(std::memory_order_relaxed),
+            g_annivPitchMilliDegrees.load(std::memory_order_relaxed) / 1000.0,
+            g_annivPitchMaxMilliDegrees.load(std::memory_order_relaxed) / 1000.0,
             used ? reasons : "none");
         // E-H2-12: the projection read-back, whenever its verdict or its
         // numbers change. This line, not the written cover, says what

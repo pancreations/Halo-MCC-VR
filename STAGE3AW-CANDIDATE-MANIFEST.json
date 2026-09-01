@@ -1,0 +1,32 @@
+{
+  "stage": "3AW",
+  "status": "HEADSET_PENDING",
+  "base_stage": "3AV rejected; forward-only",
+  "base_dll_sha256": "2baf0a3e7d654a0cda701399d672cec7c582202e138537f8193e34e5d72aca16",
+  "output_dll_sha256": "ad0c6bbca337f2436a258cb4a0cb9da5884b20270bc2f9dadf7a06daba1ed676",
+  "output_dll_size": 2919424,
+  "payload_rva": "0x2FA790",
+  "payload_size": 513,
+  "payload_sha256": "243cff272992484a73670172525615474a361d5852cb83bc845009518bf09661",
+  "changed_bytes": 470,
+  "changes_outside_five_guarded_regions": 0,
+  "target_title": "Halo 4",
+  "features": [
+    "stock-backbuffer production while head-locked pause target is active",
+    "semantic Resume via native pause reason 3 lifetime edge",
+    "authored-reticle capture begins at exact 0x28/0x0C marker",
+    "dynamic 2x capture viewport from selected runtime reticle transform"
+  ],
+  "steam_halo4_sha256": "7c53e7d5bc9848545a1b70e2768242479336fba1b7630d7ab955f7fd0c34fa84",
+  "store_halo4_sha256": "5767cd564c1e8e8d012d002a8de8e92960a3de46442399ed054e3c4ef44aa496",
+  "retail_pause_reason_getter_rva": "0xA0AE4",
+  "retail_pause_reason_getter_body_sha256": "4a7ba392baaf1ac6fc0aad577ba8ecba13d43d875602a17195a65459e868b5a2",
+  "deployment": "INSTALLED_BOTH_2026-08-28",
+  "steam_installed_dll_sha256": "ad0c6bbca337f2436a258cb4a0cb9da5884b20270bc2f9dadf7a06daba1ed676",
+  "store_installed_dll_sha256": "ad0c6bbca337f2436a258cb4a0cb9da5884b20270bc2f9dadf7a06daba1ed676",
+  "backup": "out/deploy-backups/2026-08-28-pre-3AW",
+  "cfg_changed": false,
+  "launcher_changed": false,
+  "mcc_launched": false,
+  "accepted_pointer_advanced": false
+}

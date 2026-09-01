@@ -147,6 +147,58 @@ inline CinematicControlState ClassifyOdstCinematicControl(
         : CinematicControlState::AuthoredLocked;
 }
 
+inline constexpr uint16_t kHalo4CinematicCameraType = 6;
+inline constexpr int32_t kHalo4CinematicMaximumTicks = 360000;
+inline constexpr float kHalo4CinematicLookFreedomEpsilon = 0.0001f;
+
+// Stage 3BX's H4EK/retail-proven look-constraint rule. Halo 4's post-link
+// implementation intentionally treated non-finite angle/rate bits as look
+// freedom: malformed live camera data must remain immersive, never admit a
+// room-fixed theatre screen. Rates are not required when no interpolation is
+// pending because the engine does not consume them in that state either.
+inline CinematicControlState ClassifyHalo4CinematicControl(
+    bool cinematicGlobalsAvailable, bool cinematicInProgress,
+    bool cameraStateAvailable, uint16_t cameraType,
+    const float maximumLookAngles[4],
+    const float maximumLookAngleRates[4],
+    int32_t interpolationTicksRemaining) noexcept
+{
+    if (!cinematicGlobalsAvailable)
+        return CinematicControlState::Unknown;
+    if (!cinematicInProgress)
+        return CinematicControlState::PlayerControlled;
+    if (!cameraStateAvailable || cameraType != kHalo4CinematicCameraType ||
+        !maximumLookAngles || interpolationTicksRemaining < 0 ||
+        interpolationTicksRemaining > kHalo4CinematicMaximumTicks)
+    {
+        return CinematicControlState::Unknown;
+    }
+
+    for (int axis = 0; axis < 4; ++axis)
+    {
+        const float angle = maximumLookAngles[axis];
+        if (!std::isfinite(angle) ||
+            std::fabs(angle) > kHalo4CinematicLookFreedomEpsilon)
+        {
+            return CinematicControlState::PlayerControlled;
+        }
+    }
+    if (interpolationTicksRemaining == 0)
+        return CinematicControlState::AuthoredLocked;
+    if (!maximumLookAngleRates)
+        return CinematicControlState::Unknown;
+    for (int axis = 0; axis < 4; ++axis)
+    {
+        const float rate = maximumLookAngleRates[axis];
+        if (!std::isfinite(rate) ||
+            std::fabs(rate) > kHalo4CinematicLookFreedomEpsilon)
+        {
+            return CinematicControlState::PlayerControlled;
+        }
+    }
+    return CinematicControlState::AuthoredLocked;
+}
+
 inline CinematicControlState ClassifyReachCinematicControl(
     bool cinematicGlobalsProven, uint32_t stateWord) noexcept
 {

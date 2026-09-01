@@ -1,24 +1,421 @@
 # Current state
 
-> **CURRENT PUBLISHED PRE-RELEASE: MCC VR ALPHA 0.3.5 - 2026-08-24.**
-> GitHub tag `MCC_VR_ALPHA_0.3.5` points to
-> `7daf5d0ff0222fd32fcb4b59197f9534e3cbc383` and publishes the accepted
-> cumulative runtime source `1939eabc21c1607ef93ccaec97de004271d70091`.
-> The published `HaloMCCVR.dll` is the exact accepted, unrecompiled artifact,
-> SHA-256 `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
-> The uploaded `MCC_VR_ALPHA_0.3.5.zip` is 1,245,953 bytes, SHA-256
-> `BAD8D05852A22C8F00A378A0F1B02EB5A290E8FB1A4FCA7D90A4AEB012CA6B5D`.
-> This handoff is newer source work and does not replace that accepted
-> published artifact until headset acceptance advances the pointer.
+> **PROCESS RULE (user, 2026-08-31): never fork the build lineage. A
+> candidate must CONTINUE the accepted build - it may not drop any accepted
+> behavior, and a fresh compile that loses the accepted Halo 4 3CR/3CX
+> patch behavior is not an acceptable candidate. The C-H2-78 install below
+> was rolled back for exactly this reason: both editions are back on the
+> accepted Stage 3CX DLL (`7fdf539a...`), hash-verified. Before any future
+> source-built candidate ships, the 3CR/3CX Halo 4 layout-live behavior
+> must be in the source build itself (or the change must be applied to the
+> accepted image), so one cumulative line continues.**
 
-> **CURRENT ACCEPTED CUMULATIVE DEVELOPMENT BASELINE: C-RUNTIME-1 -
-> 2026-08-24.** Source is
-> `1939eabc21c1607ef93ccaec97de004271d70091`; installed DLL SHA-256 is
-> `D6332F6CE4F25B2277A071D12D80A93977913643BE89677855EA8C259F80A1D4`.
-> The supported-title regression matrix remains required for later shared
-> lifecycle changes. Halo CE remains stock.
+> **UNACCEPTED C-H4-52 HALO 4 HEARTBEAT RETIRE, INSTALLED BOTH EDITIONS -
+> 2026-09-01.** Regression found on the source builds: after exiting a Halo
+> 4 level the screen stayed head-locked (no theatre) and the stick went
+> sideways in the menu. The 07:58 Steam log: level ended ~07:59:06 (0
+> pairs, "no owned Halo 4 frame in the last 250 ms"), title re-detected
+> 07:59:09.4, mode `gameplay -> loading -> gameplay` in 7 ms because the
+> still-ARMED core republished Gameplay every tick, and it stayed armed for
+> two minutes until the module unloaded. The accepted 3CX image tore down
+> within ~1 s at the same moment (stereo OFF -> gate re-armed -> core
+> removed -> re-detected -> unsupported). Halo 4's level-load gate never
+> closes on its own once open, so teardown depended on the core disarming
+> at level end, which the source build no longer did. C-H4-52 gives Halo 4
+> the rule every other title uses: armed + no camera heartbeat
+> (`enginePitchSerial` unchanged) for 2.5 s + not the pause screen ->
+> armed cleared, teardown requested; the next tick removes the core and
+> the menu/theatre presentation returns. Pause exempt; hitches under 2.5 s
+> untouched; longer ones re-earn the install through the existing gate.
+> Candidate `out/candidates/CH452-halo4-heartbeat-retire`, DLL SHA-256
+> `69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973`,
+> installed and hash-verified BOTH editions, MCC closed, cfg untouched.
+> Rollback `out/deploy-backups/2026-09-01-pre-CH452`.
 
-> **UNACCEPTED C-H2-77 FIELD-PROVEN D3D11 HUD LAYOUT AND NATIVE CROSSHAIR IN
+> **C-H2-86 REJECTED (Anniversary tilted); C-H2-87 BARREL METER + SWING
+> DISABLED, INSTALLED BOTH EDITIONS - 2026-09-01.** The user reported the
+> C-H2-86 swing tilted Anniversary (previously correct) and left Classic
+> wrong, so its premise - stock barrel = compose camera forward in packet
+> space - is false; the swing is disabled (`kHalo2AutoBarrelSwing`), and the
+> mount is back to C-TITLE-2 behaviour in both renderers.
+>
+> Hard measurements, finally read from the logs the mod had already been
+> writing: the classic first-person pass draws from EXACTLY this eye's
+> camera (`fpCamIsThisEye 8152/8152`, `fpDepthOn 8152 / fpDepthOff 0`, so
+> orientation equal within 1e-4) - the E-H2-34 previous-eye and E-H2-66
+> centre models were both wrong; classic compose camera == classic draw
+> camera (`fpComposeVsDraw 0.000 deg`), so Classic draws exactly what the
+> mod's carrier says; Anniversary's packet is composed against a camera
+> 4.3-4.4 deg off the eye it is drawn with (max 18 in motion), and its
+> renderer re-expresses it. H2EK tags exported with `tool.exe
+> export-tag-to-xml` (fp_smg, fp_battle_rifle, fp_shotgun, fp_magnum): the
+> `primary_trigger` and `flashlight` markers sit on the root node with
+> identity rotation along +X - the classic barrel IS root +X, which the
+> mount already maps onto the ray. So identical packets look right in
+> Anniversary and tipped in Classic; with Classic proven consistent, the
+> tilt is either in the mod's carrier (a pitch that Anniversary's 4.4 deg
+> re-expression happens to cancel) or between node and mesh. C-H2-87 adds
+> the barrel meter (E-H2-74) to the observer line - carrier and stock
+> root+X against the compose camera, with signed elevation, per renderer -
+> which decides between those two with one short session. Candidate
+> `out/candidates/CH287-halo2-barrel-meter`, DLL SHA-256
+> `9eb07bf8a75f5c3233cfa133d43a878c4f3e07ba9604fbf7467e6eb533691c62`,
+> installed and hash-verified BOTH editions, MCC closed, cfg untouched.
+> Rollback `out/deploy-backups/2026-09-01-pre-CH287`.
+
+> **UNACCEPTED C-H2-86 HALO 2 AUTOMATIC BARREL ALIGNMENT, INSTALLED BOTH
+> EDITIONS - 2026-09-01.** The requirement, restated by the user: the Halo 2
+> Classic barrel must lie on the crosshair automatically, like every other
+> game - not via a user slider. Halo 3/ODST/Reach measure the authored
+> barrel as the camera-forward direction in wrist space (in the stock game
+> the weapon points down the camera, which is where its shots go) and swing
+> the mount onto the aim ray (`ShortestArcRotation`). Halo 2's mount trusted
+> the gun root's authored +X, which the classic art does not honour. C-H2-86
+> gives `Halo2BuildAuthoredBarrelDelta` the packet's compose camera (the
+> `authoredRoot` the builder already passes) and, after the root-frame
+> mapping, swings the mounted stock barrel line onto `rightCarrier.forward`
+> - the same ray the crosshair and the shot use - with a new
+> `Halo2ShortestArcRotation` (same construction as game.cpp's). Classic and
+> Anniversary each supply their own compose camera. Weapon pitch/yaw/roll
+> remain mount calibration moving gun and crosshair together. C-TITLE-2's
+> mesh-only Barrel sliders are removed from F1 per user direction (keys stay
+> inert). Tests: a new pin proves a root tipped 12 degrees off the camera
+> still lands its barrel on the ray; two C-H2-70 pins had synthetic cameras
+> inconsistent with their identity roots and were made consistent; the
+> legacy C-H2-65 pin keeps its own camera. Process note: the first build was
+> installed before its failing tests were read and was rolled back to
+> `f499d71b` in-session; re-installed only after 100% pass, and the deploy
+> chain now gates install on ctest. Candidate
+> `out/candidates/CH286-halo2-auto-barrel-alignment`, DLL SHA-256
+> `838c7e88291735a5a53f7261ffca654163f267b68850bc2f7659d6755b9cd861`,
+> installed and hash-verified BOTH editions, MCC closed, cfg untouched.
+> Rollback `out/deploy-backups/2026-09-01-pre-CH286`.
+
+> **UNACCEPTED C-TITLE-2 PER-GAME MESH-ONLY BARREL TRIM, INSTALLED BOTH
+> EDITIONS - 2026-09-01.** The user's real requirement, finally stated
+> plainly: Halo 2 Classic's drawn barrel does not lie on the crosshair, and
+> the weapon pitch/yaw/roll sliders cannot fix it because they are mount
+> calibration folded into the shared aim pose - moving them moves the
+> crosshair with the gun. Halo 3/ODST/Reach lay the barrel on the ray
+> automatically (`ShortestArcRotation` in `DesiredWristWorld`); Halo 2's
+> mount trusts the gun root's authored +X, which the classic art does not
+> honour. C-TITLE-2 adds three MESH-ONLY sliders, `barrel_pitch_deg` /
+> `barrel_yaw_deg` / `barrel_roll_deg`, that rotate the visible gun and the
+> hands holding it about the controller while the crosshair and the shot
+> ray stay put. Saved per title profile (C-TITLE-1; Halo 2 Anniversary and
+> Classic separately) and wired at every title's mount: Halo 2 both
+> renderers (carrier trim), Halo 3/ODST (right hand after auto-alignment),
+> Reach (tracked basis), Halo 4 (controller quaternion, local frame).
+> Defaults 0 = byte-identical. Per user direction the F1 weapon section is
+> sliders only: the C-TITLE-1 banner/explanation text is removed. Candidate
+> `out/candidates/CTITLE2-per-game-barrel-trim`, DLL SHA-256
+> `f499d71b05b2b44b887f7e1e774be4e8d400c928a7136b8529bb785bc7d5b8de`,
+> installed and hash-verified BOTH editions, MCC closed, cfg untouched.
+> Rollback `out/deploy-backups/2026-09-01-pre-CTITLE2`.
+
+> **UNACCEPTED C-TITLE-1 PER-TITLE WEAPON/HAND/HUD PROFILES, INSTALLED BOTH
+> EDITIONS - 2026-08-31 (user-directed architecture).** The user directed
+> that gun offsets/rotations, hand adjustments and HUD adjustments be saved
+> PER GAME - "they all have their own configuration settings saved" - with
+> Halo 2's Anniversary and Classic renderers separate, extended on request
+> to every title including a reserved Halo 1 slot. Seven profiles now each
+> keep their own copy of the thirteen tunables (gun_scale,
+> left_hand_scale, gun_pitch/yaw/roll_deg, gun_forward/right/up_m,
+> left_hand_forward_m, hud_size, hud_aspect, hud_curvature,
+> hud_vertical_offset), exactly like the per-vehicle seat trims. The title
+> worker applies the active game's profile into the live fields (Halo 2
+> splits on the live renderer gate), so every consumer follows
+> automatically; the F1 sliders edit the running game's profile (banner:
+> "Tuning profile: <game>"); still ONE halomccvr.cfg, with
+> halo3_/odst_/reach_/halo4_/halo2a_/halo2c_/halo1_ keys that seed from the
+> shared defaults. This also supersedes C-H2-85's separate Classic sliders
+> and is the delivery path for the Halo 2 Classic-vs-Anniversary match: the
+> user tunes Classic's profile in Classic. The old "no title-prefixed keys"
+> core test enforced the pre-directive rule and was replaced with pins for
+> the new contract (all sections written, per-renderer round-trip isolation,
+> live swap, active-profile-only edits, shared defaults on exit). Candidate
+> `out/candidates/CTITLE1-per-title-tunable-profiles`, DLL SHA-256
+> `6cb91ecf264b4027a4b54c764f8c7a3cf8f1ad292163a14614465a5830a2bc2f`,
+> installed and hash-verified BOTH editions, MCC closed, cfg untouched
+> (profiles seed on first save). Rollback
+> `out/deploy-backups/2026-08-31-pre-CTITLE1`.
+
+> **UNACCEPTED C-H2-85 HALO 2 CLASSIC MATCH DIALS, INSTALLED BOTH EDITIONS -
+> 2026-08-31.** C-H2-84 armed and fired (`classic composition frame OWNED`,
+> `forced to current 674 of 1826`) and the user reports the gun unchanged,
+> so E-H2-71's composition-frame difference is DISPROVEN as the cause of the
+> visible offset (E-H2-73). That closes the last engine-level hypothesis
+> available without new evidence; five candidates each changed a different
+> stage and none moved the gun, with the packets proven byte-identical to
+> Anniversary's (E-H2-68).
+>
+> C-H2-85 gives the player direct control instead: six CLASSIC-ONLY dials -
+> `halo2_classic_gun_pitch_deg` / `yaw` / `roll` and
+> `halo2_classic_gun_forward_m` / `right_m` / `up_m` - that rotate and offset
+> the visible gun AND hands together, applied to both controller carriers in
+> the Classic packet path only. Anniversary never takes that branch; no other
+> title reads the keys; all-zero is byte-identical to C-H2-84. Live in the
+> F1 menu under "Halo 2 Classic match". The values the player settles on are
+> a MEASUREMENT of the residual difference in degrees and metres, and the
+> right input to any future engine-level fix. Candidate
+> `out/candidates/CH285-halo2-classic-match-dials`, DLL SHA-256
+> `ed6bf92c71afd4eb993866510e2da6ada303d997aa2db594b982b7bb0d49ac93`,
+> installed and hash-verified BOTH editions, MCC closed, launcher and the
+> existing `halomccvr.cfg` untouched. Rollback
+> `out/deploy-backups/2026-08-31-pre-CH285`.
+
+> **UNACCEPTED C-H2-84 HALO 2 COMPOSITION-FRAME SIGNATURE FIX, INSTALLED
+> BOTH EDITIONS - 2026-08-31.** C-H2-83's hook NEVER INSTALLED: its log says
+> `the interpolated first-person frame getter matched 2 times (expected 1 at
+> +0x7226F0)` and `classic composition frame forced to current 0 of 0`. The
+> uniqueness guard refused, so E-H2-71's fix was never exercised and the
+> user's "still offset" report says nothing about it either way. E-H2-72
+> records the root mistake: uniqueness was counted in the RAW FILE while the
+> runtime scanner walks the LOADED IMAGE, where the 23-byte prologue also
+> matches the sibling getter at `0x7227A0` (24 bytes is unique; 28 is used).
+> The pinned target `0x7226F0` is unchanged and independently verified.
+> `tools/h2-interp-signature.py` builds the loaded-image layout and reports
+> match counts per prefix length - use it, not a file search, for every
+> future Halo 2 signature. Candidate
+> `out/candidates/CH284-halo2-composition-frame-signature-fix`, DLL SHA-256
+> `0b9f51aa5166450fb29bfcb93a94b87fdc29420fe8d10eff5505893016cc4a16`,
+> installed and hash-verified BOTH editions, MCC closed, launcher/cfg
+> untouched. Rollback `out/deploy-backups/2026-08-31-pre-CH284`.
+>
+> **Read first in the next Halo 2 log:** `Halo 2 classic composition frame
+> OWNED` must appear, and `classic composition frame forced to current N of
+> M getter calls` must show a non-zero N while Classic is live. If not, the
+> fix again did not run and the gun result is meaningless.
+
+> **UNACCEPTED C-H2-83 HALO 2 CLASSIC COMPOSITION FRAME, INSTALLED BOTH
+> EDITIONS - 2026-08-31. The root cause, found statically in H2EK.** The
+> user withdrew trust in runtime probes after two failed; Ghidra on the
+> official kit answered it (E-H2-71). The packet builder
+> (kit `first_person_weapons.cpp` FUN_00706e04 = retail `+0x8181F0`) prefers
+> the frame-INTERPOLATED first-person frame when `publish_to_renderer == 0`
+> (Classic) and always uses the CURRENT tick frame `user_data+0x20C8` when
+> it is nonzero (Anniversary). Identical packet matrices expressed in two
+> different frames read as a pure ROTATION - the reported muzzle rise -
+> which no rig translation can correct. That is why C-H2-63/78/79/80/81, all
+> downstream of the composition frame, changed nothing.
+>
+> C-H2-83 makes the interpolated-frame getter report none during the mod's
+> own Classic build, which is the engine's documented fallback to that same
+> current frame. Retail homolog `0x7226F0` was MATCHED by the pinned
+> builder's own call order (build `0x729BA0` -> this -> inverse `0x729C90`
+> -> compose `0x72A150`, exactly the kit's sequence) and VERIFIED by body:
+> identical `0x38` bank stride and `0x1A39D44`/`0x1A39D48` bases, same
+> validity test, same blend, bool return; its 24-byte entry is unique and
+> the hook also requires the pinned RVA. Scope is the owned user's Classic
+> build only - the world, Anniversary and every other caller keep the
+> engine's interpolated frame. Any signature/create/enable failure leaves
+> Classic exactly as before. New telemetry: `classic composition frame
+> forced to current N of M getter calls`. Candidate
+> `out/candidates/CH283-halo2-classic-composition-frame`, DLL SHA-256
+> `48e565604e019fefce28be93eafa86263ed21e70f05871e37b245719bab7e0e4`,
+> installed and hash-verified BOTH editions, MCC closed, launcher/cfg
+> untouched. Rollback `out/deploy-backups/2026-08-31-pre-CH283`.
+
+> **C-H2-82 HALO 2 COMPOSE-VS-DRAW MEASUREMENT (superseded by the static
+> E-H2-71 finding above; its counters remain), INSTALLED BOTH EDITIONS -
+> 2026-08-31. Measurement only; no behavior change.** The user's three
+> headset tests are a decisive negative result: the Classic tipped-muzzle
+> defect did not change across C-H2-78B, C-H2-79 and C-H2-80 - and C-H2-80
+> gave Classic the BYTE-IDENTICAL packet Anniversary draws. That eliminates
+> the packet geometry, and with it everything the C-H2-63/78/79/80/81
+> compensation work touched; those candidates were changing the wrong
+> quantity. A tipped muzzle is an ORIENTATION error, which no rig
+> translation can produce. E-H2-70 identifies the one remaining per-renderer
+> difference: the engine calls the packet builder separately per renderer,
+> so each renderer's weapon nodes are composed against ITS OWN engine-given
+> camera, while each renderer draws them from a different camera (Classic's
+> first-person pass camera, read by C-H2-79; Anniversary's written eye
+> camera). Any angle between a renderer's compose and draw cameras rotates
+> its weapon alone, and the observer owns head pitch (C-H2-23), which makes
+> a pitch difference concrete. C-H2-82 publishes each renderer's
+> packet-build camera and reports that angle in both cores:
+> `fpComposeVsDraw=%.3f deg (max %.3f)` in the stereo core line and
+> `weapon compose-vs-draw angle` in the Anniversary line. Classic non-zero
+> with Anniversary ~0 confirms the mechanism and gives the exact correction,
+> which then belongs at COMPOSE time, never as another rig-wide transform
+> (E-H2-68). Both ~0 refutes it and points at the classic first-person
+> projection (E-H2-35) instead. Candidate
+> `out/candidates/CH282-halo2-compose-vs-draw-probe`, DLL SHA-256
+> `9b9baa4ba7df0e2a2d843b2206c8d6a47ca328487279ad6a30f2d7b4a6fb08e0`,
+> installed and hash-verified BOTH editions, MCC closed, launcher/cfg
+> untouched. Rollback `out/deploy-backups/2026-08-31-pre-CH282`.
+
+> **UNACCEPTED C-H2-81 HALO 2 PARITY + GUARDED WEAPON DEPTH (the user
+> accepts the depth behavior; the gun's tip/rotation remains the open
+> defect), INSTALLED BOTH EDITIONS - 2026-08-31.** The user asked for C-H2-80's parity AND the
+> weapon depth, with the constraint that it must still look like Anniversary
+> and must not sit nearer the face. E-H2-69 establishes that the per-eye
+> compensation is the ONLY mechanism that can create the parallax (writing
+> the camera globals at draw time is measured inert, E-H2-31/34; a
+> projection change cannot create parallax), and that it reproduces
+> Anniversary's own image once its viewing camera is MEASURED (E-H2-67)
+> rather than predicted. C-H2-81 therefore re-admits it, bounded so it
+> cannot express the reported defect: the measured camera must share this
+> eye's orientation exactly (identity delta rotation - a rotation offset
+> becomes unrepresentable) and lie within 1.5x the eye's live offset from
+> the pair centre (one half-IPD - the maximum displacement it can ever apply
+> is the eye offset itself). Anything else, an unreadable camera or an
+> invalid basis keeps C-H2-80's byte-identical Anniversary packet for that
+> pass. New `fpDepthOn`/`fpDepthOff` counters sit beside the `fpCamIs*`
+> measurement, so the next log states how often depth was restored and which
+> camera the pass held when it was not. Candidate
+> `out/candidates/CH281-halo2-parity-plus-guarded-depth`, DLL SHA-256
+> `e6ec1faa2e8f717b22fc5fd29d558ebad44bed2d151613a57c5dc18b1fe44edc`,
+> installed and hash-verified BOTH editions, MCC closed, launcher/cfg
+> untouched. Parity-only rollback: `out/deploy-backups/2026-08-31-pre-CH281`
+> (C-H2-80 `7fdaff9f...`).
+
+> **UNACCEPTED C-H2-80 HALO 2 CLASSIC/ANNIVERSARY PLACEMENT PARITY (the
+> floor C-H2-81 above builds on and falls back to), INSTALLED BOTH
+> EDITIONS - 2026-08-31.** The user's requirement is that
+> Classic show the hands and gun at visually the SAME position and rotation
+> as Anniversary. E-H2-68 decides this from the code: both renderers consume
+> the same mount-written packet, Anniversary transforms it not at all, and
+> Classic alone applied a rig-wide rotation+translation
+> (`Halo2CompensateClassicFirstPersonEye`). Any non-identity compensation
+> therefore differs from Anniversary by construction, so no viewing camera -
+> E-H2-34's previous eye, E-H2-66's centre, or E-H2-67's measured one - can
+> deliver parity; only applying none can. C-H2-80 sets
+> `kHalo2ClassicFirstPersonEyeCompensation = false`, so the classic renderer
+> draws the byte-identical packet Anniversary draws and the cfg offsets move
+> both renderers together. Stated cost: this restores C-H2-40's classic
+> weapon depth behavior (no per-eye weapon disparity of its own); placement
+> parity is the user's explicit priority. C-H2-79's measured-camera read and
+> its `fpCamIs*` telemetry stay compiled and reporting, so the next log
+> still names the camera the pass holds. Candidate
+> `out/candidates/CH280-halo2-classic-anniversary-parity`, DLL SHA-256
+> `7fdaff9ffb5c0908093ea8cd1c9ff6d6c62329c1f5c816db3bec55715e72f3f4`,
+> installed and hash-verified BOTH editions, MCC closed, launcher/cfg
+> untouched. Rollback `out/deploy-backups/2026-08-31-pre-CH280`.
+
+> **UNACCEPTED C-H2-79 MEASURED CLASSIC FIRST-PERSON CAMERA (superseded as
+> the shipped behavior by C-H2-80 above; its measurement remains active),
+> INSTALLED BOTH EDITIONS - 2026-08-31.** Continues C-H2-78B (nothing dropped; the Halo 4
+> 3CR/3CX source fold-in rides along, and the user confirms the H4 reticle
+> works on it). The user reports Halo 2 Classic hands/gun still offset from
+> Anniversary in BOTH position and rotation on C-H2-78B. E-H2-67 records why
+> that is the signature of a wrong viewing camera, and that both prior
+> answers (E-H2-34 previous-eye, E-H2-66 common-centre) were MODELS inferred
+> from pictures. C-H2-79 stops predicting: the draw hook reads the engine's
+> own first-person camera global `0x1996A28` - the camera
+> `draw_first_person` copies whole (E-H2-20/E-H2-31) - and publishes it as
+> the compensation's viewing term, so the rig is placed correctly whichever
+> camera the engine holds. The same read reports which candidate it matched
+> in the stereo core line (`fpCamIsCentre` / `fpCamIsThisEye` /
+> `fpCamIsOtherEye` / `fpCamIsOther`), settling the question with a
+> measurement. Unreadable camera = C-H2-78B behavior, nothing disarmed.
+> Candidate `out/candidates/CH279-halo2-measured-fp-camera`, DLL SHA-256
+> `0f47f8e0b79c60fdafd0fe4a4d689a1bfb0efbdeb342416e6f74ed08c36f3e2a`,
+> installed and hash-verified BOTH editions, MCC closed, launcher/cfg
+> untouched. Rollback `out/deploy-backups/2026-08-31-pre-CH279`.
+
+> **UNACCEPTED C-H2-78B CUMULATIVE (H2 CLASSIC COMMON FP CAMERA + H4
+> 3CR/3CX SOURCE FOLD-IN), INSTALLED BOTH EDITIONS - 2026-08-31. The user
+> confirms the Halo 4 reticle works on this build (the fold-in reproduced
+> 3CX); Halo 2 Classic was still offset, which C-H2-79 above addresses.** Per the
+> process rule above, the C-H2-78 fix now ships in a cumulative source build
+> that drops nothing: the Halo 4 3CR live selector un-hide and 3CX live
+> bias/zoom laws were folded into `halo4_cui_reticle_logic.h` /
+> `game.cpp` / `vr.cpp`. Equivalence proof: the constexpr-derived float32
+> coefficients are BIT-IDENTICAL to the constants extracted from the
+> accepted 3CX image (R 30463.988, Q -86.048874, P 0.06397328, CAL_F
+> 0.07725472, ZB 9914.3857, ZA 0.10192613), the bias evaluates in the
+> payload's Horner order, and new core tests pin the three capture-dump
+> anchors, monotonicity, the zoom anchors and every invalid-live fallback
+> exactly as the 3CX builder script verified them. Candidate
+> `out/candidates/CH278B-cumulative-h2-camera-h4-3cx-fold-in`, DLL SHA-256
+> `f4fa66048dd0e52662e1bb0de90d993c5834f4f88805e968bd9d71ccbf9a3ba4`,
+> installed and hash-verified in BOTH editions, MCC closed, launcher/cfg
+> untouched. Rollback: `out/deploy-backups/2026-08-31-pre-CH278` /
+> `built/Stage3CX-HaloMCCVR.dll`. Headset validation: (1) Halo 2 Classic
+> hands/gun parity with Anniversary, (2) Halo 4 reticle behaves like this
+> morning's accepted 3CX across level loads, (3) Halo 3 regression before
+> any pointer advance.
+
+> **SUPERSEDED BY C-H2-78B ABOVE - HALO 2 C-H2-78 CLASSIC COMMON
+> FIRST-PERSON CAMERA IN SOURCE, BUILT AND PACKAGED, INSTALL ROLLED
+> BACK - 2026-08-31.** The user reported Halo 2 Classic's
+> gun and hands visually offset from Anniversary's ("the barrel is too high
+> up"), with Anniversary correct. The 15:39-15:41 Steam parity run
+> (`out/test-runs/h2-parity-20260831-1541-steam`) measured the cause with
+> every other stage healthy: every stable Classic weapon-box sample sat at
+> -16 px between the eyes against Anniversary's steady -8 px - exactly
+> doubled disparity, so the whole hands/gun rig fused at about half its true
+> distance and read as displaced up toward the face. E-H2-66 records the
+> model: the classic first-person pass draws BOTH eyes from one common
+> camera (C-H2-40's pictures: weapon 0 px between the eyes), so the E-H2-34
+> previous-eye compensation over-shifted every pass by half the eye
+> baseline. C-H2-78 makes the stereo core name the pair's tracked centre as
+> the viewing camera for both passes; the old model stays disabled behind
+> `kHalo2ClassicCommonFirstPersonCamera`. One behavioral change; Classic and
+> Anniversary then place hands/gun identically from the same cfg offsets.
+>
+> Candidate `out/candidates/CH278-halo2-classic-common-fp-camera`, DLL
+> SHA-256 `3879dab8b2a13e2efc46efdb28fdd0849ffaa61e8b0f8f76047378b03cb8cec4`
+> (source-built from this snapshot, tree hash in the manifest; git metadata
+> unavailable). Release build, core tests, and the Reach gate pass.
+> Installed and hash-verified in BOTH editions with MCC closed; launcher and
+> cfg untouched; prior 3CX install preserved under
+> `out/deploy-backups/2026-08-31-pre-CH278`.
+>
+> **Halo 4 caveat on this build:** it carries the Stage 3CP source merge
+> (3BU reticle/HUD + 3BX classifier + 3CB theatre) but NOT the 3CR/3CX
+> layout-live binary patches, which exist only as fixed-RVA patches of the
+> Aug 25 image. H4's reticle may clip or mis-centre on some level loads
+> until 3CX (`built/Stage3CX-HaloMCCVR.dll`, `7fdf539a...`) is reinstalled
+> after the Halo 2 test, or the 3CR/3CX behavior is merged into source as
+> its own candidate. Headset acceptance required: Halo 2 Classic vs
+> Anniversary hands/gun parity, then a Halo 3 regression, before any pointer
+> advance.
+
+> **ACCEPTED HALO 4 BASELINE - STAGE 3CX - 2026-08-31. The user declared this
+> build the new baseline ("This is our new baseline. We'll fix those bugs
+> later."); every following Halo 4 candidate builds on it.**
+>
+> Installed on BOTH editions, hash-verified:
+> `built/Stage3CX-HaloMCCVR.dll`
+> `7fdf539a91f36d030eebb3df24d162cdde360ac950048e7b223d84807ed76d88`.
+> Post-link lineage: 3CB `9ee60ca1` (proven 3BU crosshair chain + 3BV/3BW/3BX
+> cutscene stack + theatre camera) -> 3CR `7d8e3ee6` (live selector un-hide:
+> 0x2F99D7 -> 0x2A8368, 4 bytes) -> 3CX (`tools/
+> build_stage3cx_h4_three_point_bias.py` from the 3CR image: 168-byte payload
+> at 0x2F93E0, gate 0x2FB992 repointed, then the byte-identical accepted 3BR
+> thunk).
+>
+> **What was wrong all along:** Halo 4 re-picks its HUD layout class per level
+> load (observed half-height pairs 336.549 / 582.373 / 731.878; the user saw
+> the reticle change size between reloads of the same level). The reticle
+> capture's un-hide distance, vertical centring and zoom were frozen at the
+> first session's layout. 3CX computes all three live, per capture:
+> selector un-hide = live hide atomic; KBIAS = clamp(0.0639733 - 86.04888*u +
+> 30463.99*u^2, 0, 0.0772547) with u = 1/|baseY|; KSCALE = 0.101926 +
+> 9914.386/hide. Every constant is anchored to on-disk capture-dump
+> measurements at the layouts named above (bit-exact on the original accepted
+> layout) - no guessed values. Headset-confirmed: full native reticle on the
+> VR crosshair at accepted size, centred (final dumps: bbox y 93..427,
+> centroid (255,260)); cutscene theatre entering/exiting cleanly.
+>
+> **To fix a future layout that clips or misplaces the reticle:** the first
+> four captures of each session auto-save as
+> `Halo_MCC_VR/HaloMCCVR-h4-reticle-N.raw` (512x512 RGBA, pitch 2048). Measure
+> the ink bbox/centroid, add the layout's (|baseY|, needed-fraction) pair to
+> `ANCHORS` in the 3CX build script, rebuild from the 3CR image - the script
+> re-verifies every anchor and monotonicity itself.
+>
+> **Deferred by the user, in their words "fix those bugs later":** (1) reticle
+> animation cadence feels laggy - `crosshair_animation_frames` was still 60
+> (slowest) in the user's cfg, floor is 6; below 6 needs the upload-cost
+> question settled (acquire/wait measured at ~4-5 ms once; re-measure before
+> lowering the floor). (2) One cutscene showed white/teal where theatre cine
+> bars should be black (matte investigation started, user said disregard for
+> now). (3) A ~15-20 s gameplay stutter (fps dips to 50, runtime flapping
+> 144<->72 Hz; NOT capture-cadenced). (4) Older parked items: pre-rendered
+> bink videos black, H4 muzzle-FX suppression, stock vehicles.
 > SOURCE - 2026-08-25.** The C-H2-76 headset log conclusively rejects Stage
 > 3D's anchor hypothesis: the exact native CHUD draw ran 3,412 scoped times,
 > while `halo2.dll+0x829490` produced zero anchor callbacks, zero crosshair
