@@ -35,6 +35,10 @@ inline constexpr char kHalo2KitTagTestSha256[] =
 inline constexpr char kHalo2DisableAimAssistDebugVar[] =
     "sim_disable_aim_assist";
 inline constexpr uint64_t kHalo2DebugVarTypeBoolean = 5;
+// C-H2-89 headset result: retail's catalog record exists, but its value slot
+// remains null in MCC gameplay, so the by-name transaction cannot apply.
+// Keep the evidence-backed code dormant; do not retry this disproven path.
+inline constexpr bool kHalo2DebugGlobalAimAssistOverrideEnabled = false;
 
 inline constexpr bool Halo2AimAssistDebugValueValid(uint8_t value) noexcept
 {

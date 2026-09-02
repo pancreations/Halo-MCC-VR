@@ -1,13 +1,11 @@
 # Current state
 
-> **C-H2-89 HALO 2 AIM-ASSIST-OFF TEST READY; UNACCEPTED (2026-09-01).**
-> The user's new Halo 2 log proves the direct controller sight-line writer is
-> already applying, while stock camera/input assistance still pulls the engine
-> view near enemies. The official H2EK exposes the boolean
-> `sim_disable_aim_assist`; C-H2-89 resolves its live retail slot by exact name
-> and type 5, sets it only during VR-owned Halo 2 gameplay, and restores the
-> captured stock value on teardown. Resolution/write failure is feature-local
-> StockFallback. This candidate changes Halo 2 only; it does not alter Halo 4.
+> **C-H2-89 HALO 2 DEBUG-GLOBAL AIM-ASSIST TEST REJECTED AND DISABLED
+> (user headset, 2026-09-02).** Source `03c7776f3118628c21f2faf0dfe3f9be3e3422e5`
+> logged `StockFallback` on both level attempts because retail's
+> `sim_disable_aim_assist` catalog record did not resolve to a readable value
+> slot. No disable write occurred, and the user reported aim assist and melee
+> unchanged. The calls are compiled dormant; do not retry this by-name path.
 
 > **C-H4-57 HALO 4 TARGET ACCEPTED; HALO 3 REGRESSION STILL REQUIRED
 > (user headset, 2026-09-01).** The user explicitly reported that source

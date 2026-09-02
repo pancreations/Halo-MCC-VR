@@ -1,6 +1,6 @@
 # C-H2-89 Halo 2 aim-assist-off test
 
-Status: **ready for headset test; unaccepted**.
+Status: **rejected; disabled in source**.
 
 This is one Halo-2-only optional change above C-H4-57. Halo 4 is unchanged.
 The exact ordinary-Ghost-trail verification and C-H4-57 target result are
@@ -37,3 +37,12 @@ files or tags are patched.
 This is a Halo-2-only engine-global lifecycle change, so it does not require a
 new Halo 3 regression. The still-pending Halo 3 check belongs to carried-forward
 C-H4-57 shared D3D behavior.
+
+## Headset result (2026-09-02)
+
+Source `03c7776f3118628c21f2faf0dfe3f9be3e3422e5` did not exercise the
+intended change. The supplied Steam / SteamVR 2.17.7 / Oculus / 120 Hz log
+reported `StockFallback` twice: retail's named debug-global record did not
+resolve to a readable value slot. The player accordingly reported that aim
+assist and melee behavior were unchanged. The runtime calls are now compiled
+dormant; the implementation remains for evidence and is not deleted.

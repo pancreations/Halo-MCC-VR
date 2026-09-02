@@ -15887,6 +15887,7 @@ int main()
     Check(std::string_view(kHalo2DisableAimAssistDebugVar) ==
               "sim_disable_aim_assist" &&
               kHalo2DebugVarTypeBoolean == 5 &&
+              !kHalo2DebugGlobalAimAssistOverrideEnabled &&
               Halo2AimAssistDebugValueValid(0) &&
               Halo2AimAssistDebugValueValid(1) &&
               !Halo2AimAssistDebugValueValid(2) &&

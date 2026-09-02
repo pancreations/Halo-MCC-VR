@@ -4313,3 +4313,10 @@ together. It may also change target-sensitive reticle color and melee lunge;
 those are expected observations for this diagnostic, not evidence that the
 native reticle itself regressed. No map, weapon tag, cache file or on-disk game
 file is modified.
+
+**C-H2-89 headset verdict (2026-09-02): rejected and disabled.** The retail
+catalog entry's runtime value pointer did not resolve. Both level attempts
+logged feature-local `StockFallback`, so the write never happened and the
+unchanged aim/melee result is expected. This disproves by-name debug-global
+resolution as a shipping MCC control path; do not retry it. The code remains
+dormant in accordance with the project's revert policy.
