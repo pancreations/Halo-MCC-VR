@@ -51,6 +51,48 @@ inline constexpr uint8_t Halo2AimAssistDebugValue(
     return vrOwnsGameplay ? uint8_t{1} : stockValue;
 }
 
+// E-H2-77 / C-H2-90: official H2EK aim_assist.cpp initializes these two
+// result blocks at the start of its central aim-assist calculation. The
+// pinned retail homolog has the identical three-argument ABI and field writes
+// at +0x759260. Neutral output means no camera friction/adhesion and no target
+// acquisition; bytes the engine does not initialize are deliberately left
+// untouched here too.
+inline constexpr uint32_t kHalo2AimAssistCalculateRva = 0x00759260;
+
+struct Halo2AimAssistTargetingResult
+{
+    uint32_t identifiers[3]{};
+    uint8_t engineScratch[12]{};
+    uint16_t flags = 0;
+    uint16_t engineScratch1A = 0;
+    float magnetismHorizontal = 0.0f;
+    float magnetismVertical = 0.0f;
+};
+
+static_assert(sizeof(Halo2AimAssistTargetingResult) == 0x24);
+static_assert(offsetof(Halo2AimAssistTargetingResult, flags) == 0x18);
+static_assert(
+    offsetof(Halo2AimAssistTargetingResult, magnetismHorizontal) == 0x1C);
+static_assert(
+    offsetof(Halo2AimAssistTargetingResult, magnetismVertical) == 0x20);
+
+inline bool Halo2WriteNeutralAimAssistResults(
+    float* control, Halo2AimAssistTargetingResult* targeting) noexcept
+{
+    if (!control || !targeting)
+        return false;
+    control[0] = 0.0f;
+    control[1] = 0.0f;
+    control[2] = 0.0f;
+    targeting->identifiers[0] = UINT32_MAX;
+    targeting->identifiers[1] = UINT32_MAX;
+    targeting->identifiers[2] = UINT32_MAX;
+    targeting->flags = 0;
+    targeting->magnetismHorizontal = 0.0f;
+    targeting->magnetismVertical = 0.0f;
+    return true;
+}
+
 // Halo 2 does not yet own a title-native pause signal. A stale head-locked
 // presentation can be inherited while switching in from another MCC engine,
 // so clear that FOREIGN state exactly when H2 first enters its stereo claim

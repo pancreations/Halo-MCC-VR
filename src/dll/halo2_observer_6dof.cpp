@@ -389,6 +389,19 @@ namespace
     std::atomic<uint64_t> g_nativeAimNonOwned{0};
     std::atomic<uint64_t> g_nativeAimRefused{0};
 
+    // E-H2-77: the H2EK/retail central aim-assist calculation. This optional
+    // transaction only neutralizes its outputs for local user 0 while the
+    // controller sight line owns Halo 2 VR. Every other call stays stock.
+    using Halo2AimAssistCalculateFn = void(__fastcall*)(
+        uint32_t, float*, Halo2AimAssistTargetingResult*);
+    void* g_aimAssistTarget = nullptr;
+    std::atomic<uintptr_t> g_aimAssistOriginal{0};
+    std::atomic<uint32_t> g_aimAssistActiveCallbacks{0};
+    std::atomic<uint64_t> g_aimAssistCalls{0};
+    std::atomic<uint64_t> g_aimAssistSuppressed{0};
+    std::atomic<uint64_t> g_aimAssistStock{0};
+    std::atomic<uint64_t> g_aimAssistRefused{0};
+
     struct Halo2FinalPaletteContext
     {
         bool valid = false;
@@ -2145,6 +2158,49 @@ namespace
         return result;
     }
 
+    __declspec(noinline) void __fastcall Halo2AimAssistCalculateDetour(
+        uint32_t userIndex, float* control,
+        Halo2AimAssistTargetingResult* targeting)
+    {
+        g_aimAssistActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_aimAssistCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original = reinterpret_cast<Halo2AimAssistCalculateFn>(
+            g_aimAssistOriginal.load(std::memory_order_acquire));
+        const bool suppress = original && userIndex == kOwnedUser && control &&
+            targeting && Game_Halo2ControllerAimActive() &&
+            Halo2Observer6Dof_DirectWeaponAimArmed();
+
+        bool completed = false;
+        if (suppress)
+        {
+            __try
+            {
+                completed = Halo2WriteNeutralAimAssistResults(
+                    control, targeting);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (completed)
+                g_aimAssistSuppressed.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        if (!completed && original)
+        {
+            __try
+            {
+                original(userIndex, control, targeting);
+                g_aimAssistStock.fetch_add(1, std::memory_order_relaxed);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        g_aimAssistActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
     __declspec(noinline) void __fastcall Halo2WeaponAimHelperDetour(
         uint32_t objectIndex, float* origin, float* direction, uint64_t marker,
         float* offset, uint8_t projectOrigin, uint8_t useUnitAim,
@@ -2873,6 +2929,30 @@ namespace
             (void)MH_RemoveHook(g_weaponAimTarget);
             g_weaponAimTarget = nullptr;
             g_weaponAimOriginal.store(0, std::memory_order_release);
+        }
+        if (g_aimAssistTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_aimAssistTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 aim-assist bypass: disable failed (%d); ownership "
+                    "retained for cleanup", static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_aimAssistActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+                Sleep(10);
+            if (g_aimAssistActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 aim-assist bypass callbacks did not drain; "
+                    "ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_aimAssistTarget);
+            g_aimAssistTarget = nullptr;
+            g_aimAssistOriginal.store(0, std::memory_order_release);
         }
         if (g_nativeAimTarget)
         {
@@ -3623,6 +3703,79 @@ namespace
             }
         }
 
+        // E-H2-77 / C-H2-90: Halo 3 parity means the controller sight remains
+        // authoritative without the stock camera being pulled toward targets.
+        // H2EK's central aim_assist.cpp result calculation was matched to this
+        // retail entry through its BSim-confirmed caller and exact ABI/output
+        // initializer. It is independent of the camera/stereo transaction.
+        uintptr_t assistMatch = 0;
+        uint32_t assistMatchCount = 0;
+        constexpr char kAimAssistCalculatePattern[] =
+            "48 89 54 24 10 55 53 56 57 41 54 48 8D AC 24 80 E7 FF FF "
+            "B8 80 19 00 00 E8 ?? ?? ?? ?? 48 2B E0 49 8B F8 48 8B DA "
+            "8B F1 E8 ?? ?? ?? ?? 33 C9 45 33 E4 48 89 0B 89 4B 08 4C "
+            "89 67 1C 48 C7 07 FF FF FF FF C7 47 08 FF FF FF FF 66 44 "
+            "89 67 18";
+        if (!g_nativeAimOriginal.load(std::memory_order_acquire))
+        {
+            LOG("Halo 2 aim-assist suppression StockFallback: native "
+                "controller aim ownership is unavailable");
+        }
+        else if (!CountPatternMatches(
+                base, size, kAimAssistCalculatePattern, assistMatch,
+                assistMatchCount) ||
+            assistMatchCount != 1 ||
+            assistMatch != base + kHalo2AimAssistCalculateRva)
+        {
+            LOG("Halo 2 aim-assist suppression StockFallback: central "
+                "calculation identity matched %u times (expected one at "
+                "+0x%X)", assistMatchCount,
+                static_cast<unsigned>(kHalo2AimAssistCalculateRva));
+        }
+        else
+        {
+            void* trampoline = nullptr;
+            void* const assistTarget = reinterpret_cast<void*>(assistMatch);
+            const MH_STATUS created = MH_CreateHook(
+                assistTarget,
+                reinterpret_cast<void*>(&Halo2AimAssistCalculateDetour),
+                &trampoline);
+            if (created != MH_OK || !trampoline)
+            {
+                LOG("Halo 2 aim-assist suppression StockFallback: hook "
+                    "create=%d; camera/stereo/aim/hands/HUD/OpenXR remain "
+                    "armed", static_cast<int>(created));
+                if (created == MH_OK)
+                    (void)MH_RemoveHook(assistTarget);
+            }
+            else
+            {
+                g_aimAssistTarget = assistTarget;
+                g_aimAssistOriginal.store(
+                    reinterpret_cast<uintptr_t>(trampoline),
+                    std::memory_order_release);
+                const MH_STATUS enabled = MH_EnableHook(assistTarget);
+                if (enabled != MH_OK)
+                {
+                    LOG("Halo 2 aim-assist suppression StockFallback: hook "
+                        "enable=%d; camera/stereo/aim/hands/HUD/OpenXR remain "
+                        "armed", static_cast<int>(enabled));
+                    (void)MH_RemoveHook(assistTarget);
+                    g_aimAssistTarget = nullptr;
+                    g_aimAssistOriginal.store(0, std::memory_order_release);
+                }
+                else
+                {
+                    LOG("Halo 2 aim-assist suppression Installed (C-H2-90): "
+                        "central aim_assist.cpp calculation +0x%X returns "
+                        "neutral camera-assist and target-acquisition results "
+                        "for VR-owned local user 0 only; every other call is "
+                        "stock", static_cast<unsigned>(
+                            kHalo2AimAssistCalculateRva));
+                }
+            }
+        }
+
         // Optional feature transaction: refusal here leaves the proven camera,
         // stereo, input and hand paths installed and loudly retains stock
         // particles for this generation.
@@ -3899,6 +4052,16 @@ namespace
                 g_nativeAimNonOwned.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_nativeAimRefused.load(std::memory_order_relaxed)));
+        LOG("Halo 2 C-H2-90 aim-assist calculation: %llu calls, %llu "
+            "suppressed for VR-owned local user 0, %llu stock, %llu refused",
+            static_cast<unsigned long long>(
+                g_aimAssistCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistSuppressed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistStock.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistRefused.load(std::memory_order_relaxed)));
         uint32_t coverBits[3] = {
             g_visibilityCoverStockBits.load(std::memory_order_relaxed),
             g_visibilityCoverRequiredBits.load(std::memory_order_relaxed),

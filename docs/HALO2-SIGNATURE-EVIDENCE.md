@@ -4320,3 +4320,82 @@ logged feature-local `StockFallback`, so the write never happened and the
 unchanged aim/melee result is expected. This disproves by-name debug-global
 resolution as a shipping MCC control path; do not retry it. The code remains
 dormant in accordance with the project's revert policy.
+
+## E-H2-77 (C-H2-90): central aim-assist calculation matched from official H2EK to pinned retail
+
+The C-H2-89 headset log proved that the debug-global path never applied. A
+second static review also showed that the kit's `sim_disable_aim_assist` value
+is referenced by simulation/debug-state comparison code, not by the player aim
+calculation. It is therefore compiled dormant and is not reused here.
+
+Online due diligence found no ready-made Halo 2 MCC no-aim-assist runtime mod.
+PCGamingWiki records controller aim assist as always enabled in Halo 2, while
+the Nexus `No Aim Magnetism` precedent covers Halo 3/Halo 4 by patching map and
+weapon data. That approach is unsuitable here because this project does not
+patch game files or tags. Halopedia's engine terminology distinguishes camera
+magnetism/friction/adhesion from target acquisition, matching the two separate
+result blocks below:
+
+- https://www.pcgamingwiki.com/wiki/Halo_2
+- https://www.nexusmods.com/halothemasterchiefcollection/mods/1099
+- https://www.halopedia.org/Magnetism
+- https://www.halopedia.org/Aim_assist
+
+Official H2EK tag exports corroborate the data path. `globals.globals` player
+control contains magnetism friction `0.6` and adhesion `0.7`; weapon tags carry
+per-weapon autoaim and magnetism angle/range fields (for example, battle rifle
+autoaim `3 deg / 17`, magnetism `6 deg / 21`). This establishes why a tag-only
+solution would require broad map/weapon edits and why the central runtime
+calculation is the narrow engine boundary.
+
+Pinned identities:
+
+- H2EK `halo2_tag_test.exe` SHA-256
+  `D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`.
+- Steam retail `halo2.dll` SHA-256
+  `DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`.
+- Retail MD5 reported by Ghidra/BSim:
+  `afd5c77177c04d050b0e6f1ad7ffb304`.
+
+In the official kit, `aim_assist.cpp` central calculation is kit RVA
+`0xFE0D0`. Its only direct code call is at kit RVA `0x74048` inside the
+player-control function beginning at `0x72D40`. The three arguments are local
+user index, a three-float assist-control output, and a targeting-result output.
+The function first zeros the three floats; writes `-1` at targeting offsets
+`+0/+4/+8`; writes zero word at `+0x18`; and writes zero floats at
+`+0x1C/+0x20`. Bytes `+0x0C..+0x17` and `+0x1A..+0x1B` are not initialized and
+must remain untouched.
+
+Using official Ghidra 12.1.3 with the cross-architecture `medium_nosize` BSim
+profile, the kit player-control caller `0x72D40` matched retail
+`halo2.dll+0x6C0E30` with similarity `0.3107777450` and significance
+`121.0401345814`. The corresponding call site in the matched retail function
+is `+0x6C2987`, targeting retail `+0x759260`. The surrounding operations are
+the same as the kit call site: the local-player index is argument one, a local
+three-float result is argument two, and the player-control targeting block at
+output `+0x30` is argument three.
+
+Retail `+0x759260` independently confirms the exact ABI and initializer:
+
+    void aim_assist_calculate(uint32 user, float *control, targeting *result)
+    control[0..2] = 0
+    result[+0/+4/+8] = 0xFFFFFFFF
+    result[+0x18] = 0 (word)
+    result[+0x1C/+0x20] = 0.0f
+
+It has one code caller, the verified `+0x6C2987` edge. The 79-byte runtime
+pattern includes the prologue, `0x1980` stack-allocation constant, two
+wildcarded calls, register transfer for all three arguments, and every neutral
+initializer write. Counting it in the pinned **loaded-image layout** (not the
+raw file) gives exactly one match at `+0x759260`.
+
+C-H2-90 installs that hook as an optional feature only after native
+controller-aim ownership exists. For local user 0 while Halo 2 VR controller
+aim is active, it writes precisely the neutral fields above and skips target
+acquisition. Other users, menus/non-VR states, and teardown call the stock
+trampoline. It does not add a separate melee patch; any melee change is only
+an observation of removing the shared aim/target result. Zero/multiple/moved
+signature, hook failure, or invalid output pointers leaves stock aim assist and
+logs feature-local `StockFallback`; it never gates or disarms the working Halo
+2 VR core. Teardown disables the hook and drains callbacks before removing its
+trampoline.

@@ -215,15 +215,20 @@ try {
             'Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only') {
         throw 'C-H4-57 gate failed: exact H4EK/retail motion-suck identity, Halo-4/stereo isolation, telemetry, or unit coverage is missing.'
     }
-    if ($gameSource -notmatch 'kHalo2DisableAimAssistDebugVar' -or
-        $gameSource -notmatch 'Game_Halo2TryDisableAimAssist' -or
-        $gameSource -notmatch 'FindDebugVarSlot\([\s\S]{0,180}kHalo2DebugVarTypeBoolean' -or
-        $gameSource -notmatch 'Game_Halo2RestoreAimAssist' -or
+    if ($halo2LogicSource -notmatch
+            'kHalo2DebugGlobalAimAssistOverrideEnabled\s*=\s*false' -or
+        $halo2LogicSource -notmatch
+            'kHalo2AimAssistCalculateRva\s*=\s*0x00759260' -or
+        $halo2LogicSource -notmatch 'Halo2WriteNeutralAimAssistResults' -or
+        $halo2ObserverSource -notmatch 'kAimAssistCalculatePattern' -or
+        $halo2ObserverSource -notmatch 'Halo2AimAssistCalculateDetour' -or
         $halo2ObserverSource -notmatch
-            'Game_Halo2MaintainDisabledAimAssist' -or
+            'Halo 2 aim-assist suppression Installed \(C-H2-90\)' -or
+        $halo2ObserverSource -notmatch
+            'camera/stereo/aim/hands/HUD/OpenXR remain' -or
         $coreTestsSource -notmatch
-            'Halo 2 aim-assist suppression uses the official typed H2EK boolean') {
-        throw 'C-H2-89 gate failed: official typed debug-global identity, fail-open lifecycle, restoration, or unit coverage is missing.'
+            'Halo 2 central aim-assist bypass writes the official neutral output') {
+        throw 'C-H2-90 gate failed: the rejected debug global is not dormant or the verified central calculation bypass, fail-open isolation, telemetry, or unit coverage is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -317,7 +322,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-89-aim-assist-off',
+        'c-h2-90-central-aim-assist-off',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -364,7 +369,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 32
+        schema_version = 33
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -491,12 +496,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-89'
+            id = 'C-H2-90'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'accepted-c-h2-88-plus-official-engine-global-aim-assist-disable-transaction'
+                'accepted-c-h2-88-plus-central-aim-assist-result-bypass'
             classic_muzzle_suppression = $true
             classic_muzzle_particle_renderer_rva = '0x0076DC90'
             classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
@@ -542,13 +547,15 @@ try {
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
             aim_assist_disabled = $true
-            aim_assist_debug_global = 'sim_disable_aim_assist'
-            aim_assist_debug_global_type = 5
-            aim_assist_scope = 'vr-owned-halo2-live-level-both-renderers'
+            aim_assist_method = 'central-aim-assist-result-bypass'
+            aim_assist_calculation_rva = '0x00759260'
+            aim_assist_scope = 'vr-owned-halo2-local-user-0-both-renderers'
             aim_assist_effect =
-                'camera-friction-adhesion-weapon-magnetism-autoaim-and-melee-assistance-off'
-            aim_assist_restore = 'captured-stock-byte-on-core-teardown'
-            aim_assist_reassert = 'title-worker-only-if-engine-resets-global'
+                'neutral-camera-assist-and-target-acquisition-results-no-tag-patching'
+            aim_assist_identity =
+                'official-h2ek-caller-bsim-match-plus-identical-abi-initializer-and-unique-retail-loaded-image-signature'
+            aim_assist_restore = 'hook-disabled-drained-and-removed-on-core-teardown'
+            aim_assist_melee_patch = $false
             aim_assist_failure_policy =
                 'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed'
             rejected_post_return_packet_enabled = $false
@@ -797,7 +804,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H2-89 carries forward C-H4-57 unchanged; its Halo 4 supercharged-Ghost blackout target is headset-accepted while the separate Halo 3 regression remains pending. Code/tag verification confirms the ordinary Ghost trail path is untouched. This candidate changes Halo 2 only: the official H2EK boolean sim_disable_aim_assist is resolved from the live retail debug-global table by exact name and type 5, set only for VR-owned Halo 2 gameplay, reasserted from the title worker if the engine resets it, and restored to the captured stock value on teardown. Failure is feature-local StockFallback. No game files are patched. This package does not install automatically.'
+        note = 'C-H2-90 carries forward C-H4-57 unchanged; its Halo 4 supercharged-Ghost blackout target is headset-accepted while the separate Halo 3 regression remains pending. Code/tag verification confirms the ordinary Ghost trail path is untouched. C-H2-89 is rejected and compiled dormant because its retail debug-global value slot stayed null. This candidate changes Halo 2 only: the official H2EK aim_assist.cpp calculation was matched to retail through the distinctive player-control caller (BSim significance 121.04), identical three-argument ABI and neutral result initializer, and a unique loaded-image signature at +0x759260. For VR-owned local user 0 it returns zero camera-assist and no-target results; every other call is stock. No separate melee behavior, game file, or tag is patched. Failure is feature-local StockFallback. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

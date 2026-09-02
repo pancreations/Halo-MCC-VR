@@ -1,5 +1,23 @@
 # Current state
 
+> **C-H2-90 HALO 2 CENTRAL AIM-ASSIST BYPASS READY FOR HEADSET TEST,
+> UNACCEPTED (2026-09-02).** This is one Halo-2-only optional change above
+> C-H4-57. The official H2EK `aim_assist.cpp` calculation (kit RVA
+> `0xFE0D0`) was mapped through its distinctive player-control caller to
+> retail `halo2.dll+0x759260`: the callers match by cross-architecture BSim
+> with significance `121.04`, and the callee has the identical three-argument
+> ABI and exact neutral initializer. A 79-byte wildcarded signature matches
+> once in the pinned retail loaded image at that RVA. While Halo 2 VR owns
+> local user 0's controller sight, the optional detour returns the engine's
+> neutral assist/targeting outputs (three zero assist floats, three no-target
+> identifiers, zero flags/magnetism). Every other call runs stock. No melee
+> code, weapon/map tag, game file, or other title is patched. Identity/hook
+> failure is feature-local `StockFallback` and cannot disarm camera, stereo,
+> hands, HUD, reticle, weapons, or OpenXR. Acceptance requires a non-zero
+> suppressed count and the user's headset result; the accepted pointer does
+> not advance yet. See `docs/C-H2-90-CENTRAL-AIM-ASSIST-OFF-NOTES.md` and
+> E-H2-77.
+
 > **C-H2-89 HALO 2 DEBUG-GLOBAL AIM-ASSIST TEST REJECTED AND DISABLED
 > (user headset, 2026-09-02).** Source `03c7776f3118628c21f2faf0dfe3f9be3e3422e5`
 > logged `StockFallback` on both level attempts because retail's

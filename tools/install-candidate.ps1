@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 32) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 33) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 32) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h2-89-aim-assist-off-',
+            $head.Substring(0, 7) + '-c-h2-90-central-aim-assist-off-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -272,14 +272,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 32) -or
             'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map' -or
         [string]$manifest.halo4_candidate.screen_effect_failure_policy -cne
             'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed' -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-89' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-90' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'accepted-c-h2-88-plus-official-engine-global-aim-assist-disable-transaction' -or
+            'accepted-c-h2-88-plus-central-aim-assist-result-bypass' -or
         $manifest.halo2_candidate.classic_muzzle_suppression -ne $true -or
         [string]$manifest.halo2_candidate.classic_muzzle_particle_renderer_rva -cne
             '0x0076DC90' -or
@@ -341,16 +341,19 @@ if (-not (Test-ExactInt32 $manifest.schema_version 32) -or
         [string]$manifest.halo2_candidate.native_aim_ownership -cne
             'desired-and-current-unit-aiming-vectors' -or
         $manifest.halo2_candidate.aim_assist_disabled -ne $true -or
-        [string]$manifest.halo2_candidate.aim_assist_debug_global -cne
-            'sim_disable_aim_assist' -or
-        -not (Test-ExactInt32 `
-            $manifest.halo2_candidate.aim_assist_debug_global_type 5) -or
+        [string]$manifest.halo2_candidate.aim_assist_method -cne
+            'central-aim-assist-result-bypass' -or
+        [string]$manifest.halo2_candidate.aim_assist_calculation_rva -cne
+            '0x00759260' -or
         [string]$manifest.halo2_candidate.aim_assist_scope -cne
-            'vr-owned-halo2-live-level-both-renderers' -or
+            'vr-owned-halo2-local-user-0-both-renderers' -or
+        [string]$manifest.halo2_candidate.aim_assist_effect -cne
+            'neutral-camera-assist-and-target-acquisition-results-no-tag-patching' -or
+        [string]$manifest.halo2_candidate.aim_assist_identity -cne
+            'official-h2ek-caller-bsim-match-plus-identical-abi-initializer-and-unique-retail-loaded-image-signature' -or
         [string]$manifest.halo2_candidate.aim_assist_restore -cne
-            'captured-stock-byte-on-core-teardown' -or
-        [string]$manifest.halo2_candidate.aim_assist_reassert -cne
-            'title-worker-only-if-engine-resets-global' -or
+            'hook-disabled-drained-and-removed-on-core-teardown' -or
+        $manifest.halo2_candidate.aim_assist_melee_patch -ne $false -or
         [string]$manifest.halo2_candidate.aim_assist_failure_policy -cne
             'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed' -or
         $manifest.halo2_candidate.rejected_post_return_packet_enabled -ne

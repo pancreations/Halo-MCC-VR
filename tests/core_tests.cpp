@@ -15894,8 +15894,35 @@ int main()
               Halo2AimAssistDebugValue(true, 0) == 1 &&
               Halo2AimAssistDebugValue(false, 0) == 0 &&
               Halo2AimAssistDebugValue(false, 1) == 1,
-        "Halo 2 aim-assist suppression uses the official typed H2EK boolean "
-        "only while VR owns gameplay and restores the captured stock value");
+        "Halo 2 rejected debug-global aim-assist path remains pinned but "
+        "compiled dormant after its headset StockFallback result");
+
+    // E-H2-77 / C-H2-90: reproduce the official H2EK and pinned-retail
+    // neutral initializer exactly. In particular, preserve the 0x0C..0x17
+    // and 0x1A..0x1B bytes that the engine itself does not initialize.
+    float neutralControl[3] = {1.0f, -2.0f, 3.0f};
+    Halo2AimAssistTargetingResult neutralTargeting{};
+    std::memset(&neutralTargeting, 0xA5, sizeof(neutralTargeting));
+    const bool neutralWritten = Halo2WriteNeutralAimAssistResults(
+        neutralControl, &neutralTargeting);
+    bool scratchPreserved = neutralTargeting.engineScratch1A == 0xA5A5;
+    for (uint8_t value : neutralTargeting.engineScratch)
+        scratchPreserved = scratchPreserved && value == 0xA5;
+    Check(kHalo2AimAssistCalculateRva == 0x00759260 && neutralWritten &&
+              neutralControl[0] == 0.0f && neutralControl[1] == 0.0f &&
+              neutralControl[2] == 0.0f &&
+              neutralTargeting.identifiers[0] == UINT32_MAX &&
+              neutralTargeting.identifiers[1] == UINT32_MAX &&
+              neutralTargeting.identifiers[2] == UINT32_MAX &&
+              neutralTargeting.flags == 0 &&
+              neutralTargeting.magnetismHorizontal == 0.0f &&
+              neutralTargeting.magnetismVertical == 0.0f &&
+              scratchPreserved &&
+              !Halo2WriteNeutralAimAssistResults(
+                  nullptr, &neutralTargeting) &&
+              !Halo2WriteNeutralAimAssistResults(neutralControl, nullptr),
+        "Halo 2 central aim-assist bypass writes the official neutral output "
+        "fields and leaves engine-owned scratch bytes untouched");
 
     if (g_failures == 0)
         std::cout << "HaloMCCVR core tests passed\n";
