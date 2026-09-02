@@ -220,15 +220,17 @@ try {
         $halo2LogicSource -notmatch
             'kHalo2AimAssistCalculateRva\s*=\s*0x00759260' -or
         $halo2LogicSource -notmatch 'Halo2WriteNeutralAimAssistResults' -or
+        $halo2LogicSource -notmatch 'Halo2SuppressCameraAimAssist' -or
         $halo2ObserverSource -notmatch 'kAimAssistCalculatePattern' -or
         $halo2ObserverSource -notmatch 'Halo2AimAssistCalculateDetour' -or
         $halo2ObserverSource -notmatch
-            'Halo 2 aim-assist suppression Installed \(C-H2-90\)' -or
+            'Halo 2 aim-assist suppression Installed \(C-H2-91\)' -or
+        $halo2ObserverSource -notmatch 'g_aimAssistTargetSelected' -or
         $halo2ObserverSource -notmatch
             'camera/stereo/aim/hands/HUD/OpenXR remain' -or
         $coreTestsSource -notmatch
-            'Halo 2 central aim-assist bypass writes the official neutral output') {
-        throw 'C-H2-90 gate failed: the rejected debug global is not dormant or the verified central calculation bypass, fail-open isolation, telemetry, or unit coverage is missing.'
+            'preserves the complete engine-selected targeting result') {
+        throw 'C-H2-91 gate failed: the rejected debug global is not dormant or the verified camera-only suppression, retained targeting, fail-open isolation, telemetry, or unit coverage is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -322,7 +324,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-90-central-aim-assist-off',
+        'c-h2-91-melee-target-retention',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -369,7 +371,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 33
+        schema_version = 34
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -496,12 +498,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-90'
+            id = 'C-H2-91'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'accepted-c-h2-88-plus-central-aim-assist-result-bypass'
+                'c-h2-90-camera-assist-off-plus-controller-sight-melee-target-retention'
             classic_muzzle_suppression = $true
             classic_muzzle_particle_renderer_rva = '0x0076DC90'
             classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
@@ -547,15 +549,19 @@ try {
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
             aim_assist_disabled = $true
-            aim_assist_method = 'central-aim-assist-result-bypass'
+            aim_assist_method = 'central-camera-assist-control-suppression'
             aim_assist_calculation_rva = '0x00759260'
             aim_assist_scope = 'vr-owned-halo2-local-user-0-both-renderers'
             aim_assist_effect =
-                'neutral-camera-assist-and-target-acquisition-results-no-tag-patching'
+                'neutral-camera-assist-control-retained-controller-sight-target-acquisition-no-tag-patching'
             aim_assist_identity =
                 'official-h2ek-caller-bsim-match-plus-identical-abi-initializer-and-unique-retail-loaded-image-signature'
             aim_assist_restore = 'hook-disabled-drained-and-removed-on-core-teardown'
             aim_assist_melee_patch = $false
+            melee_target_policy =
+                'engine-selected-target-retained-from-controller-owned-unit-sight'
+            melee_execution_path =
+                'stock-unit-action-system-and-character-physics-mode-melee'
             aim_assist_failure_policy =
                 'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed'
             rejected_post_return_packet_enabled = $false
@@ -804,7 +810,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H2-90 carries forward C-H4-57 unchanged; its Halo 4 supercharged-Ghost blackout target is headset-accepted while the separate Halo 3 regression remains pending. Code/tag verification confirms the ordinary Ghost trail path is untouched. C-H2-89 is rejected and compiled dormant because its retail debug-global value slot stayed null. This candidate changes Halo 2 only: the official H2EK aim_assist.cpp calculation was matched to retail through the distinctive player-control caller (BSim significance 121.04), identical three-argument ABI and neutral result initializer, and a unique loaded-image signature at +0x759260. For VR-owned local user 0 it returns zero camera-assist and no-target results; every other call is stock. No separate melee behavior, game file, or tag is patched. Failure is feature-local StockFallback. This package does not install automatically.'
+        note = 'C-H2-91 carries forward C-H4-57 and C-H2-90 unchanged except for one Halo-2-only result split. The C-H2-90 Steam headset run proved the central hook active (26,285 suppressed, zero refused) and the user reports the unwanted camera-follow behavior stopped, but melee still missed. Official H2EK player_control.cpp writes the calculation control block into look adjustment while its independent targeting block supplies player_action melee-target-unit; unit_action_system.cpp forwards that target into the stock bipeds.cpp and character_physics_mode_melee.cpp lunge. C-H2-91 therefore runs the verified calculation against the already controller-owned native unit sight, preserves its complete target result, and zeros only the three camera-assist control floats. No melee range, damage, animation, game file, map, weapon tag, or other title is patched. Failure is feature-local StockFallback. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

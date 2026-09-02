@@ -4399,3 +4399,49 @@ signature, hook failure, or invalid output pointers leaves stock aim assist and
 logs feature-local `StockFallback`; it never gates or disarms the working Halo
 2 VR core. Teardown disables the hook and drains callbacks before removing its
 trampoline.
+
+## E-H2-78 (C-H2-91): camera-assist control and melee target are separate outputs
+
+The exact C-H2-90 Steam headset log has SHA-256
+`7F0AAE2A3641BF55EC970B9718E92D7B50698A64B1F2E6D9F130FE1CD8C81FF7`.
+It identifies source `62d995a0c42e89b500410b0972be5f012ff857dc`,
+SteamVR/OpenXR 2.17.8, an Oculus headset, and 120 Hz. The hook installed and
+reached `26,285` suppressed local-user calls with zero refusals. The user
+reports that the unwanted enemy-following camera behavior stopped, but melee
+still misses. Thus the camera-control suppression is live and useful; clearing
+the separate target result does not repair melee.
+
+Public Halo 2 mod review found tag-level examples that alter melee lunge range,
+weapon melee parameters, or hit volumes, but no runtime mod that redirects
+player melee to a VR controller sight. Those map/tag techniques would also
+violate this project's no-game-file-patching rule:
+
+- https://www.nexusmods.com/halothemasterchiefcollection/mods/368
+- https://github.com/Tbiesty/H2EK/tree/halo_2a_rebalanced
+- https://learn.microsoft.com/en-us/halo-master-chief-collection/h2/tools/toolshome
+
+Official H2EK provides the relevant engine split without changing tag data:
+
+- `player_control.cpp` function kit RVA `0x72D40` calls the central
+  `aim_assist.cpp` calculation at `0x74048`. Its three-float control result is
+  consumed as look/camera adjustment, while the targeting result remains in
+  the output block at `+0x30`.
+- `simulation_encoding.cpp` kit RVA `0x3D5F60` serializes
+  `player_action+0x34` explicitly as `melee-target-unit`.
+- `unit_action_system.cpp` kit RVA `0x4C11B0` reads the melee request's target
+  and passes it to the melee starter at `0x4C82A0`.
+- The starter calls `bipeds.cpp` kit RVA `0x4AE2B0`, which writes the target to
+  the biped at `+0x3D8` and enters character-physics mode 6.
+- `character_physics_mode_melee.cpp` kit RVAs `0x1E3560` and `0x1E37B0`
+  consume that target's position and drive the normal lunge. This is a
+  distinct downstream path from the camera control floats.
+
+The existing E-H2-54 native-aim hook already writes the controller sight into
+the owned unit's official desired/current aiming vectors before this player
+control calculation; the C-H2-90 log shows `29,626` such writes with zero
+refusals. Therefore C-H2-91 needs no guessed melee address and no separate
+melee detour. It calls the already verified retail `+0x759260` calculation so
+the engine selects a target from the controller-owned unit sight, preserves
+the entire target result, then zeros only the three camera-assist control
+floats. Non-owned calls remain stock. The same unique signature, feature-local
+failure policy, and drained teardown from E-H2-77 remain in force.

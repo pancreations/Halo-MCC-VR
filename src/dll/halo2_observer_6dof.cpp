@@ -399,6 +399,8 @@ namespace
     std::atomic<uint32_t> g_aimAssistActiveCallbacks{0};
     std::atomic<uint64_t> g_aimAssistCalls{0};
     std::atomic<uint64_t> g_aimAssistSuppressed{0};
+    std::atomic<uint64_t> g_aimAssistTargetSelected{0};
+    std::atomic<uint64_t> g_aimAssistNoTarget{0};
     std::atomic<uint64_t> g_aimAssistStock{0};
     std::atomic<uint64_t> g_aimAssistRefused{0};
 
@@ -2170,13 +2172,30 @@ namespace
             targeting && Game_Halo2ControllerAimActive() &&
             Halo2Observer6Dof_DirectWeaponAimArmed();
 
+        bool originalCompleted = false;
         bool completed = false;
         if (suppress)
         {
             __try
             {
-                completed = Halo2WriteNeutralAimAssistResults(
-                    control, targeting);
+                // C-H2-91: run the verified engine calculation so Halo 2 can
+                // populate player_action's melee-target-unit from the same
+                // native unit sight that the controller already owns. Then
+                // neutralize only the three camera-assist outputs. C-H2-90's
+                // all-neutral result fixed camera pull but also discarded the
+                // target identity needed by the stock melee/lunge path.
+                original(userIndex, control, targeting);
+                originalCompleted = true;
+                completed = Halo2SuppressCameraAimAssist(control);
+                if (completed)
+                {
+                    if (targeting->identifiers[0] != UINT32_MAX)
+                        g_aimAssistTargetSelected.fetch_add(
+                            1, std::memory_order_relaxed);
+                    else
+                        g_aimAssistNoTarget.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
@@ -2186,7 +2205,7 @@ namespace
                 g_aimAssistSuppressed.fetch_add(1, std::memory_order_relaxed);
         }
 
-        if (!completed && original)
+        if (!completed && original && !originalCompleted)
         {
             __try
             {
@@ -3703,7 +3722,8 @@ namespace
             }
         }
 
-        // E-H2-77 / C-H2-90: Halo 3 parity means the controller sight remains
+        // E-H2-77 / E-H2-78 / C-H2-91: Halo 3 parity means the
+        // controller sight remains
         // authoritative without the stock camera being pulled toward targets.
         // H2EK's central aim_assist.cpp result calculation was matched to this
         // retail entry through its BSim-confirmed caller and exact ABI/output
@@ -3766,11 +3786,12 @@ namespace
                 }
                 else
                 {
-                    LOG("Halo 2 aim-assist suppression Installed (C-H2-90): "
-                        "central aim_assist.cpp calculation +0x%X returns "
-                        "neutral camera-assist and target-acquisition results "
-                        "for VR-owned local user 0 only; every other call is "
-                        "stock", static_cast<unsigned>(
+                    LOG("Halo 2 aim-assist suppression Installed (C-H2-91): "
+                        "central aim_assist.cpp calculation +0x%X retains "
+                        "controller-sight target acquisition for stock "
+                        "melee/lunge while returning neutral camera-assist "
+                        "control for VR-owned local user 0 only; every other "
+                        "call is stock", static_cast<unsigned>(
                             kHalo2AimAssistCalculateRva));
                 }
             }
@@ -4052,12 +4073,17 @@ namespace
                 g_nativeAimNonOwned.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_nativeAimRefused.load(std::memory_order_relaxed)));
-        LOG("Halo 2 C-H2-90 aim-assist calculation: %llu calls, %llu "
-            "suppressed for VR-owned local user 0, %llu stock, %llu refused",
+        LOG("Halo 2 C-H2-91 aim-assist calculation: %llu calls, %llu camera "
+            "assists suppressed for VR-owned local user 0 (%llu target "
+            "selected, %llu no target), %llu stock, %llu refused",
             static_cast<unsigned long long>(
                 g_aimAssistCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_aimAssistSuppressed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistTargetSelected.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistNoTarget.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_aimAssistStock.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(

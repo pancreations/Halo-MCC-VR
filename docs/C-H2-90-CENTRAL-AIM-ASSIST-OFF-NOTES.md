@@ -50,3 +50,14 @@ aim, hands, HUD, native reticle, weapons, and OpenXR remain armed.
    verdict on this mechanism.
 
 No automatic installation and no GitHub push are part of this handoff.
+
+## Headset result - 2026-09-02
+
+Source `62d995a0c42e89b500410b0972be5f012ff857dc`, Steam edition,
+SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. Log SHA-256:
+`7F0AAE2A3641BF55EC970B9718E92D7B50698A64B1F2E6D9F130FE1CD8C81FF7`.
+The hook installed and reached `26,285` suppressed local-player calls with
+zero refusals. The user reports that the camera no longer follows nearby
+enemies in the prior unwanted way, so the camera-assist result is accepted.
+Melee still misses. Clearing the independent target identity did not repair
+melee and is superseded by C-H2-91; the camera-control suppression remains.

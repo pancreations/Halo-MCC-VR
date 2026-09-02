@@ -93,6 +93,21 @@ inline bool Halo2WriteNeutralAimAssistResults(
     return true;
 }
 
+// E-H2-78 / C-H2-91: the headset-confirmed C-H2-90 camera fix proved that
+// these three control outputs are the unwanted camera-assist transaction.
+// Halo 2 separately carries the selected target into player_action's
+// melee-target-unit field. Preserve that engine result so the existing
+// controller-owned unit sight can select the normal melee/lunge target.
+inline bool Halo2SuppressCameraAimAssist(float* control) noexcept
+{
+    if (!control)
+        return false;
+    control[0] = 0.0f;
+    control[1] = 0.0f;
+    control[2] = 0.0f;
+    return true;
+}
+
 // Halo 2 does not yet own a title-native pause signal. A stale head-locked
 // presentation can be inherited while switching in from another MCC engine,
 // so clear that FOREIGN state exactly when H2 first enters its stereo claim

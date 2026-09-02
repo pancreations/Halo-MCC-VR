@@ -1,4 +1,4 @@
-// Print reproducible structural evidence for one analyzed function.
+// Print reproducible structural evidence for analyzed functions.
 // @category HaloMCCVR.RE
 
 import ghidra.app.decompiler.DecompInterface;
@@ -17,20 +17,8 @@ public class DumpFunctionAt extends GhidraScript {
         return address.subtract(currentProgram.getImageBase());
     }
 
-    @Override
-    public void run() throws Exception {
-        String[] args = getScriptArgs();
-        if (currentProgram == null || args.length != 1) {
-            throw new IllegalArgumentException(
-                "usage: DumpFunctionAt.java <address>");
-        }
-        Address address = currentProgram.getAddressFactory().getAddress(args[0]);
-        Function function = address == null ? null : getFunctionContaining(address);
-        if (function == null) {
-            throw new IllegalArgumentException(
-                "no function contains " + args[0]);
-        }
-
+    private void dumpFunction(Function function, DecompInterface decompiler)
+            throws Exception {
         println("FUNCTION program=" + currentProgram.getName() +
             " entry=" + function.getEntryPoint() +
             " rva=0x" + Long.toHexString(rva(function.getEntryPoint())) +
@@ -69,21 +57,42 @@ public class DumpFunctionAt extends GhidraScript {
             }
         }
 
+        DecompileResults result =
+            decompiler.decompileFunction(function, 180, monitor);
+        if (result != null && result.decompileCompleted() &&
+                result.getDecompiledFunction() != null) {
+            println("DECOMPILED_BEGIN");
+            println(result.getDecompiledFunction().getC());
+            println("DECOMPILED_END");
+        }
+        else {
+            println("DECOMPILED_UNAVAILABLE " +
+                (result == null ? "null result" : result.getErrorMessage()));
+        }
+    }
+
+    @Override
+    public void run() throws Exception {
+        String[] args = getScriptArgs();
+        if (currentProgram == null || args.length == 0) {
+            throw new IllegalArgumentException(
+                "usage: DumpFunctionAt.java <address> [...]");
+        }
+
         DecompInterface decompiler = new DecompInterface();
         try {
             decompiler.setOptions(new DecompileOptions());
             decompiler.openProgram(currentProgram);
-            DecompileResults result =
-                decompiler.decompileFunction(function, 180, monitor);
-            if (result != null && result.decompileCompleted() &&
-                    result.getDecompiledFunction() != null) {
-                println("DECOMPILED_BEGIN");
-                println(result.getDecompiledFunction().getC());
-                println("DECOMPILED_END");
-            }
-            else {
-                println("DECOMPILED_UNAVAILABLE " +
-                    (result == null ? "null result" : result.getErrorMessage()));
+            for (String arg : args) {
+                Address address = currentProgram.getAddressFactory()
+                    .getAddress(arg);
+                Function function = address == null ? null :
+                    getFunctionContaining(address);
+                if (function == null) {
+                    throw new IllegalArgumentException(
+                        "no function contains " + arg);
+                }
+                dumpFunction(function, decompiler);
             }
         }
         finally {

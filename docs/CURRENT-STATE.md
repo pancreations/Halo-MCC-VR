@@ -1,7 +1,25 @@
 # Current state
 
-> **C-H2-90 HALO 2 CENTRAL AIM-ASSIST BYPASS READY FOR HEADSET TEST,
-> UNACCEPTED (2026-09-02).** This is one Halo-2-only optional change above
+> **C-H2-91 HALO 2 CAMERA-ASSIST OFF / CONTROLLER-SIGHT MELEE TARGET
+> RETENTION READY FOR HEADSET TEST, UNACCEPTED (2026-09-02).** C-H2-90's
+> Steam / SteamVR 2.17.8 / Oculus / 120 Hz log proves the verified central
+> hook ran (`26,285` suppressed, `0` refused), and the user reports the
+> unwanted enemy-following camera behavior stopped. Melee still misses.
+> Official H2EK separates the calculation outputs: `player_control.cpp`
+> consumes its three control floats as camera/look adjustment, while the
+> targeting block supplies `player_action.melee-target-unit` to
+> `unit_action_system.cpp`, which forwards it into the stock `bipeds.cpp` and
+> `character_physics_mode_melee.cpp` lunge. C-H2-91 makes one change: run the
+> verified calculation against the already controller-owned native unit sight,
+> retain its complete targeting result, and zero only the three camera-assist
+> control floats. The stock melee range, damage, animation, target execution,
+> game files, maps, weapon tags, renderers and every other title remain
+> unchanged. See E-H2-78 and
+> `docs/C-H2-91-MELEE-TARGET-RETENTION-NOTES.md`.
+
+> **C-H2-90 HALO 2 CENTRAL AIM-ASSIST BYPASS CAMERA RESULT ACCEPTED /
+> TARGET-SUPPRESSION PART SUPERSEDED (user headset,
+> 2026-09-02).** This is one Halo-2-only optional change above
 > C-H4-57. The official H2EK `aim_assist.cpp` calculation (kit RVA
 > `0xFE0D0`) was mapped through its distinctive player-control caller to
 > retail `halo2.dll+0x759260`: the callers match by cross-architecture BSim
@@ -14,9 +32,14 @@
 > code, weapon/map tag, game file, or other title is patched. Identity/hook
 > failure is feature-local `StockFallback` and cannot disarm camera, stereo,
 > hands, HUD, reticle, weapons, or OpenXR. Acceptance requires a non-zero
-> suppressed count and the user's headset result; the accepted pointer does
-> not advance yet. See `docs/C-H2-90-CENTRAL-AIM-ASSIST-OFF-NOTES.md` and
-> E-H2-77.
+> suppressed count and the user's headset result. The exact Steam log,
+> SHA-256
+> `7F0AAE2A3641BF55EC970B9718E92D7B50698A64B1F2E6D9F130FE1CD8C81FF7`,
+> proves `26,285` suppressed calls with zero refusals. The user reports the
+> unwanted camera following stopped, accepting the camera-control result, but
+> melee still misses. E-H2-78 shows that clearing the independent target
+> identity cannot repair melee and supersedes only that portion in C-H2-91.
+> See `docs/C-H2-90-CENTRAL-AIM-ASSIST-OFF-NOTES.md` and E-H2-77.
 
 > **C-H2-89 HALO 2 DEBUG-GLOBAL AIM-ASSIST TEST REJECTED AND DISABLED
 > (user headset, 2026-09-02).** Source `03c7776f3118628c21f2faf0dfe3f9be3e3422e5`

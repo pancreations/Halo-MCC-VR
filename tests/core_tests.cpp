@@ -15924,6 +15924,21 @@ int main()
         "Halo 2 central aim-assist bypass writes the official neutral output "
         "fields and leaves engine-owned scratch bytes untouched");
 
+    // E-H2-78 / C-H2-91: camera suppression must not erase the independent
+    // engine-selected target that Halo 2 forwards to melee-target-unit.
+    float cameraAssist[3] = {0.25f, -0.5f, 0.75f};
+    Halo2AimAssistTargetingResult retainedTargeting{};
+    std::memset(&retainedTargeting, 0x5A, sizeof(retainedTargeting));
+    const Halo2AimAssistTargetingResult expectedTargeting = retainedTargeting;
+    Check(Halo2SuppressCameraAimAssist(cameraAssist) &&
+              cameraAssist[0] == 0.0f && cameraAssist[1] == 0.0f &&
+              cameraAssist[2] == 0.0f &&
+              std::memcmp(&retainedTargeting, &expectedTargeting,
+                  sizeof(retainedTargeting)) == 0 &&
+              !Halo2SuppressCameraAimAssist(nullptr),
+        "Halo 2 camera-assist suppression zeros only camera control and "
+        "preserves the complete engine-selected targeting result");
+
     if (g_failures == 0)
         std::cout << "HaloMCCVR core tests passed\n";
     return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
