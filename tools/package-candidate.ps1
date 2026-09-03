@@ -283,6 +283,25 @@ try {
         throw 'C-H2-77 gate failed: the proven shader identities, D3D raster transform, native-crosshair capture, shared replay, or zero-callback anchor rejection is missing.'
     }
 
+    if ($gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage1\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage2\s*=\s*true' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineFilterGlobalRva\s*=\s*0x2FFB0B8' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineCollisionFlags\s*=\s*0x0002D009' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineAdditionalFlags\s*=\s*0x00005185' -or
+        $gameSource -notmatch
+            'liveWorldLineFilter\s*==\s*kHalo4WorldLineFilterPair' -or
+        $gameSource -notmatch
+            'environmentValidated') {
+        throw 'H4 world-contact Stage 2 gate failed: rejected Stage 1 is not dormant or the official clear-line filter/calibration proof is missing.'
+    }
+
     Invoke-Tool { & cmake --preset $packagePreset }
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed for preset $packagePreset."
@@ -349,7 +368,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-fixed-world-contact-stage1',
+        'h4-world-contact-stage2',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -396,7 +415,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 36
+        schema_version = 37
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -426,9 +445,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'H4-WORLD-CONTACT-STAGE1'
+            id = 'H4-WORLD-CONTACT-STAGE2'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'c-h2-92-c-h4-58-plus-h4-fixed-structure-wrist-point-contact'
+            behavior = 'c-h2-92-c-h4-58-plus-h4-official-clear-line-filter-wrist-point-contact'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -521,15 +540,22 @@ try {
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
             world_contact = [ordered]@{
                 enabled = $true
-                scope = 'halo4-fixed-structure-only'
+                stage = 2
+                rejected_stage1_enabled = $false
+                scope = 'halo4-official-clear-line-filter'
                 query = 'h4ek-physics-ray-cast'
                 retail_query_rva = '0x001C1D4C'
-                collision_flags = 'structure-bit-0-plus-fixed-only-bit-27'
+                clear_line_wrapper_rva = '0x000F4218'
+                clear_line_filter_global_rva = '0x02FFB0B8'
+                collision_flags = '0x0002D009'
+                additional_flags = '0x00005185'
+                filter_identity = 'h4ek-and-retail-clear-line-wrapper-plus-live-global-value'
+                environment_calibration = 'diagnostic-20m-downward-ray-required-before-corrections'
                 execution_thread = 'existing-50ms-cold-title-worker'
                 render_thread_work = 'lock-free-target-and-correction-publication-only'
                 collision_shape = 'left-and-right-wrist-points'
                 held_weapon_behavior = 'rigidly-follows-corrected-right-wrist-no-barrel-volume-yet'
-                dynamic_objects = $false
+                object_impulses = $false
                 ragdoll_impulses = $false
                 physical_melee = $false
                 haptic_amplitude = 0.18
@@ -864,7 +890,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Experimental Halo 4 world-contact Stage 1 continues the C-H2-92/C-H4-58 handoff without changing its accepted camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST, or Halo 3 behavior. Official H4EK PhysicsRayCast is mapped and call-edge verified against the pinned retail module. A cold worker point-sweeps the final visible wrists against fixed structure; fresh bounded corrections clamp the hands, the held weapon follows the right wrist, and gentle per-hand contact peaks merge with existing game rumble. This does not yet provide weapon-barrel volume, dynamic-object or ragdoll impulses, or physical melee. Every proof/query failure restores only the existing unmodified floating targets. This package does not install automatically.'
+        note = 'Experimental Halo 4 world-contact Stage 2 continues the C-H2-92/C-H4-58 handoff without changing its camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST, or Halo 3 behavior. The rejected Stage 1 fixed-only filter remains dormant. Stage 2 uses the exact filter pair copied by an official H4EK clear-line wrapper and independently verified in its pinned retail homolog and live engine global. Before corrections activate, a diagnostic downward ray must validate the environment/coordinate frame and reports that state in telemetry. A cold worker then point-sweeps the final visible wrists; fresh bounded corrections clamp the hands, the held weapon follows the right wrist, and gentle per-hand contact peaks merge with existing game rumble. This does not provide weapon-barrel volume, object or ragdoll impulses, or physical melee. Every proof/query failure restores only the existing unmodified floating targets. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

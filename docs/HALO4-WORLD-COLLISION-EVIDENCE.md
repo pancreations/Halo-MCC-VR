@@ -4,11 +4,12 @@
 
 Halo 3 has no world-contact implementation in this repository. There is no
 accepted player-experience reference to port and no cross-title address,
-layout, flag, or physics behavior is reused. This document supports the first
-Halo-4-only experiment: point-sweep the final visible wrist positions against
-fixed structure, keep the held weapon rigidly attached to the corrected right
-hand, and provide gentle per-hand OpenXR feedback. Dynamic objects, ragdolls,
-physics impulses, and physical melee remain explicitly outside this candidate.
+layout, flag, or physics behavior is reused. This document supports a
+Halo-4-only experiment: point-sweep the final visible wrist positions with
+Halo 4's own clear-line collision filter, keep the held weapon rigidly attached
+to the corrected right hand, and provide gentle per-hand OpenXR feedback.
+Object impulses, ragdoll pushing, and physical melee remain explicitly outside
+this candidate.
 
 The feature is optional. Missing proof or any runtime query-contract failure
 returns only the wrist-contact feature to the existing floating-hand behavior.
@@ -40,7 +41,8 @@ Its call graph and data flow establish this ABI:
 - the function initializes fraction to exactly `1.0` and returns
   `fraction != 1.0` in `AL`.
 
-The bit values are title-specific findings, not enum-order guesses:
+The individual bit values below are title-specific findings, not enum-order
+guesses:
 
 - H4EK `object_test_vector` at RVA `0x4ECBD0` directly evaluates
   `(collision_flags & 1) == 0` immediately before the embedded assertion
@@ -49,14 +51,31 @@ The bit values are title-specific findings, not enum-order guesses:
 - H4EK filter callback RVA `0x4ED700` passes immediate `0x1B` to the engine's
   checked bit-test helper for `_collision_test_fixed_objects_only`. Fixed-only
   is therefore bit 27.
-- Multiple ordinary H4EK callers pass profile/category `0x1A`. Stage 1 uses
-  that observed value and flags `(1 << 0) | (1 << 27)`. All ignored-object and
-  optional-result fields remain zero.
+- Multiple ordinary H4EK callers pass profile/category `0x1A`.
 
 The official assertion also states that a query during object movement is
 allowed only when it is not on the main thread or the fixed-only flag is set.
-Stage 1 satisfies both conservative conditions: it runs from the existing cold
-title worker and sets fixed-only. It never queries from a render/palette hook.
+The implementation runs from the existing cold title worker and never queries
+from a render/palette hook.
+
+### Official clear-line filter contract
+
+H4EK RVA `0x17BF10` is a direct clear-line wrapper. It receives start/end
+positions and an optional ignored object, builds profile `0x1A`, copies the
+prebuilt qword at H4EK image RVA `0x512CD40` to the ray input's two filter
+dwords, calls `PhysicsRayCast`, and returns the inverse hit result.
+
+The official initializer chain proves the exact filter pair rather than merely
+the meanings of two isolated bits:
+
+- `0x512CCF8` receives qword `0x0000000000001009`;
+- `0x512CD08` receives qword `0x0000518500000000`;
+- `0x512CD38` combines those with low `0x0000C000` and high `0x00000001`;
+- `0x512CD40` adds low `0x00020000`.
+
+The resulting input dwords are collision flags `0x0002D009` and additional
+flags `0x00005185`. Stage 2 copies that exact pair. It does not infer or rename
+the remaining categories whose individual enum meanings have not been proven.
 
 ## Retail verification
 
@@ -78,6 +97,31 @@ The intervening retail simple query is RVA `0x1C1D4C`, extent
 `0x1C1D4C..0x1C1ED9`. It has the same input/result initialization, calls the
 mapped filter/world/conversion functions, compares result fraction to `1.0`,
 and returns the comparison in `AL`.
+
+The retail homolog of the official clear-line wrapper is RVA `0x0F4218`. It
+has the same profile, position/ignored-object construction and inverse-hit
+return. Its direct call at `+0x84` targets retail `PhysicsRayCast` above, and
+its RIP-relative load at `+0x3E` resolves the engine-owned filter qword at
+retail RVA `0x2FFB0B8`. The retail initializer chain independently produces
+the same value:
+
+- `0x01D6EC` initializes the source at `0x2E93D58` to qword `0x1009`;
+- `0x01D718` initializes the source at `0x2ED29E8` to high dword `0x5185`;
+- `0x01D820` combines them with low `0xC000`/high `1` at `0x2FFB0B0`;
+- `0x01D888` adds low `0x20000` at `0x2FFB0B8`.
+
+The wrapper's loaded-image signature must match exactly once at the pinned RVA:
+
+```text
+40 55 48 8D AC 24 30 FF FF FF 48 81 EC D0 01 00 00
+48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 C0 00 00 00
+8B 42 08 41 83 C9 FF F2 0F 10 02 66 83 A5 B8 00 00 00 00
+```
+
+At installation, Stage 2 also safely reads the live engine qword and requires
+the exact value `0x000051850002D009`. A missing/multiple/moved wrapper, changed
+call or load target, or different live qword returns only world contact to
+`StockFallback`.
 
 The runtime does not trust that address alone. This loaded-image signature must
 match exactly once and at the pinned RVA:
@@ -109,6 +153,12 @@ module mapping, or an unavailable floating-hand palette produces
 - The existing 50 ms title worker sweeps from the last accepted wrist point to
   the newest target. The first sample and any movement over 1.5 metres reseed
   rather than sweeping across a teleport/recenter.
+- Before wrist corrections are trusted, the worker casts a diagnostic-only
+  ray 20 metres downward from a tracked wrist with the same official filter.
+  Until a hit validates that the live environment and published coordinate
+  frame agree, hands stay on their unmodified floating targets. The calibration
+  ray never produces correction or haptics. Telemetry reports its hit/query
+  counts and `environment VALIDATED` versus `unproven`.
 - A hit stops 1.5 cm before the reported fraction. The worker publishes only a
   finite, bounded translation correction. No orientation or engine state is
   written.
@@ -127,9 +177,11 @@ module mapping, or an unavailable floating-hand palette produces
 ### Stage 1 headset rejection (2026-09-03)
 
 The user's Steam / SteamVR-Oculus / 120 Hz headset run loaded exact source
-`6b301ad681f35765568cdbcb86743de49840327f`. The binding installed and the
-worker completed approximately 1,300 queries while both floating-hand paths
-continued publishing normally. Every two-second interval reported zero left
+`6b301ad681f35765568cdbcb86743de49840327f`. The supplied 861-line log has
+SHA-256 `06BC41C74142497E8B0D9267F3433A18911EEE3A6B096EB5759C81BE05B7657E`.
+The binding installed and the worker completed 1,794 reported queries while
+both floating-hand paths continued publishing normally. Every two-second
+interval reported zero left
 and right contacts, zero visible corrections, zero failures, and therefore no
 contact haptics. The user confirmed that hands still passed through tested
 objects with no visible or tactile response.
@@ -139,13 +191,23 @@ publication, worker scheduling, and the non-throwing retail call edge were
 live; it does **not** prove that the selected flag set described a useful
 world-geometry query. The claim above that structure bit 0 plus fixed-only bit
 27 was sufficient is now only a disproven lead. The Stage 1 install is compiled
-dormant until the official H4EK input/filter contract is re-established. Do
-not use this candidate as a base for another behavioral collision experiment.
+dormant in source commit `9531abab7371691c637f8b0df8bd435d21bf308b`.
+
+H4EK and the pinned retail wrapper subsequently proved the actual clear-line
+filter pair `0x0002D009`/`0x00005185`. Stage 1 had used
+`0x08000001`/`0x00000000`: it omitted the engine's actual filter categories and
+added fixed-only by itself. Stage 1 also rejected a true hit when result type
+was zero even though the official function's public contract is its boolean
+return plus fraction. Stage 2 replaces both disproven assumptions; it does not
+stack on the rejected Stage 1 behavior.
+
+### Stage 2 pending headset validation
 
 Build/tests validate math, layout, and integration but not headset behavior.
 Acceptance requires a Halo 4 headset run with the log line
-`experimental fixed-world contact: LIVE`, non-zero query/correction counts when
-touching level geometry, correct left/right gentle feedback, and no regression
+`experimental world contact Stage 2 LIVE`, followed by telemetry reporting
+`environment VALIDATED`, non-zero contact/correction counts when touching level
+geometry, correct left/right gentle feedback, and no regression
 to existing Halo 4 camera, hand/weapon alignment, HUD, native reticle, helmet,
 effects, pause, or black-screen fixes. `docs/CURRENT-STATE.md` must not advance
 until the user reports that result.

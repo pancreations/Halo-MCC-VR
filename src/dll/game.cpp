@@ -30344,7 +30344,7 @@ namespace
     thread_local Halo4FloatingPair g_halo4FloatingPair{};
 
     // =======================================================================
-    // Halo 4 experimental fixed-world wrist contact, Stage 1.
+    // Halo 4 experimental world-contact wrist sweep, Stage 2.
     //
     // Halo 3 has no existing world-contact implementation to copy. This is a
     // deliberately Halo-4-native experiment based on H4EK PhysicsRayCast.
@@ -30364,7 +30364,8 @@ namespace
         uint8_t ignoredObjectCount = 0;
         uint8_t padding[3]{};
         // H4EK's post-cast environment conversion reads three optional
-        // result-detail bytes at +0x128..+0x12A. Stage 1 leaves all disabled.
+        // result-detail bytes at +0x128..+0x12A. This experiment leaves all
+        // optional result conversions disabled.
         uint8_t resultOptions[4]{};
     };
 
@@ -30432,6 +30433,9 @@ namespace
         std::atomic<uint64_t> applied[2]{};
         std::atomic<uint64_t> resets{0};
         std::atomic<uint64_t> failures{0};
+        std::atomic<uint64_t> calibrationQueries{0};
+        std::atomic<uint64_t> calibrationHits{0};
+        std::atomic<bool> environmentValidated{false};
     };
 
     Halo4WorldCollisionFeature g_halo4WorldCollision;
@@ -30440,13 +30444,24 @@ namespace
     // input/filter contract is re-established; do not stack another behavior
     // onto the failed experiment.
     constexpr bool kEnableHalo4WorldCollisionStage1 = false;
+    constexpr bool kEnableHalo4WorldCollisionStage2 = true;
+    static_assert(!kEnableHalo4WorldCollisionStage1);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
     constexpr uint32_t kHalo4PhysicsWorldRayRva = 0x2748AC;
     constexpr uint32_t kHalo4PhysicsCollectorResultRva = 0x1C15A8;
-    constexpr uint32_t kHalo4CollisionStructureAndFixedFlags =
-        (1u << 0) | (1u << 27);
+    constexpr uint32_t kHalo4WorldLineTestRva = 0x0F4218;
+    constexpr uint32_t kHalo4WorldLineFilterGlobalRva = 0x2FFB0B8;
+    // Exact mask pair copied by the official H4EK clear-line wrapper at
+    // 0x17BF10 and its retail homolog at 0x0F4218. Stage 1's hand-built
+    // structure/fixed-only mask was rejected in-headset after 1,794 clean
+    // no-hit calls; it omitted these engine-owned filter categories.
+    constexpr uint32_t kHalo4WorldLineCollisionFlags = 0x0002D009;
+    constexpr uint32_t kHalo4WorldLineAdditionalFlags = 0x00005185;
+    constexpr uint64_t kHalo4WorldLineFilterPair =
+        (static_cast<uint64_t>(kHalo4WorldLineAdditionalFlags) << 32) |
+        kHalo4WorldLineCollisionFlags;
     // Observed in multiple ordinary H4EK PhysicsRayCast callers. This first
     // dword selects the engine's raycast profiling bucket, not collision type.
     constexpr uint32_t kHalo4CollisionProfile = 0x1A;
@@ -30579,6 +30594,12 @@ namespace
         g_halo4WorldCollision.applied[1].store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.resets.store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.failures.store(0, std::memory_order_relaxed);
+        g_halo4WorldCollision.calibrationQueries.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.calibrationHits.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.environmentValidated.store(
+            false, std::memory_order_relaxed);
     }
 
     void RemoveHalo4WorldCollision()
@@ -30605,16 +30626,32 @@ namespace
         return instruction + 5 + static_cast<intptr_t>(displacement);
     }
 
+    uintptr_t Halo4DecodeRipRelativeAddress(
+        uintptr_t instruction, size_t displacementOffset,
+        size_t instructionLength)
+    {
+        int32_t displacement = 0;
+        if (!instruction || displacementOffset + sizeof(displacement) >
+                instructionLength ||
+            !Halo4SafeRead(
+                reinterpret_cast<const void*>(
+                    instruction + displacementOffset),
+                &displacement, sizeof(displacement)))
+            return 0;
+        return instruction + instructionLength +
+            static_cast<intptr_t>(displacement);
+    }
+
     bool InstallHalo4WorldCollision(
         uintptr_t base, size_t size, uint32_t generation)
     {
         RemoveHalo4WorldCollision();
-        if (!kEnableHalo4WorldCollisionStage1)
+        if (!kEnableHalo4WorldCollisionStage2)
         {
-            LOG("Halo 4 experimental world contact: StockFallback; rejected "
-                "Stage 1 wrist ray is deliberately dormant after the "
-                "headset run returned zero contacts; camera, hands, weapon, "
-                "HUD, reticle, effects and OpenXR remain unchanged");
+            LOG("Halo 4 experimental world contact: StockFallback; the "
+                "replacement transaction is disabled; rejected Stage 1 "
+                "remains dormant and camera, hands, weapon, HUD, reticle, "
+                "effects and OpenXR remain unchanged");
             return false;
         }
         if (!base || !generation || size != kHalo4RetailImageSize ||
@@ -30641,16 +30678,40 @@ namespace
                 base + kHalo4PhysicsWorldRayRva &&
             Halo4DecodeRel32Call(hit + 0x10F) ==
                 base + kHalo4PhysicsCollectorResultRva;
-        if (!edges || GetModuleHandleW(L"halo4.dll") !=
+        constexpr char kWorldLineTestSignature[] =
+            "40 55 48 8D AC 24 30 FF FF FF 48 81 EC D0 01 00 00 "
+            "48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 C0 00 00 00 "
+            "8B 42 08 41 83 C9 FF F2 0F 10 02 66 83 A5 B8 00 00 00 00";
+        const uintptr_t worldLineTest =
+            sig::Find(base, size, kWorldLineTestSignature);
+        const bool worldLineUnique = worldLineTest && !sig::Find(
+            worldLineTest + 1, base + size - worldLineTest - 1,
+            kWorldLineTestSignature);
+        const bool worldLinePinned = worldLineUnique &&
+            worldLineTest - base == kHalo4WorldLineTestRva &&
+            Halo4DecodeRel32Call(worldLineTest + 0x84) == hit;
+        const uintptr_t worldLineFilter = worldLinePinned
+            ? Halo4DecodeRipRelativeAddress(worldLineTest + 0x3E, 3, 7)
+            : 0;
+        uint64_t liveWorldLineFilter = 0;
+        const bool worldLineFilterPinned =
+            worldLineFilter == base + kHalo4WorldLineFilterGlobalRva &&
+            Halo4SafeRead(
+                reinterpret_cast<const void*>(worldLineFilter),
+                &liveWorldLineFilter, sizeof(liveWorldLineFilter)) &&
+            liveWorldLineFilter == kHalo4WorldLineFilterPair;
+        if (!edges || !worldLineFilterPinned ||
+            GetModuleHandleW(L"halo4.dll") !=
                 reinterpret_cast<HMODULE>(base))
         {
             LOG("Halo 4 experimental world contact: StockFallback; H4EK-"
                 "mapped PhysicsRayCast signature was %s%s and its four "
-                "internal call edges were %s; camera/hands/reticle remain "
-                "unchanged",
+                "internal call edges were %s; the official clear-line "
+                "filter was %s; camera/hands/reticle remain unchanged",
                 hit ? "present" : "missing",
                 hit && !pinned ? " but not uniquely pinned" : "",
-                edges ? "pinned" : "not proven");
+                edges ? "pinned" : "not proven",
+                worldLineFilterPinned ? "pinned" : "not proven");
             return false;
         }
 
@@ -30659,12 +30720,15 @@ namespace
         g_halo4WorldCollision.generation = generation;
         Halo4ResetWorldCollisionState(generation);
         g_halo4WorldCollision.installed.store(true, std::memory_order_release);
-        LOG("Halo 4 experimental world contact LIVE: official H4EK "
+        LOG("Halo 4 experimental world contact Stage 2 LIVE: official H4EK "
             "PhysicsRayCast is uniquely verified at retail RVA 0x%X with "
-            "all four internal call edges pinned; only fixed structure bit "
-            "0 plus fixed-only bit 27 are queried on the cold worker; "
-            "render hooks only exchange lock-free wrist corrections",
-            kHalo4PhysicsRayCastRva);
+            "all four internal call edges pinned; retail clear-line wrapper "
+            "RVA 0x%X pins the engine-owned 0x%08X/0x%08X filter pair; "
+            "rejected Stage 1's fixed-only mask remains dormant; render "
+            "hooks only exchange lock-free wrist corrections",
+            kHalo4PhysicsRayCastRva, kHalo4WorldLineTestRva,
+            kHalo4WorldLineCollisionFlags,
+            kHalo4WorldLineAdditionalFlags);
         return true;
     }
 
@@ -30680,6 +30744,39 @@ namespace
             "collision/clamping is disabled; the existing camera, hands, "
             "weapon, HUD, reticle, effects and OpenXR session continue",
             reason ? reason : "unknown worker failure");
+    }
+
+    bool Halo4RunWorldCollisionRay(
+        Halo4PhysicsRayCastInput& input,
+        Halo4PhysicsRayCastResult& output, bool& hit)
+    {
+        hit = false;
+        bool callCompleted = false;
+        __try
+        {
+            hit = g_halo4WorldCollision.rayCast(&input, &output);
+            callCompleted = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            callCompleted = false;
+        }
+        g_halo4WorldCollision.queries.fetch_add(
+            1, std::memory_order_relaxed);
+        if (!callCompleted)
+        {
+            Halo4DisableWorldCollisionAfterFailure("engine query exception");
+            return false;
+        }
+        if ((hit && (!std::isfinite(output.fraction) ||
+                     output.fraction < 0.0f || output.fraction >= 1.0f)) ||
+            (!hit && output.fraction != 1.0f))
+        {
+            Halo4DisableWorldCollisionAfterFailure(
+                "invalid PhysicsRayCast result contract");
+            return false;
+        }
+        return true;
     }
 
     void Halo4WorldCollisionWorkerTick()
@@ -30734,39 +30831,62 @@ namespace
                 continue;
             }
 
+            // Before trusting short wrist sweeps, prove that this exact
+            // filter and this published coordinate frame can reach the live
+            // level collision scene. A long downward ray from a tracked wrist
+            // is diagnostic only; it never contributes a correction or a
+            // haptic pulse. Retry until one hand sees environment geometry.
+            if (!g_halo4WorldCollision.environmentValidated.load(
+                    std::memory_order_acquire))
+            {
+                Halo4PhysicsRayCastInput calibrationInput{};
+                Halo4PhysicsRayCastResult calibrationOutput{};
+                calibrationInput.profile = kHalo4CollisionProfile;
+                calibrationInput.collisionFlags =
+                    kHalo4WorldLineCollisionFlags;
+                calibrationInput.additionalFlags =
+                    kHalo4WorldLineAdditionalFlags;
+                memcpy(calibrationInput.start, desired,
+                       sizeof(calibrationInput.start));
+                memcpy(calibrationInput.end, desired,
+                       sizeof(calibrationInput.end));
+                const float worldScale =
+                    g_worldScale.load(std::memory_order_acquire);
+                calibrationInput.start[2] += 0.25f * worldScale;
+                calibrationInput.end[2] -= 20.0f * worldScale;
+                bool calibrationHit = false;
+                g_halo4WorldCollision.calibrationQueries.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (!Halo4RunWorldCollisionRay(
+                        calibrationInput, calibrationOutput,
+                        calibrationHit))
+                    return;
+                if (calibrationHit)
+                {
+                    g_halo4WorldCollision.calibrationHits.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_halo4WorldCollision.environmentValidated.store(
+                        true, std::memory_order_release);
+                }
+                else
+                {
+                    memcpy(state.accepted, desired,
+                           sizeof(state.accepted));
+                    Halo4ClearCollisionCorrection(hand, generation);
+                    continue;
+                }
+            }
+
             Halo4PhysicsRayCastInput input{};
             Halo4PhysicsRayCastResult output{};
             input.profile = kHalo4CollisionProfile;
-            input.collisionFlags = kHalo4CollisionStructureAndFixedFlags;
+            input.collisionFlags = kHalo4WorldLineCollisionFlags;
+            input.additionalFlags = kHalo4WorldLineAdditionalFlags;
             memcpy(input.start, state.accepted, sizeof(input.start));
             memcpy(input.end, desired, sizeof(input.end));
             bool hit = false;
-            bool callCompleted = false;
-            __try
-            {
-                hit = g_halo4WorldCollision.rayCast(&input, &output);
-                callCompleted = true;
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER)
-            {
-                callCompleted = false;
-            }
-            g_halo4WorldCollision.queries.fetch_add(
-                1, std::memory_order_relaxed);
-            if (!callCompleted)
-            {
-                Halo4DisableWorldCollisionAfterFailure("engine query exception");
+            if (!Halo4RunWorldCollisionRay(input, output, hit))
                 return;
-            }
-            if ((hit && (output.type == 0 ||
-                         !std::isfinite(output.fraction) ||
-                         output.fraction < 0.0f || output.fraction >= 1.0f)) ||
-                (!hit && output.fraction != 1.0f))
-            {
-                Halo4DisableWorldCollisionAfterFailure(
-                    "invalid PhysicsRayCast result contract");
-                return;
-            }
 
             const float worldScale =
                 g_worldScale.load(std::memory_order_acquire);
@@ -36913,11 +37033,19 @@ namespace
                 0, std::memory_order_relaxed);
         const uint64_t collisionFailures =
             g_halo4WorldCollision.failures.load(std::memory_order_relaxed);
-        LOG("Halo 4 experimental fixed-world contact: %s; %llu queries, "
+        const uint64_t collisionCalibrationQueries =
+            g_halo4WorldCollision.calibrationQueries.exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionCalibrationHits =
+            g_halo4WorldCollision.calibrationHits.exchange(
+                0, std::memory_order_relaxed);
+        LOG("Halo 4 experimental world contact Stage 2: %s; %llu queries, "
             "%llu/%llu left/right contacts, %llu/%llu visible corrections, "
-            "%llu seed/teleport resets, %llu failures in 2s; wrist-point "
-            "sweeps only (weapon follows right hand), dynamic objects, "
-            "ragdolls and physical melee remain untouched",
+            "%llu seed/teleport resets, %llu/%llu environment calibration "
+            "hits/queries, environment %s, %llu failures in 2s; wrist-point "
+            "sweeps use the official clear-line filter (weapon follows right "
+            "hand); object impulses, ragdoll pushing and physical melee "
+            "remain untouched",
             g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
             static_cast<unsigned long long>(collisionQueries),
@@ -36926,6 +37054,10 @@ namespace
             static_cast<unsigned long long>(collisionAppliedLeft),
             static_cast<unsigned long long>(collisionAppliedRight),
             static_cast<unsigned long long>(collisionResets),
+            static_cast<unsigned long long>(collisionCalibrationHits),
+            static_cast<unsigned long long>(collisionCalibrationQueries),
+            g_halo4WorldCollision.environmentValidated.load(
+                std::memory_order_acquire) ? "VALIDATED" : "unproven",
             static_cast<unsigned long long>(collisionFailures));
 
         const uint64_t cuiGameplayPasses =

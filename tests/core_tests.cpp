@@ -13480,7 +13480,7 @@ int main()
           std::fabs(MergeHapticAmplitude(-1.0f, 2.0f) - 1.0f) < 1.0e-6f,
         "Per-hand contact haptics merge by clamped maximum without replacing game rumble");
 
-    // Halo 4 Stage-1 world contact: no hit accepts the controller target; a
+    // Halo 4 world-contact resolution: no hit accepts the controller target; a
     // hit backs the wrist off by the configured skin in world-scaled units;
     // malformed engine output fails closed for this optional feature only.
     const float collisionStart[3]{0.0f, 0.0f, 0.0f};
