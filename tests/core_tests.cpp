@@ -15939,6 +15939,32 @@ int main()
         "Halo 2 camera-assist suppression zeros only camera control and "
         "preserves the complete engine-selected targeting result");
 
+    // E-H2-80 / C-H2-92: the controller direction can replace the H2EK-
+    // identified player-control view result only inside the explicit central
+    // aim-assist scope. Invalid or unscoped inputs leave the engine result
+    // byte-for-byte stock.
+    const float controllerTargetRay[3] = {0.6f, 0.0f, 0.8f};
+    float selectedView[3] = {-1.0f, 2.0f, -3.0f};
+    Check(kHalo2AimAssistViewDirectionRva == 0x006C0DF0 &&
+              kHalo2ControllerAimAssistTargetingEnabled &&
+              Halo2OverrideAimAssistViewDirection(
+                  true, controllerTargetRay, selectedView) &&
+              selectedView[0] == controllerTargetRay[0] &&
+              selectedView[1] == controllerTargetRay[1] &&
+              selectedView[2] == controllerTargetRay[2],
+        "Halo 2 scoped aim-assist view helper accepts the normalized "
+        "controller target ray");
+    const float stockView[3] = {0.1f, 0.2f, 0.3f};
+    std::memcpy(selectedView, stockView, sizeof(stockView));
+    const float invalidTargetRay[3] = {2.0f, 0.0f, 0.0f};
+    Check(!Halo2OverrideAimAssistViewDirection(
+              false, controllerTargetRay, selectedView) &&
+              !Halo2OverrideAimAssistViewDirection(
+                  true, invalidTargetRay, selectedView) &&
+              std::memcmp(selectedView, stockView, sizeof(stockView)) == 0,
+        "Halo 2 aim-assist view direction stays stock outside the scope and "
+        "rejects a non-unit controller ray");
+
     if (g_failures == 0)
         std::cout << "HaloMCCVR core tests passed\n";
     return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

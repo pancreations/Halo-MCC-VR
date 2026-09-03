@@ -4464,3 +4464,56 @@ body/head camera. C-H2-91 target retention is therefore rejected and compiled
 dormant. The successful C-H2-90 neutral camera-control/no-target behavior is
 restored while the non-lunge melee direction is investigated. Do not retry
 target retention as a melee fix.
+
+## E-H2-80 (C-H2-92): native target selection must receive the controller ray
+
+C-H2-91's premise was disproved by official H2EK, not merely by its negative
+headset result. The central `aim_assist.cpp` calculation does not acquire its
+view direction from the unit aiming vector already owned by E-H2-54. Its
+verified player-control caller invokes H2EK kit RVA `0x72C30`, which reads
+`player_control->desired_angles` and converts them into a three-float view
+vector. The central calculation uses that vector for target selection. The
+stock body/head direction therefore selected C-H2-91's retained target, and
+the downstream stock lunge correctly turned/moved toward the wrong ray.
+
+The same H2EK function has two arguments: local user index and a `float[3]`
+output. In pinned retail its homolog is `halo2.dll+0x6C0DF0` with the same ABI.
+The central calculation calls it at `+0x75934C`, immediately before passing
+the result at `[rsp+0x60]` to target calculation `+0x758B50`. The retail helper
+reads the user control record at stride `0xB8` and tail-calls the angle-to-view
+conversion. A 49-byte loaded-image pattern matches exactly once at
+`+0x6C0DF0` in the pinned Steam module:
+
+    48 89 5C 24 08 57 48 83 EC 20 48 63 D9 48 8B FA 8B CB
+    E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 8B C8 4C 69 C3 B8
+    00 00 00 48 83 C2 38 49 03 D0 4C 8B C7
+
+Official H2EK independently establishes the native melee damage direction.
+`unit_action_system.cpp` kit RVA `0x4C1620` calls `units.cpp` kit RVA
+`0x480D40` at the melee damage keyframe. That function reads the current unit
+aim vector at unit `+0x174`, obtains the authored aiming origin through kit
+`+0x488C80`, and builds its collision pyramid from weapon-definition angles
+and depth at `+0x260/+0x264/+0x268`. Melee initiation kit RVA `0x4CA280`
+also reads unit `+0x174`; its call to `+0x4C9FF0` changes stock body facing.
+Thus neither damage range nor body orientation needs a guessed patch. The
+existing native controller-aim transaction already supplies the correct
+damage vector; only target selection/lunge was looking down the stock camera
+ray.
+
+C-H2-92 hooks the verified view helper as an optional subfeature. The central
+calculation detour first builds the exact same stable, converged controller
+direction already used by native unit aim. A thread-local scope exposes that
+direction only while the original central calculation for VR-owned user 0 is
+executing; the view-helper detour first calls stock, then replaces its output
+only inside that scope. The engine therefore performs its own target choice
+and lunge along the controller ray. Afterward the accepted C-H2-90 rule still
+zeros only the three camera-control floats. Every helper call outside that
+single calculation is byte-for-byte stock.
+
+If the new helper identity/hook or a coherent controller publication is
+unavailable, that calculation retains C-H2-90's neutral camera/no-target
+result; it never retains a stock-camera target. The helper failing to install
+does not prevent the already verified central camera-suppression hook from
+installing. Both callbacks are drained before their trampolines are removed.
+No melee range, damage, animation, body vector, map/weapon tag, game file, or
+other title is patched. Headset-PENDING.

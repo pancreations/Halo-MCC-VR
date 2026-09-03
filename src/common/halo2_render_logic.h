@@ -59,6 +59,16 @@ inline constexpr uint8_t Halo2AimAssistDebugValue(
 // untouched here too.
 inline constexpr uint32_t kHalo2AimAssistCalculateRva = 0x00759260;
 
+// E-H2-80 / C-H2-92: official H2EK player_control.cpp +0x72C30 converts
+// local-player desired angles into the view vector consumed once by the
+// central aim-assist calculation. Its pinned retail homolog is +0x6C0DF0
+// with the same (user index, float[3] output) ABI. The optional scoped hook
+// substitutes the already-owned controller sight only during that central
+// calculation, so Halo 2 can choose its native melee/lunge target along the
+// hand ray without restoring camera adhesion.
+inline constexpr uint32_t kHalo2AimAssistViewDirectionRva = 0x006C0DF0;
+inline constexpr bool kHalo2ControllerAimAssistTargetingEnabled = true;
+
 struct Halo2AimAssistTargetingResult
 {
     uint32_t identifiers[3]{};
@@ -105,6 +115,32 @@ inline bool Halo2SuppressCameraAimAssist(float* control) noexcept
     control[0] = 0.0f;
     control[1] = 0.0f;
     control[2] = 0.0f;
+    return true;
+}
+
+inline bool Halo2OverrideAimAssistViewDirection(
+    bool scopedControllerTargeting, const float controllerDirection[3],
+    float* engineDirection) noexcept
+{
+    if (!scopedControllerTargeting || !controllerDirection ||
+        !engineDirection)
+    {
+        return false;
+    }
+    float lengthSquared = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(controllerDirection[axis]))
+            return false;
+        lengthSquared += controllerDirection[axis] * controllerDirection[axis];
+    }
+    if (!std::isfinite(lengthSquared) || lengthSquared < 0.999f ||
+        lengthSquared > 1.001f)
+    {
+        return false;
+    }
+    std::memcpy(
+        engineDirection, controllerDirection, 3 * sizeof(float));
     return true;
 }
 

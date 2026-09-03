@@ -394,6 +394,8 @@ namespace
     // controller sight line owns Halo 2 VR. Every other call stays stock.
     using Halo2AimAssistCalculateFn = void(__fastcall*)(
         uint32_t, float*, Halo2AimAssistTargetingResult*);
+    using Halo2AimAssistViewDirectionFn = void(__fastcall*)(
+        uint32_t, float*);
     void* g_aimAssistTarget = nullptr;
     std::atomic<uintptr_t> g_aimAssistOriginal{0};
     std::atomic<uint32_t> g_aimAssistActiveCallbacks{0};
@@ -403,6 +405,22 @@ namespace
     std::atomic<uint64_t> g_aimAssistNoTarget{0};
     std::atomic<uint64_t> g_aimAssistStock{0};
     std::atomic<uint64_t> g_aimAssistRefused{0};
+    void* g_aimAssistViewDirectionTarget = nullptr;
+    std::atomic<uintptr_t> g_aimAssistViewDirectionOriginal{0};
+    std::atomic<uint32_t> g_aimAssistViewDirectionActiveCallbacks{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionCalls{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionApplied{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionStock{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionRefused{0};
+
+    struct Halo2AimAssistControllerRayScope
+    {
+        bool active = false;
+        bool applied = false;
+        float direction[3]{};
+    };
+    thread_local Halo2AimAssistControllerRayScope
+        g_aimAssistControllerRayScope{};
 
     struct Halo2FinalPaletteContext
     {
@@ -2028,6 +2046,28 @@ namespace
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    bool BuildPublishedControllerAimDirection(float direction[3]) noexcept
+    {
+        if (!direction)
+            return false;
+        Halo2ObserverPosePublication publication{};
+        Halo2CameraBasis rightCarrier{}, leftCarrier{};
+        const uint32_t generation =
+            g_generation.load(std::memory_order_acquire);
+        if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
+            !Halo2ObserverControllerSnapshotUsable(publication, generation) ||
+            !BuildStableFirstPersonCarriers(
+                publication, generation, rightCarrier, leftCarrier))
+        {
+            return false;
+        }
+        const float range = std::clamp(
+            g_config.crosshair_distance_m, 2.0f, 50.0f) *
+            Game_GetWorldScale();
+        return Halo2BuildControllerShotDirection(
+            publication.stock.position, rightCarrier, range, direction);
+    }
+
     __declspec(noinline) uint64_t __fastcall Halo2NativeAimUpdateDetour(
         uint32_t objectIndex)
     {
@@ -2101,23 +2141,8 @@ namespace
                     __leave;
                 }
 
-                Halo2ObserverPosePublication publication{};
-                Halo2CameraBasis rightCarrier{}, leftCarrier{};
-                const uint32_t generation =
-                    g_generation.load(std::memory_order_acquire);
-                if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
-                    !Halo2ObserverControllerSnapshotUsable(
-                        publication, generation) ||
-                    !BuildStableFirstPersonCarriers(
-                        publication, generation, rightCarrier, leftCarrier))
-                    __leave;
-                const float range = std::clamp(
-                    g_config.crosshair_distance_m, 2.0f, 50.0f) *
-                    Game_GetWorldScale();
                 float direction[3]{};
-                if (!Halo2BuildControllerShotDirection(
-                        publication.stock.position, rightCarrier, range,
-                        direction))
+                if (!BuildPublishedControllerAimDirection(direction))
                     __leave;
 
                 const uintptr_t objectsData = module
@@ -2160,6 +2185,57 @@ namespace
         return result;
     }
 
+    __declspec(noinline) void __fastcall Halo2AimAssistViewDirectionDetour(
+        uint32_t userIndex, float* direction)
+    {
+        g_aimAssistViewDirectionActiveCallbacks.fetch_add(
+            1, std::memory_order_acq_rel);
+        g_aimAssistViewDirectionCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original =
+            reinterpret_cast<Halo2AimAssistViewDirectionFn>(
+                g_aimAssistViewDirectionOriginal.load(
+                    std::memory_order_acquire));
+        bool originalCompleted = false;
+        if (original)
+        {
+            __try
+            {
+                original(userIndex, direction);
+                originalCompleted = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistViewDirectionRefused.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+
+        bool applied = false;
+        if (originalCompleted && userIndex == kOwnedUser &&
+            g_aimAssistControllerRayScope.active)
+        {
+            __try
+            {
+                applied = Halo2OverrideAimAssistViewDirection(
+                    true, g_aimAssistControllerRayScope.direction, direction);
+                g_aimAssistControllerRayScope.applied = applied;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistViewDirectionRefused.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        if (applied)
+            g_aimAssistViewDirectionApplied.fetch_add(
+                1, std::memory_order_relaxed);
+        else if (originalCompleted)
+            g_aimAssistViewDirectionStock.fetch_add(
+                1, std::memory_order_relaxed);
+        g_aimAssistViewDirectionActiveCallbacks.fetch_sub(
+            1, std::memory_order_acq_rel);
+    }
+
     __declspec(noinline) void __fastcall Halo2AimAssistCalculateDetour(
         uint32_t userIndex, float* control,
         Halo2AimAssistTargetingResult* targeting)
@@ -2178,27 +2254,68 @@ namespace
         {
             __try
             {
-                if constexpr (kHalo2RetainAimAssistTargetForMelee)
+                float controllerDirection[3]{};
+                const bool controllerTargeting =
+                    kHalo2ControllerAimAssistTargetingEnabled &&
+                    g_aimAssistViewDirectionOriginal.load(
+                        std::memory_order_acquire) &&
+                    BuildPublishedControllerAimDirection(
+                        controllerDirection);
+                if (controllerTargeting)
                 {
-                    // Rejected C-H2-91 behavior, intentionally dormant: the
-                    // retained target fed stock melee/lunge snap and worsened
-                    // the headset result.
-                    original(userIndex, control, targeting);
-                    originalCompleted = true;
-                    completed = Halo2SuppressCameraAimAssist(control);
-                    if (completed)
+                    bool controllerRayApplied = false;
+                    g_aimAssistControllerRayScope.active = true;
+                    g_aimAssistControllerRayScope.applied = false;
+                    std::memcpy(
+                        g_aimAssistControllerRayScope.direction,
+                        controllerDirection, sizeof(controllerDirection));
+                    __try
                     {
-                        if (targeting->identifiers[0] != UINT32_MAX)
-                            g_aimAssistTargetSelected.fetch_add(
-                                1, std::memory_order_relaxed);
-                        else
-                            g_aimAssistNoTarget.fetch_add(
-                                1, std::memory_order_relaxed);
+                        original(userIndex, control, targeting);
+                        originalCompleted = true;
                     }
+                    __finally
+                    {
+                        controllerRayApplied =
+                            g_aimAssistControllerRayScope.applied;
+                        g_aimAssistControllerRayScope = {};
+                    }
+                    if (originalCompleted && controllerRayApplied)
+                    {
+                        completed = Halo2SuppressCameraAimAssist(control);
+                        if (completed)
+                        {
+                            if (targeting->identifiers[0] != UINT32_MAX)
+                                g_aimAssistTargetSelected.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            else
+                                g_aimAssistNoTarget.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        }
+                    }
+                    // If the scoped helper was not consumed, never retain a
+                    // stock-camera target. Preserve the accepted C-H2-90
+                    // camera result and fail this targeting feature to no
+                    // target for this calculation only.
+                    if (!completed)
+                        completed = Halo2WriteNeutralAimAssistResults(
+                            control, targeting);
                 }
                 else
+                {
+                    // Controller publication or the optional direction hook
+                    // is unavailable. Retain the accepted camera-only fix and
+                    // do not manufacture a target from the head/body camera.
                     completed = Halo2WriteNeutralAimAssistResults(
                         control, targeting);
+                }
+
+                if constexpr (kHalo2RetainAimAssistTargetForMelee)
+                {
+                    // Rejected C-H2-91 behavior remains deliberately dormant:
+                    // unscoped stock-camera target retention fed the stock
+                    // lunge and worsened the headset result.
+                }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
@@ -2976,6 +3093,38 @@ namespace
             g_aimAssistTarget = nullptr;
             g_aimAssistOriginal.store(0, std::memory_order_release);
         }
+        if (g_aimAssistViewDirectionTarget)
+        {
+            const MH_STATUS disabled =
+                MH_DisableHook(g_aimAssistViewDirectionTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 controller melee view direction: disable failed "
+                    "(%d); ownership retained for cleanup",
+                    static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_aimAssistViewDirectionActiveCallbacks.load(
+                     std::memory_order_acquire);
+                 ++attempt)
+            {
+                Sleep(10);
+            }
+            if (g_aimAssistViewDirectionActiveCallbacks.load(
+                    std::memory_order_acquire))
+            {
+                LOG("Halo 2 controller melee view-direction callbacks did "
+                    "not drain; ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_aimAssistViewDirectionTarget);
+            g_aimAssistViewDirectionTarget = nullptr;
+            g_aimAssistViewDirectionOriginal.store(
+                0, std::memory_order_release);
+            g_aimAssistControllerRayScope = {};
+        }
         if (g_nativeAimTarget)
         {
             const MH_STATUS disabled = MH_DisableHook(g_nativeAimTarget);
@@ -3725,20 +3874,26 @@ namespace
             }
         }
 
-        // E-H2-77 / E-H2-78 / C-H2-91: Halo 3 parity means the
-        // controller sight remains
-        // authoritative without the stock camera being pulled toward targets.
-        // H2EK's central aim_assist.cpp result calculation was matched to this
-        // retail entry through its BSim-confirmed caller and exact ABI/output
-        // initializer. It is independent of the camera/stereo transaction.
+        // E-H2-77 through E-H2-80 / C-H2-92: Halo 3 parity means the
+        // controller sight remains authoritative without the stock camera
+        // being pulled toward targets. H2EK's central aim_assist calculation
+        // is paired with its player-control view-vector helper as one optional
+        // transaction. Only that helper call inside the owned calculation sees
+        // the controller ray; all other callers stay stock.
         uintptr_t assistMatch = 0;
         uint32_t assistMatchCount = 0;
+        uintptr_t viewDirectionMatch = 0;
+        uint32_t viewDirectionMatchCount = 0;
         constexpr char kAimAssistCalculatePattern[] =
             "48 89 54 24 10 55 53 56 57 41 54 48 8D AC 24 80 E7 FF FF "
             "B8 80 19 00 00 E8 ?? ?? ?? ?? 48 2B E0 49 8B F8 48 8B DA "
             "8B F1 E8 ?? ?? ?? ?? 33 C9 45 33 E4 48 89 0B 89 4B 08 4C "
             "89 67 1C 48 C7 07 FF FF FF FF C7 47 08 FF FF FF FF 66 44 "
             "89 67 18";
+        constexpr char kAimAssistViewDirectionPattern[] =
+            "48 89 5C 24 08 57 48 83 EC 20 48 63 D9 48 8B FA 8B CB "
+            "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 8B C8 4C 69 C3 B8 "
+            "00 00 00 48 83 C2 38 49 03 D0 4C 8B C7";
         if (!g_nativeAimOriginal.load(std::memory_order_acquire))
         {
             LOG("Halo 2 aim-assist suppression StockFallback: native "
@@ -3757,46 +3912,138 @@ namespace
         }
         else
         {
-            void* trampoline = nullptr;
             void* const assistTarget = reinterpret_cast<void*>(assistMatch);
-            const MH_STATUS created = MH_CreateHook(
+            void* assistTrampoline = nullptr;
+            bool viewInstalled = false;
+
+            const bool viewIdentity = CountPatternMatches(
+                    base, size, kAimAssistViewDirectionPattern,
+                    viewDirectionMatch, viewDirectionMatchCount) &&
+                viewDirectionMatchCount == 1 &&
+                viewDirectionMatch ==
+                    base + kHalo2AimAssistViewDirectionRva;
+            if (viewIdentity)
+            {
+                void* const viewDirectionTarget =
+                    reinterpret_cast<void*>(viewDirectionMatch);
+                void* viewDirectionTrampoline = nullptr;
+                const MH_STATUS viewCreated = MH_CreateHook(
+                    viewDirectionTarget,
+                    reinterpret_cast<void*>(
+                        &Halo2AimAssistViewDirectionDetour),
+                    &viewDirectionTrampoline);
+                if (viewCreated == MH_OK && viewDirectionTrampoline)
+                {
+                    g_aimAssistViewDirectionTarget = viewDirectionTarget;
+                    g_aimAssistViewDirectionOriginal.store(
+                        reinterpret_cast<uintptr_t>(
+                            viewDirectionTrampoline),
+                        std::memory_order_release);
+                    const MH_STATUS viewEnabled =
+                        MH_EnableHook(viewDirectionTarget);
+                    viewInstalled = viewEnabled == MH_OK;
+                    if (!viewInstalled)
+                    {
+                        LOG("Halo 2 controller melee targeting StockFallback: "
+                            "view-direction hook enable=%d; accepted camera "
+                            "suppression remains eligible",
+                            static_cast<int>(viewEnabled));
+                        (void)MH_RemoveHook(viewDirectionTarget);
+                        g_aimAssistViewDirectionTarget = nullptr;
+                        g_aimAssistViewDirectionOriginal.store(
+                            0, std::memory_order_release);
+                    }
+                }
+                else
+                {
+                    LOG("Halo 2 controller melee targeting StockFallback: "
+                        "view-direction hook create=%d; accepted camera "
+                        "suppression remains eligible",
+                        static_cast<int>(viewCreated));
+                    if (viewCreated == MH_OK)
+                        (void)MH_RemoveHook(viewDirectionTarget);
+                }
+            }
+            else
+            {
+                LOG("Halo 2 controller melee targeting StockFallback: "
+                    "view-direction identity matched %u times (expected one "
+                    "at +0x%X); accepted camera suppression remains eligible",
+                    viewDirectionMatchCount,
+                    static_cast<unsigned>(
+                        kHalo2AimAssistViewDirectionRva));
+            }
+
+            const MH_STATUS assistCreated = MH_CreateHook(
                 assistTarget,
                 reinterpret_cast<void*>(&Halo2AimAssistCalculateDetour),
-                &trampoline);
-            if (created != MH_OK || !trampoline)
+                &assistTrampoline);
+            if (assistCreated != MH_OK || !assistTrampoline)
             {
-                LOG("Halo 2 aim-assist suppression StockFallback: hook "
-                    "create=%d; camera/stereo/aim/hands/HUD/OpenXR remain "
-                    "armed", static_cast<int>(created));
-                if (created == MH_OK)
+                LOG("Halo 2 aim-assist suppression StockFallback: central "
+                    "hook create=%d; camera/stereo/aim/hands/HUD/OpenXR "
+                    "remain armed",
+                    static_cast<int>(assistCreated));
+                if (assistCreated == MH_OK)
                     (void)MH_RemoveHook(assistTarget);
             }
             else
             {
                 g_aimAssistTarget = assistTarget;
                 g_aimAssistOriginal.store(
-                    reinterpret_cast<uintptr_t>(trampoline),
+                    reinterpret_cast<uintptr_t>(assistTrampoline),
                     std::memory_order_release);
-                const MH_STATUS enabled = MH_EnableHook(assistTarget);
-                if (enabled != MH_OK)
+                const MH_STATUS assistEnabled = MH_EnableHook(assistTarget);
+                if (assistEnabled != MH_OK)
                 {
-                    LOG("Halo 2 aim-assist suppression StockFallback: hook "
-                        "enable=%d; camera/stereo/aim/hands/HUD/OpenXR remain "
-                        "armed", static_cast<int>(enabled));
+                    LOG("Halo 2 aim-assist suppression StockFallback: central "
+                        "hook enable=%d; camera/stereo/aim/hands/HUD/OpenXR "
+                        "remain armed",
+                        static_cast<int>(assistEnabled));
                     (void)MH_RemoveHook(assistTarget);
                     g_aimAssistTarget = nullptr;
                     g_aimAssistOriginal.store(0, std::memory_order_release);
                 }
+                else if (viewInstalled)
+                {
+                    LOG("Halo 2 controller melee targeting Installed "
+                        "(C-H2-92): central aim_assist.cpp +0x%X receives "
+                        "the controller ray through scoped player-control "
+                        "view helper +0x%X, retains its native melee target, "
+                        "and returns neutral camera-assist control for "
+                        "VR-owned local user 0; every other call is stock",
+                        static_cast<unsigned>(
+                            kHalo2AimAssistCalculateRva),
+                        static_cast<unsigned>(
+                            kHalo2AimAssistViewDirectionRva));
+                }
                 else
                 {
                     LOG("Halo 2 aim-assist suppression Installed (C-H2-90 "
-                        "restored after C-H2-91 rejection): central "
-                        "aim_assist.cpp calculation +0x%X returns neutral "
-                        "camera-assist and target-acquisition results for "
-                        "VR-owned local user 0 only; every other call is "
-                        "stock", static_cast<unsigned>(
-                            kHalo2AimAssistCalculateRva));
+                        "fallback): controller melee targeting is "
+                        "StockFallback, so VR-owned local user 0 receives "
+                        "neutral camera-assist and no-target results");
                 }
+            }
+
+            // The direction detour is useful only to the central transaction.
+            // If that transaction failed, remove it after first preventing new
+            // entries and draining any unscoped stock-forwarding call.
+            if (!g_aimAssistOriginal.load(std::memory_order_acquire) &&
+                g_aimAssistViewDirectionTarget)
+            {
+                (void)MH_DisableHook(g_aimAssistViewDirectionTarget);
+                for (int attempt = 0; attempt < 200 &&
+                     g_aimAssistViewDirectionActiveCallbacks.load(
+                         std::memory_order_acquire);
+                     ++attempt)
+                {
+                    Sleep(10);
+                }
+                (void)MH_RemoveHook(g_aimAssistViewDirectionTarget);
+                g_aimAssistViewDirectionTarget = nullptr;
+                g_aimAssistViewDirectionOriginal.store(
+                    0, std::memory_order_release);
             }
         }
 
@@ -4076,9 +4323,11 @@ namespace
                 g_nativeAimNonOwned.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_nativeAimRefused.load(std::memory_order_relaxed)));
-        LOG("Halo 2 C-H2-91 aim-assist calculation: %llu calls, %llu camera "
-            "assists suppressed for VR-owned local user 0 (%llu target "
-            "selected, %llu no target), %llu stock, %llu refused",
+        LOG("Halo 2 C-H2-92 controller melee targeting: %llu central calls, "
+            "%llu camera assists suppressed for VR-owned local user 0 "
+            "(%llu controller-ray targets selected, %llu controller-ray no "
+            "target), %llu stock, %llu refused; scoped view helper %llu "
+            "calls / %llu controller overrides / %llu stock / %llu refused",
             static_cast<unsigned long long>(
                 g_aimAssistCalls.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
@@ -4090,7 +4339,19 @@ namespace
             static_cast<unsigned long long>(
                 g_aimAssistStock.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
-                g_aimAssistRefused.load(std::memory_order_relaxed)));
+                g_aimAssistRefused.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionCalls.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionApplied.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionStock.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionRefused.load(
+                    std::memory_order_relaxed)));
         uint32_t coverBits[3] = {
             g_visibilityCoverStockBits.load(std::memory_order_relaxed),
             g_visibilityCoverRequiredBits.load(std::memory_order_relaxed),
