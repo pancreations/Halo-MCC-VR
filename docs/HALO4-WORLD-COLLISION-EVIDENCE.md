@@ -424,3 +424,54 @@ collision proxy over the visible barrel and stock between and beyond those
 origins. Stage 5's animated-node weapon proxy is therefore compiled dormant in
 its own revert commit. A successor must use title-authored model geometry or
 bounds, keep unknown models hand-only, and leave physical melee disabled.
+
+## Stage 6 authored render-model bounds evidence
+
+Halo 3 has no world-contact feature to match. This remains a Halo-4-native,
+opt-in implementation, and failure of weapon geometry must not affect the
+already accepted hand transaction.
+
+Official evidence comes from the installed H4EK 1.890 toolchain:
+
+- `tool.exe` SHA-256
+  `5E0AD8D03EC4B1C7F4C0C2A18C92CEC9F92F3EB7E7F0CBB7376BA9D866E3A758`;
+- `bin/ManagedBlam.dll` version 1.890.0.0, SHA-256
+  `D2048A593399DA022BFC930D52A5CBA22B9197663F6416C20522E2B5235810CC`;
+- exported `storm_assault_rifle.render_model` XML SHA-256
+  `2DB008E3DD869A88C4875438A9E5CD9108153E23C287CAA2F07580E393CA3BE2`.
+
+The official assault-rifle `.weapon` tag references
+`objects\\weapons\\rifle\\storm_assault_rifle\\storm_assault_rifle.render_model`.
+Its render-model tag contains runtime import checksum `0x1814181C`, five nodes,
+and compression-position bounds min
+`{-0.0935352,-0.0122993,-0.0122084022}` / max
+`{0.23352,0.0129804034,0.0776163}`. The user's Stage 5 runtime log independently
+reports the same checksum and five-node count. The bounds span roughly 0.327
+world units on the model's longitudinal axis and therefore describe the barrel
+and stock that five animated node origins missed.
+
+ManagedBlam reflection verifies the relevant official tag layout: runtime
+checksum at render-model root `+0x08`; nodes block at `+0x30`; render-geometry
+struct at `+0x64`; compression-info block at root `+0x80`; 52-byte compression
+records with flags at `+0x00` and six packed min/max position floats at
+`+0x04..+0x1B`. An exhaustive read-only scan of all 77 official `.weapon` tags
+found 41 unique first-person render-model references. Thirty-nine referenced
+tags exist and produced unique runtime-checksum/bounds records; the two absent
+legacy/development references are `storm_sentinel_beam` and
+`fp_sniper_rifle`. The exact 39-entry values are pinned in
+`src/common/halo4_world_collision_logic.h`. No retail address, inferred tag
+pointer, or cross-title dimension is used for these values.
+
+Stage 6 selects a bounds record with the runtime checksum already read by the
+proven render-model identity resolver. It transforms eight box corners and six
+face centers by the carried model root, then publishes those fourteen fixed
+weapon samples after seven fixed-semantic hand samples. A checksum `shapeId`
+forces one safe reseed when the held model changes even though sample count is
+constant. Coincident hand extrema retain their min/max slots instead of
+changing publication size during animation. An unknown checksum or malformed
+transform publishes the accepted right-hand volume alone and increments a
+cold-reported fallback counter. Palette/render hot paths remain bounded,
+allocation-free, lock-free, log-free, file-I/O-free, and physics-call-free.
+The ray cadence, contact skin, shared carrier correction, haptics, object
+motion, toggle default, camera, HUD, reticle, helmet, effects, and all other
+titles are unchanged. Physical melee and damage remain explicitly disabled.

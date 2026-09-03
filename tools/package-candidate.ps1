@@ -165,6 +165,8 @@ try {
     }
     $halo4RestoreLogicSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\halo4_restoration_logic.h'))
+    $halo4WorldCollisionSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_world_collision_logic.h'))
     $halo4RestoreAsmSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo4_restoration.asm'))
     $halo4CuiSource = [IO.File]::ReadAllText(
@@ -294,7 +296,15 @@ try {
         $gameSource -notmatch
             'kEnableHalo4WeaponWorldCollisionStage4\s*=\s*false' -or
         $gameSource -notmatch
-            'kEnableHalo4WeaponWorldCollisionStage5\s*=\s*true' -or
+            'kEnableHalo4WeaponWorldCollisionStage5\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WeaponWorldCollisionStage6\s*=\s*true' -or
+        $halo4WorldCollisionSource -notmatch
+            'kHalo4WeaponCollisionBoundsCount\s*==\s*39' -or
+        $halo4WorldCollisionSource -notmatch
+            'Halo4BuildWeaponCollisionBoundsSamples' -or
+        $coreTestsSource -notmatch
+            'Halo 4 weapon bounds publish eight corners and six face centres' -or
         $gameSource -notmatch
             'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
         $gameSource -notmatch
@@ -314,7 +324,7 @@ try {
             'kHalo4ObjectSetVelocitiesRva\s*=\s*0x5D1580' -or
         $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
         $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume') {
-        throw 'H4 world-contact Stage 5 gate failed: rejected stages, stable held-volume successor, live raycast context, authored volume publication, or optional object-motion proof is missing.'
+        throw 'H4 world-contact Stage 6 gate failed: rejected stages, H4EK-bounds successor, live raycast context, authored volume publication, or optional object-motion proof is missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -557,12 +567,13 @@ try {
                 capability_enabled = $true
                 default_enabled = $false
                 config_key = 'world_collision'
-                stage = 5
+                stage = 6
                 rejected_stage1_enabled = $false
                 rejected_stage2_enabled = $false
                 rejected_stage3_enabled = $false
                 rejected_stage4_weapon_publication_enabled = $false
-                scope = 'halo4-authored-hand-and-held-model-volume'
+                rejected_stage5_weapon_node_proxy_enabled = $false
+                scope = 'halo4-authored-hand-and-h4ek-render-model-bounds'
                 query = 'h4ek-physics-ray-cast'
                 retail_query_rva = '0x001C1D4C'
                 clear_line_wrapper_rva = '0x000F4218'
@@ -576,8 +587,10 @@ try {
                 query_interval_ms = 33
                 hit_fraction_resolution = 'native-result-fraction-with-world-scaled-skin'
                 render_thread_work = 'lock-free-target-and-correction-publication-only'
-                collision_shape = 'actual-storm-hand-and-held-model-node-root-plus-six-extrema'
-                held_weapon_behavior = 'one-stable-combined-hand-and-held-node-volume-per-held-record-shares-right-hand-correction'
+                collision_shape = 'fixed-seven-storm-hand-samples-plus-checksum-selected-h4ek-bounds-eight-corners-six-face-centres'
+                held_weapon_behavior = 'one-stable-combined-hand-and-authored-bounds-volume-per-held-record-shares-right-hand-correction'
+                h4ek_weapon_model_bounds = 39
+                unknown_weapon_policy = 'hand-only-stock-weapon-fail-open'
                 object_motion_rva = '0x005D1580'
                 object_impulses = 'bounded-native-linear-velocity-no-angular-or-damage-write'
                 ragdoll_impulses = 'same-optional-native-object-motion-path-when-ray-result-has-object-index'
@@ -914,7 +927,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 world-contact Stage 5 test: Stage 4 hand collision, haptics and dynamic-object response are preserved. The rejected alternating weapon publication stays dormant; one stable combined right-hand/held-model volume now publishes per held record so the continuous sweep can constrain the gun. The shared F1 Body/Hands world_collision option ships off and currently affects Halo 4 only. Physical melee and damage remain disabled. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Halo 4 world-contact Stage 6 test: accepted hand collision, haptics, dynamic-object response and the shared default-off toggle are preserved. The rejected five-node weapon proxy stays dormant. Runtime checksum selects one of 39 official H4EK first-person render-model bounds and publishes eight corners plus six face centres with fixed sample identity; unknown models fail open to hand-only collision. Physical melee and damage remain disabled. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

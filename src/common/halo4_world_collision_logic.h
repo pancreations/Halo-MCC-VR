@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 
 // Pure, engine-independent policy for the first Halo 4 world-contact
 // experiment. The runtime query is a point sweep from the last accepted wrist
@@ -14,11 +15,83 @@ struct Halo4WorldCollisionResolution
     float correction[3]{};
 };
 
-// One root plus the six authored min/max points selected from a hand or held
-// model.  The right-hand publication can combine one hand set and one weapon
-// set without inventing a title-independent capsule or box.
+// One root plus fixed min/max semantic slots selected from an authored hand.
+// The right-hand publication combines that set with the exact Halo 4 held
+// model's H4EK-authored bounds; no title-independent dimensions are invented.
 inline constexpr int kHalo4WorldCollisionExtremaCount = 7;
-inline constexpr int kHalo4WorldCollisionMaxSamples = 13;
+inline constexpr int kHalo4WeaponCollisionBoundsSampleCount = 14;
+inline constexpr int kHalo4WorldCollisionMaxSamples =
+    kHalo4WorldCollisionExtremaCount +
+    kHalo4WeaponCollisionBoundsSampleCount;
+
+struct Halo4WeaponCollisionBounds
+{
+    uint32_t runtimeImportChecksum;
+    float minimum[3];
+    float maximum[3];
+};
+
+// H4EK 1.890 ManagedBlam render_model compression-position bounds for every
+// existing first-person render model referenced by the 77 official .weapon
+// tags. The runtime import checksum is already proven by the live render-model
+// descriptor and avoids guessing a weapon type or copying another engine's
+// geometry. Unknown checksums deliberately receive hand-only collision.
+inline constexpr Halo4WeaponCollisionBounds kHalo4WeaponCollisionBounds[]{
+    {0x10030014u, {-0.0988832f, -0.0121f, -0.0124852005f}, {0.264650017f, 0.0121f, 0.0915045f}},
+    {0x10050216u, {-0.0254121833f, -0.0201971028f, -0.0532677844f}, {0.191055641f, 0.0201971028f, 0.0732690245f}},
+    {0x11070A16u, {-0.0385448635f, -0.0156979524f, -0.08223673f}, {0.383093178f, 0.0156979524f, 0.08223673f}},
+    {0x11080014u, {-0.269691825f, -0.0405867323f, -0.03488739f}, {0.191290349f, 0.0445399471f, 0.110577367f}},
+    {0x1108171Fu, {-0.09948748f, -0.0175814945f, -0.0241994746f}, {0.279507935f, 0.0175814927f, 0.08677069f}},
+    {0x110F0115u, {-0.07586707f, -0.042297408f, -0.058178328f}, {0.50159806f, 0.042297408f, 0.0932276845f}},
+    {0x11120517u, {-0.11482f, -0.00805f, -0.0119863f}, {0.21078f, 0.0121363f, 0.08608f}},
+    {0x111B0416u, {-0.1255f, -0.01282f, -0.0215f}, {0.265672f, 0.0114198f, 0.0834739953f}},
+    {0x111B0A00u, {-0.0299846269f, -0.014535673f, -0.0373922028f}, {0.151489168f, 0.0191084426f, 0.0481085852f}},
+    {0x111D0D05u, {-0.2325192f, -0.0328173f, -0.0191207f}, {0.2099376f, 0.0328173f, 0.113721296f}},
+    {0x111E0F1Cu, {-0.0444768369f, -0.06804858f, -0.0456474945f}, {0.18849726f, 0.06804858f, 0.101898991f}},
+    {0x12140501u, {-0.0192445f, -0.008581693f, -0.0412483029f}, {0.101777934f, 0.0132886069f, 0.0568027f}},
+    {0x13020014u, {-0.0644032f, -0.0374721f, -0.027175f}, {0.31773f, 0.0374721f, 0.07558f}},
+    {0x1305160Bu, {-0.0169282053f, -0.0154789491f, -0.03747928f}, {0.1605304f, 0.01547104f, 0.06674192f}},
+    {0x13081E16u, {-0.0192445274f, -0.008820772f, -0.0412482731f}, {0.101929232f, 0.0132387634f, 0.0568027f}},
+    {0x130C1C16u, {-0.05358559f, -0.0162019487f, -0.08452677f}, {0.3623625f, 0.016281724f, 0.08385826f}},
+    {0x1314081Cu, {-0.123702705f, -0.0361403f, -0.0576259f}, {0.1159724f, 0.0349579975f, 0.116330191f}},
+    {0x1402121Bu, {-0.0642338f, -0.0205f, -0.02293087f}, {0.109456085f, 0.0205f, 0.0596091338f}},
+    {0x1402141Cu, {-0.118816696f, -0.0206853021f, -0.0218272135f}, {0.506342053f, 0.0206853021f, 0.10795977f}},
+    {0x14031004u, {-0.0856358856f, -0.0165035f, -0.0143127395f}, {0.3268325f, 0.0165035f, 0.09084353f}},
+    {0x14040E08u, {-0.009711542f, -0.043816302f, -0.0363407657f}, {0.121007167f, 0.0468524136f, 0.05106438f}},
+    {0x14191210u, {-0.00257470272f, -1.1433977e-18f, -0.00257470272f}, {0.007425297f, 0.01f, 0.007425297f}},
+    {0x15091B16u, {-0.035497f, -0.0396850221f, -0.0174026974f}, {0.06963639f, 0.02335031f, 0.0696735f}},
+    {0x15111A1Du, {-0.0383199975f, -0.00892473f, -0.0293590985f}, {0.075715f, 0.00892473f, 0.0558000021f}},
+    {0x151C1A1Bu, {-0.105280541f, -0.02495401f, -0.0624283329f}, {0.32850948f, 0.02495401f, 0.0848532f}},
+    {0x160E0512u, {-0.08563654f, -0.0162987374f, -0.0143127395f}, {0.326109827f, 0.0162987243f, 0.0809431449f}},
+    {0x160F1B01u, {-0.0219149813f, -0.0116482805f, -0.0316562019f}, {0.1461231f, 0.0161748f, 0.07126853f}},
+    {0x1615080Du, {-0.30007568f, -0.04981772f, -0.534983456f}, {0.07952363f, 0.0241183564f, 0.522285461f}},
+    {0x16170807u, {-0.0549394861f, -0.03419309f, -0.02003104f}, {0.044337146f, 0.0254806373f, 0.1369933f}},
+    {0x17141708u, {-0.228255391f, -0.0294936f, -0.046647f}, {0.2007807f, 0.0311604f, 0.132953942f}},
+    {0x17161F1Cu, {-0.09792f, -0.0235393029f, -0.0270641353f}, {0.29444f, 0.0269603133f, 0.07439147f}},
+    {0x17180016u, {-0.0487442f, -0.0245576f, -0.0388763137f}, {0.2602094f, 0.0245576f, 0.07937829f}},
+    {0x171C0B05u, {-0.102605f, -0.0133150993f, -0.0118296f}, {0.267829984f, 0.0235137f, 0.06835f}},
+    {0x1814181Cu, {-0.0935352f, -0.0122993f, -0.0122084022f}, {0.23352f, 0.0129804034f, 0.0776163f}},
+    {0x1A0B0214u, {-0.254746884f, -0.0248101987f, -0.0172689f}, {0.136763f, 0.039303802f, 0.1114975f}},
+    {0x1A0D0314u, {-0.0849358f, -0.0370414f, -0.0191539f}, {0.444099f, 0.0351f, 0.0956756f}},
+    {0x1A110E12u, {-0.04397051f, -0.0388348028f, -0.0413072668f}, {0.0383695f, 0.0393228f, 0.0448977f}},
+    {0x1A140816u, {-0.0938183f, -0.0541521f, -0.287851f}, {0.108661994f, 0.0541104f, 0.3805714f}},
+    {0x1B080715u, {-0.1080806f, -0.0286612958f, -0.0484079979f}, {0.229776189f, 0.0303805266f, 0.0748976f}},
+};
+
+inline constexpr int kHalo4WeaponCollisionBoundsCount =
+    static_cast<int>(sizeof(kHalo4WeaponCollisionBounds) /
+                     sizeof(kHalo4WeaponCollisionBounds[0]));
+static_assert(kHalo4WeaponCollisionBoundsCount == 39);
+
+inline const Halo4WeaponCollisionBounds* Halo4FindWeaponCollisionBounds(
+    uint32_t runtimeImportChecksum) noexcept
+{
+    for (const Halo4WeaponCollisionBounds& bounds :
+         kHalo4WeaponCollisionBounds)
+        if (bounds.runtimeImportChecksum == runtimeImportChecksum)
+            return &bounds;
+    return nullptr;
+}
 
 inline bool Halo4WorldCollisionFiniteVector(const float value[3]) noexcept
 {
@@ -44,12 +117,12 @@ inline int Halo4SelectWorldCollisionExtrema(
     float output[][3], int outputCapacity) noexcept
 {
     if (!Halo4WorldCollisionFiniteVector(root) || !authoredPoints ||
-        authoredPointCount <= 0 || !output || outputCapacity <= 0)
+        authoredPointCount <= 0 || !output ||
+        outputCapacity < kHalo4WorldCollisionExtremaCount)
         return 0;
 
     for (int axis = 0; axis < 3; ++axis)
         output[0][axis] = root[axis];
-    int outputCount = 1;
     int extrema[6]{-1, -1, -1, -1, -1, -1};
     float values[6]{INFINITY, -INFINITY, INFINITY, -INFINITY,
                     INFINITY, -INFINITY};
@@ -74,27 +147,81 @@ inline int Halo4SelectWorldCollisionExtrema(
         }
     }
 
-    for (int extremum : extrema)
+    for (int slot = 0; slot < 6; ++slot)
     {
-        if (extremum < 0 || outputCount >= outputCapacity) continue;
+        const int extremum = extrema[slot];
+        if (extremum < 0) return 0;
         const float* candidate = authoredPoints + extremum * 3;
-        bool duplicate = false;
-        for (int existing = 0; existing < outputCount; ++existing)
-        {
-            const float distance = Halo4WorldCollisionDistanceSquared(
-                output[existing], candidate);
-            if (distance >= 0.0f && distance < 1.0e-10f)
-            {
-                duplicate = true;
-                break;
-            }
-        }
-        if (duplicate) continue;
         for (int axis = 0; axis < 3; ++axis)
-            output[outputCount][axis] = candidate[axis];
-        ++outputCount;
+            output[slot + 1][axis] = candidate[axis];
     }
-    return outputCount;
+    // Fixed semantic slots (root, min/max X/Y/Z) preserve sweep identity even
+    // when several extrema happen to name the same authored point.
+    return kHalo4WorldCollisionExtremaCount;
+}
+
+inline int Halo4BuildWeaponCollisionBoundsSamples(
+    const Halo4WeaponCollisionBounds& bounds, float scale,
+    const float rotation[9], const float translation[3],
+    const float collisionRoot[3], const float wrist[3],
+    float output[][3], int outputCapacity) noexcept
+{
+    if (!rotation || !Halo4WorldCollisionFiniteVector(translation) ||
+        !Halo4WorldCollisionFiniteVector(collisionRoot) ||
+        !Halo4WorldCollisionFiniteVector(wrist) || !output ||
+        outputCapacity < kHalo4WeaponCollisionBoundsSampleCount ||
+        !std::isfinite(scale) || std::fabs(scale) < 0.001f)
+        return 0;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(bounds.minimum[axis]) ||
+            !std::isfinite(bounds.maximum[axis]) ||
+            bounds.minimum[axis] > bounds.maximum[axis])
+            return 0;
+    }
+    for (int element = 0; element < 9; ++element)
+        if (!std::isfinite(rotation[element])) return 0;
+
+    float local[kHalo4WeaponCollisionBoundsSampleCount][3]{};
+    int sample = 0;
+    for (int x = 0; x < 2; ++x)
+        for (int y = 0; y < 2; ++y)
+            for (int z = 0; z < 2; ++z)
+            {
+                local[sample][0] = x ? bounds.maximum[0] : bounds.minimum[0];
+                local[sample][1] = y ? bounds.maximum[1] : bounds.minimum[1];
+                local[sample][2] = z ? bounds.maximum[2] : bounds.minimum[2];
+                ++sample;
+            }
+    const float centre[3]{
+        (bounds.minimum[0] + bounds.maximum[0]) * 0.5f,
+        (bounds.minimum[1] + bounds.maximum[1]) * 0.5f,
+        (bounds.minimum[2] + bounds.maximum[2]) * 0.5f};
+    for (int axis = 0; axis < 3; ++axis)
+        for (int side = 0; side < 2; ++side)
+        {
+            for (int component = 0; component < 3; ++component)
+                local[sample][component] = centre[component];
+            local[sample][axis] = side ? bounds.maximum[axis]
+                                       : bounds.minimum[axis];
+            ++sample;
+        }
+
+    for (sample = 0; sample < kHalo4WeaponCollisionBoundsSampleCount;
+         ++sample)
+    {
+        for (int row = 0; row < 3; ++row)
+        {
+            float rotated = 0.0f;
+            for (int column = 0; column < 3; ++column)
+                rotated += rotation[column * 3 + row] *
+                    local[sample][column];
+            output[sample][row] = collisionRoot[row] + translation[row] -
+                wrist[row] + scale * rotated;
+        }
+        if (!Halo4WorldCollisionFiniteVector(output[sample])) return 0;
+    }
+    return kHalo4WeaponCollisionBoundsSampleCount;
 }
 
 inline bool Halo4BuildWorldCollisionPushVelocity(

@@ -13530,6 +13530,45 @@ int main()
           std::fabs(selectedVolume[1][0] + 0.2f) < 1.0e-6f &&
           std::fabs(selectedVolume[6][2] - 0.7f) < 1.0e-6f,
         "Halo 4 contact volume selects the authored root and six model extrema");
+    const float degenerateVolumePoint[3]{0.1f, 0.2f, 0.3f};
+    float stableVolume[kHalo4WorldCollisionExtremaCount][3]{};
+    Check(Halo4SelectWorldCollisionExtrema(
+              collisionStart, degenerateVolumePoint, 1, stableVolume,
+              static_cast<int>(std::size(stableVolume))) ==
+              kHalo4WorldCollisionExtremaCount &&
+          std::fabs(stableVolume[1][0] - stableVolume[6][0]) < 1.0e-6f,
+        "Halo 4 authored extrema retain fixed semantic slots when extrema coincide");
+    const Halo4WeaponCollisionBounds* assaultRifleBounds =
+        Halo4FindWeaponCollisionBounds(0x1814181Cu);
+    Check(kHalo4WeaponCollisionBoundsCount == 39 && assaultRifleBounds &&
+          std::fabs(assaultRifleBounds->minimum[0] + 0.0935352f) < 1.0e-6f &&
+          std::fabs(assaultRifleBounds->maximum[0] - 0.23352f) < 1.0e-6f &&
+          !Halo4FindWeaponCollisionBounds(0xFFFFFFFFu),
+        "Halo 4 weapon bounds resolve the exact H4EK model checksum and fail open when unknown");
+    if (assaultRifleBounds)
+    {
+        const float identityBasis[9]{
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f};
+        const float modelTranslation[3]{10.0f, 20.0f, 30.0f};
+        const float volumeRoot[3]{1.0f, 2.0f, 3.0f};
+        const float volumeWrist[3]{0.5f, 1.5f, 2.5f};
+        float weaponSamples[kHalo4WeaponCollisionBoundsSampleCount][3]{};
+        const int weaponSampleCount = Halo4BuildWeaponCollisionBoundsSamples(
+            *assaultRifleBounds, 2.0f, identityBasis, modelTranslation,
+            volumeRoot, volumeWrist, weaponSamples,
+            static_cast<int>(std::size(weaponSamples)));
+        Check(weaponSampleCount == kHalo4WeaponCollisionBoundsSampleCount &&
+              std::fabs(weaponSamples[0][0] -
+                  (10.5f + 2.0f * assaultRifleBounds->minimum[0])) < 1.0e-6f &&
+              std::fabs(weaponSamples[7][0] -
+                  (10.5f + 2.0f * assaultRifleBounds->maximum[0])) < 1.0e-6f &&
+              std::fabs(weaponSamples[8][1] -
+                  (20.5f + assaultRifleBounds->minimum[1] +
+                   assaultRifleBounds->maximum[1])) < 1.0e-6f,
+            "Halo 4 weapon bounds publish eight corners and six face centres in the carried root frame");
+    }
     const float pushPrevious[3]{0.0f, 0.0f, 0.0f};
     const float pushDesired[3]{1.0f, 0.0f, 0.0f};
     float pushVelocity[3]{};

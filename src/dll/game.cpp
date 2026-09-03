@@ -30415,6 +30415,7 @@ namespace
         std::atomic<uint64_t> publishedAtMs{0};
         std::atomic<uint32_t> sampleCount{0};
         std::atomic<uint32_t> handSampleCount{0};
+        std::atomic<uint32_t> shapeId{0};
         std::atomic<int32_t> ignoredObjectIndex{-1};
         std::atomic<float> samples[kHalo4WorldCollisionMaxSamples][3]{};
     };
@@ -30435,6 +30436,7 @@ namespace
         uint32_t generation = 0;
         uint64_t publishedAtMs = 0;
         uint32_t sampleCount = 0;
+        uint32_t shapeId = 0;
         float accepted[kHalo4WorldCollisionMaxSamples][3]{};
     };
 
@@ -30455,6 +30457,8 @@ namespace
         std::atomic<uint64_t> queries{0};
         std::atomic<uint64_t> handContacts[2]{};
         std::atomic<uint64_t> weaponContacts{0};
+        std::atomic<uint64_t> weaponBoundsPublished{0};
+        std::atomic<uint64_t> weaponBoundsFallbacks{0};
         std::atomic<uint64_t> applied[2]{};
         std::atomic<uint64_t> objectPushAttempts{0};
         std::atomic<uint64_t> objectPushes{0};
@@ -30505,12 +30509,17 @@ namespace
     // animated node origins do not describe its visible barrel/stock mesh. Keep
     // that weapon proxy dormant; the right-hand-only fallback remains live.
     constexpr bool kEnableHalo4WeaponWorldCollisionStage5 = false;
+    // Stage 6 replaces animated-node origins with the per-render-model
+    // compression bounds authored in H4EK. Runtime checksum selects the exact
+    // model; unknown identities fail open to the accepted right-hand volume.
+    constexpr bool kEnableHalo4WeaponWorldCollisionStage6 = true;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
     static_assert(kEnableHalo4WorldCollisionStage4);
     static_assert(!kEnableHalo4WeaponWorldCollisionStage4);
     static_assert(!kEnableHalo4WeaponWorldCollisionStage5);
+    static_assert(kEnableHalo4WeaponWorldCollisionStage6);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -30547,7 +30556,7 @@ namespace
     void Halo4PublishCollisionTarget(
         int hand, uint32_t generation, const float samples[][3],
         uint32_t sampleCount, uint32_t handSampleCount,
-        int32_t ignoredObjectIndex)
+        int32_t ignoredObjectIndex, uint32_t shapeId = 0)
     {
         if (hand < 0 || hand > 1 || !generation || !samples ||
             sampleCount == 0 || sampleCount > kHalo4WorldCollisionMaxSamples ||
@@ -30564,6 +30573,7 @@ namespace
         publication.sampleCount.store(sampleCount, std::memory_order_relaxed);
         publication.handSampleCount.store(
             handSampleCount, std::memory_order_relaxed);
+        publication.shapeId.store(shapeId, std::memory_order_relaxed);
         publication.ignoredObjectIndex.store(
             ignoredObjectIndex, std::memory_order_relaxed);
         for (uint32_t sample = 0; sample < sampleCount; ++sample)
@@ -30576,7 +30586,8 @@ namespace
     bool Halo4ReadCollisionTarget(
         int hand, uint32_t& generation, uint64_t& publishedAtMs,
         float samples[][3], uint32_t& sampleCount,
-        uint32_t& handSampleCount, int32_t& ignoredObjectIndex)
+        uint32_t& handSampleCount, int32_t& ignoredObjectIndex,
+        uint32_t& shapeId)
     {
         if (hand < 0 || hand > 1 || !samples) return false;
         const auto& publication = g_halo4WorldCollision.target[hand];
@@ -30593,6 +30604,7 @@ namespace
                 std::memory_order_relaxed);
             handSampleCount = publication.handSampleCount.load(
                 std::memory_order_relaxed);
+            shapeId = publication.shapeId.load(std::memory_order_relaxed);
             ignoredObjectIndex = publication.ignoredObjectIndex.load(
                 std::memory_order_relaxed);
             if (sampleCount == 0 ||
@@ -30698,6 +30710,10 @@ namespace
         g_halo4WorldCollision.handContacts[1].store(
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.weaponContacts.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.weaponBoundsPublished.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.weaponBoundsFallbacks.store(
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.applied[0].store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.applied[1].store(0, std::memory_order_relaxed);
@@ -30941,12 +30957,14 @@ namespace
             uint64_t targetAtMs = 0;
             uint32_t sampleCount = 0;
             uint32_t handSampleCount = 0;
+            uint32_t shapeId = 0;
             int32_t ignoredObjectIndex = -1;
             float desired[kHalo4WorldCollisionMaxSamples][3]{};
             auto& state = g_halo4WorldCollision.worker[hand];
             if (!Halo4ReadCollisionTarget(
                     hand, targetGeneration, targetAtMs, desired,
-                    sampleCount, handSampleCount, ignoredObjectIndex) ||
+                    sampleCount, handSampleCount, ignoredObjectIndex,
+                    shapeId) ||
                 targetGeneration != generation || targetAtMs > now ||
                 now - targetAtMs > kHalo4CollisionPublicationMaxAgeMs)
             {
@@ -30955,7 +30973,7 @@ namespace
                 continue;
             }
             if (!state.seeded || state.generation != generation ||
-                state.sampleCount != sampleCount ||
+                state.sampleCount != sampleCount || state.shapeId != shapeId ||
                 Halo4WorldCollisionMovementIsTeleport(
                     state.accepted[0], desired[0], worldScale))
             {
@@ -30963,6 +30981,7 @@ namespace
                 state.generation = generation;
                 state.publishedAtMs = targetAtMs;
                 state.sampleCount = sampleCount;
+                state.shapeId = shapeId;
                 memcpy(state.accepted, desired,
                     sizeof(float) * sampleCount * 3);
                 Halo4ClearCollisionCorrection(hand, generation);
@@ -31244,15 +31263,17 @@ namespace
             return false;
         }
         g_halo4WorldCollision.installed.store(true, std::memory_order_release);
-        LOG("Halo 4 experimental world contact Stage 5 capability LIVE/config-%s: official H4EK "
+        LOG("Halo 4 experimental world contact Stage 6 capability LIVE/config-%s: official H4EK "
             "PhysicsRayCast is uniquely verified at retail RVA 0x%X with "
             "all four internal call edges pinned; retail clear-line wrapper "
             "RVA 0x%X pins the engine-owned 0x%08X/0x%08X filter pair; "
             "the raycast itself is hooked and its original always runs first; "
-            "authored Storm-hand/held-weapon extrema may query only after an "
+            "authored Storm-hand and checksum-selected render-model bounds "
+            "may query only after an "
             "engine dynamic-inclusive ray completes in that context; native "
             "object motion RVA 0x%X is %s; the stable combined right-side "
-            "hand/weapon volume is enabled and physical melee remains off",
+            "hand plus 14-sample weapon bounds are enabled and physical "
+            "melee remains off",
             g_config.world_collision ? "enabled" : "disabled",
             kHalo4PhysicsRayCastRva, kHalo4WorldLineTestRva,
             kHalo4WorldLineCollisionFlags,
@@ -31276,11 +31297,11 @@ namespace
                 0, std::memory_order_acq_rel);
         if (!failure) return;
         if (failure == kHalo4CollisionFailureObjectPushException)
-            LOG("Halo 4 Stage 5 dynamic-object contact FAILED OPEN: native "
+            LOG("Halo 4 Stage 6 dynamic-object contact FAILED OPEN: native "
                 "object motion raised an exception; hand/weapon world "
                 "clamping, camera, HUD and OpenXR continue");
         else
-            LOG("Halo 4 Stage 5 world contact FAILED OPEN: engine raycast "
+            LOG("Halo 4 Stage 6 world contact FAILED OPEN: engine raycast "
                 "failed contract %u; only world clamping/object push is "
                 "disabled; camera, hands, weapon, HUD, reticle, effects and "
                 "OpenXR continue", failure);
@@ -31390,11 +31411,12 @@ namespace
                 sizeof(g_halo4FloatingPair.rightSolvedWrist));
             g_halo4FloatingPair.rightSolvedWristValid = true;
         }
-        // Stage 5 deliberately defers the right side until the immediately
+        // Stages 5/6 deliberately defer the right side until the immediately
         // following held record can publish one stable hand+weapon volume.
         // Publishing here as well caused Stage 4's 985 headset-observed
         // reseeds and made the gun visually ineffective.
-        if (rightCount && !kEnableHalo4WeaponWorldCollisionStage5)
+        if (rightCount && !kEnableHalo4WeaponWorldCollisionStage5 &&
+            !kEnableHalo4WeaponWorldCollisionStage6)
             Halo4PublishCollisionTarget(
                 1, g_halo4FloatingPair.generation,
                 g_halo4FloatingPair.handCollisionSamples[1], rightCount,
@@ -31407,26 +31429,70 @@ namespace
     }
 
     void Halo4PublishAuthoredWeaponCollisionVolume(
-        const BoneMatrix* moved, int nodeCount)
+        const BoneMatrix* moved, int nodeCount,
+        uint32_t runtimeImportChecksum)
     {
         if (!g_halo4WorldCollision.configured.load(
                 std::memory_order_acquire))
             return;
         const uint32_t handCount =
             g_halo4FloatingPair.handCollisionSampleCount[1];
-        if (!moved || nodeCount <= 0 ||
-            nodeCount > kHalo4FirstPersonBankTransforms || !handCount ||
-            !g_halo4FloatingPair.rightSolvedWristValid)
+        if (!handCount || !g_halo4FloatingPair.rightSolvedWristValid)
             return;
+        const auto publishHandOnly = [&]()
+        {
+            Halo4PublishCollisionTarget(
+                1, g_halo4FloatingPair.generation,
+                g_halo4FloatingPair.handCollisionSamples[1], handCount,
+                handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex,
+                runtimeImportChecksum);
+        };
+        if (!moved || nodeCount <= 0 ||
+            nodeCount > kHalo4FirstPersonBankTransforms)
+        {
+            publishHandOnly();
+            return;
+        }
+        if (kEnableHalo4WeaponWorldCollisionStage6)
+        {
+            const Halo4WeaponCollisionBounds* bounds =
+                Halo4FindWeaponCollisionBounds(runtimeImportChecksum);
+            float rootBasis[9]{};
+            float weapon[kHalo4WeaponCollisionBoundsSampleCount][3]{};
+            if (!bounds || !NormalizedBasis(moved[0], rootBasis) ||
+                Halo4BuildWeaponCollisionBoundsSamples(
+                    *bounds, moved[0].scale, rootBasis,
+                    moved[0].translation,
+                    g_halo4FloatingPair.collisionRoot[1],
+                    g_halo4FloatingPair.rightSolvedWrist, weapon,
+                    kHalo4WeaponCollisionBoundsSampleCount) !=
+                    kHalo4WeaponCollisionBoundsSampleCount)
+            {
+                g_halo4WorldCollision.weaponBoundsFallbacks.fetch_add(
+                    1, std::memory_order_relaxed);
+                publishHandOnly();
+                return;
+            }
+            float combined[kHalo4WorldCollisionMaxSamples][3]{};
+            memcpy(combined,
+                g_halo4FloatingPair.handCollisionSamples[1],
+                sizeof(float) * handCount * 3);
+            memcpy(combined + handCount, weapon, sizeof(weapon));
+            Halo4PublishCollisionTarget(
+                1, g_halo4FloatingPair.generation, combined,
+                handCount + kHalo4WeaponCollisionBoundsSampleCount,
+                handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex,
+                runtimeImportChecksum);
+            g_halo4WorldCollision.weaponBoundsPublished.fetch_add(
+                1, std::memory_order_relaxed);
+            return;
+        }
         if (!kEnableHalo4WeaponWorldCollisionStage5)
         {
             // Preserve the headset-accepted right-hand volume when the Stage
             // 5 successor is dormant, without reviving Stage 4's alternating
             // combined publication.
-            Halo4PublishCollisionTarget(
-                1, g_halo4FloatingPair.generation,
-                g_halo4FloatingPair.handCollisionSamples[1], handCount,
-                handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex);
+            publishHandOnly();
             return;
         }
         float authored[kHalo4FirstPersonBankTransforms][3]{};
@@ -31461,7 +31527,8 @@ namespace
         }
         Halo4PublishCollisionTarget(
             1, g_halo4FloatingPair.generation, combined, combinedCount,
-            handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex);
+            handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex,
+            runtimeImportChecksum);
     }
 
     // THE 28 BONES BETWEEN THE JOINTS, which the shared solver does not move.
@@ -33119,7 +33186,8 @@ namespace
     // record immediately before it. Consume that exact same-frame hand delta
     // once and commit only after every resolved held-model node moves.
     bool Halo4CarryFloatingWeaponRecord(
-        const BoneMatrix* source, BoneMatrix* moved, int nodeCount)
+        const BoneMatrix* source, BoneMatrix* moved, int nodeCount,
+        uint32_t runtimeImportChecksum)
     {
         if (!source || !moved || nodeCount<=0 ||
             nodeCount>kHalo4FirstPersonBankTransforms ||
@@ -33157,7 +33225,8 @@ namespace
                 return false;
             moved[node]=result;
         }
-        Halo4PublishAuthoredWeaponCollisionVolume(moved, nodeCount);
+        Halo4PublishAuthoredWeaponCollisionVolume(
+            moved, nodeCount, runtimeImportChecksum);
         return true;
     }
 
@@ -33275,7 +33344,8 @@ namespace
                         identity.nodeCount,std::memory_order_relaxed);
                     if (Halo4CarryFloatingWeaponRecord(
                             inputObjectNodeMatrices,g_halo4VrikScratch,
-                            identity.nodeCount))
+                            identity.nodeCount,
+                            identity.runtimeImportChecksum))
                     {
                         selected=g_halo4VrikScratch;
                         g_halo4Camera.vrikWeaponRecordsCarried.fetch_add(
@@ -37549,6 +37619,12 @@ namespace
         const uint64_t collisionWeapon =
             g_halo4WorldCollision.weaponContacts.exchange(
                 0, std::memory_order_relaxed);
+        const uint64_t collisionWeaponBounds =
+            g_halo4WorldCollision.weaponBoundsPublished.exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionWeaponFallbacks =
+            g_halo4WorldCollision.weaponBoundsFallbacks.exchange(
+                0, std::memory_order_relaxed);
         const uint64_t collisionAppliedLeft =
             g_halo4WorldCollision.applied[0].exchange(
                 0, std::memory_order_relaxed);
@@ -37578,10 +37654,11 @@ namespace
         const uint64_t collisionPushFailures =
             g_halo4WorldCollision.objectPushFailures.load(
                 std::memory_order_relaxed);
-        LOG("Halo 4 experimental world contact Stage 5: capability-%s/config-%s; %llu engine "
+        LOG("Halo 4 experimental world contact Stage 6: capability-%s/config-%s; %llu engine "
             "raycasts (%llu dynamic-safe / %llu fixed-only), %llu authored-"
             "volume probes, %llu/%llu left/right hand contacts, %llu weapon "
-            "contacts, %llu/%llu visible corrections, %llu seed/teleport "
+            "contacts, bounds %llu published / %llu hand-only fallback, "
+            "%llu/%llu visible corrections, %llu seed/teleport/model "
             "resets, environment %s, %llu ray failures in 2s; object push=%s "
             "(%llu attempts / %llu completed / %llu failures); physical "
             "melee and damage remain untouched",
@@ -37596,6 +37673,8 @@ namespace
             static_cast<unsigned long long>(collisionLeft),
             static_cast<unsigned long long>(collisionRight),
             static_cast<unsigned long long>(collisionWeapon),
+            static_cast<unsigned long long>(collisionWeaponBounds),
+            static_cast<unsigned long long>(collisionWeaponFallbacks),
             static_cast<unsigned long long>(collisionAppliedLeft),
             static_cast<unsigned long long>(collisionAppliedRight),
             static_cast<unsigned long long>(collisionResets),
