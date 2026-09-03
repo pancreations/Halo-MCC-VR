@@ -1,5 +1,23 @@
 # Current state
 
+> **HALO 4 PHYSICAL MELEE STAGE 8 READY FOR HEADSET TEST
+> (2026-09-03).** Behavior commit
+> `0ab70d4f0916f0b570d5d30d4f8c97bf110bfc3e`. Stage 7's disproven
+> collision-object prerequisite remains compiled dormant. Stage 8 instead
+> consumes each controller's finite, current OpenXR tracking-space linear
+> velocity and emits the existing short native B-input pulse on a configurable
+> threshold crossing. A 55% release latch and the retained 600 ms cooldown
+> yield one request per physical swing; artificial Halo locomotion cannot
+> supply tracking-space hand velocity. Halo 4 retains ownership of native
+> melee proximity, target choice, damage, stagger, animation, sound, impulse,
+> attribution, and networking. The accepted Stage 6 hand/weapon collision path
+> is unchanged, and physical melee remains nested and default-off. Feature
+> failure cannot disarm world collision, camera, HUD, reticle, helmet, effects,
+> pause, or OpenXR. Release build, core tests, and the Reach consistency gate
+> pass; headset acceptance is pending and the cumulative accepted release
+> pointer below does not move. See
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 PHYSICAL MELEE STAGE 7 REJECTED AND DISABLED
 > (user headset, 2026-09-03).** Exact source
 > `7cd745338cdbe0f0b9268250cee0f721bd3e9567`, Steam edition,
