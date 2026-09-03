@@ -1,5 +1,20 @@
 # Current state
 
+> **HALO 4 WORLD CONTACT STAGE 6 AUTHORED WEAPON BOUNDS ACCEPTED
+> (user headset, 2026-09-03).** Exact source
+> `58eaed451b86f870ece67be76423ba48f78f0862`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The user confirms that held
+> guns now react to the environment and that hand/weapon collision, the shared
+> toggle, contact haptics and dynamic-object interaction form a good baseline.
+> Across 84 telemetry windows the exact log records 88,142 authored probes,
+> 139/2 hand contacts, 304 weapon contacts, 322/649 applied left/right
+> corrections, 67,696 authored-bounds publications, 68/68 completed object
+> pushes with zero failures, and zero hand-only fallbacks. Log SHA-256:
+> `29A71E488FE2299812AC19147729536305728D379022809210B383C403E1DBF9`.
+> Physical melee/damage was disabled as intended. The cumulative accepted
+> release pointer below does not move without the required title regressions.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 WORLD CONTACT STAGE 6 AUTHORED WEAPON BOUNDS READY FOR
 > HEADSET TEST (2026-09-03).** Behavior commit
 > `c7da985355c673b0fe41df631c799e0751622538`. The rejected Stage 5

@@ -475,3 +475,21 @@ allocation-free, lock-free, log-free, file-I/O-free, and physics-call-free.
 The ray cadence, contact skin, shared carrier correction, haptics, object
 motion, toggle default, camera, HUD, reticle, helmet, effects, and all other
 titles are unchanged. Physical melee and damage remain explicitly disabled.
+
+### Stage 6 headset acceptance (2026-09-03)
+
+The user's Steam / SteamVR-Oculus / 120 Hz run loaded exact source
+`58eaed451b86f870ece67be76423ba48f78f0862`. The supplied log has SHA-256
+`29A71E488FE2299812AC19147729536305728D379022809210B383C403E1DBF9`.
+The user explicitly confirmed that held guns now react to the environment and
+that the hand/weapon collision, shared toggle, haptics, and dynamic-object
+interaction are a good baseline.
+
+Across 84 telemetry windows the log totals 88,142 authored probes, 139/2
+left/right hand contacts, 304 weapon contacts, 322/649 applied left/right
+corrections, 67,696 authored-bounds publications, zero hand-only fallbacks, 42
+state resets, and 68/68 completed object pushes with zero push or ray failures.
+Physical melee and damage remained disabled as intended. Stage 6 is therefore
+the protected accepted collision baseline; a physical-melee experiment must be
+an independently gated layer and must not change its geometry, filter, cadence,
+contact skin, correction, haptic, or object-motion behavior.
