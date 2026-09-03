@@ -354,3 +354,30 @@ ordinary Halo 4 campaign gameplay, not another merely referenced helper.
 Stages 1-3 were wrist-point sweeps, not hand-volume collision, and could not
 push a ragdoll. The requested successor must separately prove both world-volume
 response and dynamic-object interaction while leaving physical melee disabled.
+
+### Stage 4 partial headset acceptance (2026-09-03)
+
+The user's Steam / SteamVR-Oculus / 120 Hz run loaded exact source
+`7451e703eb78ddf381056e538a2a8388cf1d740a`. The supplied log has SHA-256
+`4C66838A1F640483517A2911B2EA218C045C0F670F721C87A53E1D3E49BAE796`;
+the matching video has SHA-256
+`E8FB18CC48D84DD6F37A9BB2AFB378CDC3202BFA3C35BB701E8888F4F2D3BC96`.
+
+Across 57 telemetry windows, Stage 4 observed 1,071,329 dynamic-safe engine
+ray callbacks, 27,732 authored probes, 115 left-hand contacts, 62 right-hand
+contacts, 36 weapon-extrema contacts, 251/218 applied left/right corrections,
+56 successful object pushes with zero push failures, and zero ray failures.
+The user explicitly confirmed that both rendered hands collided with world
+geometry, contact haptics fired, and live ragdolls/body parts reacted to hand
+contact. Those three portions are accepted and must remain intact. Physical
+melee remained disabled as intended.
+
+The held weapon did not visibly react and is rejected as a separate optional
+sub-feature. Telemetry recorded 985 collision-state reseeds. Code inspection
+shows the right target was published first with the hand extrema and then with
+the combined hand/weapon extrema, so the engine-context consumer repeatedly
+saw a changed sample count and deliberately reseeded instead of sweeping.
+Weapon contact counts therefore prove that the authored volume reached the
+query, not that its continuous response was stable. The alternating combined
+publication is compiled dormant before a successor is attempted; the accepted
+hand, haptic, and dynamic-object transactions remain live.

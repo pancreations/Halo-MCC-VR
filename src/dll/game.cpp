@@ -30489,10 +30489,18 @@ namespace
     // dormant; a successor must use a separately proven live gameplay path.
     constexpr bool kEnableHalo4WorldCollisionStage3 = false;
     constexpr bool kEnableHalo4WorldCollisionStage4 = true;
+    // Headset-rejected on 2026-09-03: weapon extrema registered contacts but
+    // did not visibly constrain the held model.  The right target alternated
+    // between hand-only and hand-plus-weapon sample counts, repeatedly
+    // reseeding the continuous sweep.  Keep that publication shape dormant;
+    // a successor must publish exactly one stable right-side volume per held
+    // record while preserving the accepted hand/haptic/object path.
+    constexpr bool kEnableHalo4WeaponWorldCollisionStage4 = false;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
     static_assert(kEnableHalo4WorldCollisionStage4);
+    static_assert(!kEnableHalo4WeaponWorldCollisionStage4);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -31355,6 +31363,16 @@ namespace
             nodeCount > kHalo4FirstPersonBankTransforms || !handCount ||
             !g_halo4FloatingPair.rightSolvedWristValid)
             return;
+        if (!kEnableHalo4WeaponWorldCollisionStage4)
+        {
+            // Preserve the headset-accepted right-hand volume without
+            // alternating its sample count with the rejected weapon volume.
+            Halo4PublishCollisionTarget(
+                1, g_halo4FloatingPair.generation,
+                g_halo4FloatingPair.handCollisionSamples[1], handCount,
+                handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex);
+            return;
+        }
         float authored[kHalo4FirstPersonBankTransforms][3]{};
         int authoredCount = 0;
         for (int node = 0; node < nodeCount; ++node)

@@ -1,5 +1,19 @@
 # Current state
 
+> **HALO 4 WORLD CONTACT STAGE 4 PARTIALLY ACCEPTED / WEAPON RESPONSE
+> REJECTED (user headset, 2026-09-03).** Exact source
+> `7451e703eb78ddf381056e538a2a8388cf1d740a`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The user confirmed both hand
+> models collide with world geometry, gentle contact haptics work, and fresh
+> ragdolls/body parts react. The held gun did not visibly react. The log proves
+> 36 weapon contacts but also 985 state reseeds; the right-side publisher
+> alternated hand-only and hand-plus-weapon sample counts, invalidating most
+> continuous sweeps. Hand/haptic/object behavior is protected. The failed
+> weapon publication shape is disabled before replacement, physical melee
+> remains off, and the cumulative accepted release pointer below does not move
+> until the required title/headset regression results exist. See
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **C-H2-92 / C-H4-58 CUMULATIVE HANDOFF READY FOR HEADSET TEST
 > (2026-09-02).** This unaccepted candidate contains three requested changes,
 > each isolated in source history. (1) Halo 4 Stage 3AI effect teardown now
