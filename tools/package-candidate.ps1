@@ -242,7 +242,7 @@ try {
             'Halo 2 controller melee targeting Installed' -or
         $halo2ObserverSource -notmatch 'g_aimAssistTargetSelected' -or
         $halo2ObserverSource -notmatch
-            'camera/stereo/aim/hands/[\s\S]{0,16}HUD/OpenXR remain' -or
+            'camera/stereo/aim/hands/HUD/OpenXR' -or
         $coreTestsSource -notmatch
             'scoped aim-assist view helper accepts the normalized') {
         throw 'C-H2-92 gate failed: the rejected debug global is not dormant or controller-scoped native target selection, accepted camera suppression, fail-open isolation, telemetry, or unit coverage is missing.'
