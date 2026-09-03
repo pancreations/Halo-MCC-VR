@@ -13502,6 +13502,29 @@ int main()
     Check(!Halo4ResolveWorldCollision(
               collisionStart, collisionDesired, true, 1.5f, 1.0f).valid,
         "Halo 4 wrist sweep rejects an invalid engine hit fraction");
+    const float authoredVolumePoints[][3]{
+        {-0.2f, 0.0f, 0.0f}, {0.3f, 0.0f, 0.0f},
+        {0.0f, -0.4f, 0.0f}, {0.0f, 0.5f, 0.0f},
+        {0.0f, 0.0f, -0.6f}, {0.0f, 0.0f, 0.7f}};
+    float selectedVolume[kHalo4WorldCollisionExtremaCount][3]{};
+    const int selectedVolumeCount = Halo4SelectWorldCollisionExtrema(
+        collisionStart, &authoredVolumePoints[0][0],
+        static_cast<int>(std::size(authoredVolumePoints)), selectedVolume,
+        static_cast<int>(std::size(selectedVolume)));
+    Check(selectedVolumeCount == kHalo4WorldCollisionExtremaCount &&
+          std::fabs(selectedVolume[1][0] + 0.2f) < 1.0e-6f &&
+          std::fabs(selectedVolume[6][2] - 0.7f) < 1.0e-6f,
+        "Halo 4 contact volume selects the authored root and six model extrema");
+    const float pushPrevious[3]{0.0f, 0.0f, 0.0f};
+    const float pushDesired[3]{1.0f, 0.0f, 0.0f};
+    float pushVelocity[3]{};
+    Check(Halo4BuildWorldCollisionPushVelocity(
+              pushPrevious, pushDesired, 10, 0.5f, pushVelocity) &&
+          std::fabs(pushVelocity[0] - 1.0f) < 1.0e-6f,
+        "Halo 4 dynamic contact derives and world-scale clamps a finite push velocity");
+    Check(!Halo4BuildWorldCollisionPushVelocity(
+              pushPrevious, pushDesired, 0, 0.5f, pushVelocity),
+        "Halo 4 dynamic contact refuses a zero-time velocity sample");
     const float ordinaryMovement[3]{0.40f, 0.0f, 0.0f};
     const float teleportMovement[3]{0.60f, 0.0f, 0.0f};
     Check(!Halo4WorldCollisionMovementIsTeleport(

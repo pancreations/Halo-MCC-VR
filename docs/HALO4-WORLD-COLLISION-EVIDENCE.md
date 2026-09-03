@@ -5,11 +5,12 @@
 Halo 3 has no world-contact implementation in this repository. There is no
 accepted player-experience reference to port and no cross-title address,
 layout, flag, or physics behavior is reused. This document supports a
-Halo-4-only experiment: point-sweep the final visible wrist positions with
-Halo 4's own clear-line collision filter, keep the held weapon rigidly attached
-to the corrected right hand, and provide gentle per-hand OpenXR feedback.
-Object impulses, ragdoll pushing, and physical melee remain explicitly outside
-this candidate.
+Halo-4-only experiment: sweep a bounded set selected from the actual transformed
+Storm hand and held-model nodes with Halo 4's own clear-line collision filter,
+move the common visible carrier before a hit, and provide gentle per-hand
+OpenXR feedback. A separately verified native object-motion helper can give a
+finite linear push to an object returned by that query. Physical melee and
+damage remain explicitly outside this candidate.
 
 The feature is optional. Missing proof or any runtime query failure
 returns only the wrist-contact feature to the existing floating-hand behavior.
@@ -55,8 +56,26 @@ guesses:
 
 The official assertion also states that a query during object movement is
 allowed only when it is not on the main thread or the fixed-only flag is set.
-The implementation runs from the existing cold title worker and never queries
-from a render/palette hook.
+Stage 4 therefore does not call from the cold title worker or render/palette
+hook. It borrows a context only after the engine itself has completed a
+dynamic-inclusive `PhysicsRayCast` in the hooked function.
+
+### Official object-motion contract
+
+H4EK registers two `object_set_velocity` script overloads. Their callbacks at
+RVAs `0xED48F0` and `0xED4770` convert the requested local vector through the
+object basis and both call native helper RVA `0xE539C0` with the object index,
+linear xyz pointer, and null angular pointer. That helper:
+
+- commits the supplied linear/angular values through `0xE53A80`;
+- mirrors them to the object state through `0x14E600`;
+- returns without waking for a zero linear and zero angular request;
+- otherwise calls the same wake helper used by registered script
+  `object_wake_physics`, then refreshes and commits motion.
+
+This is velocity assignment and wake-up, not melee, damage, or a Havok contact
+callback. Stage 4 supplies only a finite, world-scale-capped linear vector and
+leaves angular velocity untouched.
 
 ### Official clear-line filter contract
 
@@ -160,6 +179,24 @@ Zero/multiple signature matches, a moved RVA, a changed call edge, an unstable
 module mapping, or an unavailable floating-hand palette produces
 `StockFallback` for world contact only.
 
+H4EK-to-retail BSim independently maps native object-motion helper H4EK RVA
+`0xE539C0` to retail RVA `0x5D1580` with similarity `1.0` and significance
+`57.2413835768`. The retail body reproduces the same zero-vector test and the
+same five-call commit/wake sequence. Its loaded-image signature is unique at
+the pinned RVA:
+
+```text
+48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 45 33 C9
+49 8B F8 48 8B F2 8B D9 E8 ?? ?? ?? ?? 41 B1 01 4C 8B C7
+48 8B D6 8B CB E8 ?? ?? ?? ?? F3 0F 10 1D ?? ?? ?? ??
+```
+
+Installation also decodes and requires its direct calls at `+0x1A`, `+0x2A`,
+`+0x93`, `+0x9A`, and `+0xA1` to target retail RVAs `0x5D14D8`, `0x0F1ADC`,
+`0x5D73BC`, `0x5D0F38`, and `0x5DB6D0`. If this independent proof fails,
+hand/weapon world collision can remain live while object motion alone reports
+`StockFallback`.
+
 ## Stage 3 runtime transaction
 
 - The render thread publishes the pair-frozen final left/right target
@@ -193,6 +230,49 @@ module mapping, or an unavailable floating-hand palette produces
   the cold worker emits one explicit fail-open log. Two-second telemetry
   separately reports engine wrapper callbacks, mod wrapper queries, contacts,
   visible corrections, resets, calibration, and failures.
+
+## Stage 4 runtime transaction
+
+- Rejected Stages 1-3 stay compiled dormant. Stage 4 hooks the uniquely pinned
+  retail `PhysicsRayCast` itself. Every callback completes the untouched engine
+  request through its trampoline first. The hook never changes the engine
+  request, result, or return value.
+- The hook counts every live engine call, but an experimental batch is eligible
+  only if that just-completed engine input did not request H4EK's proven
+  fixed-objects-only bit 27. This makes the borrowed context demonstrate that a
+  dynamic-inclusive query is legal there. One atomic lease and a 33 ms interval
+  bound concurrent callers and query rate.
+- The exact 80-node Storm palette supplies each wrist root and its authored hand
+  subtree. The immediately following held-model palette supplies its authored
+  nodes. A deterministic selector retains the common root and up to six unique
+  world-axis extrema from each model: at most seven left-hand samples and
+  thirteen combined right-hand/weapon samples. No guessed capsule, box, bone,
+  marker, or copied cross-title dimension is introduced.
+- Render/palette code only constructs those bounded stack arrays, publishes
+  atomics, and consumes a prior finite correction. It performs no engine query,
+  OpenXR call, logging, allocation, lock, file I/O, or signature scan.
+- Each sample sweeps from its last accepted position to the latest authored
+  target. The strongest hit-derived common translation stops the whole visible
+  hand/weapon carrier 1.5 cm before contact. First samples, sample-count changes,
+  and movements over 1.5 metres reseed rather than drawing a false sweep across
+  a weapon switch, load, teleport, or recenter.
+- The Storm callback's object index is placed in the official ignored-object
+  array, preventing the player's own first-person owner from being selected.
+- A hit with a non-sentinel, non-player object index can call the independently
+  verified native object-motion helper. Velocity comes only from that sample's
+  measured displacement/time, is scaled to 65%, and is capped at 2 m/s in
+  world-scaled units. The helper receives no angular velocity and no damage or
+  melee call is made.
+- Object motion has its own failure switch. An exception disables only pushes;
+  hand/weapon clamping and haptics continue. A ray/query contract failure
+  disables only Stage 4 world contact and pushes; the Halo 4 camera, hands,
+  weapon, HUD, reticle, helmet, effects, pause repair, black-screen repair, and
+  OpenXR session continue.
+- Two-second telemetry distinguishes total/dynamic-safe/fixed-only engine
+  callbacks, mod probes, left/right hand contacts, weapon contacts, visible
+  corrections, reseeds, environment-hit proof, ray failures, and object-push
+  attempts/completions/failures. These counters are the activation evidence;
+  install success alone is not acceptance.
 
 ## Acceptance and limitations
 

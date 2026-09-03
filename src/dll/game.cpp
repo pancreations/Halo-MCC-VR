@@ -30329,6 +30329,15 @@ namespace
         bool twoHandAimActive = false;
         Halo4FloatingTransform rightTargetWorld{};
         Halo4FloatingTransform leftTargetWorld{};
+        // Collision publication is rebuilt from authored model-node extents.
+        // Keep the uncorrected controller roots so last frame's correction is
+        // not fed back as this frame's requested target.
+        float collisionRoot[2][3]{};
+        float rightSolvedWrist[3]{};
+        bool rightSolvedWristValid = false;
+        float handCollisionSamples[2][kHalo4WorldCollisionExtremaCount][3]{};
+        uint32_t handCollisionSampleCount[2]{};
+        int32_t collisionIgnoredObjectIndex = -1;
         Halo4FloatingRecordPhase eyePhase[2]{
             Halo4FloatingRecordPhase::AwaitStormHands,
             Halo4FloatingRecordPhase::AwaitStormHands};
@@ -30344,14 +30353,15 @@ namespace
     thread_local Halo4FloatingPair g_halo4FloatingPair{};
 
     // =======================================================================
-    // Halo 4 experimental world-contact wrist sweep, Stage 2.
+    // Halo 4 experimental authored-volume world contact, Stage 4.
     //
     // Halo 3 has no existing world-contact implementation to copy. This is a
-    // deliberately Halo-4-native experiment based on H4EK PhysicsRayCast.
-    // The render thread only publishes final wrist targets and consumes a
-    // bounded translation. Stage 3 can query only when Halo 4's own verified
-    // clear-line wrapper has just completed on an engine-owned context; the
-    // cold worker never calls physics. Failure clears only this feature.
+    // deliberately Halo-4-native experiment based on H4EK PhysicsRayCast and
+    // the exact authored Storm/held-model node positions. The render thread
+    // publishes immutable volume samples and consumes a bounded translation.
+    // Stage 4 hooks the live raycast itself, always preserves the original
+    // call, and borrows only an engine context which just completed a dynamic-
+    // inclusive ray. Optional object motion is independently fail-open.
     // =======================================================================
 #pragma pack(push, 1)
     struct Halo4PhysicsRayCastInput
@@ -30395,15 +30405,18 @@ namespace
 
     using Halo4PhysicsRayCastFn = bool(__fastcall*)(
         Halo4PhysicsRayCastInput*, Halo4PhysicsRayCastResult*);
-    using Halo4WorldLineTestFn = bool(__fastcall*)(
-        const float*, const float*, int32_t);
+    using Halo4ObjectSetVelocitiesFn = void(__fastcall*)(
+        int32_t, const float*, const float*);
 
     struct Halo4WorldCollisionTargetPublication
     {
         std::atomic<uint32_t> sequence{0};
         std::atomic<uint32_t> generation{0};
         std::atomic<uint64_t> publishedAtMs{0};
-        std::atomic<float> position[3]{};
+        std::atomic<uint32_t> sampleCount{0};
+        std::atomic<uint32_t> handSampleCount{0};
+        std::atomic<int32_t> ignoredObjectIndex{-1};
+        std::atomic<float> samples[kHalo4WorldCollisionMaxSamples][3]{};
     };
 
     struct Halo4WorldCollisionCorrectionPublication
@@ -30420,31 +30433,40 @@ namespace
     {
         bool seeded = false;
         uint32_t generation = 0;
-        float accepted[3]{};
+        uint64_t publishedAtMs = 0;
+        uint32_t sampleCount = 0;
+        float accepted[kHalo4WorldCollisionMaxSamples][3]{};
     };
 
     struct Halo4WorldCollisionFeature
     {
         std::atomic<bool> installed{false};
-        Halo4PhysicsRayCastFn rayCast = nullptr;
+        std::atomic<bool> objectPushInstalled{false};
+        Halo4PhysicsRayCastFn originalRayCast = nullptr;
+        Halo4ObjectSetVelocitiesFn objectSetVelocities = nullptr;
         uint32_t generation = 0;
         Halo4WorldCollisionTargetPublication target[2]{};
         Halo4WorldCollisionCorrectionPublication correction[2]{};
         Halo4WorldCollisionWorkerHand worker[2]{};
         std::atomic<uint64_t> queries{0};
-        std::atomic<uint64_t> contacts[2]{};
+        std::atomic<uint64_t> handContacts[2]{};
+        std::atomic<uint64_t> weaponContacts{0};
         std::atomic<uint64_t> applied[2]{};
+        std::atomic<uint64_t> objectPushAttempts{0};
+        std::atomic<uint64_t> objectPushes{0};
+        std::atomic<uint64_t> objectPushFailures{0};
         std::atomic<uint64_t> resets{0};
         std::atomic<uint64_t> failures{0};
         std::atomic<uint64_t> calibrationQueries{0};
         std::atomic<uint64_t> calibrationHits{0};
         std::atomic<bool> environmentValidated{false};
-        // Stage 3 never calls PhysicsRayCast from the mod worker. It hooks the
-        // official clear-line wrapper and performs a bounded extra query only
-        // after Halo 4 has just completed its own query in that same context.
-        void* worldLineTarget = nullptr;
-        Halo4WorldLineTestFn originalWorldLineTest = nullptr;
+        // Stage 4 hooks PhysicsRayCast itself because Stage 3 proved the small
+        // clear-line helper is dormant in retail campaign. The trampoline is
+        // always completed first and our batch is leased/rate-limited.
+        void* rayCastTarget = nullptr;
         std::atomic<uint64_t> engineContextCalls{0};
+        std::atomic<uint64_t> dynamicContextCalls{0};
+        std::atomic<uint64_t> fixedOnlyContextCalls{0};
         std::atomic<uint64_t> nextEngineQueryAtMs{0};
         std::atomic<bool> engineQueryActive{false};
         std::atomic<uint32_t> hotFailureReason{0};
@@ -30466,9 +30488,11 @@ namespace
     // entire supplied session).  Keep the hook and query implementation
     // dormant; a successor must use a separately proven live gameplay path.
     constexpr bool kEnableHalo4WorldCollisionStage3 = false;
+    constexpr bool kEnableHalo4WorldCollisionStage4 = true;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
+    static_assert(kEnableHalo4WorldCollisionStage4);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -30476,6 +30500,12 @@ namespace
     constexpr uint32_t kHalo4PhysicsCollectorResultRva = 0x1C15A8;
     constexpr uint32_t kHalo4WorldLineTestRva = 0x0F4218;
     constexpr uint32_t kHalo4WorldLineFilterGlobalRva = 0x2FFB0B8;
+    constexpr uint32_t kHalo4ObjectSetVelocitiesRva = 0x5D1580;
+    constexpr uint32_t kHalo4ObjectSetVelocitiesCoreRva = 0x5D14D8;
+    constexpr uint32_t kHalo4ObjectVelocityMirrorRva = 0x0F1ADC;
+    constexpr uint32_t kHalo4ObjectWakePhysicsRva = 0x5D73BC;
+    constexpr uint32_t kHalo4ObjectMotionRefreshRva = 0x5D0F38;
+    constexpr uint32_t kHalo4ObjectMotionCommitRva = 0x5DB6D0;
     // Exact mask pair copied by the official H4EK clear-line wrapper at
     // 0x17BF10 and its retail homolog at 0x0F4218. Stage 1's hand-built
     // structure/fixed-only mask was rejected in-headset after 1,794 clean
@@ -30488,35 +30518,49 @@ namespace
     // Observed in multiple ordinary H4EK PhysicsRayCast callers. This first
     // dword selects the engine's raycast profiling bucket, not collision type.
     constexpr uint32_t kHalo4CollisionProfile = 0x1A;
+    constexpr uint32_t kHalo4CollisionFixedObjectsOnly = 1u << 27;
     constexpr uint64_t kHalo4CollisionPublicationMaxAgeMs = 150;
     constexpr float kHalo4CollisionHapticAmplitude = 0.18f;
-    constexpr uint64_t kHalo4CollisionEngineQueryIntervalMs = 50;
-    constexpr int kHalo4CollisionBinarySearchSteps = 6;
-    constexpr uint32_t kHalo4CollisionFailureWrapperException = 1;
+    constexpr uint64_t kHalo4CollisionEngineQueryIntervalMs = 33;
+    constexpr uint32_t kHalo4CollisionFailureRayException = 1;
+    constexpr uint32_t kHalo4CollisionFailureRayContract = 2;
+    constexpr uint32_t kHalo4CollisionFailureObjectPushException = 3;
 
     void Halo4PublishCollisionTarget(
-        int hand, uint32_t generation, const float position[3])
+        int hand, uint32_t generation, const float samples[][3],
+        uint32_t sampleCount, uint32_t handSampleCount,
+        int32_t ignoredObjectIndex)
     {
-        if (hand < 0 || hand > 1 || !generation ||
-            !Halo4WorldCollisionFiniteVector(position))
+        if (hand < 0 || hand > 1 || !generation || !samples ||
+            sampleCount == 0 || sampleCount > kHalo4WorldCollisionMaxSamples ||
+            handSampleCount == 0 || handSampleCount > sampleCount)
             return;
+        for (uint32_t sample = 0; sample < sampleCount; ++sample)
+            if (!Halo4WorldCollisionFiniteVector(samples[sample])) return;
         auto& publication = g_halo4WorldCollision.target[hand];
         const uint32_t writing = publication.sequence.fetch_add(
             1, std::memory_order_acq_rel) + 1;
         publication.generation.store(generation, std::memory_order_relaxed);
         publication.publishedAtMs.store(
             GetTickCount64(), std::memory_order_relaxed);
-        for (int axis = 0; axis < 3; ++axis)
-            publication.position[axis].store(
-                position[axis], std::memory_order_relaxed);
+        publication.sampleCount.store(sampleCount, std::memory_order_relaxed);
+        publication.handSampleCount.store(
+            handSampleCount, std::memory_order_relaxed);
+        publication.ignoredObjectIndex.store(
+            ignoredObjectIndex, std::memory_order_relaxed);
+        for (uint32_t sample = 0; sample < sampleCount; ++sample)
+            for (int axis = 0; axis < 3; ++axis)
+                publication.samples[sample][axis].store(
+                    samples[sample][axis], std::memory_order_relaxed);
         publication.sequence.store(writing + 1, std::memory_order_release);
     }
 
     bool Halo4ReadCollisionTarget(
         int hand, uint32_t& generation, uint64_t& publishedAtMs,
-        float position[3])
+        float samples[][3], uint32_t& sampleCount,
+        uint32_t& handSampleCount, int32_t& ignoredObjectIndex)
     {
-        if (hand < 0 || hand > 1 || !position) return false;
+        if (hand < 0 || hand > 1 || !samples) return false;
         const auto& publication = g_halo4WorldCollision.target[hand];
         for (int attempt = 0; attempt < 3; ++attempt)
         {
@@ -30527,13 +30571,30 @@ namespace
                 std::memory_order_relaxed);
             publishedAtMs = publication.publishedAtMs.load(
                 std::memory_order_relaxed);
-            for (int axis = 0; axis < 3; ++axis)
-                position[axis] = publication.position[axis].load(
-                    std::memory_order_relaxed);
+            sampleCount = publication.sampleCount.load(
+                std::memory_order_relaxed);
+            handSampleCount = publication.handSampleCount.load(
+                std::memory_order_relaxed);
+            ignoredObjectIndex = publication.ignoredObjectIndex.load(
+                std::memory_order_relaxed);
+            if (sampleCount == 0 ||
+                sampleCount > kHalo4WorldCollisionMaxSamples ||
+                handSampleCount == 0 || handSampleCount > sampleCount)
+                continue;
+            for (uint32_t sample = 0; sample < sampleCount; ++sample)
+                for (int axis = 0; axis < 3; ++axis)
+                    samples[sample][axis] =
+                        publication.samples[sample][axis].load(
+                            std::memory_order_relaxed);
             const uint32_t after = publication.sequence.load(
                 std::memory_order_acquire);
             if (before == after && !(after & 1u))
-                return Halo4WorldCollisionFiniteVector(position);
+            {
+                for (uint32_t sample = 0; sample < sampleCount; ++sample)
+                    if (!Halo4WorldCollisionFiniteVector(samples[sample]))
+                        return false;
+                return true;
+            }
         }
         return false;
     }
@@ -30614,10 +30675,20 @@ namespace
             Halo4ClearCollisionCorrection(hand, generation);
         }
         g_halo4WorldCollision.queries.store(0, std::memory_order_relaxed);
-        g_halo4WorldCollision.contacts[0].store(0, std::memory_order_relaxed);
-        g_halo4WorldCollision.contacts[1].store(0, std::memory_order_relaxed);
+        g_halo4WorldCollision.handContacts[0].store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.handContacts[1].store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.weaponContacts.store(
+            0, std::memory_order_relaxed);
         g_halo4WorldCollision.applied[0].store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.applied[1].store(0, std::memory_order_relaxed);
+        g_halo4WorldCollision.objectPushAttempts.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.objectPushes.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.objectPushFailures.store(
+            0, std::memory_order_relaxed);
         g_halo4WorldCollision.resets.store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.failures.store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.calibrationQueries.store(
@@ -30627,6 +30698,10 @@ namespace
         g_halo4WorldCollision.environmentValidated.store(
             false, std::memory_order_relaxed);
         g_halo4WorldCollision.engineContextCalls.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.dynamicContextCalls.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.fixedOnlyContextCalls.store(
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.nextEngineQueryAtMs.store(
             0, std::memory_order_relaxed);
@@ -30639,6 +30714,8 @@ namespace
     void RemoveHalo4WorldCollision()
     {
         g_halo4WorldCollision.installed.store(
+            false, std::memory_order_release);
+        g_halo4WorldCollision.objectPushInstalled.store(
             false, std::memory_order_release);
         const uint32_t generation = g_halo4WorldCollision.generation;
         // Hook disable/removal and non-atomic worker-state reset happen in the
@@ -30679,39 +30756,46 @@ namespace
 
     void Halo4RejectWorldCollisionFromEngineContext(uint32_t reason)
     {
-        g_halo4WorldCollision.failures.fetch_add(
-            1, std::memory_order_relaxed);
+        if (reason == kHalo4CollisionFailureObjectPushException)
+        {
+            g_halo4WorldCollision.objectPushFailures.fetch_add(
+                1, std::memory_order_relaxed);
+            g_halo4WorldCollision.objectPushInstalled.store(
+                false, std::memory_order_release);
+        }
+        else
+        {
+            g_halo4WorldCollision.failures.fetch_add(
+                1, std::memory_order_relaxed);
+            g_halo4WorldCollision.installed.store(
+                false, std::memory_order_release);
+            const uint32_t generation = g_halo4WorldCollision.generation;
+            Halo4ClearCollisionCorrection(0, generation);
+            Halo4ClearCollisionCorrection(1, generation);
+        }
         uint32_t empty = 0;
         g_halo4WorldCollision.hotFailureReason.compare_exchange_strong(
             empty, reason, std::memory_order_acq_rel,
             std::memory_order_relaxed);
-        g_halo4WorldCollision.installed.store(
-            false, std::memory_order_release);
-        const uint32_t generation = g_halo4WorldCollision.generation;
-        Halo4ClearCollisionCorrection(0, generation);
-        Halo4ClearCollisionCorrection(1, generation);
     }
 
-    bool Halo4RunWorldLineFromEngineContext(
-        const float start[3], const float end[3], bool& clear)
+    bool Halo4RunWorldCollisionRayFromEngineContext(
+        Halo4PhysicsRayCastInput& input,
+        Halo4PhysicsRayCastResult& output, bool& hit)
     {
-        clear = true;
-        if (!Halo4WorldCollisionFiniteVector(start) ||
-            !Halo4WorldCollisionFiniteVector(end) ||
-            !g_halo4WorldCollision.originalWorldLineTest)
+        hit = false;
+        if (!g_halo4WorldCollision.originalRayCast ||
+            !Halo4WorldCollisionFiniteVector(input.start) ||
+            !Halo4WorldCollisionFiniteVector(input.end))
         {
             Halo4RejectWorldCollisionFromEngineContext(
-                kHalo4CollisionFailureWrapperException);
+                kHalo4CollisionFailureRayException);
             return false;
         }
-
         bool completed = false;
         __try
         {
-            // -1 is the exact sentinel the official wrapper tests before
-            // deciding whether to append an ignored object to its input.
-            clear = g_halo4WorldCollision.originalWorldLineTest(
-                start, end, -1);
+            hit = g_halo4WorldCollision.originalRayCast(&input, &output);
             completed = true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
@@ -30723,10 +30807,56 @@ namespace
         if (!completed)
         {
             Halo4RejectWorldCollisionFromEngineContext(
-                kHalo4CollisionFailureWrapperException);
+                kHalo4CollisionFailureRayException);
+            return false;
+        }
+        if ((hit && (!std::isfinite(output.fraction) ||
+                     output.fraction < 0.0f || output.fraction >= 1.0f)) ||
+            (!hit && output.fraction != 1.0f))
+        {
+            Halo4RejectWorldCollisionFromEngineContext(
+                kHalo4CollisionFailureRayContract);
             return false;
         }
         return true;
+    }
+
+    void Halo4TryPushWorldCollisionObject(
+        int32_t objectIndex, int32_t ignoredObjectIndex,
+        const float previous[3], const float desired[3], uint64_t elapsedMs,
+        float worldScale)
+    {
+        if (objectIndex == -1 || objectIndex == ignoredObjectIndex ||
+            !g_halo4WorldCollision.objectPushInstalled.load(
+                std::memory_order_acquire) ||
+            !g_halo4WorldCollision.objectSetVelocities)
+            return;
+        float velocity[3]{};
+        if (!Halo4BuildWorldCollisionPushVelocity(
+                previous, desired, elapsedMs, worldScale, velocity))
+            return;
+        g_halo4WorldCollision.objectPushAttempts.fetch_add(
+            1, std::memory_order_relaxed);
+        bool completed = false;
+        __try
+        {
+            // H4EK object_set_velocity resolves to this exact native helper.
+            // A null angular vector preserves angular velocity while the
+            // helper applies the finite linear velocity and wakes the object.
+            g_halo4WorldCollision.objectSetVelocities(
+                objectIndex, velocity, nullptr);
+            completed = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            completed = false;
+        }
+        if (completed)
+            g_halo4WorldCollision.objectPushes.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            Halo4RejectWorldCollisionFromEngineContext(
+                kHalo4CollisionFailureObjectPushException);
     }
 
     void Halo4WorldCollisionEngineContextTick()
@@ -30765,8 +30895,7 @@ namespace
         if (!generation || generation != g_halo4WorldCollision.generation)
             return;
 
-        const float worldScale =
-            g_worldScale.load(std::memory_order_acquire);
+        const float worldScale = g_worldScale.load(std::memory_order_acquire);
         if (!std::isfinite(worldScale) || worldScale <= 0.0f)
             return;
 
@@ -30774,10 +30903,14 @@ namespace
         {
             uint32_t targetGeneration = 0;
             uint64_t targetAtMs = 0;
-            float desired[3]{};
+            uint32_t sampleCount = 0;
+            uint32_t handSampleCount = 0;
+            int32_t ignoredObjectIndex = -1;
+            float desired[kHalo4WorldCollisionMaxSamples][3]{};
             auto& state = g_halo4WorldCollision.worker[hand];
             if (!Halo4ReadCollisionTarget(
-                    hand, targetGeneration, targetAtMs, desired) ||
+                    hand, targetGeneration, targetAtMs, desired,
+                    sampleCount, handSampleCount, ignoredObjectIndex) ||
                 targetGeneration != generation || targetAtMs > now ||
                 now - targetAtMs > kHalo4CollisionPublicationMaxAgeMs)
             {
@@ -30786,125 +30919,144 @@ namespace
                 continue;
             }
             if (!state.seeded || state.generation != generation ||
+                state.sampleCount != sampleCount ||
                 Halo4WorldCollisionMovementIsTeleport(
-                    state.accepted, desired, worldScale))
+                    state.accepted[0], desired[0], worldScale))
             {
                 state.seeded = true;
                 state.generation = generation;
-                memcpy(state.accepted, desired, sizeof(state.accepted));
+                state.publishedAtMs = targetAtMs;
+                state.sampleCount = sampleCount;
+                memcpy(state.accepted, desired,
+                    sizeof(float) * sampleCount * 3);
                 Halo4ClearCollisionCorrection(hand, generation);
                 g_halo4WorldCollision.resets.fetch_add(
                     1, std::memory_order_relaxed);
                 continue;
             }
 
-            if (!g_halo4WorldCollision.environmentValidated.load(
-                    std::memory_order_acquire))
+            bool contact = false;
+            uint32_t contactSample = 0;
+            int32_t contactObject = -1;
+            float strongestCorrection[3]{};
+            float strongestCorrectionSquared = 0.0f;
+            for (uint32_t sample = 0; sample < sampleCount; ++sample)
             {
-                float calibrationStart[3]{
-                    desired[0], desired[1],
-                    desired[2] + 0.25f * worldScale};
-                float calibrationEnd[3]{
-                    desired[0], desired[1],
-                    desired[2] - 20.0f * worldScale};
-                bool calibrationClear = true;
-                g_halo4WorldCollision.calibrationQueries.fetch_add(
-                    1, std::memory_order_relaxed);
-                if (!Halo4RunWorldLineFromEngineContext(
-                        calibrationStart, calibrationEnd,
-                        calibrationClear))
-                    return;
-                if (calibrationClear)
+                const float movement = Halo4WorldCollisionDistanceSquared(
+                    state.accepted[sample], desired[sample]);
+                if (movement < 1.0e-10f) continue;
+                Halo4PhysicsRayCastInput input{};
+                Halo4PhysicsRayCastResult output{};
+                input.profile = kHalo4CollisionProfile;
+                input.collisionFlags = kHalo4WorldLineCollisionFlags;
+                input.additionalFlags = kHalo4WorldLineAdditionalFlags;
+                memcpy(input.start, state.accepted[sample],
+                    sizeof(input.start));
+                memcpy(input.end, desired[sample], sizeof(input.end));
+                if (ignoredObjectIndex != -1)
                 {
-                    memcpy(state.accepted, desired, sizeof(state.accepted));
-                    Halo4ClearCollisionCorrection(hand, generation);
-                    continue;
+                    input.ignoredObjects[0] = ignoredObjectIndex;
+                    input.ignoredObjectCount = 1;
                 }
-                g_halo4WorldCollision.calibrationHits.fetch_add(
-                    1, std::memory_order_relaxed);
+                bool hit = false;
+                if (!Halo4RunWorldCollisionRayFromEngineContext(
+                        input, output, hit))
+                    return;
+                if (!hit) continue;
                 g_halo4WorldCollision.environmentValidated.store(
                     true, std::memory_order_release);
-            }
-
-            bool clear = true;
-            if (!Halo4RunWorldLineFromEngineContext(
-                    state.accepted, desired, clear))
-                return;
-
-            float hitFraction = 1.0f;
-            if (!clear)
-            {
-                float low = 0.0f;
-                float high = 1.0f;
-                for (int step = 0;
-                     step < kHalo4CollisionBinarySearchSteps; ++step)
+                const Halo4WorldCollisionResolution resolution =
+                    Halo4ResolveWorldCollision(
+                        state.accepted[sample], desired[sample], true,
+                        output.fraction, worldScale);
+                if (!resolution.valid)
                 {
-                    const float middle = (low + high) * 0.5f;
-                    float probe[3]{};
-                    for (int axis = 0; axis < 3; ++axis)
-                        probe[axis] = state.accepted[axis] +
-                            (desired[axis] - state.accepted[axis]) * middle;
-                    bool prefixClear = true;
-                    if (!Halo4RunWorldLineFromEngineContext(
-                            state.accepted, probe, prefixClear))
-                        return;
-                    if (prefixClear)
-                        low = middle;
-                    else
-                        high = middle;
+                    Halo4RejectWorldCollisionFromEngineContext(
+                        kHalo4CollisionFailureRayContract);
+                    return;
                 }
-                hitFraction = high;
+                float correctionSquared = 0.0f;
+                for (float value : resolution.correction)
+                    correctionSquared += value * value;
+                if (!contact || correctionSquared > strongestCorrectionSquared)
+                {
+                    contact = true;
+                    contactSample = sample;
+                    contactObject = output.objectIndex;
+                    strongestCorrectionSquared = correctionSquared;
+                    memcpy(strongestCorrection, resolution.correction,
+                        sizeof(strongestCorrection));
+                }
             }
 
-            const Halo4WorldCollisionResolution resolution =
-                Halo4ResolveWorldCollision(
-                    state.accepted, desired, !clear, hitFraction,
-                    worldScale);
-            if (!resolution.valid)
-            {
-                Halo4RejectWorldCollisionFromEngineContext(
-                    kHalo4CollisionFailureWrapperException);
-                return;
-            }
-            memcpy(state.accepted, resolution.accepted,
-                   sizeof(state.accepted));
+            const uint64_t elapsedMs = targetAtMs > state.publishedAtMs
+                ? targetAtMs - state.publishedAtMs : 0;
+            if (contact)
+                Halo4TryPushWorldCollisionObject(
+                    contactObject, ignoredObjectIndex,
+                    state.accepted[contactSample], desired[contactSample],
+                    elapsedMs, worldScale);
+            for (uint32_t sample = 0; sample < sampleCount; ++sample)
+                for (int axis = 0; axis < 3; ++axis)
+                    state.accepted[sample][axis] = desired[sample][axis] +
+                        (contact ? strongestCorrection[axis] : 0.0f);
+            state.publishedAtMs = targetAtMs;
             Halo4PublishCollisionCorrection(
-                hand, generation, desired, resolution.correction,
-                resolution.contact);
-            if (resolution.contact)
+                hand, generation, desired[0], strongestCorrection, contact);
+            if (contact)
             {
-                g_halo4WorldCollision.contacts[hand].fetch_add(
-                    1, std::memory_order_relaxed);
+                if (contactSample < handSampleCount)
+                    g_halo4WorldCollision.handContacts[hand].fetch_add(
+                        1, std::memory_order_relaxed);
+                else
+                    g_halo4WorldCollision.weaponContacts.fetch_add(
+                        1, std::memory_order_relaxed);
                 VR_PulseContactHaptics(
                     hand == 0, kHalo4CollisionHapticAmplitude);
             }
         }
     }
 
-    bool Halo4WorldLineTestDetourBody(
-        const float* start, const float* end, int32_t ignoredObject)
+    bool Halo4PhysicsRayCastDetourBody(
+        Halo4PhysicsRayCastInput* input, Halo4PhysicsRayCastResult* output)
     {
-        Halo4WorldLineTestFn original =
-            g_halo4WorldCollision.originalWorldLineTest;
+        Halo4PhysicsRayCastFn original =
+            g_halo4WorldCollision.originalRayCast;
         if (!original)
-            return true;
-        const bool result = original(start, end, ignoredObject);
+            return false;
+        uint32_t originalFlags = kHalo4CollisionFixedObjectsOnly;
+        __try
+        {
+            if (input) originalFlags = input->collisionFlags;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            originalFlags = kHalo4CollisionFixedObjectsOnly;
+        }
+        const bool result = original(input, output);
         g_halo4WorldCollision.engineContextCalls.fetch_add(
             1, std::memory_order_relaxed);
-        Halo4WorldCollisionEngineContextTick();
+        if ((originalFlags & kHalo4CollisionFixedObjectsOnly) != 0)
+            g_halo4WorldCollision.fixedOnlyContextCalls.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+        {
+            g_halo4WorldCollision.dynamicContextCalls.fetch_add(
+                1, std::memory_order_relaxed);
+            Halo4WorldCollisionEngineContextTick();
+        }
         return result;
     }
 
-    __declspec(noinline) bool __fastcall Halo4WorldLineTestDetour(
-        const float* start, const float* end, int32_t ignoredObject)
+    __declspec(noinline) bool __fastcall Halo4PhysicsRayCastDetour(
+        Halo4PhysicsRayCastInput* input, Halo4PhysicsRayCastResult* output)
     {
         bool result = true;
         g_halo4Camera.activeCallbacks.fetch_add(
             1, std::memory_order_acq_rel);
         __try
         {
-            result = Halo4WorldLineTestDetourBody(
-                start, end, ignoredObject);
+            result = Halo4PhysicsRayCastDetourBody(input, output);
         }
         __finally
         {
@@ -30918,18 +31070,18 @@ namespace
         uintptr_t base, size_t size, uint32_t generation)
     {
         RemoveHalo4WorldCollision();
-        if (!kEnableHalo4WorldCollisionStage3)
+        if (!kEnableHalo4WorldCollisionStage4)
         {
             LOG("Halo 4 experimental world contact: StockFallback; the "
-                "replacement transaction is disabled; rejected Stages 1/2 "
+                "replacement transaction is disabled; rejected Stages 1-3 "
                 "remain dormant and camera, hands, weapon, HUD, reticle, "
                 "effects and OpenXR remain unchanged");
             return false;
         }
-        if (g_halo4WorldCollision.worldLineTarget)
+        if (g_halo4WorldCollision.rayCastTarget)
         {
             LOG("Halo 4 experimental world contact: StockFallback; a prior "
-                "clear-line hook has not completed teardown");
+                "raycast hook has not completed teardown");
             return false;
         }
         if (!base || !generation || size != kHalo4RetailImageSize ||
@@ -30993,244 +31145,95 @@ namespace
             return false;
         }
 
-        Halo4WorldLineTestFn originalWorldLineTest = nullptr;
-        void* const worldLineTarget = reinterpret_cast<void*>(worldLineTest);
+        constexpr char kObjectSetVelocitiesSignature[] =
+            "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 45 33 C9 "
+            "49 8B F8 48 8B F2 8B D9 E8 ?? ?? ?? ?? 41 B1 01 4C 8B C7 "
+            "48 8B D6 8B CB E8 ?? ?? ?? ?? F3 0F 10 1D ?? ?? ?? ??";
+        const uintptr_t objectSetVelocities =
+            sig::Find(base, size, kObjectSetVelocitiesSignature);
+        const bool objectSetVelocitiesUnique = objectSetVelocities &&
+            !sig::Find(objectSetVelocities + 1,
+                base + size - objectSetVelocities - 1,
+                kObjectSetVelocitiesSignature);
+        const bool objectSetVelocitiesPinned = objectSetVelocitiesUnique &&
+            objectSetVelocities - base == kHalo4ObjectSetVelocitiesRva &&
+            Halo4DecodeRel32Call(objectSetVelocities + 0x1A) ==
+                base + kHalo4ObjectSetVelocitiesCoreRva &&
+            Halo4DecodeRel32Call(objectSetVelocities + 0x2A) ==
+                base + kHalo4ObjectVelocityMirrorRva &&
+            Halo4DecodeRel32Call(objectSetVelocities + 0x93) ==
+                base + kHalo4ObjectWakePhysicsRva &&
+            Halo4DecodeRel32Call(objectSetVelocities + 0x9A) ==
+                base + kHalo4ObjectMotionRefreshRva &&
+            Halo4DecodeRel32Call(objectSetVelocities + 0xA1) ==
+                base + kHalo4ObjectMotionCommitRva;
+
+        Halo4PhysicsRayCastFn originalRayCast = nullptr;
+        void* const rayCastTarget = reinterpret_cast<void*>(hit);
         if (MH_CreateHook(
-                worldLineTarget,
-                reinterpret_cast<void*>(&Halo4WorldLineTestDetour),
-                reinterpret_cast<void**>(&originalWorldLineTest)) != MH_OK)
+                rayCastTarget,
+                reinterpret_cast<void*>(&Halo4PhysicsRayCastDetour),
+                reinterpret_cast<void**>(&originalRayCast)) != MH_OK)
         {
             LOG("Halo 4 experimental world contact: StockFallback; MinHook "
-                "rejected the optional official clear-line wrapper hook");
+                "rejected the optional live PhysicsRayCast hook");
             return false;
         }
 
-        g_halo4WorldCollision.rayCast =
-            reinterpret_cast<Halo4PhysicsRayCastFn>(hit);
-        g_halo4WorldCollision.worldLineTarget = worldLineTarget;
-        g_halo4WorldCollision.originalWorldLineTest = originalWorldLineTest;
+        g_halo4WorldCollision.rayCastTarget = rayCastTarget;
+        g_halo4WorldCollision.originalRayCast = originalRayCast;
+        g_halo4WorldCollision.objectSetVelocities = objectSetVelocitiesPinned
+            ? reinterpret_cast<Halo4ObjectSetVelocitiesFn>(objectSetVelocities)
+            : nullptr;
+        g_halo4WorldCollision.objectPushInstalled.store(
+            objectSetVelocitiesPinned, std::memory_order_release);
         g_halo4WorldCollision.generation = generation;
         Halo4ResetWorldCollisionState(generation);
-        if (MH_EnableHook(worldLineTarget) != MH_OK)
+        if (MH_EnableHook(rayCastTarget) != MH_OK)
         {
-            MH_RemoveHook(worldLineTarget);
-            g_halo4WorldCollision.rayCast = nullptr;
-            g_halo4WorldCollision.worldLineTarget = nullptr;
-            g_halo4WorldCollision.originalWorldLineTest = nullptr;
+            MH_RemoveHook(rayCastTarget);
+            g_halo4WorldCollision.rayCastTarget = nullptr;
+            g_halo4WorldCollision.originalRayCast = nullptr;
+            g_halo4WorldCollision.objectSetVelocities = nullptr;
+            g_halo4WorldCollision.objectPushInstalled.store(
+                false, std::memory_order_release);
             g_halo4WorldCollision.generation = 0;
             LOG("Halo 4 experimental world contact: StockFallback; the "
-                "optional official clear-line wrapper hook could not be "
+                "optional live PhysicsRayCast hook could not be "
                 "enabled");
             return false;
         }
         g_halo4WorldCollision.installed.store(true, std::memory_order_release);
-        LOG("Halo 4 experimental world contact Stage 3 LIVE: official H4EK "
+        LOG("Halo 4 experimental world contact Stage 4 LIVE: official H4EK "
             "PhysicsRayCast is uniquely verified at retail RVA 0x%X with "
             "all four internal call edges pinned; retail clear-line wrapper "
             "RVA 0x%X pins the engine-owned 0x%08X/0x%08X filter pair; "
-            "the rejected arbitrary-worker call is dormant; a bounded wrist "
-            "query can run only immediately after Halo 4 completes its own "
-            "clear-line call in that same engine context",
+            "the raycast itself is hooked and its original always runs first; "
+            "authored Storm-hand/held-weapon extrema may query only after an "
+            "engine dynamic-inclusive ray completes in that context; native "
+            "object motion RVA 0x%X is %s and physical melee remains off",
             kHalo4PhysicsRayCastRva, kHalo4WorldLineTestRva,
             kHalo4WorldLineCollisionFlags,
-            kHalo4WorldLineAdditionalFlags);
-        return true;
-    }
-
-    void Halo4DisableWorldCollisionAfterFailure(const char* reason)
-    {
-        g_halo4WorldCollision.failures.fetch_add(
-            1, std::memory_order_relaxed);
-        g_halo4WorldCollision.installed.store(
-            false, std::memory_order_release);
-        Halo4ClearCollisionCorrection(0, g_halo4WorldCollision.generation);
-        Halo4ClearCollisionCorrection(1, g_halo4WorldCollision.generation);
-        LOG("Halo 4 experimental world contact FAILED OPEN (%s): only "
-            "collision/clamping is disabled; the existing camera, hands, "
-            "weapon, HUD, reticle, effects and OpenXR session continue",
-            reason ? reason : "unknown worker failure");
-    }
-
-    bool Halo4RunWorldCollisionRay(
-        Halo4PhysicsRayCastInput& input,
-        Halo4PhysicsRayCastResult& output, bool& hit)
-    {
-        hit = false;
-        bool callCompleted = false;
-        __try
-        {
-            hit = g_halo4WorldCollision.rayCast(&input, &output);
-            callCompleted = true;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            callCompleted = false;
-        }
-        g_halo4WorldCollision.queries.fetch_add(
-            1, std::memory_order_relaxed);
-        if (!callCompleted)
-        {
-            Halo4DisableWorldCollisionAfterFailure("engine query exception");
-            return false;
-        }
-        if ((hit && (!std::isfinite(output.fraction) ||
-                     output.fraction < 0.0f || output.fraction >= 1.0f)) ||
-            (!hit && output.fraction != 1.0f))
-        {
-            Halo4DisableWorldCollisionAfterFailure(
-                "invalid PhysicsRayCast result contract");
-            return false;
-        }
+            kHalo4WorldLineAdditionalFlags, kHalo4ObjectSetVelocitiesRva,
+            objectSetVelocitiesPinned ? "LIVE" : "StockFallback");
         return true;
     }
 
     void Halo4WorldCollisionWorkerTick()
     {
-        if (kEnableHalo4WorldCollisionStage3)
-        {
-            const uint32_t failure =
-                g_halo4WorldCollision.hotFailureReason.exchange(
-                    0, std::memory_order_acq_rel);
-            if (failure == kHalo4CollisionFailureWrapperException)
-            {
-                LOG("Halo 4 experimental world contact Stage 3 FAILED OPEN: "
-                    "an engine-context clear-line call raised an exception; "
-                    "only world contact is disabled and the camera, hands, "
-                    "weapon, HUD, reticle, effects and OpenXR continue");
-            }
-            return;
-        }
-        if (!g_halo4WorldCollision.installed.load(
-                std::memory_order_acquire) ||
-            !g_halo4WorldCollision.rayCast)
-            return;
-        const uint32_t generation = g_halo4Camera.generation.load(
-            std::memory_order_acquire);
-        const RuntimeMode mode = TitleAdapter_GetRuntimeMode();
-        const bool gameplay = mode == RuntimeMode::Gameplay ||
-            mode == RuntimeMode::Vehicle || mode == RuntimeMode::Turret;
-        if (!g_halo4Camera.armed.load(std::memory_order_acquire) ||
-            !gameplay || generation != g_halo4WorldCollision.generation)
-        {
-            for (int hand = 0; hand < 2; ++hand)
-            {
-                g_halo4WorldCollision.worker[hand].seeded = false;
-                Halo4ClearCollisionCorrection(hand, generation);
-            }
-            return;
-        }
-
-        const uint64_t now = GetTickCount64();
-        for (int hand = 0; hand < 2; ++hand)
-        {
-            uint32_t targetGeneration = 0;
-            uint64_t targetAtMs = 0;
-            float desired[3]{};
-            auto& state = g_halo4WorldCollision.worker[hand];
-            if (!Halo4ReadCollisionTarget(
-                    hand, targetGeneration, targetAtMs, desired) ||
-                targetGeneration != generation || targetAtMs > now ||
-                now - targetAtMs > kHalo4CollisionPublicationMaxAgeMs)
-            {
-                state.seeded = false;
-                Halo4ClearCollisionCorrection(hand, generation);
-                continue;
-            }
-            if (!state.seeded || state.generation != generation ||
-                Halo4WorldCollisionMovementIsTeleport(
-                    state.accepted, desired,
-                    g_worldScale.load(std::memory_order_acquire)))
-            {
-                state.seeded = true;
-                state.generation = generation;
-                memcpy(state.accepted, desired, sizeof(state.accepted));
-                Halo4ClearCollisionCorrection(hand, generation);
-                g_halo4WorldCollision.resets.fetch_add(
-                    1, std::memory_order_relaxed);
-                continue;
-            }
-
-            // Before trusting short wrist sweeps, prove that this exact
-            // filter and this published coordinate frame can reach the live
-            // level collision scene. A long downward ray from a tracked wrist
-            // is diagnostic only; it never contributes a correction or a
-            // haptic pulse. Retry until one hand sees environment geometry.
-            if (!g_halo4WorldCollision.environmentValidated.load(
-                    std::memory_order_acquire))
-            {
-                Halo4PhysicsRayCastInput calibrationInput{};
-                Halo4PhysicsRayCastResult calibrationOutput{};
-                calibrationInput.profile = kHalo4CollisionProfile;
-                calibrationInput.collisionFlags =
-                    kHalo4WorldLineCollisionFlags;
-                calibrationInput.additionalFlags =
-                    kHalo4WorldLineAdditionalFlags;
-                memcpy(calibrationInput.start, desired,
-                       sizeof(calibrationInput.start));
-                memcpy(calibrationInput.end, desired,
-                       sizeof(calibrationInput.end));
-                const float worldScale =
-                    g_worldScale.load(std::memory_order_acquire);
-                calibrationInput.start[2] += 0.25f * worldScale;
-                calibrationInput.end[2] -= 20.0f * worldScale;
-                bool calibrationHit = false;
-                g_halo4WorldCollision.calibrationQueries.fetch_add(
-                    1, std::memory_order_relaxed);
-                if (!Halo4RunWorldCollisionRay(
-                        calibrationInput, calibrationOutput,
-                        calibrationHit))
-                    return;
-                if (calibrationHit)
-                {
-                    g_halo4WorldCollision.calibrationHits.fetch_add(
-                        1, std::memory_order_relaxed);
-                    g_halo4WorldCollision.environmentValidated.store(
-                        true, std::memory_order_release);
-                }
-                else
-                {
-                    memcpy(state.accepted, desired,
-                           sizeof(state.accepted));
-                    Halo4ClearCollisionCorrection(hand, generation);
-                    continue;
-                }
-            }
-
-            Halo4PhysicsRayCastInput input{};
-            Halo4PhysicsRayCastResult output{};
-            input.profile = kHalo4CollisionProfile;
-            input.collisionFlags = kHalo4WorldLineCollisionFlags;
-            input.additionalFlags = kHalo4WorldLineAdditionalFlags;
-            memcpy(input.start, state.accepted, sizeof(input.start));
-            memcpy(input.end, desired, sizeof(input.end));
-            bool hit = false;
-            if (!Halo4RunWorldCollisionRay(input, output, hit))
-                return;
-
-            const float worldScale =
-                g_worldScale.load(std::memory_order_acquire);
-            const Halo4WorldCollisionResolution resolution =
-                Halo4ResolveWorldCollision(
-                    state.accepted, desired, hit, output.fraction, worldScale);
-            if (!resolution.valid)
-            {
-                Halo4DisableWorldCollisionAfterFailure(
-                    "non-finite collision resolution");
-                return;
-            }
-            memcpy(state.accepted, resolution.accepted,
-                   sizeof(state.accepted));
-            Halo4PublishCollisionCorrection(
-                hand, generation, desired, resolution.correction,
-                resolution.contact);
-            if (resolution.contact)
-            {
-                g_halo4WorldCollision.contacts[hand].fetch_add(
-                    1, std::memory_order_relaxed);
-                VR_PulseContactHaptics(
-                    hand == 0, kHalo4CollisionHapticAmplitude);
-            }
-        }
+        const uint32_t failure =
+            g_halo4WorldCollision.hotFailureReason.exchange(
+                0, std::memory_order_acq_rel);
+        if (!failure) return;
+        if (failure == kHalo4CollisionFailureObjectPushException)
+            LOG("Halo 4 Stage 4 dynamic-object contact FAILED OPEN: native "
+                "object motion raised an exception; hand/weapon world "
+                "clamping, camera, HUD and OpenXR continue");
+        else
+            LOG("Halo 4 Stage 4 world contact FAILED OPEN: engine raycast "
+                "failed contract %u; only world clamping/object push is "
+                "disabled; camera, hands, weapon, HUD, reticle, effects and "
+                "OpenXR continue", failure);
     }
 
     void Halo4ApplyWorldCollision(
@@ -31242,8 +31245,6 @@ namespace
                 std::memory_order_acquire) ||
             !Halo4FloatingTransformValid(target))
             return;
-        Halo4PublishCollisionTarget(hand, generation, target.translation);
-
         uint32_t correctionGeneration = 0;
         uint64_t correctionAtMs = 0;
         float source[3]{}, correction[3]{};
@@ -31279,6 +31280,114 @@ namespace
             g_halo4WorldCollision.applied[hand].fetch_add(
                 1, std::memory_order_relaxed);
         }
+    }
+
+    template <size_t N>
+    uint32_t Halo4BuildAuthoredCollisionExtrema(
+        const BoneMatrix* matrices, const int (&nodes)[N], int wristNode,
+        const float collisionRoot[3], float output[][3])
+    {
+        if (!matrices || wristNode < 0 ||
+            !Halo4WorldCollisionFiniteVector(collisionRoot) ||
+            !Halo4WorldCollisionFiniteVector(matrices[wristNode].translation))
+            return 0;
+        float authored[N][3]{};
+        int authoredCount = 0;
+        for (int node : nodes)
+        {
+            if (node < 0 ||
+                !Halo4WorldCollisionFiniteVector(matrices[node].translation))
+                continue;
+            for (int axis = 0; axis < 3; ++axis)
+                authored[authoredCount][axis] = collisionRoot[axis] +
+                    matrices[node].translation[axis] -
+                    matrices[wristNode].translation[axis];
+            ++authoredCount;
+        }
+        return static_cast<uint32_t>(Halo4SelectWorldCollisionExtrema(
+            collisionRoot, &authored[0][0], authoredCount, output,
+            kHalo4WorldCollisionExtremaCount));
+    }
+
+    void Halo4PublishAuthoredHandCollisionVolumes(
+        const BoneMatrix* solved, int32_t ignoredObjectIndex)
+    {
+        if (!solved || !g_halo4FloatingPair.targetsValid ||
+            !g_halo4FloatingPair.generation)
+            return;
+        const uint32_t rightCount = Halo4BuildAuthoredCollisionExtrema(
+            solved, kHalo4RightHandSubtree, kHalo4RightHandNode,
+            g_halo4FloatingPair.collisionRoot[1],
+            g_halo4FloatingPair.handCollisionSamples[1]);
+        const uint32_t leftCount = Halo4BuildAuthoredCollisionExtrema(
+            solved, kHalo4LeftHandSubtree, kHalo4LeftHandNode,
+            g_halo4FloatingPair.collisionRoot[0],
+            g_halo4FloatingPair.handCollisionSamples[0]);
+        g_halo4FloatingPair.handCollisionSampleCount[1] = rightCount;
+        g_halo4FloatingPair.handCollisionSampleCount[0] = leftCount;
+        g_halo4FloatingPair.collisionIgnoredObjectIndex = ignoredObjectIndex;
+        if (Halo4WorldCollisionFiniteVector(
+                solved[kHalo4RightHandNode].translation))
+        {
+            memcpy(g_halo4FloatingPair.rightSolvedWrist,
+                solved[kHalo4RightHandNode].translation,
+                sizeof(g_halo4FloatingPair.rightSolvedWrist));
+            g_halo4FloatingPair.rightSolvedWristValid = true;
+        }
+        if (rightCount)
+            Halo4PublishCollisionTarget(
+                1, g_halo4FloatingPair.generation,
+                g_halo4FloatingPair.handCollisionSamples[1], rightCount,
+                rightCount, ignoredObjectIndex);
+        if (leftCount)
+            Halo4PublishCollisionTarget(
+                0, g_halo4FloatingPair.generation,
+                g_halo4FloatingPair.handCollisionSamples[0], leftCount,
+                leftCount, ignoredObjectIndex);
+    }
+
+    void Halo4PublishAuthoredWeaponCollisionVolume(
+        const BoneMatrix* moved, int nodeCount)
+    {
+        const uint32_t handCount =
+            g_halo4FloatingPair.handCollisionSampleCount[1];
+        if (!moved || nodeCount <= 0 ||
+            nodeCount > kHalo4FirstPersonBankTransforms || !handCount ||
+            !g_halo4FloatingPair.rightSolvedWristValid)
+            return;
+        float authored[kHalo4FirstPersonBankTransforms][3]{};
+        int authoredCount = 0;
+        for (int node = 0; node < nodeCount; ++node)
+        {
+            if (!Halo4WorldCollisionFiniteVector(moved[node].translation))
+                continue;
+            for (int axis = 0; axis < 3; ++axis)
+                authored[authoredCount][axis] =
+                    g_halo4FloatingPair.collisionRoot[1][axis] +
+                    moved[node].translation[axis] -
+                    g_halo4FloatingPair.rightSolvedWrist[axis];
+            ++authoredCount;
+        }
+        float weapon[kHalo4WorldCollisionExtremaCount][3]{};
+        const int weaponCount = Halo4SelectWorldCollisionExtrema(
+            g_halo4FloatingPair.collisionRoot[1], &authored[0][0],
+            authoredCount, weapon, kHalo4WorldCollisionExtremaCount);
+        float combined[kHalo4WorldCollisionMaxSamples][3]{};
+        uint32_t combinedCount = handCount;
+        memcpy(combined, g_halo4FloatingPair.handCollisionSamples[1],
+            sizeof(float) * handCount * 3);
+        // weapon[0] is the already-published common root. Append only the six
+        // title-authored held-model extrema.
+        for (int sample = 1; sample < weaponCount &&
+             combinedCount < kHalo4WorldCollisionMaxSamples; ++sample)
+        {
+            memcpy(combined[combinedCount], weapon[sample],
+                sizeof(combined[combinedCount]));
+            ++combinedCount;
+        }
+        Halo4PublishCollisionTarget(
+            1, g_halo4FloatingPair.generation, combined, combinedCount,
+            handCount, g_halo4FloatingPair.collisionIgnoredObjectIndex);
     }
 
     // THE 28 BONES BETWEEN THE JOINTS, which the shared solver does not move.
@@ -32637,10 +32746,18 @@ namespace
             if (g_halo4FloatingPair.leftTargetValid)
                 g_halo4FloatingPair.leftTargetWorld=selectedLeft;
         }
+        if (g_halo4FloatingPair.rightTargetValid)
+            memcpy(g_halo4FloatingPair.collisionRoot[1],
+                g_halo4FloatingPair.rightTargetWorld.translation,
+                sizeof(g_halo4FloatingPair.collisionRoot[1]));
+        if (g_halo4FloatingPair.leftTargetValid)
+            memcpy(g_halo4FloatingPair.collisionRoot[0],
+                g_halo4FloatingPair.leftTargetWorld.translation,
+                sizeof(g_halo4FloatingPair.collisionRoot[0]));
         // The final visible carriers are the only positions published to the
-        // cold collision worker. A fresh, same-generation correction changes
-        // translation only; the weapon already inherits the right-hand rigid
-        // motion and no alternate palette or camera path is introduced.
+        // collision transaction. A fresh, same-generation correction changes
+        // translation only; the authored hand/weapon volume is published after
+        // the exact palettes are built below.
         if (g_halo4FloatingPair.rightTargetValid)
             Halo4ApplyWorldCollision(
                 1, g_halo4FloatingPair.generation,
@@ -32758,7 +32875,8 @@ namespace
     // direct world delta is staged only after both hands and the final mask
     // validate, then consumed by the immediately following held model.
     Halo4VrikStage Halo4BuildFloatingHandsPalette(
-        const BoneMatrix* source, BoneMatrix* solved, int nodeCount)
+        const BoneMatrix* source, BoneMatrix* solved, int nodeCount,
+        int32_t objectIndex)
     {
         if (!source || !solved ||
             nodeCount!=kHalo4StormFpBodyNodeCount ||
@@ -32919,6 +33037,7 @@ namespace
         staged.preparedSerial=g_halo4FloatingPair.preparedSerial;
         staged.rightHandDeltaWorld=rightDeltaWorld;
         staged.expectedHeldSource=heldSource;
+        Halo4PublishAuthoredHandCollisionVolumes(solved, objectIndex);
         return Halo4VrikStage::Solved;
     }
 
@@ -32964,6 +33083,7 @@ namespace
                 return false;
             moved[node]=result;
         }
+        Halo4PublishAuthoredWeaponCollisionVolume(moved, nodeCount);
         return true;
     }
 
@@ -33051,7 +33171,7 @@ namespace
                         std::memory_order_relaxed);
                     const Halo4VrikStage stage=Halo4BuildFloatingHandsPalette(
                         inputObjectNodeMatrices,g_halo4VrikScratch,
-                        identity.nodeCount);
+                        identity.nodeCount,objectIndex);
                     if (stage==Halo4VrikStage::Solved)
                     {
                         selected=g_halo4VrikScratch;
@@ -36707,8 +36827,8 @@ namespace
             MH_DisableHook(g_halo4Camera.wrapperTarget);
         if (g_halo4Camera.modelSkinningTarget)
             MH_DisableHook(g_halo4Camera.modelSkinningTarget);
-        if (g_halo4WorldCollision.worldLineTarget)
-            MH_DisableHook(g_halo4WorldCollision.worldLineTarget);
+        if (g_halo4WorldCollision.rayCastTarget)
+            MH_DisableHook(g_halo4WorldCollision.rayCastTarget);
         // Both detours must have returned before a trampoline is freed or the
         // module reference is released.
         if (g_halo4Camera.activeCallbacks.load(std::memory_order_acquire) != 0)
@@ -36725,8 +36845,8 @@ namespace
             MH_RemoveHook(g_halo4Camera.wrapperTarget);
         if (g_halo4Camera.modelSkinningTarget)
             MH_RemoveHook(g_halo4Camera.modelSkinningTarget);
-        if (g_halo4WorldCollision.worldLineTarget)
-            MH_RemoveHook(g_halo4WorldCollision.worldLineTarget);
+        if (g_halo4WorldCollision.rayCastTarget)
+            MH_RemoveHook(g_halo4WorldCollision.rayCastTarget);
         const MH_STATUS dispatcherRemoved = g_halo4Camera.cuiReticleTarget
             ? MH_RemoveHook(g_halo4Camera.cuiReticleTarget)
             : MH_ERROR_NOT_CREATED;
@@ -36779,9 +36899,11 @@ namespace
         g_halo4OrigModelSkinning = nullptr;
         g_halo4OrigCuiRenderCommand = nullptr;
         g_halo4OrigCuiGameplayRender = nullptr;
-        g_halo4WorldCollision.worldLineTarget = nullptr;
-        g_halo4WorldCollision.originalWorldLineTest = nullptr;
-        g_halo4WorldCollision.rayCast = nullptr;
+        g_halo4WorldCollision.rayCastTarget = nullptr;
+        g_halo4WorldCollision.originalRayCast = nullptr;
+        g_halo4WorldCollision.objectSetVelocities = nullptr;
+        g_halo4WorldCollision.objectPushInstalled.store(
+            false, std::memory_order_release);
         g_halo4WorldCollision.generation = 0;
         Halo4ResetWorldCollisionState(0);
         g_halo4RenderModelTagIndexPointerSlot=0;
@@ -37345,10 +37467,13 @@ namespace
             g_halo4WorldCollision.queries.exchange(
                 0, std::memory_order_relaxed);
         const uint64_t collisionLeft =
-            g_halo4WorldCollision.contacts[0].exchange(
+            g_halo4WorldCollision.handContacts[0].exchange(
                 0, std::memory_order_relaxed);
         const uint64_t collisionRight =
-            g_halo4WorldCollision.contacts[1].exchange(
+            g_halo4WorldCollision.handContacts[1].exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionWeapon =
+            g_halo4WorldCollision.weaponContacts.exchange(
                 0, std::memory_order_relaxed);
         const uint64_t collisionAppliedLeft =
             g_halo4WorldCollision.applied[0].exchange(
@@ -37361,37 +37486,51 @@ namespace
                 0, std::memory_order_relaxed);
         const uint64_t collisionFailures =
             g_halo4WorldCollision.failures.load(std::memory_order_relaxed);
-        const uint64_t collisionCalibrationQueries =
-            g_halo4WorldCollision.calibrationQueries.exchange(
-                0, std::memory_order_relaxed);
-        const uint64_t collisionCalibrationHits =
-            g_halo4WorldCollision.calibrationHits.exchange(
-                0, std::memory_order_relaxed);
         const uint64_t collisionEngineContextCalls =
             g_halo4WorldCollision.engineContextCalls.exchange(
                 0, std::memory_order_relaxed);
-        LOG("Halo 4 experimental world contact Stage 3: %s; %llu engine-owned "
-            "clear-line callbacks, %llu mod wrapper queries, "
-            "%llu/%llu left/right contacts, %llu/%llu visible corrections, "
-            "%llu seed/teleport resets, %llu/%llu environment calibration "
-            "hits/queries, environment %s, %llu failures in 2s; wrist-point "
-            "sweeps use the official clear-line filter (weapon follows right "
-            "hand); object impulses, ragdoll pushing and physical melee "
-            "remain untouched",
+        const uint64_t collisionDynamicContexts =
+            g_halo4WorldCollision.dynamicContextCalls.exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionFixedContexts =
+            g_halo4WorldCollision.fixedOnlyContextCalls.exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionPushAttempts =
+            g_halo4WorldCollision.objectPushAttempts.exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionPushes =
+            g_halo4WorldCollision.objectPushes.exchange(
+                0, std::memory_order_relaxed);
+        const uint64_t collisionPushFailures =
+            g_halo4WorldCollision.objectPushFailures.load(
+                std::memory_order_relaxed);
+        LOG("Halo 4 experimental world contact Stage 4: %s; %llu engine "
+            "raycasts (%llu dynamic-safe / %llu fixed-only), %llu authored-"
+            "volume probes, %llu/%llu left/right hand contacts, %llu weapon "
+            "contacts, %llu/%llu visible corrections, %llu seed/teleport "
+            "resets, environment %s, %llu ray failures in 2s; object push=%s "
+            "(%llu attempts / %llu completed / %llu failures); physical "
+            "melee and damage remain untouched",
             g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
             static_cast<unsigned long long>(collisionEngineContextCalls),
+            static_cast<unsigned long long>(collisionDynamicContexts),
+            static_cast<unsigned long long>(collisionFixedContexts),
             static_cast<unsigned long long>(collisionQueries),
             static_cast<unsigned long long>(collisionLeft),
             static_cast<unsigned long long>(collisionRight),
+            static_cast<unsigned long long>(collisionWeapon),
             static_cast<unsigned long long>(collisionAppliedLeft),
             static_cast<unsigned long long>(collisionAppliedRight),
             static_cast<unsigned long long>(collisionResets),
-            static_cast<unsigned long long>(collisionCalibrationHits),
-            static_cast<unsigned long long>(collisionCalibrationQueries),
             g_halo4WorldCollision.environmentValidated.load(
                 std::memory_order_acquire) ? "VALIDATED" : "unproven",
-            static_cast<unsigned long long>(collisionFailures));
+            static_cast<unsigned long long>(collisionFailures),
+            g_halo4WorldCollision.objectPushInstalled.load(
+                std::memory_order_acquire) ? "LIVE" : "StockFallback",
+            static_cast<unsigned long long>(collisionPushAttempts),
+            static_cast<unsigned long long>(collisionPushes),
+            static_cast<unsigned long long>(collisionPushFailures));
 
         const uint64_t cuiGameplayPasses =
             g_halo4Camera.cuiGameplayPasses.exchange(

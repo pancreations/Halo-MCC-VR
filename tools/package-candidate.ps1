@@ -290,6 +290,8 @@ try {
         $gameSource -notmatch
             'kEnableHalo4WorldCollisionStage3\s*=\s*false' -or
         $gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage4\s*=\s*true' -or
+        $gameSource -notmatch
             'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
         $gameSource -notmatch
             'kHalo4WorldLineFilterGlobalRva\s*=\s*0x2FFB0B8' -or
@@ -299,15 +301,16 @@ try {
             'kHalo4WorldLineAdditionalFlags\s*=\s*0x00005185' -or
         $gameSource -notmatch
             'liveWorldLineFilter\s*==\s*kHalo4WorldLineFilterPair' -or
+        $gameSource -notmatch 'Halo4PhysicsRayCastDetour' -or
         $gameSource -notmatch
-            'Halo4WorldLineTestDetour' -or
+            'originalRayCast\s*\(\s*&input\s*,\s*&output\s*\)' -or
         $gameSource -notmatch
-            'originalWorldLineTest\s*\(\s*start\s*,\s*end\s*,\s*-1\s*\)' -or
+            'originalFlags\s*&\s*kHalo4CollisionFixedObjectsOnly' -or
         $gameSource -notmatch
-            'kHalo4CollisionBinarySearchSteps\s*=\s*6' -or
-        $gameSource -notmatch
-            'if\s*\(kEnableHalo4WorldCollisionStage3\)') {
-        throw 'H4 world-contact dormant gate failed: a headset-rejected collision stage is enabled or its retained evidence path is missing.'
+            'kHalo4ObjectSetVelocitiesRva\s*=\s*0x5D1580' -or
+        $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
+        $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume') {
+        throw 'H4 world-contact Stage 4 gate failed: rejected stages, live raycast context, authored volume publication, or optional object-motion proof is missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -376,7 +379,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-stage3-engine-context',
+        'h4-world-contact-stage4-authored-volume',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -453,9 +456,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'H4-WORLD-CONTACT-STAGES1-3-DORMANT'
-            status = 'NO_ACTIVE_WORLD_CONTACT_CANDIDATE'
-            behavior = 'c-h2-92-c-h4-58-with-rejected-world-contact-stages-dormant'
+            id = 'H4-WORLD-CONTACT-STAGE4-AUTHORED-VOLUME'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            behavior = 'c-h2-92-c-h4-58-plus-stage4-authored-volume-world-contact'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -547,11 +550,12 @@ try {
             two_hand_left_pose =
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
             world_contact = [ordered]@{
-                enabled = $false
-                stage = 0
+                enabled = $true
+                stage = 4
                 rejected_stage1_enabled = $false
                 rejected_stage2_enabled = $false
-                scope = 'halo4-official-clear-line-filter'
+                rejected_stage3_enabled = $false
+                scope = 'halo4-authored-hand-and-held-model-volume'
                 query = 'h4ek-physics-ray-cast'
                 retail_query_rva = '0x001C1D4C'
                 clear_line_wrapper_rva = '0x000F4218'
@@ -559,16 +563,17 @@ try {
                 collision_flags = '0x0002D009'
                 additional_flags = '0x00005185'
                 filter_identity = 'h4ek-and-retail-clear-line-wrapper-plus-live-global-value'
-                environment_calibration = 'diagnostic-20m-downward-ray-required-before-corrections'
-                execution_context = 'none-stage3-rejected-zero-live-gameplay-callbacks'
+                environment_calibration = 'first-real-authored-volume-hit-is-reported'
+                execution_context = 'post-original-live-physics-raycast-dynamic-inclusive-only'
                 arbitrary_worker_physics_calls = $false
-                query_interval_ms = 50
-                hit_fraction_resolution = 'six-step-clear-prefix-binary-search'
+                query_interval_ms = 33
+                hit_fraction_resolution = 'native-result-fraction-with-world-scaled-skin'
                 render_thread_work = 'lock-free-target-and-correction-publication-only'
-                collision_shape = 'left-and-right-wrist-points'
-                held_weapon_behavior = 'rigidly-follows-corrected-right-wrist-no-barrel-volume-yet'
-                object_impulses = $false
-                ragdoll_impulses = $false
+                collision_shape = 'actual-storm-hand-and-held-model-node-root-plus-six-extrema'
+                held_weapon_behavior = 'authored-held-node-volume-shares-right-hand-correction'
+                object_motion_rva = '0x005D1580'
+                object_impulses = 'bounded-native-linear-velocity-no-angular-or-damage-write'
+                ragdoll_impulses = 'same-optional-native-object-motion-path-when-ray-result-has-object-index'
                 physical_melee = $false
                 haptic_amplitude = 0.18
                 haptic_policy = 'per-hand-peak-merged-by-max-with-stock-game-rumble'
@@ -902,7 +907,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 world-contact Stages 1 through 3 are headset-rejected and compiled dormant. Stage 3 installed safely but its clear-line wrapper received zero callbacks in ordinary campaign gameplay. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Halo 4 world-contact Stage 4 test: rejected Stages 1 through 3 stay dormant. The live PhysicsRayCast hook preserves every original call, borrows only a just-proven dynamic-inclusive engine context, sweeps actual Storm-hand and held-model node extrema, applies one bounded common correction plus per-hand haptics, and optionally moves a hit object through the independently verified native velocity/wake helper. Physical melee and damage remain disabled. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
