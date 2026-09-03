@@ -550,3 +550,29 @@ collision untouched. Telemetry separately reports qualifying dynamic contacts,
 emitted native-input pulses, cooldown suppressions, and peak qualifying speed,
 so a headset result can distinguish threshold/filter failure from a downstream
 control-mapping problem.
+
+### Stage 7 headset rejection (2026-09-03)
+
+The user's Steam / SteamVR-Oculus / 120 Hz run loaded exact source
+`7cd745338cdbe0f0b9268250cee0f721bd3e9567`. The supplied log has SHA-256
+`907E772D27897846B65A9C472E8CC279AFDBCB64F2BAE0192FEBB4A68945F466`.
+The menu toggle and slider worked, but the user's hand passed through living
+enemies and no physical melee occurred.
+
+The telemetry makes the failure boundary conclusive. Across 37 windows, 35
+with physical melee enabled, the user lowered the threshold from 1.20 through
+0.61 to the minimum 0.30 m/s. The system ran 37,294 authored-volume probes and
+reported 57 weapon/world contacts, but zero hand contacts, zero object-push
+attempts, zero qualifying dynamic contacts, zero native-input pulses, and zero
+cooldown suppressions. Consequently the B mapping and native melee action were
+never reached. The accepted clear-line filter did exactly what Stage 6 needs
+for scenery, but did not admit the living enemy body as a dynamic result for
+this purpose. Lowering the threshold or changing the output button cannot fix
+an absent target identity.
+
+Stage 7 is compiled dormant before a successor. Its menu/config storage and
+implementation remain inert for evidence, while the accepted Stage 6 world
+collision transaction stays live. A successor must obtain a unit through Halo
+4's own melee target/acquisition path or another official H4EK-proven unit
+query; it must not guess collision-filter bits or write damage directly from
+the scenery ray callback.

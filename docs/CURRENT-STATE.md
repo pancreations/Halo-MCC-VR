@@ -1,5 +1,20 @@
 # Current state
 
+> **HALO 4 PHYSICAL MELEE STAGE 7 REJECTED AND DISABLED
+> (user headset, 2026-09-03).** Exact source
+> `7cd745338cdbe0f0b9268250cee0f721bd3e9567`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The nested controls appeared,
+> but physical swings passed through enemies and caused no melee. Across 37
+> telemetry windows (35 enabled), including the minimum 0.30 m/s threshold,
+> the log records 37,294 authored probes, 57 weapon/world contacts, zero hand
+> contacts, zero dynamic-object identities/push attempts, zero qualifying melee
+> contacts, and zero pulses. The Stage 7 dependency was wrong: Halo 4's
+> clear-line filter never admitted the enemy body, so neither speed nor input
+> mapping was reached. The behavior is compiled dormant before a successor;
+> accepted Stage 6 world collision remains live. Log SHA-256:
+> `907E772D27897846B65A9C472E8CC279AFDBCB64F2BAE0192FEBB4A68945F466`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 PHYSICAL MELEE STAGE 7 READY FOR HEADSET TEST
 > (2026-09-03).** Behavior commit
 > `a4f5e927535a053524574f94c95687ff5e7b74b4`. The accepted Stage 6 authored

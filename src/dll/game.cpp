@@ -30528,7 +30528,7 @@ namespace
     // geometry. A dynamic-object contact above the configured raw authored
     // sample speed emits the same native B melee input used in the accepted
     // headset configuration (the supplied logs record those manual B edges).
-    constexpr bool kEnableHalo4PhysicalMeleeStage7 = true;
+    constexpr bool kEnableHalo4PhysicalMeleeStage7 = false;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
@@ -30536,7 +30536,7 @@ namespace
     static_assert(!kEnableHalo4WeaponWorldCollisionStage4);
     static_assert(!kEnableHalo4WeaponWorldCollisionStage5);
     static_assert(kEnableHalo4WeaponWorldCollisionStage6);
-    static_assert(kEnableHalo4PhysicalMeleeStage7);
+    static_assert(!kEnableHalo4PhysicalMeleeStage7);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
