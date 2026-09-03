@@ -400,7 +400,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-stage6-authored-weapon-bounds',
+        'h4-world-contact-stage7-physical-melee',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -477,9 +477,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'H4-WORLD-CONTACT-STAGE4-AUTHORED-VOLUME'
+            id = 'H4-WORLD-CONTACT-STAGE7-PHYSICAL-MELEE'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'c-h2-92-c-h4-58-plus-stage4-authored-volume-world-contact'
+            behavior = 'accepted-stage6-authored-world-contact-plus-opt-in-native-input-physical-melee'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -946,7 +946,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 world-contact Stage 6 test: accepted hand collision, haptics, dynamic-object response and the shared default-off toggle are preserved. The rejected five-node weapon proxy stays dormant. Runtime checksum selects one of 39 official H4EK first-person render-model bounds and publishes eight corners plus six face centres with fixed sample identity; unknown models fail open to hand-only collision. Physical melee and damage remain disabled. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Halo 4 physical-melee Stage 7 test: accepted Stage 6 hand/weapon collision, haptics, dynamic-object response, exact filter, cadence, contact skin and shared default-off world-collision toggle are preserved. A nested default-off physical-melee toggle qualifies non-player dynamic contacts from raw authored hand/weapon speed (default 1.20 m/s, adjustable 0.30-3.00) and emits a 120 ms native B-input pulse with a 600 ms cooldown. Halo 4 retains ownership of target selection, authored damage, animation, sound, ragdoll response and networking. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
