@@ -30500,16 +30500,17 @@ namespace
     // a successor must publish exactly one stable right-side volume per held
     // record while preserving the accepted hand/haptic/object path.
     constexpr bool kEnableHalo4WeaponWorldCollisionStage4 = false;
-    // Stage 5 publishes the cached right hand and held-model extrema once,
-    // together, from the held-record boundary. That preserves sample identity
-    // across raycast ticks instead of reseeding between two palette callbacks.
-    constexpr bool kEnableHalo4WeaponWorldCollisionStage5 = true;
+    // Headset-rejected on 2026-09-03: Stage 5 fixed the alternating-publication
+    // reseeds and preserved the accepted hand path, but an assault rifle's five
+    // animated node origins do not describe its visible barrel/stock mesh. Keep
+    // that weapon proxy dormant; the right-hand-only fallback remains live.
+    constexpr bool kEnableHalo4WeaponWorldCollisionStage5 = false;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
     static_assert(kEnableHalo4WorldCollisionStage4);
     static_assert(!kEnableHalo4WeaponWorldCollisionStage4);
-    static_assert(kEnableHalo4WeaponWorldCollisionStage5);
+    static_assert(!kEnableHalo4WeaponWorldCollisionStage5);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;

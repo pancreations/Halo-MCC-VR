@@ -1,5 +1,22 @@
 # Current state
 
+> **HALO 4 WORLD CONTACT STAGE 5 HAND PATH ACCEPTED / WEAPON PROXY
+> REJECTED (user headset, 2026-09-03).** Exact source
+> `ae96c406dae08301579490be8f9042911de38b1a`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The user confirmed the shared
+> toggle works, hand collision is materially more solid, and the previously
+> accepted hand/haptic/object behavior remains good. The assault-rifle barrel
+> still passed through a rock. Across 20 enabled telemetry windows the exact
+> log records 329,193 engine callbacks, 10,664 authored probes, 20/24 hand
+> contacts, 66 nominal weapon-node contacts, 43/200 applied corrections, 231
+> reseeds and zero failures. Runtime identity reports only five nodes for the
+> assault rifle (`0x1814181C`); those animated origins cannot represent its
+> visible barrel and stock. Stage 5's weapon proxy is disabled separately while
+> the accepted Stage 4 hand transaction stays live. Physical melee remains off.
+> Log SHA-256:
+> `0E61F973DA010D0BB95FCB49467A97CAD24129A344446825F9923EB1308019CF`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 WORLD CONTACT STAGE 5 READY FOR HEADSET TEST (2026-09-03).**
 > Stage 4's accepted hand collision, haptics, and dynamic-object response are
 > unchanged. The rejected weapon publication is replaced by one stable

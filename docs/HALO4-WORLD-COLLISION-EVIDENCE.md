@@ -403,3 +403,24 @@ old correction can be consumed. Other titles ignore the option until they
 gain their own evidence-backed implementation. The Stage 4 hand-volume,
 haptic, exact raycast/filter binding, dynamic-object helper, bounds, cadence,
 and feature-local fail-open behavior are otherwise unchanged.
+
+### Stage 5 partial headset acceptance / weapon rejection (2026-09-03)
+
+The user's Steam / SteamVR-Oculus / 120 Hz run loaded exact source
+`ae96c406dae08301579490be8f9042911de38b1a`. The supplied log has SHA-256
+`0E61F973DA010D0BB95FCB49467A97CAD24129A344446825F9923EB1308019CF`.
+The user confirmed that the toggle works, collision is materially more solid,
+and the hand path is a good baseline. The assault-rifle barrel still passed
+through a rock, so the weapon portion is rejected while the accepted hand,
+haptic, and object-response portions remain protected.
+
+Across 20 enabled telemetry windows the log totals 329,193 engine raycast
+callbacks, 10,664 authored-volume probes, 20/24 left/right hand contacts, 66
+nominal weapon contacts, 43/200 visible left/right corrections, 231 reseeds,
+and zero ray or object-push failures. The held render-model identity is the
+assault-rifle checksum `0x1814181C` with only five animated nodes. Contacts at
+five node origins prove the Stage 5 publication ran; they cannot establish a
+collision proxy over the visible barrel and stock between and beyond those
+origins. Stage 5's animated-node weapon proxy is therefore compiled dormant in
+its own revert commit. A successor must use title-authored model geometry or
+bounds, keep unknown models hand-only, and leave physical melee disabled.
