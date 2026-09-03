@@ -817,3 +817,91 @@ wins). This ordering is not independently confirmed by disassembly. New
 telemetry (`framing reasserts` alongside the existing `exact capture OM
 reroutes`) makes a silent reassert failure visible in the next log even if the
 result is still wrong.
+
+## C-H4-54 reticle/helmet transform separation (2026-09-01)
+
+The Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz C-H4-53 log supplied at
+13:35 records 139 main gameplay CUI passes and 417 type-`0x28` begin markers
+in one window, with all 417 reported as native hides. The 3.000 marker/pass
+ratio repeats. The user's simultaneous headset observation was that the
+authored helmet frame was absent while the rest of the HUD worked. The same
+run changed `config-visible` to `config-hidden` and back, but every sample
+remained `helmet=stock-fallback`; the attempted `helmet_armor` lookup was not
+a live HUD control and is rejected.
+
+The H4EK `ReticuleOffsetContainerWidget` evidence at lines 250-261 above is
+the positive identity available in the command stream: only that producer
+constructs payload float2 `{+/-0.0f, authoredY}`. C-H4-54 therefore narrows
+both visible native-reticle suppression and capture selection to a readable
+type-`0x28`, size-`0x0C` payload whose X is finite and exactly `+/-0.0f`.
+Unreadable, non-finite, or nonzero-X payloads are not reticles and stay stock
+under the default configuration.
+
+The C-H4-54 helmet toggle is a headset-unaccepted candidate based on the
+measured three-marker boundary: with `halo4_helmet=1`, the two non-reticle
+transforms stay stock; with `halo4_helmet=0`, only those two use the same
+offscreen transform operation that C-H4-53 already applied to all three.
+Whether those two transforms exactly comprise the authored helmet/visor frame
+is the pending headset test; it is not recorded as an accepted engine fact.
+Failure remains local to the optional CUI feature and never disarms the camera,
+stereo, hands, effects, HUD, or OpenXR.
+
+### C-H4-54 headset result
+
+The 2026-09-01 Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz test of source
+`18111adf27fbfccd508baec744262bb9387eb236` rejected both premises above: the
+authored native reticle was still not restored, the helmet frame remained
+absent, and changing the helmet option had no visible effect. The zero-X
+transform classifier and transform-based helmet control are therefore negative
+results, not engine facts. Commit `3470728` disabled both behaviors before the
+next candidate.
+
+## C-H4-55 stock replay canvas and exact visor shader (2026-09-01)
+
+The last-known-good Halo 4 native-reticle log supplied for source
+`bda7ecb93cdfcc982469e8ba92f888e05490511a` contains nonblank authored uploads
+(six uploaded frames / 830 art pixels in one report) on a measured stock CUI
+base near `-1456.000/818.772`. The rejected C-H4-54 log instead used the
+Stage 3X visible-HUD base near `-763.818/336.072` and did not restore the
+native reticle. C-H4-55 therefore records the private replay transform
+separately and supplies that stock canvas to the existing capture framing;
+Stage 3X remains limited to the normal visible pass.
+
+The supplied known-good `7a24814` log identifies Halo 4's authored visor frame
+by exact 3DMigoto pixel-shader hash `4BE62AC49C2BF210`. It explicitly reports
+that no CUI/radar property is modified and that disabling the checkbox
+suppresses only that exact visor shader. Disassembly of the supplied V6 donor
+matches the log: CreatePixelShader computes unseeded 64-bit FNV-1 and
+PSSetShader nulls only the shader argument on an exact registered-pointer match,
+preserving the context and class-instance arguments. This is positive evidence
+for the C-H4-55 implementation, but its source-native port remains unaccepted
+until the user's headset test.
+
+### C-H4-55 headset result and C-H4-56 visor-root correction
+
+The 2026-09-01 Steam / SteamVR OpenXR 2.17.7 / Oculus 120 Hz test of source
+`6cccbc8ec65d4f690869f8fcf6224d151f39f1cd` confirmed that C-H4-55 restored
+the exact native reticle and left the other Halo 4 behavior in good standing.
+The authored helmet frame alone remained absent.
+
+The log proves this is not a shader-discovery or checkbox failure. It registers
+exact hash `4BE62AC49C2BF210`; configuration changes between visible and hidden;
+and exact suppressions rise only on hidden intervals. A visible interval still
+renders no helmet, so the geometry is lost before `PSSetShader`.
+
+The headset-working V6 donor resolves that earlier boundary. Its `.h4hs+0x2EA`
+wrapper admits HUD affine through the complete gameplay-CUI frontend callback
+depth, and its native-curvature bridge uses the same depth. The Stage 3X
+recovery notes explicitly map that donor TLS field to
+`g_halo4CuiFrontendCallbackDepth`. C-H4-55 narrowed its source port to
+`gameplayPassActive`, which is the reticle-owned child scope rather than the
+complete frontend. H4EK proves the helmet is sibling CUI polyart under
+`container_visor` / `container_visor_glow`; it therefore kept flat-screen edge
+coordinates and could remain outside the VR eye crop while the exact shader
+continued to bind.
+
+C-H4-56 restores complete frontend-depth admission for the existing Halo 4
+affine and curvature paths. It explicitly excludes the private native-reticle
+replay and pause presentation, so the now-confirmed reticle canvas and stock
+pause behavior are unchanged. The shader hook and checkbox are unchanged.
+This is a headset-unaccepted correction until the user sees the visor return.

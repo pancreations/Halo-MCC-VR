@@ -611,11 +611,25 @@ void ConfigLoad(const wchar_t* path)
         // C-TITLE-1: per-title profile keys, handled by table.
         if (ParseTitleProfileKey(key, val))
             continue;
+        // Keep new keys outside the already-at-limit legacy else-if chain.
+        if (!strcmp(key, "halo4_helmet"))
+        {
+            g_config.halo4_helmet = atoi(val) != 0;
+            continue;
+        }
         // C-H2-85: handled by table, not by the else-if chain below - that
         // chain is at MSVC's block nesting limit and cannot take more arms.
         {
             struct FloatKey { const char* name; float* destination; };
             const FloatKey kFloatKeys[] = {
+                // Stage 3N / V5 compatibility. The current source writes the
+                // expanded `halo2_...` names below, but existing V5 configs
+                // used these two shorter keys for the same Classic-only
+                // visual carrier trim.
+                {"h2_classic_gun_pitch_deg",
+                 &g_config.halo2_classic_gun_pitch_deg},
+                {"h2_classic_gun_yaw_deg",
+                 &g_config.halo2_classic_gun_yaw_deg},
                 {"halo2_classic_gun_pitch_deg",
                  &g_config.halo2_classic_gun_pitch_deg},
                 {"halo2_classic_gun_yaw_deg",
@@ -1206,6 +1220,10 @@ void ConfigSave()
     fprintf(f, "# Left-handed: mirror the Halo 4 hand placement. (default %d)\n",
             d.halo4_hands_mirrored);
     fprintf(f, "halo4_hands_mirrored = %d\n\n", g_config.halo4_hands_mirrored);
+    fprintf(f, "# Halo 4 authored Mjolnir helmet/visor frame. This does not hide\n");
+    fprintf(f, "# shields, radar, ammo, objectives, or the aiming reticle. (default %d)\n",
+            d.halo4_helmet ? 1 : 0);
+    fprintf(f, "halo4_helmet = %d\n\n", g_config.halo4_helmet ? 1 : 0);
     fprintf(f, "# Floating VR-crosshair smoothing only; bullets stay raw.\n");
     fprintf(f, "# (default %.2f, range 0 to 0.95)\n", d.aim_stabilization);
     fprintf(f, "aim_stabilization = %.2f\n\n", g_config.aim_stabilization);
@@ -1272,6 +1290,22 @@ void ConfigSave()
     fprintf(f, "# (defaults 0.00 / 0.00, range -0.3 to 0.3)\n");
     fprintf(f, "gun_right_m = %.2f\n", g_config.base_tunables.gun_right_m);
     fprintf(f, "gun_up_m = %.2f\n\n", g_config.base_tunables.gun_up_m);
+    fprintf(f, "# Halo 2 CLASSIC / original-graphics visual alignment only.\n");
+    fprintf(f, "# Pitch/yaw are the two live F1 controls; Anniversary and the\n");
+    fprintf(f, "# native reticle/shot ray never read any of these values.\n");
+    fprintf(f, "# (pitch/yaw slider range -30 to +30 degrees; defaults 0)\n");
+    fprintf(f, "halo2_classic_gun_pitch_deg = %.2f\n",
+            g_config.halo2_classic_gun_pitch_deg);
+    fprintf(f, "halo2_classic_gun_yaw_deg = %.2f\n",
+            g_config.halo2_classic_gun_yaw_deg);
+    fprintf(f, "halo2_classic_gun_roll_deg = %.2f\n",
+            g_config.halo2_classic_gun_roll_deg);
+    fprintf(f, "halo2_classic_gun_forward_m = %.3f\n",
+            g_config.halo2_classic_gun_forward_m);
+    fprintf(f, "halo2_classic_gun_right_m = %.3f\n",
+            g_config.halo2_classic_gun_right_m);
+    fprintf(f, "halo2_classic_gun_up_m = %.3f\n\n",
+            g_config.halo2_classic_gun_up_m);
     fprintf(f, "# Raise the muzzle flash / bullet spawn point along the gun's\n");
     fprintf(f, "# own up axis, in meters. Reach only. Does NOT change where\n");
     fprintf(f, "# rounds land - only where they appear to come from.\n");
@@ -1528,7 +1562,7 @@ void ConfigSave()
     fprintf(f, "# extra render pass, no measurable cost). 0 = off (default; the window\n");
     fprintf(f, "# behaves exactly as before). CLOSE MCC COMPLETELY and relaunch after\n");
     fprintf(f, "# changing this, the same as resolution_scale.\n");
-    fprintf(f, "# (default %d)\n", d.fit_desktop_window ? 1 : 0);
+    fprintf(f, "# (V5 default %d)\n", d.fit_desktop_window ? 1 : 0);
     fprintf(f, "fit_desktop_window = %d\n\n", g_config.fit_desktop_window ? 1 : 0);
     fprintf(f, "# Let the HEADSET set the frame rate, not your monitor. The VR frame\n");
     fprintf(f, "# is submitted inside MCC's desktop present, so MCC's V-Sync would\n");

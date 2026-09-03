@@ -128,6 +128,13 @@ bool Game_ComputeAimStick(float& outRx, float& outRy);
 // C-H2-41. True only while Halo 2's controller-owned aim/weapon feature is
 // requested; tracking loss still makes each call fail open independently.
 bool Game_Halo2ControllerAimActive();
+// C-H2-89 optional feature transaction. The official H2EK boolean is resolved
+// by name and set only while the Halo 2 VR core owns gameplay. Failure leaves
+// aim assist stock without affecting camera/stereo; teardown restores the
+// captured value.
+bool Game_Halo2TryDisableAimAssist(uintptr_t moduleBase, size_t moduleSize);
+void Game_Halo2MaintainDisabledAimAssist();
+void Game_Halo2RestoreAimAssist();
 // Rotates a move-stick vector so pushing forward walks toward the gaze
 // instead of the hand-steered aim heading. No-op when VR aim is inactive.
 void Game_MapMoveStick(float& mx, float& my);

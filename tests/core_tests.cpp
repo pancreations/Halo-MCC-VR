@@ -31,7 +31,10 @@
 #include "halo2_render_logic.h"
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
+#include "halo4_helmet_shader_logic.h"
+#include "halo4_screen_effect_shader_logic.h"
 #include "halo4_hud_logic.h"
+#include "halo4_restoration_logic.h"
 #include "halo4_parity_trace_logic.h"
 #include "halo4_render_logic.h"
 #include "reach_adapter.h"
@@ -9557,6 +9560,77 @@ int main()
             "Halo 4 HUD layout rejects out-of-range config values");
     }
 
+    {
+        std::array<uint8_t, kHalo4PauseReasonGetterBytes> pauseGetter{
+            0x8B,0x15,0x11,0x22,0x33,0x44,
+            0x65,0x48,0x8B,0x04,0x25,0x58,0x00,0x00,0x00,
+            0x41,0xB8,0x90,0x00,0x00,0x00,0x48,0x8B,0x04,0xD0,
+            0x49,0x8B,0x14,0x00,0x32,0xC0,0x38,0x02,0x74,0x0F,
+            0xB8,0x01,0x00,0x00,0x00,0x66,0xD3,0xE0,0x66,0x85,
+            0x42,0x02,0x0F,0x95,0xC0,0xC3};
+        Check(Halo4PauseReasonGetterMatches(
+                  pauseGetter.data(), pauseGetter.size()),
+            "Halo 4 native pause getter accepts the exact body with only its RIP displacement wildcarded");
+        pauseGetter[22] ^= 1;
+        Check(!Halo4PauseReasonGetterMatches(
+                  pauseGetter.data(), pauseGetter.size()),
+            "Halo 4 native pause getter rejects any fixed-byte drift");
+
+        Check(Halo4EffectDescriptorIsLocalFirstPerson(0x01) &&
+                  Halo4EffectDescriptorIsLocalFirstPerson(0xA3) &&
+                  !Halo4EffectDescriptorIsLocalFirstPerson(0x00) &&
+                  !Halo4EffectDescriptorIsLocalFirstPerson(0xF1),
+            "Halo 4 C50 effect admission keeps only local first-person descriptor families");
+
+        Halo4HudAffine affine{};
+        Check(Halo4ComputeNativeHudAffine(0.43f, 1.22f, 16.0f, affine) &&
+                  std::fabs(affine.vertical - 0.43f) < 0.0001f &&
+                  std::fabs(affine.horizontal - 0.5246f) < 0.0001f &&
+                  std::fabs(affine.heightPixels - 16.0f) < 0.0001f,
+            "Halo 4 native HUD affine matches Stage 3X size/aspect/height semantics");
+
+        Check(Halo4NativeHudAdmitsCuiRoot(1, false, false) &&
+                  Halo4NativeHudAdmitsCuiRoot(2, false, false) &&
+                  !Halo4NativeHudAdmitsCuiRoot(0, false, false) &&
+                  !Halo4NativeHudAdmitsCuiRoot(1, true, false) &&
+                  !Halo4NativeHudAdmitsCuiRoot(1, false, true),
+            "Halo 4 native HUD admits the complete frontend for visor siblings while private reticle replay and pause stay stock");
+
+        Check(halo4_helmet_shader::IsVisorFramingShader(
+                  0x4BE62AC49C2BF210ULL) &&
+                  !halo4_helmet_shader::IsVisorFramingShader(
+                      0x4BE62AC49C2BF211ULL),
+            "Halo 4 helmet toggle admits only the headset-proven V6 visor shader hash");
+        Check(halo4_helmet_shader::ShouldSuppress(
+                  true, true, false, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      true, true, true, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      true, false, false, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      false, true, false, true) &&
+                  !halo4_helmet_shader::ShouldSuppress(
+                      true, true, false, false),
+            "Halo 4 suppresses only the exact visor shader when the live checkbox is off");
+
+        Check(halo4_screen_effect_shader::IsMotionSuckShader(
+                  0x47668A1953271934ULL) &&
+                  !halo4_screen_effect_shader::IsMotionSuckShader(
+                      0x47668A1953271935ULL),
+            "Halo 4 screen-effect bridge admits only the byte-proven H4EK/retail motion-suck shader");
+        Check(halo4_screen_effect_shader::ShouldSuppress(
+                  true, true, true, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      false, true, true, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      true, false, true, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      true, true, false, true) &&
+                  !halo4_screen_effect_shader::ShouldSuppress(
+                      true, true, true, false),
+            "Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only");
+    }
+
     Halo4CuiReticleInstallProof halo4CuiInstall{};
     halo4CuiInstall.transformLayoutProven = true;
     halo4CuiInstall.anchorsMatchedOnce = kHalo4CuiReticleAnchorCount;
@@ -9980,6 +10054,24 @@ int main()
                   fabsf(directHidden.y) < 1.0e-4f &&
                   !Halo4BuildHiddenCuiTranslation(NAN, 1080.0f).valid,
             "Halo 4 native-copy hiding is independent of every aim coordinate");
+        float captureBaseY = 0.0f;
+        float captureHide = 0.0f;
+        Check(Halo4SelectCuiCaptureCanvas(
+                  -1456.0f, 818.772f, -763.818f, 336.072f,
+                  captureBaseY, captureHide) &&
+                  fabsf(captureBaseY - 818.772f) < 1.0e-4f &&
+                  fabsf(captureHide - 5824.0f) < 1.0e-4f,
+            "Halo 4 private reticle capture frames from its stock replay canvas instead of the scaled visible HUD canvas");
+        Check(Halo4SelectCuiCaptureCanvas(
+                  0.0f, 0.0f, -763.818f, 336.072f,
+                  captureBaseY, captureHide) &&
+                  fabsf(captureBaseY - 336.072f) < 1.0e-4f &&
+                  fabsf(captureHide - 3055.272f) < 1.0e-3f,
+            "Halo 4 capture keeps the accepted visible-canvas fallback before its first replay marker");
+        Check(!Halo4SelectCuiCaptureCanvas(
+                  NAN, 0.0f, 0.0f, NAN,
+                  captureBaseY, captureHide),
+            "Halo 4 capture canvas rejects invalid replay and visible samples without affecting camera VR");
         Check(!Halo4MapAimToCuiTranslation(
                    right, 0.0f, 1080.0f, false).valid &&
                   !Halo4MapAimToCuiTranslation(
@@ -12235,8 +12327,8 @@ int main()
     Check(halo4Row && !(halo4Row->capabilities & TitleCapability_ArmIk),
         "Halo 4 withholds ArmIk: C-H4-43 has one rigid no-IK floating-hands "
         "transaction on the proven first-person return site");
-    Check(halo4Row && !(halo4Row->capabilities & TitleCapability_Hud),
-        "Halo 4 withholds Hud while C-H4-44's rejected basis writer is dormant");
+    Check(halo4Row && (halo4Row->capabilities & TitleCapability_Hud),
+        "Halo 4 grants Hud through the restored native CUI-root path while the rejected tag-basis writer stays dormant");
     Check(halo4Row &&
               (halo4Row->capabilities & TitleCapability_CutsceneTheater),
         "Halo 4 advertises CutsceneTheater after its evidence-backed cinematic "
@@ -12316,6 +12408,26 @@ int main()
     Check(std::string_view(RuntimeModeName(RuntimeMode::Vehicle)) == "vehicle",
         "Runtime modes have stable diagnostic names");
 
+    Check(!Halo2ShouldSuppressClassicFirstPersonParticle(0, 0) &&
+              Halo2ShouldSuppressClassicFirstPersonParticle(0, 1) &&
+              Halo2ShouldSuppressClassicFirstPersonParticle(0, 0xFF) &&
+              !Halo2ShouldSuppressClassicFirstPersonParticle(1, 1) &&
+              !Halo2ShouldSuppressClassicFirstPersonParticle(2, 1),
+        "Halo 2 muzzle suppression requires both the live Classic gate and "
+        "a nonzero current-user first-person particle classification");
+
+    {
+        const Config fresh;
+        Check(fresh.show_welcome && fresh.fit_desktop_window &&
+                  fresh.hud_size == 0.43f &&
+                  fresh.base_tunables.hud_size == 0.43f &&
+                  fresh.halo2_classic_gun_yaw_deg == 1.0f &&
+                  fresh.halo2_classic_gun_pitch_deg == -9.5f,
+            "The V5 seed defaults keep the welcome visible, fit the desktop "
+            "window, use the V5 HUD size, and seed the accepted Halo 2 "
+            "Classic yaw/pitch alignment");
+    }
+
     wchar_t tempPath[MAX_PATH]{};
     GetTempPathW(MAX_PATH, tempPath);
     const std::filesystem::path configDir = std::filesystem::path(tempPath) /
@@ -12351,6 +12463,33 @@ int main()
     Check(organizedConfig.find("This ONE file is shared by every supported MCC game") !=
               std::string::npos,
         "The generated config explains that preferences are shared across titles");
+    Check(CountText(organizedConfig, "\nhalo2_classic_gun_pitch_deg = ") == 1 &&
+              CountText(organizedConfig, "\nhalo2_classic_gun_yaw_deg = ") == 1,
+        "The generated config persists the two Halo 2 Classic alignment sliders");
+
+    {
+        std::ofstream file(primary);
+        file << "config_version = 5\n";
+        file << "h2_classic_gun_yaw_deg = 7.5\n";
+        file << "h2_classic_gun_pitch_deg = -4.25\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.halo2_classic_gun_yaw_deg == 7.5f &&
+              g_config.halo2_classic_gun_pitch_deg == -4.25f,
+        "Stage 3N/V5 Halo 2 Classic alignment aliases load into the current fields");
+    ConfigSave();
+    const std::string halo2AlignmentConfig = ReadTextFile(primary);
+    Check(CountText(
+              halo2AlignmentConfig,
+              "\nhalo2_classic_gun_yaw_deg = 7.50") == 1 &&
+              CountText(
+                  halo2AlignmentConfig,
+                  "\nhalo2_classic_gun_pitch_deg = -4.25") == 1 &&
+              halo2AlignmentConfig.find("\nh2_classic_gun_yaw_deg = ") ==
+                  std::string::npos &&
+              halo2AlignmentConfig.find("\nh2_classic_gun_pitch_deg = ") ==
+                  std::string::npos,
+        "Saving migrates the two V5 aliases to one canonical assignment each");
     // C-TITLE-1 (user directive 2026-08-31): the one universal file now
     // carries a per-title profile section for the thirteen weapon/hand/HUD
     // tunables - every game, Halo 2's two renderers separately, and a
@@ -12409,7 +12548,7 @@ int main()
         "vehicle_view_follow", "vehicle_cam_smoothing",
         "vehicle_motion", "vehicle_wheel_max_deg",
         "vehicle_wheel_deadzone_deg",
-        "crosshair", "crosshair_distance_m", "crosshair_size_deg",
+        "halo4_helmet", "crosshair", "crosshair_distance_m", "crosshair_size_deg",
         "reticle_r", "reticle_g", "reticle_b", "kill_reticle",
         "gun_scale", "left_hand_scale", "gun_pitch_deg", "gun_yaw_deg",
         "gun_roll_deg", "gun_forward_m", "muzzle_height_m",
@@ -13110,6 +13249,7 @@ int main()
           g_config.hud_aspect == defaults.hud_aspect &&
           g_config.hud_curvature == defaults.hud_curvature &&
           g_config.hud_vertical_offset == defaults.hud_vertical_offset &&
+          g_config.halo4_helmet == defaults.halo4_helmet &&
           g_config.scope_enabled &&
           g_config.scope_zoom == defaults.scope_zoom &&
           g_config.scope_screen_width_m == defaults.scope_screen_width_m &&
@@ -15743,6 +15883,90 @@ int main()
             "Halo 2 native HUD layout rejects an uncovered FOV and "
             "out-of-range slider values");
     }
+
+    // C-H2-89: pin the official H2EK boolean identity and, importantly, the
+    // lifecycle contract. VR-owned gameplay requests 1; leaving gameplay
+    // returns the exact captured value rather than assuming stock was 0.
+    Check(std::string_view(kHalo2DisableAimAssistDebugVar) ==
+              "sim_disable_aim_assist" &&
+              kHalo2DebugVarTypeBoolean == 5 &&
+              !kHalo2DebugGlobalAimAssistOverrideEnabled &&
+              Halo2AimAssistDebugValueValid(0) &&
+              Halo2AimAssistDebugValueValid(1) &&
+              !Halo2AimAssistDebugValueValid(2) &&
+              Halo2AimAssistDebugValue(true, 0) == 1 &&
+              Halo2AimAssistDebugValue(false, 0) == 0 &&
+              Halo2AimAssistDebugValue(false, 1) == 1,
+        "Halo 2 rejected debug-global aim-assist path remains pinned but "
+        "compiled dormant after its headset StockFallback result");
+
+    // E-H2-77 / C-H2-90: reproduce the official H2EK and pinned-retail
+    // neutral initializer exactly. In particular, preserve the 0x0C..0x17
+    // and 0x1A..0x1B bytes that the engine itself does not initialize.
+    float neutralControl[3] = {1.0f, -2.0f, 3.0f};
+    Halo2AimAssistTargetingResult neutralTargeting{};
+    std::memset(&neutralTargeting, 0xA5, sizeof(neutralTargeting));
+    const bool neutralWritten = Halo2WriteNeutralAimAssistResults(
+        neutralControl, &neutralTargeting);
+    bool scratchPreserved = neutralTargeting.engineScratch1A == 0xA5A5;
+    for (uint8_t value : neutralTargeting.engineScratch)
+        scratchPreserved = scratchPreserved && value == 0xA5;
+    Check(kHalo2AimAssistCalculateRva == 0x00759260 && neutralWritten &&
+              neutralControl[0] == 0.0f && neutralControl[1] == 0.0f &&
+              neutralControl[2] == 0.0f &&
+              neutralTargeting.identifiers[0] == UINT32_MAX &&
+              neutralTargeting.identifiers[1] == UINT32_MAX &&
+              neutralTargeting.identifiers[2] == UINT32_MAX &&
+              neutralTargeting.flags == 0 &&
+              neutralTargeting.magnetismHorizontal == 0.0f &&
+              neutralTargeting.magnetismVertical == 0.0f &&
+              scratchPreserved &&
+              !Halo2WriteNeutralAimAssistResults(
+                  nullptr, &neutralTargeting) &&
+              !Halo2WriteNeutralAimAssistResults(neutralControl, nullptr),
+        "Halo 2 central aim-assist bypass writes the official neutral output "
+        "fields and leaves engine-owned scratch bytes untouched");
+
+    // E-H2-78 / C-H2-91: camera suppression must not erase the independent
+    // engine-selected target that Halo 2 forwards to melee-target-unit.
+    float cameraAssist[3] = {0.25f, -0.5f, 0.75f};
+    Halo2AimAssistTargetingResult retainedTargeting{};
+    std::memset(&retainedTargeting, 0x5A, sizeof(retainedTargeting));
+    const Halo2AimAssistTargetingResult expectedTargeting = retainedTargeting;
+    Check(Halo2SuppressCameraAimAssist(cameraAssist) &&
+              cameraAssist[0] == 0.0f && cameraAssist[1] == 0.0f &&
+              cameraAssist[2] == 0.0f &&
+              std::memcmp(&retainedTargeting, &expectedTargeting,
+                  sizeof(retainedTargeting)) == 0 &&
+              !Halo2SuppressCameraAimAssist(nullptr),
+        "Halo 2 camera-assist suppression zeros only camera control and "
+        "preserves the complete engine-selected targeting result");
+
+    // E-H2-80 / C-H2-92: the controller direction can replace the H2EK-
+    // identified player-control view result only inside the explicit central
+    // aim-assist scope. Invalid or unscoped inputs leave the engine result
+    // byte-for-byte stock.
+    const float controllerTargetRay[3] = {0.6f, 0.0f, 0.8f};
+    float selectedView[3] = {-1.0f, 2.0f, -3.0f};
+    Check(kHalo2AimAssistViewDirectionRva == 0x006C0DF0 &&
+              kHalo2ControllerAimAssistTargetingEnabled &&
+              Halo2OverrideAimAssistViewDirection(
+                  true, controllerTargetRay, selectedView) &&
+              selectedView[0] == controllerTargetRay[0] &&
+              selectedView[1] == controllerTargetRay[1] &&
+              selectedView[2] == controllerTargetRay[2],
+        "Halo 2 scoped aim-assist view helper accepts the normalized "
+        "controller target ray");
+    const float stockView[3] = {0.1f, 0.2f, 0.3f};
+    std::memcpy(selectedView, stockView, sizeof(stockView));
+    const float invalidTargetRay[3] = {2.0f, 0.0f, 0.0f};
+    Check(!Halo2OverrideAimAssistViewDirection(
+              false, controllerTargetRay, selectedView) &&
+              !Halo2OverrideAimAssistViewDirection(
+                  true, invalidTargetRay, selectedView) &&
+              std::memcmp(selectedView, stockView, sizeof(stockView)) == 0,
+        "Halo 2 aim-assist view direction stays stock outside the scope and "
+        "rejects a non-unit controller ray");
 
     if (g_failures == 0)
         std::cout << "HaloMCCVR core tests passed\n";

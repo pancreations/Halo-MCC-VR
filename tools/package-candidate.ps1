@@ -1,10 +1,15 @@
 ﻿[CmdletBinding()]
 param(
     # Force a from-scratch compile. Off by default: the packaged identity comes
-    # from the git commit check and the SHA-256 of the installed files, not from
+    # from the git commit check and the SHA-256 of the packaged files, not from
     # discarding object files, and a clean rebuild cost minutes on every single
     # candidate.
-    [switch]$Clean
+    [switch]$Clean,
+
+    # Packaging is intentionally non-deploying by default. Pass -Install only
+    # for an explicitly requested local deployment after the ZIP has been
+    # reviewed; ordinary headset-test handoffs stop at the candidate package.
+    [switch]$Install
 )
 
 # Halo MCC VR is one cumulative build: Halo 3 + ODST + Halo: Reach + Halo 4,
@@ -13,9 +18,8 @@ param(
 # Reach's camera core is permanent while Halo 4 is still an explicitly
 # unaccepted bring-up line. Optional player-visible features fail open
 # independently. This stages one unaccepted local candidate under out/candidates
-# after a passing build and tests, then automatically installs those
-# exact manifest-verified bytes into the dedicated MCC mod directory. It never
-# launches MCC and never labels rebuilt bytes as an accepted release.
+# after a passing build and tests. It installs only when -Install is supplied,
+# never launches MCC, and never labels rebuilt bytes as an accepted release.
 
 $ErrorActionPreference = 'Stop'
 
@@ -59,37 +63,32 @@ try {
         throw 'Could not resolve the candidate source commit.'
     }
 
-    # This development repository was reconstructed from the complete C50
-    # source ZIP, so the older upstream commit objects named in its evidence
-    # documents are deliberately absent from the local Git object database.
-    # Pin the immutable imported snapshot that contains those cumulative
-    # sources; all behavior-specific gates below still validate the live tree.
-    $importedC50Baseline =
-        'ac6b0a9bcfca8f09f06e32013aed2c64d9b36ae1'
-    & git -C $repoRoot merge-base --is-ancestor $importedC50Baseline $commit
+    # Every unaccepted continuation must descend from the authoritative
+    # user-accepted C-H4-56 source pointer.
+    $acceptedC56Baseline =
+        '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
+    & git -C $repoRoot merge-base --is-ancestor $acceptedC56Baseline $commit
     if ($LASTEXITCODE -ne 0) {
-        throw "Refusing to package: HEAD does not descend from the imported C50 source snapshot $importedC50Baseline."
+        throw "Refusing to package: HEAD does not descend from accepted C-H4-56 source $acceptedC56Baseline."
     }
 
-    # C-H2-55 shared loader-lifecycle and same-generation rehook gate. Game DLL mappings are identities,
-    # never references owned by the mod. A future title adapter must not bring
-    # back the exact refcount/unload race this candidate fixes.
-    $dllSources = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src\dll') `
-        -Filter '*.cpp' -File
-    $dllSourceText = ($dllSources | ForEach-Object {
-        [IO.File]::ReadAllText($_.FullName)
-    }) -join "`n"
-    if ($dllSourceText -match '(?m)^\s*FreeLibrary\s*\(') {
-        throw 'C-H2-55 gate failed: a title-DLL FreeLibrary call remains.'
+    # C-H2-55 observer identity is explicitly non-owning. Do not apply that
+    # rule globally: accepted ODST/Reach cores deliberately own loader pins,
+    # and Halo 2 stereo owns a short cleanup pin while its hooks drain.
+    $halo2ObserverSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo2_observer_6dof.cpp'))
+    if ($halo2ObserverSource -match '(?m)^\s*FreeLibrary\s*\(') {
+        throw 'C-H2-55 gate failed: the Halo 2 observer released a non-owning module identity.'
     }
     $moduleHandleCalls = [regex]::Matches(
-        $dllSourceText, 'GetModuleHandleExW\s*\((?<args>[\s\S]{0,320}?)\)')
+        $halo2ObserverSource,
+        'GetModuleHandleExW\s*\((?<args>[\s\S]{0,320}?)\)')
     foreach ($call in $moduleHandleCalls) {
         $argsText = $call.Groups['args'].Value
         if ($argsText -match 'GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS' -and
                 $argsText -notmatch
                     'GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT') {
-            throw 'C-H2-55 gate failed: a FROM_ADDRESS module lookup still increments the loader refcount.'
+            throw 'C-H2-55 gate failed: a Halo 2 observer FROM_ADDRESS lookup increments the loader refcount.'
         }
     }
     $gameSource = [IO.File]::ReadAllText(
@@ -143,23 +142,135 @@ try {
             'kHalo2C64GenericLeftPresentationEnabled\s*=\s*false') {
         throw 'C-H2-65 gate failed: the rejected C-H2-64 generic alignment is not disabled.'
     }
+    $configHeaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\config.h'))
+    $menuSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\menu.cpp'))
+    $vrSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\vr.cpp'))
+    if ($halo2ObserverSource -notmatch
+            'kHalo2ParticleRendererRva\s*=\s*0x0076DC90' -or
+        $halo2ObserverSource -notmatch
+            'Halo2ShouldSuppressClassicFirstPersonParticle' -or
+        $halo2LogicSource -notmatch
+            'currentUserFirstPerson\s*!=\s*0\s*&&\s*\r?\n\s*Halo2ClassicRenderTreeRuns' -or
+        $menuSource -notmatch 'H2 Classic gun yaw \(deg\)' -or
+        $menuSource -notmatch 'H2 Classic gun pitch \(deg\)' -or
+        $configHeaderSource -notmatch
+            'bool fit_desktop_window\s*=\s*true' -or
+        $configHeaderSource -notmatch 'float hud_size\s*=\s*0\.43f' -or
+        $configHeaderSource -notmatch 'bool show_welcome\s*=\s*true' -or
+        $vrSource -notmatch 'Halo 2 Stage 3AM performance gate') {
+        throw 'C-H2-88 gate failed: Classic muzzle isolation, the two alignment controls, V5 defaults, welcome, or bounded Stage 3AM diagnostics are missing.'
+    }
+    $halo4RestoreLogicSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_restoration_logic.h'))
+    $halo4RestoreAsmSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\halo4_restoration.asm'))
+    $halo4CuiSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_cui_reticle_logic.h'))
+    $halo4HelmetShaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_helmet_shader_logic.h'))
+    $halo4ScreenEffectShaderSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_screen_effect_shader_logic.h'))
+    $d3dSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
+    if ($gameSource -notmatch 'InstallHalo4Restoration' -or
+        $gameSource -notmatch 'kHalo4EffectNegRva\s*=\s*0x1059A2' -or
+        $gameSource -notmatch 'kHalo4PauseReasonRva\s*=\s*0xA0AE4' -or
+        $gameSource -notmatch 'kHalo4HudRootRva\s*=\s*0x3F313C' -or
+        $gameSource -notmatch 'kHalo4CurvatureRva\s*=\s*0x420D7E' -or
+        $gameSource -notmatch 'VR_IsPausePresentationTarget\(\)' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4PauseReasonGetterMatches' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4ComputeNativeHudAffine' -or
+        $halo4RestoreLogicSource -notmatch
+            'Halo4NativeHudAdmitsCuiRoot' -or
+        $gameSource -notmatch
+            'Halo4NativeHudAdmitsCuiRoot\([\s\S]{0,240}g_halo4CuiFrontendCallbackDepth' -or
+        $halo4CuiSource -notmatch 'Halo4SelectCuiCaptureCanvas' -or
+        $gameSource -notmatch 'cuiReticleCaptureBaseX' -or
+        $gameSource -notmatch 'cuiReticleCaptureBaseY' -or
+        $gameSource -notmatch
+            'scope\.captureReplay\s*=\s*true;[\s\S]{0,800}g_halo4HudGameplayThreadId\s*=\s*0;' -or
+        $halo4HelmetShaderSource -notmatch
+            'kVisorFramingHash\s*=\s*0x4BE62AC49C2BF210ULL' -or
+        $d3dSource -notmatch 'PixelShaderSetHook' -or
+        $d3dSource -notmatch 'D3D_Halo4HelmetShaderPathAvailable' -or
+        $halo4RestoreAsmSource -notmatch 'Halo4EffectTransientWrapper' -or
+        $halo4RestoreAsmSource -notmatch 'Halo4CurvatureBridge' -or
+        $configHeaderSource -notmatch 'bool halo4_helmet\s*=\s*true' -or
+        $menuSource -notmatch 'Show Halo 4 helmet frame') {
+        throw 'C-H4-56 gate failed: the full-frontend visor geometry admission, native-reticle replay canvas, exact visor-shader toggle, pause, effects, or adjustable HUD source is missing.'
+    }
+    if ($halo4ScreenEffectShaderSource -notmatch
+            'kMotionSuckHash\s*=\s*0x47668A1953271934ULL' -or
+        $halo4ScreenEffectShaderSource -notmatch 'ShouldSuppress' -or
+        $d3dSource -notmatch 'RegisterHalo4MotionSuckShader' -or
+        $d3dSource -notmatch 'VR_IsStereoEnabled\(\)' -or
+        $d3dSource -notmatch 'D3D_Halo4ScreenEffectShaderPathAvailable' -or
+        $gameSource -notmatch 'screen-fx=%s' -or
+        $coreTestsSource -notmatch
+            'Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only') {
+        throw 'C-H4-57 gate failed: exact H4EK/retail motion-suck identity, Halo-4/stereo isolation, telemetry, or unit coverage is missing.'
+    }
+    if ($gameSource -notmatch 'Halo4EffectCavePatch' -or
+        $gameSource -notmatch
+            'Halo4RestoreOwnedPatch\s*\(\s*base \+ kHalo4EffectCaveRva,\s*cave,\s*caveStock\)' -or
+        $gameSource -notmatch
+            'Halo4PatchMatches\s*\(\s*base \+ kHalo4EffectCaveRva,\s*caveStock\)') {
+        throw 'C-H4-58 gate failed: Stage 3AI entry routes and their owned cave do not have symmetric teardown verification.'
+    }
+    if ($halo2LogicSource -notmatch
+            'kHalo2DebugGlobalAimAssistOverrideEnabled\s*=\s*false' -or
+        $halo2LogicSource -notmatch
+            'kHalo2AimAssistCalculateRva\s*=\s*0x00759260' -or
+        $halo2LogicSource -notmatch
+            'kHalo2AimAssistViewDirectionRva\s*=\s*0x006C0DF0' -or
+        $halo2LogicSource -notmatch
+            'kHalo2ControllerAimAssistTargetingEnabled\s*=\s*true' -or
+        $halo2LogicSource -notmatch 'Halo2WriteNeutralAimAssistResults' -or
+        $halo2LogicSource -notmatch 'Halo2SuppressCameraAimAssist' -or
+        $halo2LogicSource -notmatch 'Halo2OverrideAimAssistViewDirection' -or
+        $halo2ObserverSource -notmatch 'kAimAssistCalculatePattern' -or
+        $halo2ObserverSource -notmatch 'kAimAssistViewDirectionPattern' -or
+        $halo2ObserverSource -notmatch 'Halo2AimAssistCalculateDetour' -or
+        $halo2ObserverSource -notmatch
+            'Halo2AimAssistViewDirectionDetour' -or
+        $halo2ObserverSource -notmatch
+            'Halo 2 controller melee targeting Installed' -or
+        $halo2ObserverSource -notmatch 'g_aimAssistTargetSelected' -or
+        $halo2ObserverSource -notmatch
+            'camera/stereo/aim/hands/HUD/OpenXR' -or
+        $coreTestsSource -notmatch
+            'scoped aim-assist view helper accepts the normalized') {
+        throw 'C-H2-92 gate failed: the rejected debug global is not dormant or controller-scoped native target selection, accepted camera suppression, fail-open isolation, telemetry, or unit coverage is missing.'
+    }
+    if ($configHeaderSource -notmatch
+            'halo2_classic_gun_pitch_deg\s*=\s*-9\.5f' -or
+        $configHeaderSource -notmatch
+            'halo2_classic_gun_yaw_deg\s*=\s*1\.0f' -or
+        $coreTestsSource -notmatch
+            'fresh\.halo2_classic_gun_yaw_deg\s*==\s*1\.0f' -or
+        $coreTestsSource -notmatch
+            'fresh\.halo2_classic_gun_pitch_deg\s*==\s*-9\.5f') {
+        throw 'Halo 2 Classic default-alignment gate failed: yaw +1.0 / pitch -9.5 or unit coverage is missing.'
+    }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
     $halo2HudLogicSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\halo2_hud_logic.h'))
     $halo2HudShaderSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\halo2_hud_shader_logic.h'))
-    $d3dSource = [IO.File]::ReadAllText(
-        (Join-Path $repoRoot 'src\dll\d3d11_hook.cpp'))
     if ($halo2HudShaderSource -notmatch
             'kCrosshairHash\s*=\s*0x0a9b60d8f40268f6ULL' -or
         $halo2HudShaderSource -notmatch
             'kGameplayHudHashes' -or
         $halo2HudShaderSource -notmatch
             'MigotoFnv1' -or
-        $d3dSource -notmatch 'Halo2CreatePixelShaderHook' -or
+        $d3dSource -notmatch 'CreatePixelShaderHook' -or
         $d3dSource -notmatch 'Halo2NativeHud_GetRasterLayout' -or
-        $d3dSource -notmatch 'VR_BeginPreparedAuthoredReticleCapture' -or
         $halo2StereoSource -notmatch
             'VR_PrepareAuthoredReticleResources' -or
         $halo2StereoSource -match '&NativeHudAnchorBasisDetour' -or
@@ -185,7 +296,7 @@ try {
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA:BOOL=ON\r?$') {
-        throw 'Refusing to package C-H4-D1: the Halo 4 camera core is not ON.'
+        throw 'Refusing to package C-H4-57: the Halo 4 camera core is not ON.'
     }
     if ($cache -notmatch
             '(?m)^HALOMCCVR_EXPERIMENTAL_HALO2_COLD_OBSERVATION:BOOL=ON\r?$') {
@@ -206,7 +317,7 @@ try {
     # Incremental. A clean rebuild was recompiling the whole tree for every
     # candidate, which is minutes per iteration for no safety: the packaged
     # identity is proven by the git commit check above plus the SHA-256 of the
-    # exact installed files, not by how the object files were produced. Use
+    # exact packaged files, not by how the object files were produced. Use
     # -Clean when a build-system change genuinely needs a from-scratch compile.
     $buildArgs = @('--build', '--preset', $packagePreset)
     if ($Clean) { $buildArgs += '--clean-first' }
@@ -238,7 +349,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-77-stage3e-proven-hud-native-crosshair',
+        'c-h2-92-controller-melee-h4-effects',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -251,11 +362,23 @@ try {
         throw 'Candidate staging failed.'
     }
 
+    $configGenerator = Join-Path $repoRoot `
+        "$packageBuildDir\Release\halomccvr-config-defaults.exe"
+    $configPath = Join-Path $packageDir 'halomccvr.cfg'
+    if (-not (Test-Path -LiteralPath $configGenerator -PathType Leaf)) {
+        throw "Default-config generator is missing: $configGenerator"
+    }
+    Invoke-Tool { & $configGenerator $configPath }
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Default config generation failed.'
+    }
+
     $dllPath = Join-Path $packageDir 'HaloMCCVR.dll'
     $launcherPath = Join-Path $packageDir 'HaloMCCVRLauncher.exe'
     foreach ($requiredPath in @(
             $dllPath,
             $launcherPath,
+            $configPath,
             (Join-Path $packageDir 'LICENSE'),
             (Join-Path $packageDir 'MANUAL-README.txt'))) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
@@ -265,12 +388,15 @@ try {
 
     $dll = Get-Item -LiteralPath $dllPath
     $launcher = Get-Item -LiteralPath $launcherPath
+    $config = Get-Item -LiteralPath $configPath
     $dllHash = (Get-FileHash -LiteralPath $dllPath -Algorithm SHA256).Hash
     $launcherHash =
         (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash
+    $configHash =
+        (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 26
+        schema_version = 35
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -289,20 +415,20 @@ try {
             halo2 = 'BOTH_MODES_STEREO_6DOF'
         }
         deployment_policy = [ordered]@{
-            automatic_after_package = $true
+            automatic_after_package = $false
             installer = 'tools/install-candidate.ps1'
             launches_mcc = $false
             changes_config = $false
         }
         accepted_halo4_identity = [ordered]@{
-            candidate = 'C-H4-43'
+            candidate = 'C-H4-56'
             source_commit =
-                'dd9946595511d65c9859b536e2727201c107da45'
+                '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-D1'
-            status = 'DIAGNOSTIC_HEADSET_CAPTURE_REQUIRED'
-            behavior = 'c-h4-49-player-visible-path-plus-log-only-bounded-gameplay-cui-command-and-transform-identity-census'
+            id = 'C-H4-58'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            behavior = 'accepted-c-h4-57-plus-symmetric-stage3ai-effect-cave-teardown'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -313,18 +439,65 @@ try {
             # Exact accepted C-H4-43 player-visible behavior.
             hud = 'native-inside-captured-scene-no-redirect'
             hud_layout =
-                'dormant-after-c-h4-44-headset-rejection'
-            hud_controls = @()
+                'stage3x-native-complete-gameplay-cui-frontend-affine-and-prop-curvature-consumer'
+            hud_controls = @(
+                'hud_size', 'hud_aspect', 'hud_curvature',
+                'hud_vertical_offset')
             hud_failure_policy =
-                'stock-halo4-cui-layout'
+                'stock-halo4-cui-layout-camera-effects-and-openxr-remain-armed'
+            pause_reason_getter_rva = '0x000A0AE4'
+            pause_reason = 3
+            pause_presentation = 'native-reason-authoritative-headlocked-2d-stock-wrapper'
+            pause_failure_policy = 'raw-edge-fallback-other-h4-features-remain-armed'
+            local_fp_effect_suppression = $true
+            effect_negative_route_rva = '0x001059A2'
+            effect_helper_route_rva = '0x00100EE8'
+            effect_transient_route_rva = '0x001012D5'
+            effect_mode_one_gate_rva = '0x0027BD36'
+            effect_cave_rva = '0x00B79C10'
+            effect_cave_restored_on_cleanup = $true
+            effect_policy = 'stage3ai-selected-local-first-person-finite-far'
+            effect_failure_policy = 'stock-effects-camera-hud-and-openxr-remain-armed'
+            helmet_default_visible = $true
+            helmet_control = 'halo4_helmet'
+            helmet_binding =
+                'exact-3dmigoto-pixel-shader-4BE62AC49C2BF210'
+            helmet_hidden_policy =
+                'pssetshader-null-only-exact-visor-shader'
+            helmet_geometry =
+                'h4ek-container-visor-and-container-visor-glow-sibling-cui-polyart'
+            helmet_geometry_transform =
+                'complete-gameplay-cui-frontend-depth-excluding-private-reticle-replay-and-pause'
+            helmet_failure_policy = 'stock-authored-helmet-art'
+            screen_effect_blackout_fix = $true
+            screen_effect_shader = 'screen-motion-suck'
+            screen_effect_shader_hash = '0x47668A1953271934'
+            screen_effect_scope =
+                'halo4-active-and-stereo-enabled-exact-pixel-shader-only'
+            screen_effect_policy =
+                'pssetshader-null-preserve-already-rendered-eye'
+            screen_effect_kept_native =
+                'm30-speed-line-tint-alpha-and-all-other-shaders'
+            screen_effect_evidence =
+                'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map'
+            screen_effect_failure_policy =
+                'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed'
             authored_crosshair = $true
             native_face_crosshair_suppressed = $true
             reticle_capture_boundary =
                 'bounded-capture-eye-full-gameplay-cui-replay-into-shared-authored-texture'
+            reticle_capture_hud_transform =
+                'stock-affine-and-stock-curvature'
+            reticle_capture_canvas =
+                'private-replay-live-base-with-visible-pass-fallback'
+            reticle_visible_pass_hud_transform =
+                'stage3x-adjustable-affine-and-curvature'
+            reticle_visible_transform_discriminator =
+                'all-h4ek-type-0x28-payload-size-0x0c-markers-as-bda7-headset-confirmed'
             reticle_failure_policy =
                 'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed'
             parity_diagnostic = [ordered]@{
-                player_visible_behavior_changed = $false
+                player_visible_behavior_changed = $true
                 automatic_for_this_candidate = $true
                 command_bucket_count = 256
                 transform_identity_slots = 32
@@ -352,12 +525,29 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-77'
+            id = 'C-H2-92'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'proven-hud-pixel-shader-raster-transform-plus-native-crosshair-capture-shared-both-renderers'
+                'c-h2-90-camera-assist-off-plus-controller-scoped-native-melee-target-selection'
+            classic_muzzle_suppression = $true
+            classic_muzzle_particle_renderer_rva = '0x0076DC90'
+            classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
+            classic_muzzle_predicate =
+                'current-user-first-person-nonzero-and-live-classic-gate-zero'
+            anniversary_muzzle_behavior = 'stock'
+            classic_alignment_controls = @(
+                'halo2_classic_gun_yaw_deg',
+                'halo2_classic_gun_pitch_deg')
+            classic_alignment_default_yaw_deg = 1.0
+            classic_alignment_default_pitch_deg = -9.5
+            aim_assist_view_direction_rva = '0x006C0DF0'
+            melee_targeting_scope =
+                'vr-owned-user0-central-calculation-only-controller-ray'
+            melee_targeting_failure_policy =
+                'c-h2-90-neutral-camera-and-no-target-other-features-remain-armed'
+            heavy_eye_validation = 'bounded-source-discovery-only'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
             # classic stereo core arms only where its hooks can actually fire.
@@ -392,6 +582,24 @@ try {
             right_hand_gun_transform = 'unchanged-c63-controller-barrel-alignment'
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
+            aim_assist_disabled = $true
+            aim_assist_method =
+                'central-camera-control-suppression-plus-scoped-controller-view-targeting'
+            aim_assist_calculation_rva = '0x00759260'
+            aim_assist_scope = 'vr-owned-halo2-local-user-0-both-renderers'
+            aim_assist_effect =
+                'neutral-camera-assist-control-native-target-acquisition-along-controller-ray-no-tag-patching'
+            aim_assist_identity =
+                'official-h2ek-central-caller-and-player-control-view-helper-plus-unique-retail-loaded-image-signatures'
+            aim_assist_restore =
+                'central-and-view-hooks-disabled-drained-and-removed-on-core-teardown'
+            aim_assist_melee_patch = $false
+            melee_target_policy =
+                'engine-selected-target-from-controller-ray-only-inside-owned-central-calculation'
+            melee_execution_path =
+                'stock-unit-action-system-and-character-physics-mode-melee'
+            aim_assist_failure_policy =
+                'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed'
             rejected_post_return_packet_enabled = $false
             rejected_firing_helper_enabled = $false
             live_renderer_report = $true
@@ -633,8 +841,12 @@ try {
                 bytes = $launcher.Length
                 sha256 = $launcherHash
             }
+            'halomccvr.cfg' = [ordered]@{
+                bytes = $config.Length
+                sha256 = $configHash
+            }
         }
-        note = 'C-H2-77 rejects Stage 3D after zero anchor callbacks and transforms only the exact Halo 2 HUD pixel shaders proven by a working v1.2 HUD mod, inside the live native CHUD scope. The separately identified native crosshair shader is captured into the existing controller-aim quad; the procedural marker remains until that capture succeeds. Headset validation required.'
+        note = 'C-H2-92 carries three requested, source-isolated changes. Halo 4 Stage 3AI effect cleanup now restores its owned cave after every entry route, allowing exact muzzle/effect suppression to reinstall without changing reticle, helmet, HUD, pause, camera, motion-suck, or OpenXR behavior. Official H2EK proves C-H2-91 selected its retained melee target from player_control desired angles, not controller-owned unit aim; C-H2-92 substitutes the controller ray only inside the native central target calculation, preserves the native result, and still zeros camera-assist control. Failure retains C-H2-90 neutral/no-target behavior. New Halo 2 Classic configs seed yaw +1.0 and pitch -9.5; existing saved values remain authoritative and editable. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
@@ -648,12 +860,18 @@ try {
     Write-Host "Source:   $commit"
     Write-Host "DLL:      $dllHash"
     Write-Host "Launcher: $launcherHash"
+    Write-Host "Config:   $configHash"
 
-    & powershell -NoProfile -ExecutionPolicy Bypass -File `
-        (Join-Path $repoRoot 'tools\install-candidate.ps1') `
-        -CandidateDir $packageDir
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Candidate was packaged but automatic installation failed.'
+    if ($Install) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File `
+            (Join-Path $repoRoot 'tools\install-candidate.ps1') `
+            -CandidateDir $packageDir
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Candidate was packaged but the explicitly requested installation failed.'
+        }
+    }
+    else {
+        Write-Host 'Package-only mode: no MCC installation was performed.'
     }
 }
 finally {

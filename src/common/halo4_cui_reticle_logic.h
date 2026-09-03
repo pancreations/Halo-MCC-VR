@@ -463,6 +463,30 @@ inline Halo4CuiAimOffset Halo4BuildHiddenCuiTranslation(
     return result;
 }
 
+// C-H4-55 keeps the private authored-reticle replay on the stock CUI transform
+// even while the visible HUD consumes Stage 3X size/aspect/height controls.
+// Capture framing must therefore use the replay's own measured canvas. Before
+// the first replay marker is observed, fall back to the visible-pass sample so
+// startup remains identical to the accepted 3CX behavior.
+inline bool Halo4SelectCuiCaptureCanvas(
+    float replayBaseX, float replayBaseY,
+    float visibleBaseX, float visibleBaseY,
+    float& baseY, float& hideShift) noexcept
+{
+    const auto select = [&](float x, float y) noexcept
+    {
+        const Halo4CuiAimOffset hide =
+            Halo4BuildHiddenCuiTranslation(x, y);
+        if (!hide.valid || !std::isfinite(y) || y <= 0.0f)
+            return false;
+        baseY = y;
+        hideShift = hide.x;
+        return true;
+    };
+    return select(replayBaseX, replayBaseY) ||
+        select(visibleBaseX, visibleBaseY);
+}
+
 // The projected aim is normalized device space. Halo 4's pushed CUI
 // transform is not: the headset log measured the stock centre at
 // (-halfWidth,+halfHeight). Convert through that live transform rather than

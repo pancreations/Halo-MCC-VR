@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(halomccvr LANGUAGES C CXX RC)
 
+if(MSVC)
+    enable_language(ASM_MASM)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -272,6 +276,9 @@ add_library(halo3xr SHARED
     src/dll/halo2_anniversary_stereo.cpp
     src/dll/halo4_adapter.cpp
     src/dll/halo4_cold_observation.cpp)
+if(HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA)
+    target_sources(halo3xr PRIVATE src/dll/halo4_restoration.asm)
+endif()
 set_target_properties(halo3xr PROPERTIES OUTPUT_NAME "HaloMCCVR")
 target_include_directories(halo3xr PRIVATE
     ${HALOMCCVR_GENERATED_DIR}
@@ -337,6 +344,20 @@ set_target_properties(reach_runtime_observer PROPERTIES
     OUTPUT_NAME "reach-runtime-observer")
 
 if(BUILD_TESTING)
+    # Packaging runs this tiny program against a nonexistent path to generate
+    # the current source tree's exact default config. It is intentionally not
+    # installed by CMake: package-candidate stages and hashes its output while
+    # install-candidate preserves every already-existing live config.
+    add_executable(halomccvr_config_defaults
+        tools/config_defaults.cpp
+        src/common/config.cpp
+        src/common/log.cpp)
+    target_include_directories(halomccvr_config_defaults PRIVATE src/common)
+    target_compile_definitions(halomccvr_config_defaults PRIVATE
+        UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    set_target_properties(halomccvr_config_defaults PROPERTIES
+        OUTPUT_NAME "halomccvr-config-defaults")
+
     add_executable(halomccvr_core_tests
         tests/core_tests.cpp
         src/common/input_logic.cpp

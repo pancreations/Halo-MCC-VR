@@ -27,6 +27,129 @@ inline constexpr char kHalo2KitBuildTag[] =
 inline constexpr char kHalo2KitTagTestSha256[] =
     "D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36";
 
+// C-H2-89: the official H2EK script surface exposes
+// `sim_disable_aim_assist` as a boolean. Retail carries the same unique name
+// and typed debug-global catalog entry. Runtime code resolves the live value
+// slot by this name and exact type; these pure helpers pin the only two legal
+// values and the teardown rule used by the optional override.
+inline constexpr char kHalo2DisableAimAssistDebugVar[] =
+    "sim_disable_aim_assist";
+inline constexpr uint64_t kHalo2DebugVarTypeBoolean = 5;
+// C-H2-89 headset result: retail's catalog record exists, but its value slot
+// remains null in MCC gameplay, so the by-name transaction cannot apply.
+// Keep the evidence-backed code dormant; do not retry this disproven path.
+inline constexpr bool kHalo2DebugGlobalAimAssistOverrideEnabled = false;
+
+inline constexpr bool Halo2AimAssistDebugValueValid(uint8_t value) noexcept
+{
+    return value <= 1;
+}
+
+inline constexpr uint8_t Halo2AimAssistDebugValue(
+    bool vrOwnsGameplay, uint8_t stockValue) noexcept
+{
+    return vrOwnsGameplay ? uint8_t{1} : stockValue;
+}
+
+// E-H2-77 / C-H2-90: official H2EK aim_assist.cpp initializes these two
+// result blocks at the start of its central aim-assist calculation. The
+// pinned retail homolog has the identical three-argument ABI and field writes
+// at +0x759260. Neutral output means no camera friction/adhesion and no target
+// acquisition; bytes the engine does not initialize are deliberately left
+// untouched here too.
+inline constexpr uint32_t kHalo2AimAssistCalculateRva = 0x00759260;
+
+// E-H2-80 / C-H2-92: official H2EK player_control.cpp +0x72C30 converts
+// local-player desired angles into the view vector consumed once by the
+// central aim-assist calculation. Its pinned retail homolog is +0x6C0DF0
+// with the same (user index, float[3] output) ABI. The optional scoped hook
+// substitutes the already-owned controller sight only during that central
+// calculation, so Halo 2 can choose its native melee/lunge target along the
+// hand ray without restoring camera adhesion.
+inline constexpr uint32_t kHalo2AimAssistViewDirectionRva = 0x006C0DF0;
+inline constexpr bool kHalo2ControllerAimAssistTargetingEnabled = true;
+
+struct Halo2AimAssistTargetingResult
+{
+    uint32_t identifiers[3]{};
+    uint8_t engineScratch[12]{};
+    uint16_t flags = 0;
+    uint16_t engineScratch1A = 0;
+    float magnetismHorizontal = 0.0f;
+    float magnetismVertical = 0.0f;
+};
+
+static_assert(sizeof(Halo2AimAssistTargetingResult) == 0x24);
+static_assert(offsetof(Halo2AimAssistTargetingResult, flags) == 0x18);
+static_assert(
+    offsetof(Halo2AimAssistTargetingResult, magnetismHorizontal) == 0x1C);
+static_assert(
+    offsetof(Halo2AimAssistTargetingResult, magnetismVertical) == 0x20);
+
+inline bool Halo2WriteNeutralAimAssistResults(
+    float* control, Halo2AimAssistTargetingResult* targeting) noexcept
+{
+    if (!control || !targeting)
+        return false;
+    control[0] = 0.0f;
+    control[1] = 0.0f;
+    control[2] = 0.0f;
+    targeting->identifiers[0] = UINT32_MAX;
+    targeting->identifiers[1] = UINT32_MAX;
+    targeting->identifiers[2] = UINT32_MAX;
+    targeting->flags = 0;
+    targeting->magnetismHorizontal = 0.0f;
+    targeting->magnetismVertical = 0.0f;
+    return true;
+}
+
+// E-H2-78 / C-H2-91: the headset-confirmed C-H2-90 camera fix proved that
+// these three control outputs are the unwanted camera-assist transaction.
+// Halo 2 separately carries the selected target into player_action's
+// melee-target-unit field. Preserve that engine result so the existing
+// controller-owned unit sight can select the normal melee/lunge target.
+inline bool Halo2SuppressCameraAimAssist(float* control) noexcept
+{
+    if (!control)
+        return false;
+    control[0] = 0.0f;
+    control[1] = 0.0f;
+    control[2] = 0.0f;
+    return true;
+}
+
+inline bool Halo2OverrideAimAssistViewDirection(
+    bool scopedControllerTargeting, const float controllerDirection[3],
+    float* engineDirection) noexcept
+{
+    if (!scopedControllerTargeting || !controllerDirection ||
+        !engineDirection)
+    {
+        return false;
+    }
+    float lengthSquared = 0.0f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(controllerDirection[axis]))
+            return false;
+        lengthSquared += controllerDirection[axis] * controllerDirection[axis];
+    }
+    if (!std::isfinite(lengthSquared) || lengthSquared < 0.999f ||
+        lengthSquared > 1.001f)
+    {
+        return false;
+    }
+    std::memcpy(
+        engineDirection, controllerDirection, 3 * sizeof(float));
+    return true;
+}
+
+// C-H2-91 headset rejection: retaining the engine-selected target restored
+// Halo 2's stock melee/lunge snap and made the player's camera turn/miss feel
+// worse. Keep the proven implementation available as evidence, but never run
+// it in a candidate descended from that result.
+inline constexpr bool kHalo2RetainAimAssistTargetForMelee = false;
+
 // Halo 2 does not yet own a title-native pause signal. A stale head-locked
 // presentation can be inherited while switching in from another MCC engine,
 // so clear that FOREIGN state exactly when H2 first enters its stereo claim
@@ -2104,6 +2227,18 @@ constexpr bool Halo2ClassicRenderTreeRuns(
     uint8_t classicDisabledByte) noexcept
 {
     return classicDisabledByte == 0;
+}
+
+// Stage 3AK: the particle renderer's second register argument is the engine's
+// current-user / first-person classification. Suppression is deliberately the
+// conjunction of that classification and the live Classic render gate: world
+// particles, non-player callers and Anniversary all retain stock behavior.
+constexpr bool Halo2ShouldSuppressClassicFirstPersonParticle(
+    uint8_t classicDisabledByte,
+    uint8_t currentUserFirstPerson) noexcept
+{
+    return currentUserFirstPerson != 0 &&
+        Halo2ClassicRenderTreeRuns(classicDisabledByte);
 }
 
 constexpr bool Halo2GraphicsModeIsCoherent(

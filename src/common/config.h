@@ -328,7 +328,7 @@ struct TitleTunables
     float gun_right_m = 0.0f;
     float gun_up_m = 0.0f;
     float left_hand_forward_m = -0.063f;
-    float hud_size = 0.38f;
+    float hud_size = 0.43f;
     float hud_aspect = 1.22f;
     float hud_curvature = 0.48f;
     float hud_vertical_offset = 16.0f;
@@ -525,6 +525,10 @@ struct Config
     float halo4_hand_lateral_m = 0.00f;   // + moves it toward your right
     // Left-handed: mirrors the placement across the forward axis.
     bool halo4_hands_mirrored = false;
+    // Halo 4's authored Mjolnir helmet/visor overlay. This is deliberately
+    // separate from HUD scale/curvature so players can keep the complete HUD
+    // while hiding only the helmet frame.
+    bool halo4_helmet = true;
 
     // rendering. The game's own HUD reticle sits at head-center and is wrong
     // whenever hand aim is on; this one is the truth.
@@ -598,12 +602,13 @@ struct Config
     // Halo 2 CLASSIC ONLY: extra rotation and offset applied to the visible
     // gun AND hands together, so Classic can be lined up with what
     // Anniversary shows. Anniversary is never touched by these; every other
-    // title ignores them. 0 = identical to before. Tune LIVE in the F1 menu
-    // while standing in Classic, then switch to Anniversary to compare.
+    // title ignores them. The Halo 2 Classic baseline is yaw +1.0 and pitch
+    // -9.5; saved config values still win and remain LIVE-editable in F1.
+    // Switch to Anniversary to compare without applying this extra trim.
     // Degrees, about the held weapon's own axes (pitch raises/lowers the
     // muzzle), then meters along its own forward/right/up.
-    float halo2_classic_gun_pitch_deg = 0.0f;
-    float halo2_classic_gun_yaw_deg = 0.0f;
+    float halo2_classic_gun_pitch_deg = -9.5f;
+    float halo2_classic_gun_yaw_deg = 1.0f;
     float halo2_classic_gun_roll_deg = 0.0f;
     float halo2_classic_gun_forward_m = 0.0f;
     float halo2_classic_gun_right_m = 0.0f;
@@ -668,10 +673,10 @@ struct Config
     // mouse can't reach them. With this on, MCC still draws the full-size frame
     // (so the headset picture and the gun alignment never change) but the visible
     // window is shrunk to fit and the GPU downscales the picture into it for free
-    // -- no extra render pass, no measurable cost. OFF by default; when off the
-    // desktop window behaves exactly as it always has. Like resolution_scale,
-    // this takes effect on the next game start (close MCC and relaunch).
-    bool fit_desktop_window = false;
+    // -- no extra render pass, no measurable cost. V5 ships this ON; when
+    // disabled the desktop window behaves exactly as it always has. Like
+    // resolution_scale, this takes effect on the next game start.
+    bool fit_desktop_window = true;
 
     // The VR frame is submitted inside MCC's desktop Present, so MCC's own
     // V-Sync would pace the HEADSET at the DESKTOP monitor's refresh -- a 60 Hz
@@ -752,7 +757,7 @@ struct Config
     // re-lays the HUD out the same frame the floats change). 0.87 = the game's
     // stock value (mod applies nothing); smaller pulls shields/radar/ammo
     // toward the screen center where both VR eyes can see them.
-    float hud_size = 0.38f;
+    float hud_size = 0.43f;
 
     // Extra horizontal trim after the runtime headset-aspect correction.
     // 1 = automatic shape, lower = narrower, higher = wider.

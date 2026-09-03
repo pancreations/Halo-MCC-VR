@@ -22,6 +22,10 @@
 #include "../common/halo2_hud_logic.h"
 #include "../common/halo2_hud_shader_logic.h"
 #endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+#include "../common/halo4_helmet_shader_logic.h"
+#include "../common/halo4_screen_effect_shader_logic.h"
+#endif
 #include "../common/config.h"
 #include "../common/coop_probe_logic.h"
 #include "../common/log.h"
@@ -56,16 +60,19 @@ typedef void(STDMETHODCALLTYPE* DrawIndexedFn)(ID3D11DeviceContext*, UINT, UINT,
 typedef void(STDMETHODCALLTYPE* CopyResourceFn)(ID3D11DeviceContext*,
     ID3D11Resource*, ID3D11Resource*);
 #endif
+#if HALOMCCVR_HALO2_STEREO6DOF || HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+typedef HRESULT(STDMETHODCALLTYPE* CreatePixelShaderFn)(
+    ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*,
+    ID3D11PixelShader**);
+static CreatePixelShaderFn g_origCreatePixelShader = nullptr;
+#endif
+
 #if HALOMCCVR_HALO2_STEREO6DOF
 typedef void(STDMETHODCALLTYPE* Halo2DrawIndexedFn)(
     ID3D11DeviceContext*, UINT, UINT, INT);
 typedef void(STDMETHODCALLTYPE* Halo2DrawFn)(ID3D11DeviceContext*, UINT, UINT);
-typedef HRESULT(STDMETHODCALLTYPE* Halo2CreatePixelShaderFn)(
-    ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*,
-    ID3D11PixelShader**);
 static Halo2DrawIndexedFn g_origHalo2DrawIndexed = nullptr;
 static Halo2DrawFn g_origHalo2Draw = nullptr;
-static Halo2CreatePixelShaderFn g_origHalo2CreatePixelShader = nullptr;
 static std::atomic<bool> g_halo2ShaderHooksAvailable{false};
 static std::atomic<uint32_t> g_halo2NativeCrosshairGeneration{0};
 
@@ -138,30 +145,6 @@ static halo2_hud_shader::Role LookupHalo2PixelShader(
         }
     }
     return halo2_hud_shader::Role::Other;
-}
-
-static HRESULT STDMETHODCALLTYPE Halo2CreatePixelShaderHook(
-    ID3D11Device* device, const void* bytecode, SIZE_T bytecodeLength,
-    ID3D11ClassLinkage* linkage, ID3D11PixelShader** shader)
-{
-    const HRESULT result = g_origHalo2CreatePixelShader(
-        device, bytecode, bytecodeLength, linkage, shader);
-    if (SUCCEEDED(result) && shader && *shader && bytecode && bytecodeLength)
-    {
-        const uint64_t hash =
-            halo2_hud_shader::MigotoFnv1(bytecode, bytecodeLength);
-        const halo2_hud_shader::Role role =
-            halo2_hud_shader::Classify(hash);
-        const bool newlyRegistered = RegisterHalo2PixelShader(*shader, role);
-        if (role != halo2_hud_shader::Role::Other && newlyRegistered)
-        {
-            (role == halo2_hud_shader::Role::Crosshair
-                 ? g_halo2CrosshairShadersRegistered
-                 : g_halo2GameplayShadersRegistered)
-                .fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    return result;
 }
 
 struct Halo2HudDrawMutation
@@ -316,6 +299,160 @@ static void STDMETHODCALLTYPE Halo2DrawCensusHook(
 }
 #endif
 
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+typedef void(STDMETHODCALLTYPE* PixelShaderSetFn)(
+    ID3D11DeviceContext*, ID3D11PixelShader*,
+    ID3D11ClassInstance* const*, UINT);
+static PixelShaderSetFn g_origPixelShaderSet = nullptr;
+static std::atomic<bool> g_halo4HelmetShaderPathAvailable{false};
+// The working V6 donor owns one exact live visor shader pointer. Overwrite it
+// when MCC recreates the shader on a later device/level instead of retaining a
+// bounded collection of stale COM identities that could eventually fill up.
+static std::atomic<uintptr_t> g_halo4HelmetShader{0};
+static std::atomic<uint64_t> g_halo4HelmetShadersRegistered{0};
+static std::atomic<uint64_t> g_halo4HelmetShaderSuppressions{0};
+static std::atomic<bool> g_halo4ScreenEffectShaderPathAvailable{false};
+static std::atomic<uintptr_t> g_halo4MotionSuckShader{0};
+static std::atomic<uint64_t> g_halo4MotionSuckShadersRegistered{0};
+static std::atomic<uint64_t> g_halo4MotionSuckShaderSuppressions{0};
+
+static bool RegisterHalo4HelmetShader(
+    ID3D11PixelShader* shader, bool visorFraming) noexcept
+{
+    if (!shader)
+        return false;
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(shader);
+    if (!visorFraming)
+    {
+        uintptr_t registered = pointer;
+        (void)g_halo4HelmetShader.compare_exchange_strong(
+            registered, 0, std::memory_order_acq_rel,
+            std::memory_order_acquire);
+        return false;
+    }
+    return g_halo4HelmetShader.exchange(
+               pointer, std::memory_order_acq_rel) != pointer;
+}
+
+static bool IsHalo4HelmetShader(ID3D11PixelShader* shader) noexcept
+{
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(shader);
+    return pointer && g_halo4HelmetShader.load(
+        std::memory_order_acquire) == pointer;
+}
+
+static bool RegisterHalo4MotionSuckShader(
+    ID3D11PixelShader* shader, bool motionSuck) noexcept
+{
+    if (!shader)
+        return false;
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(shader);
+    if (!motionSuck)
+    {
+        uintptr_t registered = pointer;
+        (void)g_halo4MotionSuckShader.compare_exchange_strong(
+            registered, 0, std::memory_order_acq_rel,
+            std::memory_order_acquire);
+        return false;
+    }
+    return g_halo4MotionSuckShader.exchange(
+               pointer, std::memory_order_acq_rel) != pointer;
+}
+
+static bool IsHalo4MotionSuckShader(ID3D11PixelShader* shader) noexcept
+{
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(shader);
+    return pointer && g_halo4MotionSuckShader.load(
+        std::memory_order_acquire) == pointer;
+}
+
+static void STDMETHODCALLTYPE PixelShaderSetHook(
+    ID3D11DeviceContext* context, ID3D11PixelShader* shader,
+    ID3D11ClassInstance* const* classInstances, UINT classInstanceCount)
+{
+    const bool suppressMotionSuck =
+        halo4_screen_effect_shader::ShouldSuppress(
+            g_halo4ScreenEffectShaderPathAvailable.load(
+                std::memory_order_acquire),
+            TitleAdapter_GetActiveTitle() == GameTitle::Halo4,
+            VR_IsStereoEnabled(), IsHalo4MotionSuckShader(shader));
+    if (suppressMotionSuck)
+    {
+        // A null pixel shader makes this one full-screen draw write nothing,
+        // preserving the already-rendered eye. Class instances remain exactly
+        // as authored, matching the independently accepted visor bridge.
+        g_origPixelShaderSet(
+            context, nullptr, classInstances, classInstanceCount);
+        g_halo4MotionSuckShaderSuppressions.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+
+    const bool suppress = halo4_helmet_shader::ShouldSuppress(
+        g_halo4HelmetShaderPathAvailable.load(std::memory_order_acquire),
+        TitleAdapter_GetActiveTitle() == GameTitle::Halo4,
+        g_config.halo4_helmet, IsHalo4HelmetShader(shader));
+    if (suppress)
+    {
+        // Match the working V6 bridge exactly: replace only the shader pointer
+        // and preserve the caller's class-instance pointer/count unchanged.
+        g_origPixelShaderSet(
+            context, nullptr, classInstances, classInstanceCount);
+        g_halo4HelmetShaderSuppressions.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    g_origPixelShaderSet(
+        context, shader, classInstances, classInstanceCount);
+}
+#endif
+
+#if HALOMCCVR_HALO2_STEREO6DOF || HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+static HRESULT STDMETHODCALLTYPE CreatePixelShaderHook(
+    ID3D11Device* device, const void* bytecode, SIZE_T bytecodeLength,
+    ID3D11ClassLinkage* linkage, ID3D11PixelShader** shader)
+{
+    const HRESULT result = g_origCreatePixelShader(
+        device, bytecode, bytecodeLength, linkage, shader);
+    if (FAILED(result) || !shader || !*shader || !bytecode || !bytecodeLength)
+        return result;
+
+#if HALOMCCVR_HALO2_STEREO6DOF
+    const uint64_t hash =
+        halo2_hud_shader::MigotoFnv1(bytecode, bytecodeLength);
+    const halo2_hud_shader::Role role =
+        halo2_hud_shader::Classify(hash);
+    const bool newlyRegistered = RegisterHalo2PixelShader(*shader, role);
+    if (role != halo2_hud_shader::Role::Other && newlyRegistered)
+    {
+        (role == halo2_hud_shader::Role::Crosshair
+             ? g_halo2CrosshairShadersRegistered
+             : g_halo2GameplayShadersRegistered)
+            .fetch_add(1, std::memory_order_relaxed);
+    }
+#else
+    const uint64_t hash =
+        halo4_helmet_shader::MigotoFnv1(bytecode, bytecodeLength);
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    if (RegisterHalo4HelmetShader(
+            *shader, halo4_helmet_shader::IsVisorFramingShader(hash)))
+    {
+        g_halo4HelmetShadersRegistered.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if (RegisterHalo4MotionSuckShader(
+            *shader,
+            halo4_screen_effect_shader::IsMotionSuckShader(hash)))
+    {
+        g_halo4MotionSuckShadersRegistered.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+#endif
+    return result;
+}
+#endif
+
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA && !HALOMCCVR_HALO2_STEREO6DOF
 typedef void(STDMETHODCALLTYPE* Halo4DrawIndexedFn)(
     ID3D11DeviceContext*, UINT, UINT, INT);
@@ -370,6 +507,53 @@ bool D3D_Halo4AuthoredReticleDrawPathAvailable()
         std::memory_order_acquire);
 #else
     return false;
+#endif
+}
+
+bool D3D_Halo4HelmetShaderPathAvailable()
+{
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    return g_halo4HelmetShaderPathAvailable.load(std::memory_order_acquire);
+#else
+    return false;
+#endif
+}
+
+bool D3D_Halo4ScreenEffectShaderPathAvailable()
+{
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    return g_halo4ScreenEffectShaderPathAvailable.load(
+        std::memory_order_acquire);
+#else
+    return false;
+#endif
+}
+
+void D3D_GetHalo4HelmetTelemetry(
+    uint64_t& shadersRegistered, uint64_t& suppressions)
+{
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    shadersRegistered = g_halo4HelmetShadersRegistered.load(
+        std::memory_order_relaxed);
+    suppressions = g_halo4HelmetShaderSuppressions.exchange(
+        0, std::memory_order_relaxed);
+#else
+    shadersRegistered = 0;
+    suppressions = 0;
+#endif
+}
+
+void D3D_GetHalo4ScreenEffectTelemetry(
+    uint64_t& shadersRegistered, uint64_t& suppressions)
+{
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    shadersRegistered = g_halo4MotionSuckShadersRegistered.load(
+        std::memory_order_relaxed);
+    suppressions = g_halo4MotionSuckShaderSuppressions.exchange(
+        0, std::memory_order_relaxed);
+#else
+    shadersRegistered = 0;
+    suppressions = 0;
 #endif
 }
 
@@ -1518,11 +1702,34 @@ bool InstallD3D11Hooks()
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     bool halo4ReticleDrawPathCreated = false;
     bool halo4ReticleBindingStatePathCreated = false;
+    bool halo4HelmetShaderPathCreated = false;
 #endif
     bool ok = MH_CreateHook(vtbl[8], (void*)&PresentHook, (void**)&g_origPresent) == MH_OK &&
               MH_CreateHook(vtbl[13], (void*)&ResizeBuffersHook, (void**)&g_origResizeBuffers) == MH_OK &&
               MH_CreateHook(contextVtbl[33], (void*)&OMSetRenderTargetsHook,
                             (void**)&g_origOMSetRenderTargets) == MH_OK;
+#if HALOMCCVR_HALO2_STEREO6DOF || HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    const MH_STATUS createPixelShader = MH_CreateHook(
+        deviceVtbl[15], (void*)&CreatePixelShaderHook,
+        (void**)&g_origCreatePixelShader);
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    // The known-good V6 helmet toggle intercepts only PSSetShader and only the
+    // exact 3DMigoto visor hash. Both hooks are optional; a partial install
+    // leaves the authored helmet stock and never gates Present or camera VR.
+    const MH_STATUS halo4PixelShaderSet = MH_CreateHook(
+        contextVtbl[9], (void*)&PixelShaderSetHook,
+        (void**)&g_origPixelShaderSet);
+    halo4HelmetShaderPathCreated =
+        createPixelShader == MH_OK && halo4PixelShaderSet == MH_OK;
+    if (!halo4HelmetShaderPathCreated)
+    {
+        LOG("Halo 4 helmet shader path unavailable: CreatePS=%d PSSetShader=%d; "
+            "authored visor stays stock",
+            static_cast<int>(createPixelShader),
+            static_cast<int>(halo4PixelShaderSet));
+    }
+#endif
 #if HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
     ok = ok && MH_CreateHook(contextVtbl[47], (void*)&CopyResourceHook,
                              (void**)&g_origCopyResource) == MH_OK;
@@ -1569,9 +1776,6 @@ bool InstallD3D11Hooks()
     // CreatePixelShader is ID3D11Device slot 15; DrawIndexed/Draw are context
     // slots 12/13. These remain optional and fail open: the core Present path
     // and every other title continue even if this exact HUD path is unavailable.
-    const MH_STATUS halo2CreatePixelShader = MH_CreateHook(
-        deviceVtbl[15], (void*)&Halo2CreatePixelShaderHook,
-        (void**)&g_origHalo2CreatePixelShader);
     const MH_STATUS halo2DrawIndexed = MH_CreateHook(
         contextVtbl[12], (void*)&Halo2DrawIndexedCensusHook,
         (void**)&g_origHalo2DrawIndexed);
@@ -1579,7 +1783,7 @@ bool InstallD3D11Hooks()
         contextVtbl[13], (void*)&Halo2DrawCensusHook,
         (void**)&g_origHalo2Draw);
     halo2ShaderPathCreated =
-        halo2CreatePixelShader == MH_OK &&
+        createPixelShader == MH_OK &&
         halo2DrawIndexed == MH_OK && halo2Draw == MH_OK;
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     halo4ReticleDrawPathCreated =
@@ -1591,7 +1795,7 @@ bool InstallD3D11Hooks()
         LOG("Halo 2 proven HUD shader path unavailable: CreatePS=%d "
             "DrawIndexed=%d Draw=%d; HUD stays stock and the procedural "
             "crosshair fallback remains",
-            static_cast<int>(halo2CreatePixelShader),
+            static_cast<int>(createPixelShader),
             static_cast<int>(halo2DrawIndexed),
             static_cast<int>(halo2Draw));
     }
@@ -1787,6 +1991,22 @@ bool InstallD3D11Hooks()
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     g_halo4AuthoredReticleDrawPathAvailable.store(
         enabled && halo4ReticleDrawPathCreated, std::memory_order_release);
+    g_halo4HelmetShaderPathAvailable.store(
+        enabled && halo4HelmetShaderPathCreated, std::memory_order_release);
+    g_halo4ScreenEffectShaderPathAvailable.store(
+        enabled && halo4HelmetShaderPathCreated, std::memory_order_release);
+    if (enabled && halo4HelmetShaderPathCreated)
+    {
+        LOG("Halo 4 helmet shader bridge ACTIVE: tracking exact 3Dmigoto "
+            "pixel shader %016llX; no CUI/radar property is modified",
+            static_cast<unsigned long long>(
+                halo4_helmet_shader::kVisorFramingHash));
+        LOG("Halo 4 screen-effect comfort bridge ACTIVE: exact H4EK/retail "
+            "motion-suck pixel shader %016llX is suppressed only while Halo 4 "
+            "stereo owns the view; other speed-line/tint effects stay native",
+            static_cast<unsigned long long>(
+                halo4_screen_effect_shader::kMotionSuckHash));
+    }
 #endif
     return enabled;
 }

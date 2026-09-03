@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 35) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h2-77-stage3e-proven-hud-native-crosshair-',
+            $head.Substring(0, 7) + '-c-h2-92-controller-melee-h4-effects-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -180,18 +180,18 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         $manifest.embedded_build_identity.halo4 -ne $true -or
         [string]$manifest.embedded_build_identity.halo2 -cne
             'BOTH_MODES_STEREO_6DOF' -or
-        [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-43' -or
+        [string]$manifest.accepted_halo4_identity.candidate -cne 'C-H4-56' -or
         [string]$manifest.accepted_halo4_identity.source_commit -cne
-            'dd9946595511d65c9859b536e2727201c107da45' -or
+            '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25' -or
         # Producer and installer advance together. This prevents a package for
         # the new source from silently carrying the preceding Halo 4 candidate's
         # behavior block, which happened repeatedly during bring-up.
-        [string]$manifest.halo4_candidate.id -cne 'C-H4-D1' -or
+        [string]$manifest.halo4_candidate.id -cne 'C-H4-58' -or
         [string]$manifest.halo4_candidate.status -cne
-            'DIAGNOSTIC_HEADSET_CAPTURE_REQUIRED' -or
+            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo4_candidate.behavior -notmatch '\S' -or
         $manifest.halo4_candidate.parity_diagnostic.player_visible_behavior_changed -ne
-            $false -or
+            $true -or
         $manifest.halo4_candidate.parity_diagnostic.automatic_for_this_candidate -ne
             $true -or
         [int]$manifest.halo4_candidate.parity_diagnostic.command_bucket_count -ne
@@ -210,21 +210,107 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
         $manifest.halo4_candidate.native_face_crosshair_suppressed -ne $true -or
         [string]$manifest.halo4_candidate.reticle_capture_boundary -cne
             'bounded-capture-eye-full-gameplay-cui-replay-into-shared-authored-texture' -or
+        [string]$manifest.halo4_candidate.reticle_capture_hud_transform -cne
+            'stock-affine-and-stock-curvature' -or
+        [string]$manifest.halo4_candidate.reticle_capture_canvas -cne
+            'private-replay-live-base-with-visible-pass-fallback' -or
+        [string]$manifest.halo4_candidate.reticle_visible_pass_hud_transform -cne
+            'stage3x-adjustable-affine-and-curvature' -or
+        [string]$manifest.halo4_candidate.reticle_visible_transform_discriminator -cne
+            'all-h4ek-type-0x28-payload-size-0x0c-markers-as-bda7-headset-confirmed' -or
         [string]$manifest.halo4_candidate.reticle_failure_policy -cne
             'stock-or-procedural-feature-fallback-camera-hands-stereo-and-openxr-remain-armed' -or
         [string]$manifest.halo4_candidate.hud_layout -cne
-            'dormant-after-c-h4-44-headset-rejection' -or
+            'stage3x-native-complete-gameplay-cui-frontend-affine-and-prop-curvature-consumer' -or
         [string]$manifest.halo4_candidate.hud_failure_policy -cne
-            'stock-halo4-cui-layout' -or
-        @($manifest.halo4_candidate.hud_controls).Count -ne 0 -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-77' -or
+            'stock-halo4-cui-layout-camera-effects-and-openxr-remain-armed' -or
+        @($manifest.halo4_candidate.hud_controls).Count -ne 4 -or
+        [string]$manifest.halo4_candidate.hud_controls[0] -cne 'hud_size' -or
+        [string]$manifest.halo4_candidate.hud_controls[1] -cne 'hud_aspect' -or
+        [string]$manifest.halo4_candidate.hud_controls[2] -cne 'hud_curvature' -or
+        [string]$manifest.halo4_candidate.hud_controls[3] -cne
+            'hud_vertical_offset' -or
+        [string]$manifest.halo4_candidate.pause_reason_getter_rva -cne
+            '0x000A0AE4' -or
+        -not (Test-ExactInt32 $manifest.halo4_candidate.pause_reason 3) -or
+        [string]$manifest.halo4_candidate.pause_presentation -cne
+            'native-reason-authoritative-headlocked-2d-stock-wrapper' -or
+        $manifest.halo4_candidate.local_fp_effect_suppression -ne $true -or
+        [string]$manifest.halo4_candidate.effect_negative_route_rva -cne
+            '0x001059A2' -or
+        [string]$manifest.halo4_candidate.effect_helper_route_rva -cne
+            '0x00100EE8' -or
+        [string]$manifest.halo4_candidate.effect_transient_route_rva -cne
+            '0x001012D5' -or
+        [string]$manifest.halo4_candidate.effect_mode_one_gate_rva -cne
+            '0x0027BD36' -or
+        [string]$manifest.halo4_candidate.effect_cave_rva -cne
+            '0x00B79C10' -or
+        $manifest.halo4_candidate.effect_cave_restored_on_cleanup -ne $true -or
+        [string]$manifest.halo4_candidate.effect_policy -cne
+            'stage3ai-selected-local-first-person-finite-far' -or
+        $manifest.halo4_candidate.helmet_default_visible -ne $true -or
+        [string]$manifest.halo4_candidate.helmet_control -cne
+            'halo4_helmet' -or
+        [string]$manifest.halo4_candidate.helmet_binding -cne
+            'exact-3dmigoto-pixel-shader-4BE62AC49C2BF210' -or
+        [string]$manifest.halo4_candidate.helmet_hidden_policy -cne
+            'pssetshader-null-only-exact-visor-shader' -or
+        [string]$manifest.halo4_candidate.helmet_geometry -cne
+            'h4ek-container-visor-and-container-visor-glow-sibling-cui-polyart' -or
+        [string]$manifest.halo4_candidate.helmet_geometry_transform -cne
+            'complete-gameplay-cui-frontend-depth-excluding-private-reticle-replay-and-pause' -or
+        $manifest.halo4_candidate.screen_effect_blackout_fix -ne $true -or
+        [string]$manifest.halo4_candidate.screen_effect_shader -cne
+            'screen-motion-suck' -or
+        [string]$manifest.halo4_candidate.screen_effect_shader_hash -cne
+            '0x47668A1953271934' -or
+        [string]$manifest.halo4_candidate.screen_effect_scope -cne
+            'halo4-active-and-stereo-enabled-exact-pixel-shader-only' -or
+        [string]$manifest.halo4_candidate.screen_effect_policy -cne
+            'pssetshader-null-preserve-already-rendered-eye' -or
+        [string]$manifest.halo4_candidate.screen_effect_kept_native -cne
+            'm30-speed-line-tint-alpha-and-all-other-shaders' -or
+        [string]$manifest.halo4_candidate.screen_effect_evidence -cne
+            'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map' -or
+        [string]$manifest.halo4_candidate.screen_effect_failure_policy -cne
+            'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-92' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'proven-hud-pixel-shader-raster-transform-plus-native-crosshair-capture-shared-both-renderers' -or
+            'c-h2-90-camera-assist-off-plus-controller-scoped-native-melee-target-selection' -or
+        $manifest.halo2_candidate.classic_muzzle_suppression -ne $true -or
+        [string]$manifest.halo2_candidate.classic_muzzle_particle_renderer_rva -cne
+            '0x0076DC90' -or
+        [string]$manifest.halo2_candidate.classic_muzzle_live_renderer_gate_rva -cne
+            '0x00E70CF8' -or
+        [string]$manifest.halo2_candidate.classic_muzzle_predicate -cne
+            'current-user-first-person-nonzero-and-live-classic-gate-zero' -or
+        [string]$manifest.halo2_candidate.anniversary_muzzle_behavior -cne
+            'stock' -or
+        @($manifest.halo2_candidate.classic_alignment_controls).Count -ne 2 -or
+        [string]$manifest.halo2_candidate.classic_alignment_controls[0] -cne
+            'halo2_classic_gun_yaw_deg' -or
+        [string]$manifest.halo2_candidate.classic_alignment_controls[1] -cne
+            'halo2_classic_gun_pitch_deg' -or
+        [double]$manifest.halo2_candidate.classic_alignment_default_yaw_deg -ne
+            1.0 -or
+        [double]$manifest.halo2_candidate.classic_alignment_default_pitch_deg -ne
+            -9.5 -or
+        [string]$manifest.halo2_candidate.aim_assist_calculation_rva -cne
+            '0x00759260' -or
+        [string]$manifest.halo2_candidate.aim_assist_view_direction_rva -cne
+            '0x006C0DF0' -or
+        [string]$manifest.halo2_candidate.melee_targeting_scope -cne
+            'vr-owned-user0-central-calculation-only-controller-ray' -or
+        [string]$manifest.halo2_candidate.melee_targeting_failure_policy -cne
+            'c-h2-90-neutral-camera-and-no-target-other-features-remain-armed' -or
+        [string]$manifest.halo2_candidate.heavy_eye_validation -cne
+            'bounded-source-discovery-only' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
         $manifest.halo2_candidate.render_topology_probe_changes_behavior -ne
             $false -or
@@ -269,6 +355,26 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
             '0x008FDF50' -or
         [string]$manifest.halo2_candidate.native_aim_ownership -cne
             'desired-and-current-unit-aiming-vectors' -or
+        $manifest.halo2_candidate.aim_assist_disabled -ne $true -or
+        [string]$manifest.halo2_candidate.aim_assist_method -cne
+            'central-camera-control-suppression-plus-scoped-controller-view-targeting' -or
+        [string]$manifest.halo2_candidate.aim_assist_calculation_rva -cne
+            '0x00759260' -or
+        [string]$manifest.halo2_candidate.aim_assist_scope -cne
+            'vr-owned-halo2-local-user-0-both-renderers' -or
+        [string]$manifest.halo2_candidate.aim_assist_effect -cne
+            'neutral-camera-assist-control-native-target-acquisition-along-controller-ray-no-tag-patching' -or
+        [string]$manifest.halo2_candidate.aim_assist_identity -cne
+            'official-h2ek-central-caller-and-player-control-view-helper-plus-unique-retail-loaded-image-signatures' -or
+        [string]$manifest.halo2_candidate.aim_assist_restore -cne
+            'central-and-view-hooks-disabled-drained-and-removed-on-core-teardown' -or
+        $manifest.halo2_candidate.aim_assist_melee_patch -ne $false -or
+        [string]$manifest.halo2_candidate.melee_target_policy -cne
+            'engine-selected-target-from-controller-ray-only-inside-owned-central-calculation' -or
+        [string]$manifest.halo2_candidate.melee_execution_path -cne
+            'stock-unit-action-system-and-character-physics-mode-melee' -or
+        [string]$manifest.halo2_candidate.aim_assist_failure_policy -cne
+            'stock-aim-assist-camera-stereo-hands-hud-reticle-weapons-and-openxr-remain-armed' -or
         $manifest.halo2_candidate.rejected_post_return_packet_enabled -ne
             $false -or
         $manifest.halo2_candidate.rejected_firing_helper_enabled -ne $false -or
@@ -584,7 +690,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
             'floaty-or-aim-failure-leaves-that-feature-stock-camera-stereo-and-openxr-remain-armed' -or
         [string]$manifest.halo2_candidate.evidence -cne
             'docs/HALO2-SIGNATURE-EVIDENCE.md' -or
-        $manifest.deployment_policy.automatic_after_package -ne $true -or
+        $manifest.deployment_policy.automatic_after_package -ne $false -or
         [string]$manifest.deployment_policy.installer -cne
             'tools/install-candidate.ps1' -or
         $manifest.deployment_policy.launches_mcc -ne $false -or
@@ -644,10 +750,13 @@ if (-not (Test-ExactInt32 $manifest.schema_version 26) -or
 
 $candidateDll = Join-Path $candidatePath 'HaloMCCVR.dll'
 $candidateLauncher = Join-Path $candidatePath 'HaloMCCVRLauncher.exe'
+$candidateConfig = Join-Path $candidatePath 'halomccvr.cfg'
 $dllHash = Assert-FileIdentity `
     $candidateDll $manifest.files.'HaloMCCVR.dll' 'Candidate DLL'
 $launcherHash = Assert-FileIdentity `
     $candidateLauncher $manifest.files.'HaloMCCVRLauncher.exe' 'Candidate launcher'
+$configHash = Assert-FileIdentity `
+    $candidateConfig $manifest.files.'halomccvr.cfg' 'Candidate seed config'
 
 $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
     $_.ProcessName -in @(
@@ -699,6 +808,9 @@ foreach ($target in $targets) {
         $seedConfig = $existingConfig
         break
     }
+}
+if ($null -eq $seedConfig) {
+    $seedConfig = $candidateConfig
 }
 
 $createdUtc = [DateTime]::UtcNow

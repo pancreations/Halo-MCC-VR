@@ -76,6 +76,24 @@ namespace
     std::atomic<uintptr_t> g_observerResult{0};
     std::atomic<uint32_t> g_activeCallbacks{0};
 
+    // E-H2-75 / Stage 3AK: Halo 2 Classic's first-person muzzle effect enters
+    // this particle renderer. The hook is optional and fail-open: its failure
+    // never changes camera ownership. Four 32-bit arguments preserve the
+    // pinned function's RCX/RDX/R8/R9 ABI; only RDX's low byte is classified.
+    using Halo2ParticleRendererFn = void(__fastcall*)(
+        uint32_t, uint32_t, uint32_t, uint32_t);
+    constexpr uint32_t kHalo2ParticleRendererRva = 0x0076DC90;
+    constexpr char kHalo2ParticleRendererPattern[] =
+        "48 8B C4 88 50 10 89 48 08 55 53 56 57 41 55";
+    void* g_particleTarget = nullptr;
+    std::atomic<uintptr_t> g_particleOriginal{0};
+    std::atomic<uint32_t> g_particleActiveCallbacks{0};
+    std::atomic<uint64_t> g_particleSuppressed{0};
+    std::atomic<uint64_t> g_particleReadFaults{0};
+    std::atomic<bool> g_particleHitPending{false};
+    uint32_t g_particleRejectedGeneration = 0;
+    bool g_particleHitLogged = false;
+
     // E-H2-23 (C-H2-31): the weapon tick witness. first_person_weapons runs
     // at the game tick (~60/s, the C-H2-30 log: 1890 placements against ~200
     // observer updates per second) and places the weapon against the observer
@@ -370,6 +388,39 @@ namespace
     std::atomic<uint64_t> g_nativeAimApplied{0};
     std::atomic<uint64_t> g_nativeAimNonOwned{0};
     std::atomic<uint64_t> g_nativeAimRefused{0};
+
+    // E-H2-77: the H2EK/retail central aim-assist calculation. This optional
+    // transaction only neutralizes its outputs for local user 0 while the
+    // controller sight line owns Halo 2 VR. Every other call stays stock.
+    using Halo2AimAssistCalculateFn = void(__fastcall*)(
+        uint32_t, float*, Halo2AimAssistTargetingResult*);
+    using Halo2AimAssistViewDirectionFn = void(__fastcall*)(
+        uint32_t, float*);
+    void* g_aimAssistTarget = nullptr;
+    std::atomic<uintptr_t> g_aimAssistOriginal{0};
+    std::atomic<uint32_t> g_aimAssistActiveCallbacks{0};
+    std::atomic<uint64_t> g_aimAssistCalls{0};
+    std::atomic<uint64_t> g_aimAssistSuppressed{0};
+    std::atomic<uint64_t> g_aimAssistTargetSelected{0};
+    std::atomic<uint64_t> g_aimAssistNoTarget{0};
+    std::atomic<uint64_t> g_aimAssistStock{0};
+    std::atomic<uint64_t> g_aimAssistRefused{0};
+    void* g_aimAssistViewDirectionTarget = nullptr;
+    std::atomic<uintptr_t> g_aimAssistViewDirectionOriginal{0};
+    std::atomic<uint32_t> g_aimAssistViewDirectionActiveCallbacks{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionCalls{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionApplied{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionStock{0};
+    std::atomic<uint64_t> g_aimAssistViewDirectionRefused{0};
+
+    struct Halo2AimAssistControllerRayScope
+    {
+        bool active = false;
+        bool applied = false;
+        float direction[3]{};
+    };
+    thread_local Halo2AimAssistControllerRayScope
+        g_aimAssistControllerRayScope{};
 
     struct Halo2FinalPaletteContext
     {
@@ -1995,6 +2046,28 @@ namespace
         g_weaponsActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    bool BuildPublishedControllerAimDirection(float direction[3]) noexcept
+    {
+        if (!direction)
+            return false;
+        Halo2ObserverPosePublication publication{};
+        Halo2CameraBasis rightCarrier{}, leftCarrier{};
+        const uint32_t generation =
+            g_generation.load(std::memory_order_acquire);
+        if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
+            !Halo2ObserverControllerSnapshotUsable(publication, generation) ||
+            !BuildStableFirstPersonCarriers(
+                publication, generation, rightCarrier, leftCarrier))
+        {
+            return false;
+        }
+        const float range = std::clamp(
+            g_config.crosshair_distance_m, 2.0f, 50.0f) *
+            Game_GetWorldScale();
+        return Halo2BuildControllerShotDirection(
+            publication.stock.position, rightCarrier, range, direction);
+    }
+
     __declspec(noinline) uint64_t __fastcall Halo2NativeAimUpdateDetour(
         uint32_t objectIndex)
     {
@@ -2068,23 +2141,8 @@ namespace
                     __leave;
                 }
 
-                Halo2ObserverPosePublication publication{};
-                Halo2CameraBasis rightCarrier{}, leftCarrier{};
-                const uint32_t generation =
-                    g_generation.load(std::memory_order_acquire);
-                if (!Halo2Observer6Dof_ReadPublishedPose(publication) ||
-                    !Halo2ObserverControllerSnapshotUsable(
-                        publication, generation) ||
-                    !BuildStableFirstPersonCarriers(
-                        publication, generation, rightCarrier, leftCarrier))
-                    __leave;
-                const float range = std::clamp(
-                    g_config.crosshair_distance_m, 2.0f, 50.0f) *
-                    Game_GetWorldScale();
                 float direction[3]{};
-                if (!Halo2BuildControllerShotDirection(
-                        publication.stock.position, rightCarrier, range,
-                        direction))
+                if (!BuildPublishedControllerAimDirection(direction))
                     __leave;
 
                 const uintptr_t objectsData = module
@@ -2125,6 +2183,161 @@ namespace
             g_nativeAimApplied.fetch_add(1, std::memory_order_relaxed);
         g_nativeAimActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
         return result;
+    }
+
+    __declspec(noinline) void __fastcall Halo2AimAssistViewDirectionDetour(
+        uint32_t userIndex, float* direction)
+    {
+        g_aimAssistViewDirectionActiveCallbacks.fetch_add(
+            1, std::memory_order_acq_rel);
+        g_aimAssistViewDirectionCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original =
+            reinterpret_cast<Halo2AimAssistViewDirectionFn>(
+                g_aimAssistViewDirectionOriginal.load(
+                    std::memory_order_acquire));
+        bool originalCompleted = false;
+        if (original)
+        {
+            __try
+            {
+                original(userIndex, direction);
+                originalCompleted = true;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistViewDirectionRefused.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+
+        bool applied = false;
+        if (originalCompleted && userIndex == kOwnedUser &&
+            g_aimAssistControllerRayScope.active)
+        {
+            __try
+            {
+                applied = Halo2OverrideAimAssistViewDirection(
+                    true, g_aimAssistControllerRayScope.direction, direction);
+                g_aimAssistControllerRayScope.applied = applied;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistViewDirectionRefused.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        if (applied)
+            g_aimAssistViewDirectionApplied.fetch_add(
+                1, std::memory_order_relaxed);
+        else if (originalCompleted)
+            g_aimAssistViewDirectionStock.fetch_add(
+                1, std::memory_order_relaxed);
+        g_aimAssistViewDirectionActiveCallbacks.fetch_sub(
+            1, std::memory_order_acq_rel);
+    }
+
+    __declspec(noinline) void __fastcall Halo2AimAssistCalculateDetour(
+        uint32_t userIndex, float* control,
+        Halo2AimAssistTargetingResult* targeting)
+    {
+        g_aimAssistActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        g_aimAssistCalls.fetch_add(1, std::memory_order_relaxed);
+        const auto original = reinterpret_cast<Halo2AimAssistCalculateFn>(
+            g_aimAssistOriginal.load(std::memory_order_acquire));
+        const bool suppress = original && userIndex == kOwnedUser && control &&
+            targeting && Game_Halo2ControllerAimActive() &&
+            Halo2Observer6Dof_DirectWeaponAimArmed();
+
+        bool originalCompleted = false;
+        bool completed = false;
+        if (suppress)
+        {
+            __try
+            {
+                float controllerDirection[3]{};
+                const bool controllerTargeting =
+                    kHalo2ControllerAimAssistTargetingEnabled &&
+                    g_aimAssistViewDirectionOriginal.load(
+                        std::memory_order_acquire) &&
+                    BuildPublishedControllerAimDirection(
+                        controllerDirection);
+                if (controllerTargeting)
+                {
+                    bool controllerRayApplied = false;
+                    g_aimAssistControllerRayScope.active = true;
+                    g_aimAssistControllerRayScope.applied = false;
+                    std::memcpy(
+                        g_aimAssistControllerRayScope.direction,
+                        controllerDirection, sizeof(controllerDirection));
+                    __try
+                    {
+                        original(userIndex, control, targeting);
+                        originalCompleted = true;
+                    }
+                    __finally
+                    {
+                        controllerRayApplied =
+                            g_aimAssistControllerRayScope.applied;
+                        g_aimAssistControllerRayScope = {};
+                    }
+                    if (originalCompleted && controllerRayApplied)
+                    {
+                        completed = Halo2SuppressCameraAimAssist(control);
+                        if (completed)
+                        {
+                            if (targeting->identifiers[0] != UINT32_MAX)
+                                g_aimAssistTargetSelected.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            else
+                                g_aimAssistNoTarget.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        }
+                    }
+                    // If the scoped helper was not consumed, never retain a
+                    // stock-camera target. Preserve the accepted C-H2-90
+                    // camera result and fail this targeting feature to no
+                    // target for this calculation only.
+                    if (!completed)
+                        completed = Halo2WriteNeutralAimAssistResults(
+                            control, targeting);
+                }
+                else
+                {
+                    // Controller publication or the optional direction hook
+                    // is unavailable. Retain the accepted camera-only fix and
+                    // do not manufacture a target from the head/body camera.
+                    completed = Halo2WriteNeutralAimAssistResults(
+                        control, targeting);
+                }
+
+                if constexpr (kHalo2RetainAimAssistTargetForMelee)
+                {
+                    // Rejected C-H2-91 behavior remains deliberately dormant:
+                    // unscoped stock-camera target retention fed the stock
+                    // lunge and worsened the headset result.
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (completed)
+                g_aimAssistSuppressed.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        if (!completed && original && !originalCompleted)
+        {
+            __try
+            {
+                original(userIndex, control, targeting);
+                g_aimAssistStock.fetch_add(1, std::memory_order_relaxed);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                g_aimAssistRefused.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        g_aimAssistActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     __declspec(noinline) void __fastcall Halo2WeaponAimHelperDetour(
@@ -2347,6 +2560,61 @@ namespace
         }
     }
 
+    __declspec(noinline) void __fastcall Halo2ParticleRendererDetour(
+        uint32_t arg0, uint32_t currentUserFirstPerson, uint32_t arg2,
+        uint32_t arg3)
+    {
+        g_particleActiveCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            const auto original = reinterpret_cast<Halo2ParticleRendererFn>(
+                g_particleOriginal.load(std::memory_order_acquire));
+            bool suppress = false;
+            if (original && g_armed.load(std::memory_order_acquire) &&
+                g_levelLive.load(std::memory_order_acquire) &&
+                !g_teardownRequested.load(std::memory_order_acquire))
+            {
+                const uintptr_t base =
+                    g_moduleBase.load(std::memory_order_acquire);
+                if (base)
+                {
+                    uint8_t classicDisabled = 1;
+                    bool readable = false;
+                    __try
+                    {
+                        classicDisabled = *reinterpret_cast<
+                            const volatile uint8_t*>(
+                                base + kHalo2ClassicRenderDisabledByteRva);
+                        readable = true;
+                    }
+                    __except (EXCEPTION_EXECUTE_HANDLER)
+                    {
+                        g_particleReadFaults.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    suppress = readable &&
+                        Halo2ShouldSuppressClassicFirstPersonParticle(
+                            classicDisabled,
+                            static_cast<uint8_t>(currentUserFirstPerson));
+                }
+            }
+
+            if (suppress)
+            {
+                g_particleSuppressed.fetch_add(1, std::memory_order_relaxed);
+                g_particleHitPending.store(true, std::memory_order_release);
+            }
+            else if (original)
+            {
+                original(arg0, currentUserFirstPerson, arg2, arg3);
+            }
+        }
+        __finally
+        {
+            g_particleActiveCallbacks.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
+
     bool IsReadableProtection(DWORD protect) noexcept
     {
         if (protect & (PAGE_GUARD | PAGE_NOACCESS))
@@ -2515,10 +2783,152 @@ namespace
         return false;
     }
 
+    bool InstallParticleGate(
+        uintptr_t base, size_t size, uint32_t generation) noexcept
+    {
+        if (g_particleTarget)
+            return true;
+        if (g_particleRejectedGeneration == generation)
+            return false;
+
+        uintptr_t match = 0;
+        uint32_t matchCount = 0;
+        if (!CountPatternMatches(
+                base, size, kHalo2ParticleRendererPattern, match,
+                matchCount) ||
+            matchCount != 1 || match != base + kHalo2ParticleRendererRva)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: particle "
+                "renderer signature matched %u times%s; camera and every "
+                "other feature remain active",
+                matchCount,
+                (matchCount == 1 &&
+                 match != base + kHalo2ParticleRendererRva)
+                    ? " but moved from its pinned RVA" : "");
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        bool gateReadable = false;
+        uint8_t gate = 0xFF;
+        __try
+        {
+            gate = *reinterpret_cast<const volatile uint8_t*>(
+                base + kHalo2ClassicRenderDisabledByteRva);
+            gateReadable = gate <= 1;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            gateReadable = false;
+        }
+        if (!gateReadable)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: live "
+                "renderer gate +0x%X was unreadable or invalid; camera and "
+                "every other feature remain active",
+                static_cast<unsigned>(kHalo2ClassicRenderDisabledByteRva));
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        void* trampoline = nullptr;
+        void* const target = reinterpret_cast<void*>(match);
+        const MH_STATUS created = MH_CreateHook(
+            target, reinterpret_cast<void*>(&Halo2ParticleRendererDetour),
+            &trampoline);
+        if (created != MH_OK || !trampoline)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: hook "
+                "create=%d; camera and every other feature remain active",
+                static_cast<int>(created));
+            if (created == MH_OK)
+                (void)MH_RemoveHook(target);
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        g_particleOriginal.store(
+            reinterpret_cast<uintptr_t>(trampoline),
+            std::memory_order_release);
+        const MH_STATUS enabled = MH_EnableHook(target);
+        if (enabled != MH_OK)
+        {
+            LOG("Halo 2 Classic muzzle suppression StockFallback: hook "
+                "enable=%d; camera and every other feature remain active",
+                static_cast<int>(enabled));
+            (void)MH_RemoveHook(target);
+            g_particleOriginal.store(0, std::memory_order_release);
+            g_particleRejectedGeneration = generation;
+            return false;
+        }
+
+        g_particleTarget = target;
+        g_particleSuppressed.store(0, std::memory_order_relaxed);
+        g_particleReadFaults.store(0, std::memory_order_relaxed);
+        g_particleHitPending.store(false, std::memory_order_release);
+        g_particleHitLogged = false;
+        LOG("Halo 2 Classic muzzle suppression Installed (Stage 3AK): "
+            "particle renderer +0x%X is skipped only for nonzero current-user "
+            "first-person calls while live renderer gate +0x%X is 0; "
+            "Anniversary and all stock/world callers remain stock",
+            static_cast<unsigned>(kHalo2ParticleRendererRva),
+            static_cast<unsigned>(kHalo2ClassicRenderDisabledByteRva));
+        return true;
+    }
+
+    bool RemoveParticleGate() noexcept
+    {
+        if (!g_particleTarget)
+        {
+            g_particleOriginal.store(0, std::memory_order_release);
+            return true;
+        }
+        const MH_STATUS disabled = MH_DisableHook(g_particleTarget);
+        if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+            disabled != MH_ERROR_DISABLED)
+        {
+            LOG("Halo 2 Classic muzzle suppression: disable failed (%d); "
+                "ownership retained for cleanup", static_cast<int>(disabled));
+            return false;
+        }
+        for (int attempt = 0; attempt < 200 &&
+             g_particleActiveCallbacks.load(std::memory_order_acquire);
+             ++attempt)
+        {
+            Sleep(10);
+        }
+        if (g_particleActiveCallbacks.load(std::memory_order_acquire))
+        {
+            LOG("Halo 2 Classic muzzle suppression: callbacks did not drain; "
+                "ownership retained for cleanup");
+            return false;
+        }
+        const MH_STATUS removed = MH_RemoveHook(g_particleTarget);
+        if (removed != MH_OK && removed != MH_ERROR_NOT_CREATED)
+        {
+            LOG("Halo 2 Classic muzzle suppression: remove failed (%d); "
+                "ownership retained for cleanup", static_cast<int>(removed));
+            return false;
+        }
+        g_particleTarget = nullptr;
+        g_particleOriginal.store(0, std::memory_order_release);
+        LOG("Halo 2 Classic muzzle suppression removed: %llu first-person "
+            "Classic particle calls suppressed; stock renderer restored",
+            static_cast<unsigned long long>(
+                g_particleSuppressed.load(std::memory_order_relaxed)));
+        return true;
+    }
+
     bool RemoveCore(const char* reason) noexcept
     {
         g_armed.store(false, std::memory_order_release);
         g_teardownRequested.store(true, std::memory_order_release);
+        // Optional and failure-isolated: restore the stock engine boolean even
+        // if a later hook cleanup needs to remain pending.
+        if constexpr (kHalo2DebugGlobalAimAssistOverrideEnabled)
+            Game_Halo2RestoreAimAssist();
+        if (!RemoveParticleGate())
+            return false;
         if (g_target)
         {
             const MH_STATUS disabled = MH_DisableHook(g_target);
@@ -2658,6 +3068,62 @@ namespace
             (void)MH_RemoveHook(g_weaponAimTarget);
             g_weaponAimTarget = nullptr;
             g_weaponAimOriginal.store(0, std::memory_order_release);
+        }
+        if (g_aimAssistTarget)
+        {
+            const MH_STATUS disabled = MH_DisableHook(g_aimAssistTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 aim-assist bypass: disable failed (%d); ownership "
+                    "retained for cleanup", static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_aimAssistActiveCallbacks.load(std::memory_order_acquire);
+                 ++attempt)
+                Sleep(10);
+            if (g_aimAssistActiveCallbacks.load(std::memory_order_acquire))
+            {
+                LOG("Halo 2 aim-assist bypass callbacks did not drain; "
+                    "ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_aimAssistTarget);
+            g_aimAssistTarget = nullptr;
+            g_aimAssistOriginal.store(0, std::memory_order_release);
+        }
+        if (g_aimAssistViewDirectionTarget)
+        {
+            const MH_STATUS disabled =
+                MH_DisableHook(g_aimAssistViewDirectionTarget);
+            if (disabled != MH_OK && disabled != MH_ERROR_NOT_CREATED &&
+                disabled != MH_ERROR_DISABLED)
+            {
+                LOG("Halo 2 controller melee view direction: disable failed "
+                    "(%d); ownership retained for cleanup",
+                    static_cast<int>(disabled));
+                return false;
+            }
+            for (int attempt = 0; attempt < 200 &&
+                 g_aimAssistViewDirectionActiveCallbacks.load(
+                     std::memory_order_acquire);
+                 ++attempt)
+            {
+                Sleep(10);
+            }
+            if (g_aimAssistViewDirectionActiveCallbacks.load(
+                    std::memory_order_acquire))
+            {
+                LOG("Halo 2 controller melee view-direction callbacks did "
+                    "not drain; ownership retained for cleanup");
+                return false;
+            }
+            (void)MH_RemoveHook(g_aimAssistViewDirectionTarget);
+            g_aimAssistViewDirectionTarget = nullptr;
+            g_aimAssistViewDirectionOriginal.store(
+                0, std::memory_order_release);
+            g_aimAssistControllerRayScope = {};
         }
         if (g_nativeAimTarget)
         {
@@ -3408,6 +3874,190 @@ namespace
             }
         }
 
+        // E-H2-77 through E-H2-80 / C-H2-92: Halo 3 parity means the
+        // controller sight remains authoritative without the stock camera
+        // being pulled toward targets. H2EK's central aim_assist calculation
+        // is paired with its player-control view-vector helper as one optional
+        // transaction. Only that helper call inside the owned calculation sees
+        // the controller ray; all other callers stay stock.
+        uintptr_t assistMatch = 0;
+        uint32_t assistMatchCount = 0;
+        uintptr_t viewDirectionMatch = 0;
+        uint32_t viewDirectionMatchCount = 0;
+        constexpr char kAimAssistCalculatePattern[] =
+            "48 89 54 24 10 55 53 56 57 41 54 48 8D AC 24 80 E7 FF FF "
+            "B8 80 19 00 00 E8 ?? ?? ?? ?? 48 2B E0 49 8B F8 48 8B DA "
+            "8B F1 E8 ?? ?? ?? ?? 33 C9 45 33 E4 48 89 0B 89 4B 08 4C "
+            "89 67 1C 48 C7 07 FF FF FF FF C7 47 08 FF FF FF FF 66 44 "
+            "89 67 18";
+        constexpr char kAimAssistViewDirectionPattern[] =
+            "48 89 5C 24 08 57 48 83 EC 20 48 63 D9 48 8B FA 8B CB "
+            "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 8B C8 4C 69 C3 B8 "
+            "00 00 00 48 83 C2 38 49 03 D0 4C 8B C7";
+        if (!g_nativeAimOriginal.load(std::memory_order_acquire))
+        {
+            LOG("Halo 2 aim-assist suppression StockFallback: native "
+                "controller aim ownership is unavailable");
+        }
+        else if (!CountPatternMatches(
+                base, size, kAimAssistCalculatePattern, assistMatch,
+                assistMatchCount) ||
+            assistMatchCount != 1 ||
+            assistMatch != base + kHalo2AimAssistCalculateRva)
+        {
+            LOG("Halo 2 aim-assist suppression StockFallback: central "
+                "calculation identity matched %u times (expected one at "
+                "+0x%X)", assistMatchCount,
+                static_cast<unsigned>(kHalo2AimAssistCalculateRva));
+        }
+        else
+        {
+            void* const assistTarget = reinterpret_cast<void*>(assistMatch);
+            void* assistTrampoline = nullptr;
+            bool viewInstalled = false;
+
+            const bool viewIdentity = CountPatternMatches(
+                    base, size, kAimAssistViewDirectionPattern,
+                    viewDirectionMatch, viewDirectionMatchCount) &&
+                viewDirectionMatchCount == 1 &&
+                viewDirectionMatch ==
+                    base + kHalo2AimAssistViewDirectionRva;
+            if (viewIdentity)
+            {
+                void* const viewDirectionTarget =
+                    reinterpret_cast<void*>(viewDirectionMatch);
+                void* viewDirectionTrampoline = nullptr;
+                const MH_STATUS viewCreated = MH_CreateHook(
+                    viewDirectionTarget,
+                    reinterpret_cast<void*>(
+                        &Halo2AimAssistViewDirectionDetour),
+                    &viewDirectionTrampoline);
+                if (viewCreated == MH_OK && viewDirectionTrampoline)
+                {
+                    g_aimAssistViewDirectionTarget = viewDirectionTarget;
+                    g_aimAssistViewDirectionOriginal.store(
+                        reinterpret_cast<uintptr_t>(
+                            viewDirectionTrampoline),
+                        std::memory_order_release);
+                    const MH_STATUS viewEnabled =
+                        MH_EnableHook(viewDirectionTarget);
+                    viewInstalled = viewEnabled == MH_OK;
+                    if (!viewInstalled)
+                    {
+                        LOG("Halo 2 controller melee targeting StockFallback: "
+                            "view-direction hook enable=%d; accepted camera "
+                            "suppression remains eligible",
+                            static_cast<int>(viewEnabled));
+                        (void)MH_RemoveHook(viewDirectionTarget);
+                        g_aimAssistViewDirectionTarget = nullptr;
+                        g_aimAssistViewDirectionOriginal.store(
+                            0, std::memory_order_release);
+                    }
+                }
+                else
+                {
+                    LOG("Halo 2 controller melee targeting StockFallback: "
+                        "view-direction hook create=%d; accepted camera "
+                        "suppression remains eligible",
+                        static_cast<int>(viewCreated));
+                    if (viewCreated == MH_OK)
+                        (void)MH_RemoveHook(viewDirectionTarget);
+                }
+            }
+            else
+            {
+                LOG("Halo 2 controller melee targeting StockFallback: "
+                    "view-direction identity matched %u times (expected one "
+                    "at +0x%X); accepted camera suppression remains eligible",
+                    viewDirectionMatchCount,
+                    static_cast<unsigned>(
+                        kHalo2AimAssistViewDirectionRva));
+            }
+
+            const MH_STATUS assistCreated = MH_CreateHook(
+                assistTarget,
+                reinterpret_cast<void*>(&Halo2AimAssistCalculateDetour),
+                &assistTrampoline);
+            if (assistCreated != MH_OK || !assistTrampoline)
+            {
+                LOG("Halo 2 aim-assist suppression StockFallback: central "
+                    "hook create=%d; camera/stereo/aim/hands/HUD/OpenXR "
+                    "remain armed",
+                    static_cast<int>(assistCreated));
+                if (assistCreated == MH_OK)
+                    (void)MH_RemoveHook(assistTarget);
+            }
+            else
+            {
+                g_aimAssistTarget = assistTarget;
+                g_aimAssistOriginal.store(
+                    reinterpret_cast<uintptr_t>(assistTrampoline),
+                    std::memory_order_release);
+                const MH_STATUS assistEnabled = MH_EnableHook(assistTarget);
+                if (assistEnabled != MH_OK)
+                {
+                    LOG("Halo 2 aim-assist suppression StockFallback: central "
+                        "hook enable=%d; camera/stereo/aim/hands/HUD/OpenXR "
+                        "remain armed",
+                        static_cast<int>(assistEnabled));
+                    (void)MH_RemoveHook(assistTarget);
+                    g_aimAssistTarget = nullptr;
+                    g_aimAssistOriginal.store(0, std::memory_order_release);
+                }
+                else if (viewInstalled)
+                {
+                    LOG("Halo 2 controller melee targeting Installed "
+                        "(C-H2-92): central aim_assist.cpp +0x%X receives "
+                        "the controller ray through scoped player-control "
+                        "view helper +0x%X, retains its native melee target, "
+                        "and returns neutral camera-assist control for "
+                        "VR-owned local user 0; every other call is stock",
+                        static_cast<unsigned>(
+                            kHalo2AimAssistCalculateRva),
+                        static_cast<unsigned>(
+                            kHalo2AimAssistViewDirectionRva));
+                }
+                else
+                {
+                    LOG("Halo 2 aim-assist suppression Installed (C-H2-90 "
+                        "fallback): controller melee targeting is "
+                        "StockFallback, so VR-owned local user 0 receives "
+                        "neutral camera-assist and no-target results");
+                }
+            }
+
+            // The direction detour is useful only to the central transaction.
+            // If that transaction failed, remove it after first preventing new
+            // entries and draining any unscoped stock-forwarding call.
+            if (!g_aimAssistOriginal.load(std::memory_order_acquire) &&
+                g_aimAssistViewDirectionTarget)
+            {
+                (void)MH_DisableHook(g_aimAssistViewDirectionTarget);
+                for (int attempt = 0; attempt < 200 &&
+                     g_aimAssistViewDirectionActiveCallbacks.load(
+                         std::memory_order_acquire);
+                     ++attempt)
+                {
+                    Sleep(10);
+                }
+                (void)MH_RemoveHook(g_aimAssistViewDirectionTarget);
+                g_aimAssistViewDirectionTarget = nullptr;
+                g_aimAssistViewDirectionOriginal.store(
+                    0, std::memory_order_release);
+            }
+        }
+
+        // Optional feature transaction: refusal here leaves the proven camera,
+        // stereo, input and hand paths installed and loudly retains stock
+        // particles for this generation.
+        (void)InstallParticleGate(base, size, generation);
+
+        // C-H2-89 is deliberately a separate optional transaction. A missing
+        // or invalid debug-global slot leaves stock aim assist active without
+        // disarming any of the proven Halo 2 VR paths.
+        if constexpr (kHalo2DebugGlobalAimAssistOverrideEnabled)
+            (void)Game_Halo2TryDisableAimAssist(base, size);
+
         g_coreState = CoreState::Installed;
         LOG("Halo 2 observer 6DOF installed: observer final transform "
             "+0x%X, observer results +0x%X stride 0x%X, user %u. Three "
@@ -3673,6 +4323,35 @@ namespace
                 g_nativeAimNonOwned.load(std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_nativeAimRefused.load(std::memory_order_relaxed)));
+        LOG("Halo 2 C-H2-92 controller melee targeting: %llu central calls, "
+            "%llu camera assists suppressed for VR-owned local user 0 "
+            "(%llu controller-ray targets selected, %llu controller-ray no "
+            "target), %llu stock, %llu refused; scoped view helper %llu "
+            "calls / %llu controller overrides / %llu stock / %llu refused",
+            static_cast<unsigned long long>(
+                g_aimAssistCalls.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistSuppressed.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistTargetSelected.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistNoTarget.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistStock.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistRefused.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionCalls.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionApplied.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionStock.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_aimAssistViewDirectionRefused.load(
+                    std::memory_order_relaxed)));
         uint32_t coverBits[3] = {
             g_visibilityCoverStockBits.load(std::memory_order_relaxed),
             g_visibilityCoverRequiredBits.load(std::memory_order_relaxed),
@@ -3750,6 +4429,10 @@ bool Halo2Observer6Dof_Poll(
     }
 
     g_armed.store(true, std::memory_order_release);
+    // Map/script initialization can rewrite debug globals after core install.
+    // This poll runs on the title worker, not an eye/render hook.
+    if constexpr (kHalo2DebugGlobalAimAssistOverrideEnabled)
+        Game_Halo2MaintainDisabledAimAssist();
     if (g_armedLoggedGeneration != generation)
     {
         g_armedLoggedGeneration = generation;
@@ -3757,6 +4440,14 @@ bool Halo2Observer6Dof_Poll(
             "camera's position and orientation in BOTH graphics modes, "
             "because the observer is the one camera root the classic Blam "
             "renderer and the remastered Anniversary renderer both consume");
+    }
+    if (!g_particleHitLogged &&
+        g_particleHitPending.exchange(false, std::memory_order_acq_rel))
+    {
+        g_particleHitLogged = true;
+        LOG("Halo 2 Classic muzzle suppression HIT: first-person Classic "
+            "particle renderer calls are being skipped; Anniversary remains "
+            "stock");
     }
     ReportTelemetry();
     return true;

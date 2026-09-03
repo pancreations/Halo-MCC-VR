@@ -17,6 +17,18 @@ bool D3D_Halo2HudShaderPathAvailable();
 // Stage 3BH/3BR's Draw/DrawIndexed framing pin is required before Halo 4's
 // optional authored-reticle hooks may hide the native flat CUI copy.
 bool D3D_Halo4AuthoredReticleDrawPathAvailable();
+// Exact known-good V6 pixel-shader path for Halo 4's visor/framing overlay.
+// The feature remains stock unless both shader creation and PS binding hooks
+// are live; the default-visible path forwards every binding byte-for-byte.
+bool D3D_Halo4HelmetShaderPathAvailable();
+void D3D_GetHalo4HelmetTelemetry(
+    uint64_t& shadersRegistered, uint64_t& suppressions);
+// Exact H4EK/retail `screen\motion_suck` pixel shader. This optional bridge is
+// independently gated and suppresses only the incompatible full-screen draw
+// while Halo 4 stereo is active.
+bool D3D_Halo4ScreenEffectShaderPathAvailable();
+void D3D_GetHalo4ScreenEffectTelemetry(
+    uint64_t& shadersRegistered, uint64_t& suppressions);
 void D3D_GetHalo2HudTelemetry(
     uint64_t& gameplayShadersRegistered,
     uint64_t& crosshairShadersRegistered,

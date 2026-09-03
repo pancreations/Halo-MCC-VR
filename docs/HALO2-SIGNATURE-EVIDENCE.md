@@ -4216,3 +4216,304 @@ in Classic, dials until it matches, presses Tab to compare with Anniversary,
 and saves. Whatever values land there are then a MEASUREMENT of the residual
 difference, in degrees and metres - the number this investigation could not
 obtain any other way, and the right input to a future engine-level fix.
+
+## E-H2-75 (C-H2-88, unaccepted): Stage 3AK Classic first-person particle suppression restored
+
+The user supplied the complete Stage 3AM source package whose DLL has SHA-256
+`D61E223898BBFC822568AE3EB9E0B7B1740235B6F2F521BFF5FDB98752B0F68C`;
+its embedded Stage 3AK path identifies the Classic muzzle
+effect at the particle renderer, not at a guessed weapon/tag field. The pinned
+retail Steam `halo2.dll` used by this repository has SHA-256
+`DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`.
+In its loaded-image layout the 15-byte entry signature
+
+    48 8B C4 88 50 10 89 48 08 55 53 56 57 41 55
+
+matches exactly once at RVA `0x0076DC90`. The live renderer-selection byte is
+the already evidenced gate at RVA `0x00E70CF8`: zero means the Classic render
+tree runs; one means Anniversary. The renderer's second register argument is
+the current-user/first-person classification used by the Stage 3AK donor.
+Three pinned callers reach the function; two populate that argument from their
+first-person classification and the unrelated caller supplies zero.
+
+C-H2-88 therefore skips the renderer only when both facts are true:
+
+- the second argument's low byte is nonzero; and
+- the live renderer gate is exactly zero.
+
+Anniversary, world particles, the unrelated zero-classification caller, an
+unreadable gate, and any non-Classic gate value all call the stock trampoline.
+The detour keeps no logging, allocation, locks, file I/O or scans in its hot
+path; it updates atomics only, and the worker logs the first witnessed hit.
+Signature zero/multiple/moved, invalid gate, or hook failure produces an
+explicit `StockFallback` for muzzle suppression only. It never disarms the
+observer, stereo, input, hand or OpenXR paths. Teardown disables the optional
+hook and drains its callbacks before releasing its trampoline.
+
+This candidate also exposes only the two user-requested Classic carrier dials
+from the existing E-H2-73 implementation (yaw and pitch, each -30 to +30
+degrees). It does not expose new roll/translation dials, does not alter
+Anniversary, and does not move the native reticle or shot ray. The six-field
+storage remains readable for compatibility and the two old Stage 3N/V5
+`h2_classic_*` aliases migrate to the canonical `halo2_classic_*` keys.
+
+Finally, the Stage 3AM performance gate is restored in source: full-resolution
+synchronous eye readback is bounded to capture-source discovery (or an
+explicit dump request), renderer switches no longer schedule BMP capture, and
+alternate-target copies retire with source validation. This is not yet a
+headset acceptance result. C-H2-88 must demonstrate the missing Classic flash,
+working two-dial visual alignment, stock Anniversary effects, and no recurring
+cutscene diagnostic hitch before any accepted pointer advances.
+
+## E-H2-76 (C-H2-89): official global aim-assist disable transaction
+
+The 2026-09-01 Steam / SteamVR 2.17.7 / Oculus / 120 Hz report shows Halo 2's
+existing direct native-aim hook working (`native aim` reaches thousands of
+applied local-player updates with zero refused), while the player still sees
+the camera pulled near enemies. The same interval shows the headset-pitch loop
+correcting differences between headset and engine pitch. Therefore the
+remaining report is upstream camera/input assistance, not a failure to write
+the controller sight line into unit aiming vectors.
+
+The official H2EK provides the engine-owned control needed for a narrow test:
+
+    tool.exe script-doc sim_disable_aim_assist
+    (<boolean> sim_disable_aim_assist)
+
+Pinned evidence identities:
+
+- H2EK `tool.exe` SHA-256
+  `84A2D9EDB30381D30F4458748815801042291E03C817B0E4BFB422369C8EB042`.
+- H2EK `halo2_tag_test.exe` SHA-256
+  `D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`.
+  The unique NUL-terminated name is at file `0x8A71EC`, RVA `0x8A7DEC`;
+  its kit debug-global record has boolean type 5.
+- Pinned Steam retail `halo2.dll` SHA-256
+  `DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`.
+  The same unique name is at file `0xB39C48`, RVA `0xB3AE48`; its unique
+  catalog reference is at file `0xE0C018` and the following type word is 5.
+
+The retail catalog's value pointer is populated at runtime, so C-H2-89 does
+not ship a guessed RVA. It uses the project's established typed debug-global
+resolver: exact NUL-bounded name, exact boolean type 5, value inside the
+module, and committed writable non-executable memory. The current byte must be
+0 or 1 and every write is read back.
+
+This is an optional feature transaction. Once the Halo 2 VR core has installed
+for a live level, it captures the stock byte and sets the official disable
+boolean to 1. The title worker reasserts it if map/script initialization resets
+the global. Level exit, title exit, module-generation change, install rollback,
+or VR failure restores the captured value before camera-hook cleanup. Failure
+to resolve, write, verify, reassert or restore is logged for this feature only;
+it never disarms the observer, stereo, hands, HUD or OpenXR.
+
+Because this is the engine's global switch, the test intentionally disables
+camera friction/adhesion, weapon magnetism/autoaim and melee assistance
+together. It may also change target-sensitive reticle color and melee lunge;
+those are expected observations for this diagnostic, not evidence that the
+native reticle itself regressed. No map, weapon tag, cache file or on-disk game
+file is modified.
+
+**C-H2-89 headset verdict (2026-09-02): rejected and disabled.** The retail
+catalog entry's runtime value pointer did not resolve. Both level attempts
+logged feature-local `StockFallback`, so the write never happened and the
+unchanged aim/melee result is expected. This disproves by-name debug-global
+resolution as a shipping MCC control path; do not retry it. The code remains
+dormant in accordance with the project's revert policy.
+
+## E-H2-77 (C-H2-90): central aim-assist calculation matched from official H2EK to pinned retail
+
+The C-H2-89 headset log proved that the debug-global path never applied. A
+second static review also showed that the kit's `sim_disable_aim_assist` value
+is referenced by simulation/debug-state comparison code, not by the player aim
+calculation. It is therefore compiled dormant and is not reused here.
+
+Online due diligence found no ready-made Halo 2 MCC no-aim-assist runtime mod.
+PCGamingWiki records controller aim assist as always enabled in Halo 2, while
+the Nexus `No Aim Magnetism` precedent covers Halo 3/Halo 4 by patching map and
+weapon data. That approach is unsuitable here because this project does not
+patch game files or tags. Halopedia's engine terminology distinguishes camera
+magnetism/friction/adhesion from target acquisition, matching the two separate
+result blocks below:
+
+- https://www.pcgamingwiki.com/wiki/Halo_2
+- https://www.nexusmods.com/halothemasterchiefcollection/mods/1099
+- https://www.halopedia.org/Magnetism
+- https://www.halopedia.org/Aim_assist
+
+Official H2EK tag exports corroborate the data path. `globals.globals` player
+control contains magnetism friction `0.6` and adhesion `0.7`; weapon tags carry
+per-weapon autoaim and magnetism angle/range fields (for example, battle rifle
+autoaim `3 deg / 17`, magnetism `6 deg / 21`). This establishes why a tag-only
+solution would require broad map/weapon edits and why the central runtime
+calculation is the narrow engine boundary.
+
+Pinned identities:
+
+- H2EK `halo2_tag_test.exe` SHA-256
+  `D0B71186D3948C48DDD02E2CCB88FA13E77E25A3D8F7FA60922F23A2A0073E36`.
+- Steam retail `halo2.dll` SHA-256
+  `DE65B4F4FDBF3F0A5EAB7431FE530DA17DD815599182DFD6AE9B7E21CF171946`.
+- Retail MD5 reported by Ghidra/BSim:
+  `afd5c77177c04d050b0e6f1ad7ffb304`.
+
+In the official kit, `aim_assist.cpp` central calculation is kit RVA
+`0xFE0D0`. Its only direct code call is at kit RVA `0x74048` inside the
+player-control function beginning at `0x72D40`. The three arguments are local
+user index, a three-float assist-control output, and a targeting-result output.
+The function first zeros the three floats; writes `-1` at targeting offsets
+`+0/+4/+8`; writes zero word at `+0x18`; and writes zero floats at
+`+0x1C/+0x20`. Bytes `+0x0C..+0x17` and `+0x1A..+0x1B` are not initialized and
+must remain untouched.
+
+Using official Ghidra 12.1.3 with the cross-architecture `medium_nosize` BSim
+profile, the kit player-control caller `0x72D40` matched retail
+`halo2.dll+0x6C0E30` with similarity `0.3107777450` and significance
+`121.0401345814`. The corresponding call site in the matched retail function
+is `+0x6C2987`, targeting retail `+0x759260`. The surrounding operations are
+the same as the kit call site: the local-player index is argument one, a local
+three-float result is argument two, and the player-control targeting block at
+output `+0x30` is argument three.
+
+Retail `+0x759260` independently confirms the exact ABI and initializer:
+
+    void aim_assist_calculate(uint32 user, float *control, targeting *result)
+    control[0..2] = 0
+    result[+0/+4/+8] = 0xFFFFFFFF
+    result[+0x18] = 0 (word)
+    result[+0x1C/+0x20] = 0.0f
+
+It has one code caller, the verified `+0x6C2987` edge. The 79-byte runtime
+pattern includes the prologue, `0x1980` stack-allocation constant, two
+wildcarded calls, register transfer for all three arguments, and every neutral
+initializer write. Counting it in the pinned **loaded-image layout** (not the
+raw file) gives exactly one match at `+0x759260`.
+
+C-H2-90 installs that hook as an optional feature only after native
+controller-aim ownership exists. For local user 0 while Halo 2 VR controller
+aim is active, it writes precisely the neutral fields above and skips target
+acquisition. Other users, menus/non-VR states, and teardown call the stock
+trampoline. It does not add a separate melee patch; any melee change is only
+an observation of removing the shared aim/target result. Zero/multiple/moved
+signature, hook failure, or invalid output pointers leaves stock aim assist and
+logs feature-local `StockFallback`; it never gates or disarms the working Halo
+2 VR core. Teardown disables the hook and drains callbacks before removing its
+trampoline.
+
+## E-H2-78 (C-H2-91): camera-assist control and melee target are separate outputs
+
+The exact C-H2-90 Steam headset log has SHA-256
+`7F0AAE2A3641BF55EC970B9718E92D7B50698A64B1F2E6D9F130FE1CD8C81FF7`.
+It identifies source `62d995a0c42e89b500410b0972be5f012ff857dc`,
+SteamVR/OpenXR 2.17.8, an Oculus headset, and 120 Hz. The hook installed and
+reached `26,285` suppressed local-user calls with zero refusals. The user
+reports that the unwanted enemy-following camera behavior stopped, but melee
+still misses. Thus the camera-control suppression is live and useful; clearing
+the separate target result does not repair melee.
+
+Public Halo 2 mod review found tag-level examples that alter melee lunge range,
+weapon melee parameters, or hit volumes, but no runtime mod that redirects
+player melee to a VR controller sight. Those map/tag techniques would also
+violate this project's no-game-file-patching rule:
+
+- https://www.nexusmods.com/halothemasterchiefcollection/mods/368
+- https://github.com/Tbiesty/H2EK/tree/halo_2a_rebalanced
+- https://learn.microsoft.com/en-us/halo-master-chief-collection/h2/tools/toolshome
+
+Official H2EK provides the relevant engine split without changing tag data:
+
+- `player_control.cpp` function kit RVA `0x72D40` calls the central
+  `aim_assist.cpp` calculation at `0x74048`. Its three-float control result is
+  consumed as look/camera adjustment, while the targeting result remains in
+  the output block at `+0x30`.
+- `simulation_encoding.cpp` kit RVA `0x3D5F60` serializes
+  `player_action+0x34` explicitly as `melee-target-unit`.
+- `unit_action_system.cpp` kit RVA `0x4C11B0` reads the melee request's target
+  and passes it to the melee starter at `0x4C82A0`.
+- The starter calls `bipeds.cpp` kit RVA `0x4AE2B0`, which writes the target to
+  the biped at `+0x3D8` and enters character-physics mode 6.
+- `character_physics_mode_melee.cpp` kit RVAs `0x1E3560` and `0x1E37B0`
+  consume that target's position and drive the normal lunge. This is a
+  distinct downstream path from the camera control floats.
+
+The existing E-H2-54 native-aim hook already writes the controller sight into
+the owned unit's official desired/current aiming vectors before this player
+control calculation; the C-H2-90 log shows `29,626` such writes with zero
+refusals. Therefore C-H2-91 needs no guessed melee address and no separate
+melee detour. It calls the already verified retail `+0x759260` calculation so
+the engine selects a target from the controller-owned unit sight, preserves
+the entire target result, then zeros only the three camera-assist control
+floats. Non-owned calls remain stock. The same unique signature, feature-local
+failure policy, and drained teardown from E-H2-77 remain in force.
+
+## E-H2-79 (C-H2-91 rejection): retained target restores stock lunge snap
+
+The C-H2-91 Steam headset log has SHA-256
+`B154EB5BA323A5FC6E2974FAC1F8635AFAFFF91049FA892515E1545A83384DC8`
+and identifies source `34189bcef76ef49bd3c542af29e867a4c068ccd1`,
+SteamVR/OpenXR 2.17.8, an Oculus headset, and 120 Hz. The exact installed hook
+ran `4,723` owned calculations, retained `435` engine-selected targets, and
+reported zero refusals. The user reports that melee still missed and its
+lock-on, camera turn, and wrong-way movement felt worse than C-H2-90.
+
+This is a direct behavioral result for E-H2-78's dataflow. Preserving the
+target does not merely retain an inert hit-test identity: it feeds the stock
+`character_physics_mode_melee` lunge, whose target-directed movement and
+facing are unsuitable for a VR weapon that can point independently of the
+body/head camera. C-H2-91 target retention is therefore rejected and compiled
+dormant. The successful C-H2-90 neutral camera-control/no-target behavior is
+restored while the non-lunge melee direction is investigated. Do not retry
+target retention as a melee fix.
+
+## E-H2-80 (C-H2-92): native target selection must receive the controller ray
+
+C-H2-91's premise was disproved by official H2EK, not merely by its negative
+headset result. The central `aim_assist.cpp` calculation does not acquire its
+view direction from the unit aiming vector already owned by E-H2-54. Its
+verified player-control caller invokes H2EK kit RVA `0x72C30`, which reads
+`player_control->desired_angles` and converts them into a three-float view
+vector. The central calculation uses that vector for target selection. The
+stock body/head direction therefore selected C-H2-91's retained target, and
+the downstream stock lunge correctly turned/moved toward the wrong ray.
+
+The same H2EK function has two arguments: local user index and a `float[3]`
+output. In pinned retail its homolog is `halo2.dll+0x6C0DF0` with the same ABI.
+The central calculation calls it at `+0x75934C`, immediately before passing
+the result at `[rsp+0x60]` to target calculation `+0x758B50`. The retail helper
+reads the user control record at stride `0xB8` and tail-calls the angle-to-view
+conversion. A 49-byte loaded-image pattern matches exactly once at
+`+0x6C0DF0` in the pinned Steam module:
+
+    48 89 5C 24 08 57 48 83 EC 20 48 63 D9 48 8B FA 8B CB
+    E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 8B C8 4C 69 C3 B8
+    00 00 00 48 83 C2 38 49 03 D0 4C 8B C7
+
+Official H2EK independently establishes the native melee damage direction.
+`unit_action_system.cpp` kit RVA `0x4C1620` calls `units.cpp` kit RVA
+`0x480D40` at the melee damage keyframe. That function reads the current unit
+aim vector at unit `+0x174`, obtains the authored aiming origin through kit
+`+0x488C80`, and builds its collision pyramid from weapon-definition angles
+and depth at `+0x260/+0x264/+0x268`. Melee initiation kit RVA `0x4CA280`
+also reads unit `+0x174`; its call to `+0x4C9FF0` changes stock body facing.
+Thus neither damage range nor body orientation needs a guessed patch. The
+existing native controller-aim transaction already supplies the correct
+damage vector; only target selection/lunge was looking down the stock camera
+ray.
+
+C-H2-92 hooks the verified view helper as an optional subfeature. The central
+calculation detour first builds the exact same stable, converged controller
+direction already used by native unit aim. A thread-local scope exposes that
+direction only while the original central calculation for VR-owned user 0 is
+executing; the view-helper detour first calls stock, then replaces its output
+only inside that scope. The engine therefore performs its own target choice
+and lunge along the controller ray. Afterward the accepted C-H2-90 rule still
+zeros only the three camera-control floats. Every helper call outside that
+single calculation is byte-for-byte stock.
+
+If the new helper identity/hook or a coherent controller publication is
+unavailable, that calculation retains C-H2-90's neutral camera/no-target
+result; it never retains a stock-camera target. The helper failing to install
+does not prevent the already verified central camera-suppression hook from
+installing. Both callbacks are drained before their trampolines are removed.
+No melee range, damage, animation, body vector, map/weapon tag, game file, or
+other title is patched. Headset-PENDING.

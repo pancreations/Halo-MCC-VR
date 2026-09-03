@@ -122,6 +122,36 @@
       "tag": "ui\\hud\\player_huds\\shared\\curve_template\\hud_curve_global",
       "class": "cui_screen",
       "proven": false
+    },
+    {
+      "id": "m30_ghost_boost_screen_effect",
+      "tag": "environments\\solo\\m30_cryptum\\fx\\screen\\parts\\fx_m30_ghost_boost",
+      "class": "area_screen_effect",
+      "proven": true
+    },
+    {
+      "id": "m30_ghost_escape_blur",
+      "tag": "environments\\solo\\m30_cryptum\\fx\\screen\\parts\\fx_m30_ghost_escape_blur",
+      "class": "material",
+      "proven": true
+    },
+    {
+      "id": "m30_ghost_escape_screen",
+      "tag": "environments\\solo\\m30_cryptum\\fx\\screen\\parts\\fx_m30_ghost_escape_scrn",
+      "class": "material",
+      "proven": true
+    },
+    {
+      "id": "screen_motion_suck",
+      "tag": "shaders\\material_shaders\\screen\\motion_suck",
+      "class": "material_shader",
+      "proven": true
+    },
+    {
+      "id": "screen_shader_bank",
+      "tag": "shaders\\material_shaders\\screen",
+      "class": "material_shader_bank",
+      "proven": true
     }
   ]
 }

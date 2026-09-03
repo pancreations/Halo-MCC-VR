@@ -66,8 +66,9 @@ namespace
     // Halo 4 camera + motion core. C-H4-7/8/9 earned stereo, head tracking,
     // 6DOF and headset-owned pitch in the headset; C-H4-10 adds the closed-loop
     // controller aim, VR turn and haptics the other titles already have, on the
-    // same shared code paths. C-H4-44's HUD-basis writer is headset-rejected
-    // and dormant. C-H4-34 replaces the
+    // same shared code paths. C-H4-53 restores the headset-proven Stage 3X
+    // native CUI-root and curvature consumers; the rejected C-H4-44 tag-basis
+    // writer remains dormant. C-H4-34 replaces the
     // rejected arm solve with rigid floating hands, so ArmIk is deliberately
     // absent. Halo 4's H4EK-derived cinematic globals and live authored-shot
     // look constraints now publish the common CutsceneTheater contract from
@@ -75,6 +76,7 @@ namespace
     constexpr uint32_t kHalo4Capabilities =
         TitleCapability_Stereo |
         TitleCapability_ControllerAim |
+        TitleCapability_Hud |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_ControllerInput |

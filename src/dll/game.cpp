@@ -37,6 +37,7 @@
 #include "../common/halo4_render_logic.h"
 #include "../common/halo4_cui_reticle_logic.h"
 #include "../common/halo4_hud_logic.h"
+#include "../common/halo4_restoration_logic.h"
 #include "../common/halo4_parity_trace_logic.h"
 #include "../common/level_load_gate_logic.h"
 #include "halo2_adapter.h"
@@ -67,6 +68,53 @@
 
 #ifndef HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP
 #define HALOMCCVR_EXPERIMENTAL_ODST_BRINGUP 0
+#endif
+
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+extern "C"
+{
+    // Read by the two allocation-free MASM bridges. The worker installs and
+    // clears them only while halo4.dll is loader-pinned.
+    void* g_halo4EffectOriginalHelper = nullptr;
+    void* g_halo4EffectTransientContinue = nullptr;
+    void* g_halo4CurvatureContinue = nullptr;
+    volatile DWORD g_halo4HudGameplayThreadId = 0;
+    volatile uint8_t g_halo4HudCurvatureEnabled = 0;
+    volatile float g_halo4HudCurvatureValue = 1.0f;
+    volatile uint8_t g_halo4EffectsEnabled = 0;
+    volatile LONG64 g_halo4EffectsHidden = 0;
+
+    void Halo4EffectTransientWrapper();
+    void Halo4CurvatureBridge();
+    void __fastcall Halo4EffectHideBridge(void* descriptor, void* matrix);
+}
+
+std::atomic<bool> g_halo4NativePauseAvailable{false};
+
+extern "C" void __fastcall Halo4EffectHideBridge(
+    void* descriptor, void* matrix)
+{
+    if (!g_halo4EffectsEnabled || !descriptor || !matrix)
+        return;
+    __try
+    {
+        const uint8_t flags =
+            *(static_cast<const uint8_t*>(descriptor) + 0x4A);
+        if (!Halo4EffectDescriptorIsLocalFirstPerson(flags))
+            return;
+        constexpr uint32_t kFiniteFar = 0x461C4000u;
+        auto* const destination = static_cast<uint8_t*>(matrix);
+        std::memcpy(destination + 0x28, &kFiniteFar, sizeof(kFiniteFar));
+        std::memcpy(destination + 0x2C, &kFiniteFar, sizeof(kFiniteFar));
+        std::memcpy(destination + 0x30, &kFiniteFar, sizeof(kFiniteFar));
+        InterlockedIncrement64(&g_halo4EffectsHidden);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        // A torn optional effect record leaves that effect stock. The camera
+        // and OpenXR session are owned by a separate transaction.
+    }
+}
 #endif
 // M1 head tracking. We hook the game's per-frame camera-update function and,
 // each frame, overwrite the authoritative camera's forward/up vectors with the
@@ -1780,6 +1828,14 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
         return 1;
     }
+
+    struct Halo2AimAssistOverride
+    {
+        uint8_t* slot = nullptr;
+        uint8_t stock = 0;
+        uint64_t reassertions = 0;
+    };
+    Halo2AimAssistOverride g_halo2AimAssistOverride{};
 
     static int SafeReadFloat(const float* slot, float* value)
     {
@@ -29449,7 +29505,9 @@ namespace
     std::atomic<float> g_halo4RenderHalfFovY[2]{};
     std::atomic<uint64_t> g_halo4RenderFovSerial[2]{};
 
-    // C-H4-10. Stereo and ControllerInput are carried forward from the accepted
+    // C-H4-53 restores Stage 3X's independently headset-proven native HUD
+    // consumers. The rejected C-H4-44 tag-basis writer remains dormant.
+    // Stereo and ControllerInput are carried forward from the accepted
     // C-H4-1/C-H4-7/C-H4-9 line. ControllerAim, Haptics, RuntimeModes and
     // RoomScale join them now that Halo 4 publishes the three things the shared
     // paths need from a title: a runtime mode, a yaw reference pair, and the
@@ -29461,7 +29519,8 @@ namespace
     // would grant a capability Halo 4 does not implement.
     constexpr uint32_t kHalo4RuntimeCapabilities =
         TitleCapability_Stereo | TitleCapability_ControllerInput |
-        TitleCapability_ControllerAim | TitleCapability_Haptics |
+        TitleCapability_ControllerAim | TitleCapability_Hud |
+        TitleCapability_Haptics |
         TitleCapability_RuntimeModes |
         TitleCapability_RoomScale |
         TitleCapability_CutsceneTheater;
@@ -29670,6 +29729,11 @@ namespace
         std::atomic<uint32_t> parityLastFlag{0};
         std::atomic<float> cuiReticleBaseX{0.0f};
         std::atomic<float> cuiReticleBaseY{0.0f};
+        // Stock-transform canvas measured inside the private capture replay.
+        // It is separate from the visible canvas above because Stage 3X HUD
+        // controls intentionally affect only the visible gameplay pass.
+        std::atomic<float> cuiReticleCaptureBaseX{0.0f};
+        std::atomic<float> cuiReticleCaptureBaseY{0.0f};
         std::atomic<float> cuiReticleAimX{0.0f};
         std::atomic<float> cuiReticleAimY{0.0f};
         std::atomic<float> cuiReticleStockScale{0.0f};
@@ -29765,6 +29829,125 @@ namespace
         std::atomic<float> lastElementVerticalFov{0.0f};
         std::atomic<float> lastConverterScale{0.0f};
     } g_halo4Camera;
+
+    using Halo4PauseReasonFn = bool(__fastcall*)(int32_t reason);
+    using Halo4HudRootFn = void(__fastcall*)(void* renderer);
+
+    struct Halo4RestorationRuntime
+    {
+        std::atomic<bool> effectsInstalled{false};
+        std::atomic<bool> hudInstalled{false};
+        std::atomic<bool> pauseProven{false};
+        bool cleanupRequired = false;
+        bool effectsTouched = false;
+        bool effectsNegPatched = false;
+        bool effectsHelperPatched = false;
+        bool effectsTransientPatched = false;
+        bool effectsModeOnePatched = false;
+        bool curvatureTouched = false;
+        bool curvaturePatched = false;
+        void* hudTarget = nullptr;
+        Halo4HudRootFn hudOriginal = nullptr;
+        Halo4PauseReasonFn pauseReason = nullptr;
+        bool pauseStateKnown = false;
+        bool pauseLast = false;
+        uint64_t pauseMismatchSinceMs = 0;
+        bool pauseMismatchValue = false;
+        std::atomic<bool> helmetControlInstalled{false};
+        std::atomic<uint64_t> hudTransforms{0};
+    } g_halo4Restoration;
+
+    constexpr uint32_t kHalo4EffectNegRva = 0x1059A2;
+    constexpr uint32_t kHalo4EffectHelperRva = 0x100EE8;
+    constexpr uint32_t kHalo4EffectOriginalHelperRva = 0x100EBC;
+    constexpr uint32_t kHalo4EffectTransientRva = 0x1012D5;
+    constexpr uint32_t kHalo4EffectTransientContinueRva = 0x1012E7;
+    constexpr uint32_t kHalo4EffectModeOneRva = 0x27BD36;
+    constexpr uint32_t kHalo4EffectCaveRva = 0xB79C10;
+    constexpr uint32_t kHalo4HudRootRva = 0x3F313C;
+    constexpr uint32_t kHalo4CurvatureRva = 0x420D7E;
+    constexpr uint32_t kHalo4CurvatureContinueRva = 0x420D98;
+    constexpr uint32_t kHalo4PauseReasonRva = 0xA0AE4;
+
+    constexpr std::array<uint8_t, 5> kHalo4EffectNegStock =
+        {0x48,0x8B,0x5C,0x24,0x48};
+    constexpr std::array<uint8_t, 5> kHalo4EffectHelperStock =
+        {0xE8,0xCB,0x4A,0x00,0x00};
+    constexpr std::array<uint8_t, 18> kHalo4EffectTransientStock = {
+        0x66,0x41,0x39,0x44,0xB6,0x18,0x49,0x8B,0xD7,
+        0x41,0x0F,0x95,0xC1,0xE8,0xD5,0xFB,0xFF,0xFF};
+    constexpr std::array<uint8_t, 3> kHalo4EffectModeOneStock =
+        {0x41,0x8A,0xDA};
+    constexpr std::array<uint8_t, 3> kHalo4EffectModeOneHidden =
+        {0x30,0xDB,0x90};
+    constexpr std::array<uint8_t, 26> kHalo4CurvatureStock = {
+        0xF3,0x0F,0x10,0x8F,0xE8,0x01,0x00,0x00,
+        0xF3,0x0F,0x11,0x4D,0xA4,
+        0xF3,0x0F,0x10,0x8F,0xEC,0x01,0x00,0x00,
+        0xF3,0x0F,0x11,0x4D,0xAC};
+
+    int Halo4SafeRead(const void* source, void* destination, size_t bytes);
+    int Halo4SafeWrite(void* destination, const void* source, size_t bytes);
+
+    bool Halo4FindUniquePinned(
+        uintptr_t base, size_t size, const char* pattern, uint32_t rva,
+        uintptr_t& result)
+    {
+        result = sig::Find(base, size, pattern);
+        return result && result - base == rva &&
+            !sig::Find(result + 1, base + size - result - 1, pattern);
+    }
+
+    bool Halo4WriteExecutable(
+        void* destination, const void* expected, const void* replacement,
+        size_t bytes)
+    {
+        if (!destination || !expected || !replacement || !bytes)
+            return false;
+        std::vector<uint8_t> current(bytes);
+        if (!Halo4SafeRead(destination, current.data(), bytes) ||
+            std::memcmp(current.data(), expected, bytes) != 0)
+            return false;
+        DWORD previous = 0;
+        if (!VirtualProtect(
+                destination, bytes, PAGE_EXECUTE_READWRITE, &previous))
+            return false;
+        const bool wrote = Halo4SafeWrite(destination, replacement, bytes) != 0;
+        DWORD ignored = 0;
+        const bool protectedAgain = VirtualProtect(
+            destination, bytes, previous, &ignored) != 0;
+        FlushInstructionCache(GetCurrentProcess(), destination, bytes);
+        return wrote && protectedAgain &&
+            Halo4SafeRead(destination, current.data(), bytes) &&
+            std::memcmp(current.data(), replacement, bytes) == 0;
+    }
+
+    template<size_t N>
+    bool Halo4PatchMatches(
+        uintptr_t address, const std::array<uint8_t, N>& bytes)
+    {
+        std::array<uint8_t, N> current{};
+        return Halo4SafeRead(
+                   reinterpret_cast<const void*>(address), current.data(), N) &&
+            current == bytes;
+    }
+
+    template<size_t N>
+    bool Halo4RestoreOwnedPatch(
+        uintptr_t address, const std::array<uint8_t, N>& owned,
+        const std::array<uint8_t, N>& stock)
+    {
+        std::array<uint8_t, N> current{};
+        if (!Halo4SafeRead(
+                reinterpret_cast<const void*>(address), current.data(), N))
+            return false;
+        if (current == stock)
+            return true;
+        if (current != owned)
+            return false;
+        return Halo4WriteExecutable(
+            reinterpret_cast<void*>(address), owned.data(), stock.data(), N);
+    }
 
     uint32_t Halo4RetainedRuntimeGeneration()
     {
@@ -32894,6 +33077,63 @@ namespace
     // its own callback reference below.
     thread_local uint32_t g_halo4CuiFrontendCallbackDepth = 0;
 
+    void Halo4ApplyNativeHudAffine(void* renderer)
+    {
+        if (!renderer || !g_halo4Restoration.hudInstalled.load(
+                std::memory_order_acquire) ||
+            !Halo4NativeHudAdmitsCuiRoot(
+                g_halo4CuiFrontendCallbackDepth,
+                g_halo4CuiReticleEyeScope.captureReplay,
+                VR_IsPausePresentationTarget()))
+        {
+            return;
+        }
+        int32_t count = 0;
+        if (!Halo4SafeRead(
+                static_cast<const uint8_t*>(renderer) + 0x870,
+                &count, sizeof(count)) || count <= 0 || count > 0x60)
+            return;
+        auto* const entry = static_cast<uint8_t*>(renderer) + 0x878 +
+            static_cast<size_t>(count - 1) * 0x34;
+        std::array<float, 13> transform{};
+        if (!Halo4SafeRead(entry, transform.data(), 0x34))
+            return;
+        constexpr size_t kTouched[] = {1,2,4,5,7,8,10,11};
+        for (const size_t index : kTouched)
+            if (!std::isfinite(transform[index]))
+                return;
+        Halo4HudAffine affine{};
+        if (!Halo4ComputeNativeHudAffine(
+                g_config.hud_size, g_config.hud_aspect,
+                g_config.hud_vertical_offset, affine))
+            return;
+        for (const size_t index : {size_t{1},size_t{4},size_t{7},size_t{10}})
+            transform[index] *= affine.horizontal;
+        for (const size_t index : {size_t{2},size_t{5},size_t{8},size_t{11}})
+            transform[index] *= affine.vertical;
+        transform[11] -= affine.heightPixels;
+        if (Halo4SafeWrite(entry, transform.data(), 0x34))
+            g_halo4Restoration.hudTransforms.fetch_add(
+                1, std::memory_order_relaxed);
+    }
+
+    void __fastcall Halo4HudRootDetour(void* renderer)
+    {
+        g_halo4Camera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
+        __try
+        {
+            Halo4HudRootFn const original = g_halo4Restoration.hudOriginal;
+            if (original)
+                original(renderer);
+            Halo4ApplyNativeHudAffine(renderer);
+        }
+        __finally
+        {
+            g_halo4Camera.activeCallbacks.fetch_sub(
+                1, std::memory_order_acq_rel);
+        }
+    }
+
     bool Halo4CuiReticleTransformLive()
     {
         // This live fact is queried from the compositor as well as from pinned
@@ -33165,6 +33405,7 @@ namespace
         }
 
         scope.gameplayPassActive = true;
+        g_halo4HudGameplayThreadId = GetCurrentThreadId();
         if constexpr (kEnableHalo4ParityTrace)
         {
             g_halo4Camera.parityLastWindow.store(
@@ -33193,12 +33434,22 @@ namespace
             if (wantsCaptureReplay)
             {
                 scope.captureReplay = true;
+                // Match the last headset-confirmed native-reticle pass: the
+                // private replay uses stock CUI affine/curvature. Its own live
+                // canvas is published below so 3CX framing never mixes these
+                // stock coordinates with the scaled visible HUD coordinates.
+                g_halo4HudGameplayThreadId = 0;
+                g_halo4Camera.cuiReticleCaptureBaseX.store(
+                    0.0f, std::memory_order_relaxed);
+                g_halo4Camera.cuiReticleCaptureBaseY.store(
+                    0.0f, std::memory_order_relaxed);
                 scope.captureReplayAttempted = false;
                 scope.captureReplayRedirected = false;
                 scope.captureSelection = {};
                 original(windowIndex, renderBufferChannel, viewportBounds,
                          optionalProfileValue, renderMode, flag);
                 scope.captureReplay = false;
+                g_halo4HudGameplayThreadId = GetCurrentThreadId();
                 scope.captureSelection = {};
                 if (scope.redirectActive)
                     (void)Halo4EndCuiReticleRedirect(false);
@@ -33222,6 +33473,8 @@ namespace
             // enter this phase and therefore remain completely stock.
             if (scope.redirectActive)
                 (void)Halo4EndCuiReticleRedirect(true);
+            scope.captureReplay = false;
+            g_halo4HudGameplayThreadId = 0;
             scope.gameplayPassActive = false;
         }
     }
@@ -33235,6 +33488,13 @@ namespace
             reinterpret_cast<uintptr_t>(_ReturnAddress());
         g_halo4Camera.activeCallbacks.fetch_add(1, std::memory_order_acq_rel);
         ++g_halo4CuiFrontendCallbackDepth;
+        // The V6 affine and curvature wrappers used this complete frontend
+        // scope. Publish the same scope for the assembly curvature bridge so
+        // sibling visor draws receive the same native HUD transform as radar,
+        // shields and ammo. The private reticle replay temporarily clears it
+        // inside Halo4CuiGameplayRenderBody and therefore remains stock.
+        if (g_halo4CuiFrontendCallbackDepth == 1)
+            g_halo4HudGameplayThreadId = GetCurrentThreadId();
         __try
         {
             Halo4CuiGameplayRenderBody(
@@ -33244,6 +33504,8 @@ namespace
         __finally
         {
             --g_halo4CuiFrontendCallbackDepth;
+            if (g_halo4CuiFrontendCallbackDepth == 0)
+                g_halo4HudGameplayThreadId = 0;
             g_halo4Camera.activeCallbacks.fetch_sub(
                 1, std::memory_order_acq_rel);
         }
@@ -33336,9 +33598,23 @@ namespace
                             kHalo4CuiTransformStride;
                     BoneMatrix transform{};
                     if (Halo4SafeRead(entry, &transform, sizeof(transform)))
+                    {
+                        if (Halo4CuiCaptureKeepsTopTransform(
+                                scope.captureSelection) &&
+                            std::isfinite(transform.translation[0]) &&
+                            std::isfinite(transform.translation[1]))
+                        {
+                            g_halo4Camera.cuiReticleCaptureBaseX.store(
+                                transform.translation[0],
+                                std::memory_order_relaxed);
+                            g_halo4Camera.cuiReticleCaptureBaseY.store(
+                                transform.translation[1],
+                                std::memory_order_relaxed);
+                        }
                         Halo4ParityRecordTransform(
                             reticleTransformId, header.payloadSize, count,
                             transform, true);
+                    }
                 }
             }
             return result;
@@ -34438,6 +34714,18 @@ namespace
         const Halo4SetupArgs args = g_halo4SetupArgs;
         g_halo4SetupArgs.valid = false;
 
+        // Stage 3AW's headset-accepted pause ownership: while the compositor
+        // targets the head-locked pause screen, run Halo 4's stock wrapper
+        // once. The stereo core stays armed, but it must not consume the
+        // native start-menu backbuffer as a per-eye scene transaction.
+        if (VR_IsPausePresentationTarget())
+        {
+            g_halo4Camera.stockFrames.fetch_add(
+                1, std::memory_order_relaxed);
+            g_halo4OrigWrapper(element, view, window);
+            return;
+        }
+
         if (g_halo4Camera.sceneTargetMissing.load(std::memory_order_acquire))
         {
             // Rendering twice and capturing nothing is pure cost with a black
@@ -34550,6 +34838,11 @@ namespace
                 std::memory_order_acquire))
         {
             lifecycle.enabledCapabilities &= ~TitleCapability_CutsceneTheater;
+        }
+        if (!g_halo4Restoration.hudInstalled.load(
+                std::memory_order_acquire))
+        {
+            lifecycle.enabledCapabilities &= ~TitleCapability_Hud;
         }
         // Publish only on a real state change: republishing identical state
         // every poll keeps the shared snapshot permanently "pending", which is
@@ -34982,6 +35275,451 @@ namespace
         return Halo4CuiReticleOptionalInstallState::Installed;
     }
 
+    std::array<uint8_t, 5> Halo4RelativePatch(
+        uint8_t opcode, uintptr_t source, uintptr_t destination)
+    {
+        std::array<uint8_t, 5> patch{opcode,0,0,0,0};
+        const int64_t wide = static_cast<int64_t>(destination) -
+            static_cast<int64_t>(source + patch.size());
+        const int32_t relative = static_cast<int32_t>(wide);
+        if (static_cast<int64_t>(relative) != wide)
+            return {};
+        std::memcpy(patch.data() + 1, &relative, sizeof(relative));
+        return patch;
+    }
+
+    std::array<uint8_t, 18> Halo4TransientPatch()
+    {
+        std::array<uint8_t, 18> patch{};
+        patch[0] = 0xFF;
+        patch[1] = 0x25;
+        const uintptr_t target =
+            reinterpret_cast<uintptr_t>(&Halo4EffectTransientWrapper);
+        std::memcpy(patch.data() + 6, &target, sizeof(target));
+        std::fill(patch.begin() + 14, patch.end(), 0x90);
+        return patch;
+    }
+
+    std::array<uint8_t, 0xF0> Halo4EffectCavePatch()
+    {
+        std::array<uint8_t, 0xF0> cave{};
+        static constexpr uint8_t kNegPayload[] = {
+            0x66,0x83,0xFF,0xFE,0x7F,0x12,0x48,0x89,0xE9,0x48,0x89,0xDA,
+            0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x48,0x8B,0x5C,0x24,
+            0x48,0xE9,0x75,0xBD,0x58,0xFF};
+        static constexpr uint8_t kHelperPayload[] = {
+            0x48,0x83,0xEC,0x58,0x48,0x89,0x4C,0x24,0x20,0x48,0x89,0x54,
+            0x24,0x28,0x4C,0x89,0x44,0x24,0x30,0x4C,0x89,0x4C,0x24,0x38,
+            0xE8,0x1B,0xBD,0x58,0xFF,0x4C,0x8B,0x4C,0x24,0x38,0x45,0x84,
+            0xC9,0x74,0x30,0x48,0x8B,0x44,0x24,0x28,0x66,0x83,0xF8,0xFE,
+            0x7F,0x25,0x48,0x8B,0x4C,0x24,0x20,0xF6,0x41,0x4A,0x0F,0x74,
+            0x1A,0x8A,0x41,0x4A,0x24,0xF0,0x3C,0xF0,0x74,0x11,0x48,0x8B,
+            0x54,0x24,0x30,0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x48,
+            0x83,0xC4,0x58,0xC3};
+        std::memcpy(cave.data(), kNegPayload, sizeof(kNegPayload));
+        std::memcpy(cave.data() + 0x70, kHelperPayload, sizeof(kHelperPayload));
+        const uintptr_t bridge =
+            reinterpret_cast<uintptr_t>(&Halo4EffectHideBridge);
+        std::memcpy(cave.data() + 0x0E, &bridge, sizeof(bridge));
+        std::memcpy(cave.data() + 0xBD, &bridge, sizeof(bridge));
+        return cave;
+    }
+
+    std::array<uint8_t, 26> Halo4CurvaturePatch()
+    {
+        std::array<uint8_t, 26> patch{};
+        patch[0] = 0x48;
+        patch[1] = 0xB8;
+        const uintptr_t target =
+            reinterpret_cast<uintptr_t>(&Halo4CurvatureBridge);
+        std::memcpy(patch.data() + 2, &target, sizeof(target));
+        patch[10] = 0xFF;
+        patch[11] = 0xE0;
+        std::fill(patch.begin() + 12, patch.end(), 0x90);
+        return patch;
+    }
+
+    bool CleanupHalo4Effects(uintptr_t base)
+    {
+        g_halo4EffectsEnabled = 0;
+        if (!g_halo4Restoration.effectsTouched)
+        {
+            g_halo4Restoration.effectsInstalled.store(
+                false, std::memory_order_release);
+            g_halo4EffectOriginalHelper = nullptr;
+            g_halo4EffectTransientContinue = nullptr;
+            return true;
+        }
+        bool clean = true;
+        const auto transient = Halo4TransientPatch();
+        const auto cave = Halo4EffectCavePatch();
+        const std::array<uint8_t, 0xF0> caveStock{};
+        const auto neg = Halo4RelativePatch(
+            0xE9, base + kHalo4EffectNegRva,
+            base + kHalo4EffectCaveRva);
+        const auto helper = Halo4RelativePatch(
+            0xE8, base + kHalo4EffectHelperRva,
+            base + kHalo4EffectCaveRva + 0x70);
+        if (g_halo4Restoration.effectsTransientPatched)
+            clean = Halo4RestoreOwnedPatch(
+                base + kHalo4EffectTransientRva, transient,
+                kHalo4EffectTransientStock) && clean;
+        if (g_halo4Restoration.effectsHelperPatched)
+            clean = Halo4RestoreOwnedPatch(
+                base + kHalo4EffectHelperRva, helper,
+                kHalo4EffectHelperStock) && clean;
+        if (g_halo4Restoration.effectsNegPatched)
+            clean = Halo4RestoreOwnedPatch(
+                base + kHalo4EffectNegRva, neg,
+                kHalo4EffectNegStock) && clean;
+        if (g_halo4Restoration.effectsModeOnePatched)
+            clean = Halo4RestoreOwnedPatch(
+                base + kHalo4EffectModeOneRva, kHalo4EffectModeOneHidden,
+                kHalo4EffectModeOneStock) && clean;
+        // Stage 3AI's four entry routes are stock again before the trampoline
+        // storage is cleared, so no thread can enter the cave while it is
+        // being restored. Previous candidates omitted this final ownership
+        // step: the first level worked, but the next install found the cave
+        // non-stock and fell back, bringing muzzle effects back after reload.
+        clean = Halo4RestoreOwnedPatch(
+            base + kHalo4EffectCaveRva, cave, caveStock) && clean;
+        clean = Halo4PatchMatches(
+                    base + kHalo4EffectTransientRva,
+                    kHalo4EffectTransientStock) &&
+            Halo4PatchMatches(
+                    base + kHalo4EffectHelperRva,
+                    kHalo4EffectHelperStock) &&
+            Halo4PatchMatches(
+                    base + kHalo4EffectNegRva, kHalo4EffectNegStock) &&
+            Halo4PatchMatches(
+                    base + kHalo4EffectModeOneRva,
+                    kHalo4EffectModeOneStock) &&
+            Halo4PatchMatches(
+                    base + kHalo4EffectCaveRva, caveStock) && clean;
+        if (!clean)
+        {
+            g_halo4Restoration.cleanupRequired = true;
+            return false;
+        }
+        g_halo4Restoration.effectsTransientPatched = false;
+        g_halo4Restoration.effectsHelperPatched = false;
+        g_halo4Restoration.effectsNegPatched = false;
+        g_halo4Restoration.effectsModeOnePatched = false;
+        g_halo4Restoration.effectsTouched = false;
+        g_halo4Restoration.effectsInstalled.store(
+            false, std::memory_order_release);
+        g_halo4EffectOriginalHelper = nullptr;
+        g_halo4EffectTransientContinue = nullptr;
+        return true;
+    }
+
+    bool InstallHalo4Effects(uintptr_t base, size_t size)
+    {
+        if (g_halo4Restoration.effectsInstalled.load(
+                std::memory_order_acquire))
+            return true;
+        uintptr_t negSite = 0, helperSite = 0, transientSite = 0;
+        uintptr_t modeOneSite = 0;
+        constexpr char kNegSignature[] =
+            "48 8B 5C 24 48 48 8B 6C 24 50 48 83 C4 20 41 5E 5F 5E C3 "
+            "CC CC CC 48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 "
+            "49 8B F0";
+        constexpr char kHelperSignature[] =
+            "E8 CB 4A 00 00 48 8D 53 0C 4C 8B C7 48 8D 4C 24 20 "
+            "E8 DA C5 01 00 41 B3 01 4C 8B D7";
+        constexpr char kTransientSignature[] =
+            "66 41 39 44 B6 18 49 8B D7 41 0F 95 C1 E8 D5 FB FF FF "
+            "45 8A 0C B6 48 8D 4D D0";
+        constexpr char kModeOneSignature[] =
+            "41 8A DA EB 03 41 88 10 E8 ?? ?? ?? ?? 33 D2 41 0F B6 CA";
+        if (!Halo4FindUniquePinned(
+                base, size, kNegSignature, kHalo4EffectNegRva, negSite) ||
+            !Halo4FindUniquePinned(
+                base, size, kHelperSignature, kHalo4EffectHelperRva,
+                helperSite) ||
+            !Halo4FindUniquePinned(
+                base, size, kTransientSignature, kHalo4EffectTransientRva,
+                transientSite) ||
+            !Halo4FindUniquePinned(
+                base, size, kModeOneSignature, kHalo4EffectModeOneRva,
+                modeOneSite))
+        {
+            LOG("Halo 4 effects: StockFallback; Stage 3AI signatures were "
+                "missing, ambiguous, or moved; camera/HUD stay live");
+            return false;
+        }
+
+        std::array<uint8_t, 0xF0> caveStock{};
+        const auto cave = Halo4EffectCavePatch();
+        if (!Halo4WriteExecutable(
+                reinterpret_cast<void*>(base + kHalo4EffectCaveRva),
+                caveStock.data(), cave.data(), cave.size()))
+        {
+            LOG("Halo 4 effects: StockFallback; exact C50 cave was not "
+                "untouched/writable; camera/HUD stay live");
+            return false;
+        }
+        g_halo4Restoration.effectsTouched = true;
+
+        g_halo4EffectOriginalHelper =
+            reinterpret_cast<void*>(base + kHalo4EffectOriginalHelperRva);
+        g_halo4EffectTransientContinue =
+            reinterpret_cast<void*>(base + kHalo4EffectTransientContinueRva);
+        const auto negPatch = Halo4RelativePatch(
+            0xE9, negSite, base + kHalo4EffectCaveRva);
+        const auto helperPatch = Halo4RelativePatch(
+            0xE8, helperSite, base + kHalo4EffectCaveRva + 0x70);
+        const auto transientPatch = Halo4TransientPatch();
+        bool ok = Halo4WriteExecutable(
+            reinterpret_cast<void*>(modeOneSite),
+            kHalo4EffectModeOneStock.data(), kHalo4EffectModeOneHidden.data(),
+            kHalo4EffectModeOneStock.size());
+        g_halo4Restoration.effectsModeOnePatched = Halo4PatchMatches(
+            modeOneSite, kHalo4EffectModeOneHidden);
+        if (ok)
+        {
+            ok = Halo4WriteExecutable(
+                reinterpret_cast<void*>(negSite), kHalo4EffectNegStock.data(),
+                negPatch.data(), negPatch.size());
+            g_halo4Restoration.effectsNegPatched = Halo4PatchMatches(
+                negSite, negPatch);
+        }
+        if (ok)
+        {
+            ok = Halo4WriteExecutable(
+                reinterpret_cast<void*>(helperSite),
+                kHalo4EffectHelperStock.data(), helperPatch.data(),
+                helperPatch.size());
+            g_halo4Restoration.effectsHelperPatched = Halo4PatchMatches(
+                helperSite, helperPatch);
+        }
+        if (ok)
+        {
+            ok = Halo4WriteExecutable(
+                reinterpret_cast<void*>(transientSite),
+                kHalo4EffectTransientStock.data(), transientPatch.data(),
+                transientPatch.size());
+            g_halo4Restoration.effectsTransientPatched = Halo4PatchMatches(
+                transientSite, transientPatch);
+        }
+        if (!ok)
+        {
+            const bool cleaned = CleanupHalo4Effects(base);
+            LOG("Halo 4 effects: %s; Stage 3AI patch transaction failed and "
+                "camera/HUD stay live", cleaned ? "StockFallback" :
+                "CleanupRequired");
+            return false;
+        }
+        g_halo4EffectsHidden = 0;
+        g_halo4Restoration.effectsInstalled.store(
+            true, std::memory_order_release);
+        g_halo4EffectsEnabled = 1;
+        LOG("Halo 4 effects Installed: exact Stage 3AI C50 negative/helper/"
+            "transient routes and mode-1 particle deny are active");
+        return true;
+    }
+
+    bool InstallHalo4NativeHud(uintptr_t base, size_t size)
+    {
+        uintptr_t hudSite = 0, curvatureSite = 0;
+        constexpr char kHudSignature[] =
+            "40 55 48 8D 6C 24 A9 48 81 EC 90 00 00 00 4C 63 91 70 08 00 00";
+        constexpr char kCurvatureSignature[] =
+            "F3 0F 10 8F E8 01 00 00 F3 0F 11 4D A4 F3 0F 10 8F EC 01 00 00 "
+            "F3 0F 11 4D AC";
+        if (!Halo4FindUniquePinned(
+                base, size, kHudSignature, kHalo4HudRootRva, hudSite))
+        {
+            LOG("Halo 4 HUD: StockFallback; Stage 3X native CUI root was "
+                "missing, ambiguous, or moved; camera/effects stay live");
+            return false;
+        }
+        Halo4HudRootFn original = nullptr;
+        if (MH_CreateHook(
+                reinterpret_cast<void*>(hudSite),
+                reinterpret_cast<void*>(&Halo4HudRootDetour),
+                reinterpret_cast<void**>(&original)) != MH_OK)
+        {
+            LOG("Halo 4 HUD: StockFallback; MinHook refused the optional "
+                "native CUI root; camera/effects stay live");
+            return false;
+        }
+        g_halo4Restoration.hudTarget = reinterpret_cast<void*>(hudSite);
+        g_halo4Restoration.hudOriginal = original;
+        if (MH_EnableHook(reinterpret_cast<void*>(hudSite)) != MH_OK)
+        {
+            MH_RemoveHook(reinterpret_cast<void*>(hudSite));
+            g_halo4Restoration.hudTarget = nullptr;
+            g_halo4Restoration.hudOriginal = nullptr;
+            LOG("Halo 4 HUD: StockFallback; optional native CUI root could "
+                "not be enabled; camera/effects stay live");
+            return false;
+        }
+        g_halo4Restoration.hudInstalled.store(
+            true, std::memory_order_release);
+        if (Halo4FindUniquePinned(
+                base, size, kCurvatureSignature, kHalo4CurvatureRva,
+                curvatureSite))
+        {
+            const auto patch = Halo4CurvaturePatch();
+            g_halo4CurvatureContinue = reinterpret_cast<void*>(
+                base + kHalo4CurvatureContinueRva);
+            g_halo4Restoration.curvatureTouched = true;
+            const bool curvatureWrite = Halo4WriteExecutable(
+                    reinterpret_cast<void*>(curvatureSite),
+                    kHalo4CurvatureStock.data(), patch.data(), patch.size());
+            g_halo4Restoration.curvaturePatched = Halo4PatchMatches(
+                curvatureSite, patch);
+            if (curvatureWrite && g_halo4Restoration.curvaturePatched)
+            {
+                g_halo4HudCurvatureEnabled = 1;
+            }
+            else
+            {
+                if (g_halo4Restoration.curvaturePatched)
+                    (void)Halo4RestoreOwnedPatch(
+                        curvatureSite, patch, kHalo4CurvatureStock);
+                g_halo4Restoration.curvaturePatched = false;
+                g_halo4CurvatureContinue = nullptr;
+            }
+        }
+        LOG("Halo 4 HUD Installed: Stage 3X gameplay-CUI affine is adjustable; "
+            "native curvature=%s; pause/shell CUI stays stock",
+            g_halo4Restoration.curvaturePatched ? "Installed" :
+            "StockFallback");
+        return true;
+    }
+
+    bool CleanupHalo4NativeHud(uintptr_t base)
+    {
+        g_halo4HudCurvatureEnabled = 0;
+        g_halo4HudGameplayThreadId = 0;
+        g_halo4Restoration.hudInstalled.store(
+            false, std::memory_order_release);
+        if (g_halo4Restoration.hudTarget)
+            MH_DisableHook(g_halo4Restoration.hudTarget);
+        if (g_halo4Camera.activeCallbacks.load(std::memory_order_acquire) != 0)
+            return false;
+        bool clean = true;
+        if (g_halo4Restoration.curvaturePatched)
+        {
+            const auto patch = Halo4CurvaturePatch();
+            clean = Halo4RestoreOwnedPatch(
+                base + kHalo4CurvatureRva, patch, kHalo4CurvatureStock);
+        }
+        if (g_halo4Restoration.curvatureTouched)
+            clean = Halo4PatchMatches(
+                base + kHalo4CurvatureRva, kHalo4CurvatureStock) && clean;
+        if (g_halo4Restoration.hudTarget)
+        {
+            const MH_STATUS removed =
+                MH_RemoveHook(g_halo4Restoration.hudTarget);
+            clean = (removed == MH_OK || removed == MH_ERROR_NOT_CREATED) &&
+                clean;
+        }
+        if (!clean)
+        {
+            g_halo4Restoration.cleanupRequired = true;
+            return false;
+        }
+        g_halo4Restoration.hudTarget = nullptr;
+        g_halo4Restoration.hudOriginal = nullptr;
+        g_halo4Restoration.curvaturePatched = false;
+        g_halo4Restoration.curvatureTouched = false;
+        g_halo4CurvatureContinue = nullptr;
+        return true;
+    }
+
+    void InstallHalo4PauseAndHelmet(uintptr_t base, size_t size)
+    {
+        uintptr_t pauseSite = 0;
+        constexpr char kPauseSignature[] =
+            "8B 15 ?? ?? ?? ?? 65 48 8B 04 25 58 00 00 00 41 B8 90 00 00 00 "
+            "48 8B 04 D0 49 8B 14 00 32 C0 38 02 74 0F B8 01 00 00 00 66 D3 "
+            "E0 66 85 42 02 0F 95 C0 C3";
+        if (Halo4FindUniquePinned(
+                base, size, kPauseSignature, kHalo4PauseReasonRva, pauseSite))
+        {
+            g_halo4Restoration.pauseReason =
+                reinterpret_cast<Halo4PauseReasonFn>(pauseSite);
+            g_halo4Restoration.pauseProven.store(
+                true, std::memory_order_release);
+            g_halo4NativePauseAvailable.store(true, std::memory_order_release);
+            LOG("Halo 4 pause Installed: unique native reason-3 getter proven; "
+                "presentation follows the start-menu component");
+        }
+        else
+        {
+            LOG("Halo 4 pause: StockFallback; native reason-3 getter was "
+                "missing, ambiguous, or moved; other H4 features stay live");
+        }
+
+        const bool helmetShaderPath = D3D_Halo4HelmetShaderPathAvailable();
+        g_halo4Restoration.helmetControlInstalled.store(
+            helmetShaderPath, std::memory_order_release);
+        if (helmetShaderPath)
+        {
+            LOG("Halo 4 helmet toggle Installed: exact known-good V6 visor "
+                "pixel-shader binding is active; authored frame stays visible "
+                "by default and no other HUD shader is modified");
+        }
+        else
+        {
+            LOG("Halo 4 helmet toggle: StockFallback; exact visor shader "
+                "binding is unavailable, so authored helmet art stays stock");
+        }
+    }
+
+    void Halo4RestorationWorkerTick()
+    {
+        const float curvature = std::clamp(
+            std::isfinite(g_config.hud_curvature)
+                ? g_config.hud_curvature : 0.5f,
+            0.0f, 1.0f) * 2.0f;
+        g_halo4HudCurvatureValue = curvature;
+    }
+
+    bool Halo4ReadNativePaused(bool& paused)
+    {
+        paused = false;
+        if (!g_halo4Restoration.pauseProven.load(
+                std::memory_order_acquire) ||
+            !g_halo4Restoration.pauseReason)
+            return false;
+        __try
+        {
+            paused = g_halo4Restoration.pauseReason(3);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool RemoveHalo4Restoration(uintptr_t base)
+    {
+        g_halo4NativePauseAvailable.store(false, std::memory_order_release);
+        g_halo4Restoration.pauseProven.store(false, std::memory_order_release);
+        g_halo4Restoration.pauseReason = nullptr;
+        g_halo4Restoration.pauseStateKnown = false;
+        g_halo4Restoration.pauseMismatchSinceMs = 0;
+        g_halo4Restoration.helmetControlInstalled.store(
+            false, std::memory_order_release);
+        if (!CleanupHalo4NativeHud(base) || !CleanupHalo4Effects(base))
+            return false;
+        g_halo4Restoration.cleanupRequired = false;
+        return true;
+    }
+
+    void InstallHalo4Restoration(uintptr_t base, size_t size)
+    {
+        (void)InstallHalo4Effects(base, size);
+        (void)InstallHalo4NativeHud(base, size);
+        InstallHalo4PauseAndHelmet(base, size);
+        Halo4RestorationWorkerTick();
+    }
+
     bool RemoveHalo4CameraCore()
     {
         const uint32_t generation =
@@ -34998,6 +35736,11 @@ namespace
         g_halo4Camera.armed.store(false, std::memory_order_release);
         g_halo4Camera.cuiReticleInstalled.store(
             false, std::memory_order_release);
+        g_halo4Restoration.hudInstalled.store(
+            false, std::memory_order_release);
+        g_halo4HudCurvatureEnabled = 0;
+        if (g_halo4Restoration.hudTarget)
+            MH_DisableHook(g_halo4Restoration.hudTarget);
         PublishHalo4Lifecycle();
         if (g_halo4Camera.cuiReticleTarget)
             MH_DisableHook(g_halo4Camera.cuiReticleTarget);
@@ -35012,6 +35755,8 @@ namespace
         // Both detours must have returned before a trampoline is freed or the
         // module reference is released.
         if (g_halo4Camera.activeCallbacks.load(std::memory_order_acquire) != 0)
+            return false;
+        if (!RemoveHalo4Restoration(g_halo4Camera.base))
             return false;
         // A callback admitted immediately before teardown can have published
         // after the first clear above. Clear again after quiescence so this
@@ -35361,6 +36106,11 @@ namespace
         // C-H4-46: Halo 4 supplies authored pixels to the same shared VR
         // reticle chain as Halo 3/ODST/Reach. CUI never owns placement.
         (void)InstallHalo4CuiReticle(base, size, generation);
+        // Four optional, independently fail-open restorations requested for
+        // this cumulative test: Stage 3AI effects, Stage 3X native HUD,
+        // Stage 3AW pause semantics, and the known-good V6 exact visor-shader
+        // toggle. Each path fails open independently of camera/OpenXR.
+        InstallHalo4Restoration(base, size);
         PublishHalo4Lifecycle();
         LOG("Halo 4 camera core installed (generation %u): setup 0x%X and the "
             "render wrapper 0x%X are hooked at their pinned RVAs, both proven "
@@ -35406,6 +36156,8 @@ namespace
                  !g_halo4Camera.cuiReticleInstalled.load(
                      std::memory_order_acquire))
             (void)InstallHalo4CuiReticle(base, size, generation);
+        if (installed)
+            Halo4RestorationWorkerTick();
         if (g_vrRuntimeFailureLatched.load(std::memory_order_acquire))
         {
             g_halo4Camera.armed.store(false, std::memory_order_release);
@@ -35582,6 +36334,45 @@ namespace
             kRejectionNames[reason],
             g_halo4Camera.armed.load(std::memory_order_acquire) ? 1 : 0);
 
+        const LONG64 hiddenEffects =
+            InterlockedExchange64(&g_halo4EffectsHidden, 0);
+        const uint64_t hudTransforms =
+            g_halo4Restoration.hudTransforms.exchange(
+                0, std::memory_order_relaxed);
+        uint64_t helmetShaders = 0;
+        uint64_t helmetSuppressions = 0;
+        D3D_GetHalo4HelmetTelemetry(
+            helmetShaders, helmetSuppressions);
+        uint64_t motionSuckShaders = 0;
+        uint64_t motionSuckSuppressions = 0;
+        D3D_GetHalo4ScreenEffectTelemetry(
+            motionSuckShaders, motionSuckSuppressions);
+        LOG("Halo 4 C-H4-57 restorations: effects=%s (%lld local FP hides), "
+            "HUD=%s (%llu native affine writes, curvature=%s), pause=%s, "
+            "helmet=%s/config-%s (%llu exact shaders, %llu suppressed binds; "
+            "full frontend root), screen-fx=%s (%llu motion-suck shaders, "
+            "%llu suppressed binds); "
+            "every unavailable feature stays stock",
+            g_halo4Restoration.effectsInstalled.load(
+                std::memory_order_acquire) ? "LIVE" : "StockFallback",
+            static_cast<long long>(hiddenEffects),
+            g_halo4Restoration.hudInstalled.load(
+                std::memory_order_acquire) ? "LIVE" : "StockFallback",
+            static_cast<unsigned long long>(hudTransforms),
+            g_halo4Restoration.curvaturePatched ? "LIVE" : "StockFallback",
+            g_halo4Restoration.pauseProven.load(
+                std::memory_order_acquire) ? "native-reason-3" :
+                "raw-edge-fallback",
+            g_halo4Restoration.helmetControlInstalled.load(
+                std::memory_order_acquire) ? "shader-LIVE" : "StockFallback",
+            g_config.halo4_helmet ? "visible" : "hidden",
+            static_cast<unsigned long long>(helmetShaders),
+            static_cast<unsigned long long>(helmetSuppressions),
+            D3D_Halo4ScreenEffectShaderPathAvailable() ?
+                "exact-bridge-LIVE" : "StockFallback",
+            static_cast<unsigned long long>(motionSuckShaders),
+            static_cast<unsigned long long>(motionSuckSuppressions));
+
         const uint64_t cuiGameplayPasses =
             g_halo4Camera.cuiGameplayPasses.exchange(
                 0, std::memory_order_relaxed);
@@ -35611,7 +36402,8 @@ namespace
             "passes, %llu begin markers, "
             "%llu completed actions (%llu authored captures / %llu native hides), %llu "
             "write failures, %llu forced restores, %llu exact capture OM reroutes "
-            "(%llu framing reasserts) in 2s; last native base %.3f/%.3f "
+            "(%llu framing reasserts) in 2s; last native base %.3f/%.3f, "
+            "capture base %.3f/%.3f "
             "+ offscreen hide %.3f/%.3f, scale %.4f -> %.4f; camera "
             "and OpenXR remain independently armed; the existing VR quad alone owns placement",
             Halo4CuiReticleTransformLive() ? "LIVE" : "stock fallback",
@@ -35626,6 +36418,10 @@ namespace
             static_cast<unsigned long long>(authoredFramingReasserts),
             g_halo4Camera.cuiReticleBaseX.load(std::memory_order_relaxed),
             g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed),
+            g_halo4Camera.cuiReticleCaptureBaseX.load(
+                std::memory_order_relaxed),
+            g_halo4Camera.cuiReticleCaptureBaseY.load(
+                std::memory_order_relaxed),
             g_halo4Camera.cuiReticleAimX.load(std::memory_order_relaxed),
             g_halo4Camera.cuiReticleAimY.load(std::memory_order_relaxed),
             g_halo4Camera.cuiReticleStockScale.load(std::memory_order_relaxed),
@@ -37057,16 +37853,14 @@ bool Game_Halo4OwnsLookPitch()
 bool Game_Halo4LiveCuiCanvas(float& baseY, float& hideShift)
 {
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
-    const float liveBaseY =
-        g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed);
-    const Halo4CuiAimOffset hide = Halo4BuildHiddenCuiTranslation(
+    return Halo4SelectCuiCaptureCanvas(
+        g_halo4Camera.cuiReticleCaptureBaseX.load(
+            std::memory_order_relaxed),
+        g_halo4Camera.cuiReticleCaptureBaseY.load(
+            std::memory_order_relaxed),
         g_halo4Camera.cuiReticleBaseX.load(std::memory_order_relaxed),
-        liveBaseY);
-    if (!hide.valid || !std::isfinite(liveBaseY) || liveBaseY <= 0.0f)
-        return false;
-    baseY = liveBaseY;
-    hideShift = hide.x;
-    return true;
+        g_halo4Camera.cuiReticleBaseY.load(std::memory_order_relaxed),
+        baseY, hideShift);
 #else
     baseY = 0.0f;
     hideShift = 0.0f;
@@ -37590,6 +38384,15 @@ bool Game_HasAuthoritativePauseState()
          (runtime.runtime.owner == GameTitle::HaloReach &&
           runtime.runtime.qualifyingOwnerCount == 1)) &&
         g_reachNativePauseFlag.load(std::memory_order_acquire) != 0)
+    {
+        return true;
+    }
+#endif
+#if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
+    if ((activeTitle == GameTitle::Halo4 ||
+         (runtime.runtime.owner == GameTitle::Halo4 &&
+          runtime.runtime.qualifyingOwnerCount == 1)) &&
+        g_halo4NativePauseAvailable.load(std::memory_order_acquire))
     {
         return true;
     }
@@ -38318,6 +39121,42 @@ void Game_AutoVrTick()
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
     if (TitleAdapter_GetActiveTitle() == GameTitle::Halo4)
     {
+        bool halo4Paused = false;
+        const bool halo4PauseKnown = Halo4ReadNativePaused(halo4Paused);
+        const uint64_t halo4Now = GetTickCount64();
+        if (halo4PauseKnown)
+        {
+            if (!g_halo4Restoration.pauseStateKnown ||
+                g_halo4Restoration.pauseLast != halo4Paused)
+            {
+                g_halo4Restoration.pauseStateKnown = true;
+                g_halo4Restoration.pauseLast = halo4Paused;
+                LOG("Halo 4 pause state: native reason 3=%d, presentation "
+                    "target=%d", halo4Paused ? 1 : 0,
+                    VR_IsPausePresentationTarget() ? 1 : 0);
+            }
+            const bool targetPaused = VR_IsPausePresentationTarget();
+            if (targetPaused != halo4Paused)
+            {
+                if (!g_halo4Restoration.pauseMismatchSinceMs ||
+                    g_halo4Restoration.pauseMismatchValue != halo4Paused)
+                {
+                    g_halo4Restoration.pauseMismatchSinceMs = halo4Now;
+                    g_halo4Restoration.pauseMismatchValue = halo4Paused;
+                }
+                else if (halo4Now -
+                         g_halo4Restoration.pauseMismatchSinceMs >= 50)
+                {
+                    VR_RequestPausePresentation(halo4Paused);
+                    LOG("Halo 4 pause state: authoritative reason 3 restored "
+                        "presentation to %s",
+                        halo4Paused ? "head-locked 2D" : "stereo 3D");
+                    g_halo4Restoration.pauseMismatchSinceMs = 0;
+                }
+            }
+            else
+                g_halo4Restoration.pauseMismatchSinceMs = 0;
+        }
         // Halo 4 owns stereo presentation exactly while its camera core is
         // armed. g_enabled is also the shared presentation gate used by the
         // wrapper detour; C-H4-8 applies the HMD head pose and 6DOF. The
@@ -38361,7 +39200,9 @@ void Game_AutoVrTick()
                 // below stops the heartbeat, which expires ownership and drops
                 // the arm-gated capabilities with it.
                 TitleAdapter_PublishMode(
-                    GameTitle::Halo4, halo4Generation, RuntimeMode::Gameplay);
+                    GameTitle::Halo4, halo4Generation,
+                    halo4PauseKnown && halo4Paused
+                        ? RuntimeMode::Paused : RuntimeMode::Gameplay);
                 // C-H4-44 HUD-basis writes are disabled after headset rejection.
             }
         }
@@ -39166,6 +40007,106 @@ namespace
 #endif
         return false;
     }
+}
+
+bool Game_Halo2TryDisableAimAssist(uintptr_t moduleBase, size_t moduleSize)
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    // A stale slot would mean the preceding module generation did not reach
+    // its normal teardown. Restore it before resolving anything in the new
+    // generation; this feature never owns or gates the Halo 2 camera core.
+    Game_Halo2RestoreAimAssist();
+
+    auto* const slot = static_cast<uint8_t*>(FindDebugVarSlot(
+        moduleBase, moduleSize, kHalo2DisableAimAssistDebugVar,
+        kHalo2DebugVarTypeBoolean));
+    uint8_t stock = 0;
+    if (!slot || !SafeReadByte(slot, &stock) ||
+        !Halo2AimAssistDebugValueValid(stock))
+    {
+        LOG("Halo 2 C-H2-89 aim-assist suppression StockFallback: official "
+            "H2EK boolean `%s` did not resolve to a readable boolean slot; "
+            "stock aim assist remains active and camera/stereo are unaffected",
+            kHalo2DisableAimAssistDebugVar);
+        return false;
+    }
+
+    const uint8_t disabled = Halo2AimAssistDebugValue(true, stock);
+    uint8_t verified = 0;
+    if (!SafeWriteByte(slot, disabled) || !SafeReadByte(slot, &verified) ||
+        verified != disabled)
+    {
+        // The first write may have landed even when the verification read did
+        // not. Make a best-effort rollback before abandoning this feature.
+        (void)SafeWriteByte(slot, stock);
+        LOG("Halo 2 C-H2-89 aim-assist suppression StockFallback: `%s` was "
+            "resolved but could not be set and verified; stock value %u was "
+            "restored best-effort and camera/stereo remain active",
+            kHalo2DisableAimAssistDebugVar, static_cast<unsigned>(stock));
+        return false;
+    }
+
+    g_halo2AimAssistOverride = {slot, stock, 0};
+    LOG("Halo 2 C-H2-89 aim-assist suppression Installed: official H2EK "
+        "boolean `%s` set to 1 (stock %u) only for VR-owned Halo 2 gameplay; "
+        "camera friction/adhesion, weapon magnetism and melee assistance are "
+        "disabled together; teardown restores the captured stock value",
+        kHalo2DisableAimAssistDebugVar, static_cast<unsigned>(stock));
+    return true;
+#else
+    (void)moduleBase;
+    (void)moduleSize;
+    return false;
+#endif
+}
+
+void Game_Halo2MaintainDisabledAimAssist()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    auto& state = g_halo2AimAssistOverride;
+    if (!state.slot)
+        return;
+    uint8_t current = 0;
+    const uint8_t disabled = Halo2AimAssistDebugValue(true, state.stock);
+    if (SafeReadByte(state.slot, &current) && current == disabled)
+        return;
+    uint8_t verified = 0;
+    if (!SafeWriteByte(state.slot, disabled) ||
+        !SafeReadByte(state.slot, &verified) || verified != disabled)
+    {
+        LOG("Halo 2 C-H2-89 aim-assist suppression LOST: `%s` could not be "
+            "reasserted after the engine changed it; this optional feature "
+            "returns to StockFallback and camera/stereo remain active",
+            kHalo2DisableAimAssistDebugVar);
+        state.slot = nullptr;
+        return;
+    }
+    ++state.reassertions;
+    LOG("Halo 2 C-H2-89 aim-assist suppression: `%s` was reset by the engine "
+        "and reasserted (correction %llu)", kHalo2DisableAimAssistDebugVar,
+        static_cast<unsigned long long>(state.reassertions));
+#endif
+}
+
+void Game_Halo2RestoreAimAssist()
+{
+#if HALOMCCVR_HALO2_STEREO6DOF
+    auto& state = g_halo2AimAssistOverride;
+    if (!state.slot)
+        return;
+    const uint8_t* const slot = state.slot;
+    const uint8_t stock = Halo2AimAssistDebugValue(false, state.stock);
+    const uint64_t reassertions = state.reassertions;
+    state = {};
+    uint8_t verified = 0;
+    const bool restored = SafeWriteByte(const_cast<uint8_t*>(slot), stock) &&
+        SafeReadByte(slot, &verified) && verified == stock;
+    LOG("Halo 2 C-H2-89 aim-assist suppression removed: stock value %u %s "
+        "after %llu engine reassertions; camera-core teardown continues "
+        "independently",
+        static_cast<unsigned>(stock), restored ? "restored" : "restore FAILED",
+        static_cast<unsigned long long>(reassertions));
+#endif
 }
 
 bool Game_ComputeAimStick(float& outRx, float& outRy)

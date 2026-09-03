@@ -1,5 +1,113 @@
 # Current state
 
+> **C-H2-92 / C-H4-58 CUMULATIVE HANDOFF READY FOR HEADSET TEST
+> (2026-09-02).** This unaccepted candidate contains three requested changes,
+> each isolated in source history. (1) Halo 4 Stage 3AI effect teardown now
+> restores its owned cave after restoring every entry route, so the exact
+> first-person muzzle/effect suppression can reinstall instead of reporting
+> `StockFallback`; no accepted Halo 4 reticle, helmet, HUD, pause, camera,
+> screen-effect, or OpenXR path changes. (2) Official H2EK shows that C-H2-91
+> retained a target selected from `player_control->desired_angles`, explaining
+> the wrong-way stock lunge. C-H2-92 substitutes the stable controller ray only
+> inside the original central target calculation, retains Halo 2's native
+> result, and still zeros camera-assist control; failure falls back to C-H2-90
+> neutral/no-target behavior. (3) New configs seed Halo 2 Classic yaw `+1.0`
+> and pitch `-9.5`; saved values remain authoritative and F1-editable.
+> Build/tests and package gates must pass, but headset acceptance is pending.
+> See E-H2-80, the C-H2-92 notes, the C-H4-58 notes, and the Halo 4 evidence.
+
+> **HALO 4 PERFORMANCE AUDIT (supplied Steam log, 2026-09-02).** The log uses
+> a 4368x3150 backbuffer at a 120 Hz panel and records roughly 24-48 FPS in the
+> reported dense sequence. `renderWindow` dominates at about 24-36 ms p95,
+> while the mod's measured two-eye publish is only about 0.60-0.73 ms/frame,
+> DXGI Present about 0.2-0.34 ms, and wait handoff about 0.01 ms. Low rates also
+> occur with stereo off (about 25-33 FPS). There is no log evidence of a
+> runaway Halo 4 VR hook or compositor-copy bottleneck; the unusually high
+> render resolution and scene cost are consistent with the observed slowdown.
+> No speculative performance behavior is added to this fix candidate.
+
+> **C-H2-91 HALO 2 MELEE TARGET RETENTION REJECTED AND DISABLED (user
+> headset, 2026-09-02).** Source
+> `34189bcef76ef49bd3c542af29e867a4c068ccd1`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. Exact log SHA-256
+> `B154EB5BA323A5FC6E2974FAC1F8635AFAFFF91049FA892515E1545A83384DC8`.
+> The hook ran `4,723` owned calculations with zero refusals and retained
+> `435` targets. The user reports that melee still missed and the lock-on,
+> camera turn, and wrong-way motion felt worse. That matches E-H2-78's stock
+> flow: a retained target enters `character_physics_mode_melee` lunge. Target
+> retention is now compiled dormant, and the active path is restored to
+> C-H2-90's neutral camera-assist/no-target result. Do not retry target
+> retention as a melee fix. See E-H2-79 and
+> `docs/C-H2-91-MELEE-TARGET-RETENTION-NOTES.md`.
+
+> **C-H2-90 HALO 2 CENTRAL AIM-ASSIST BYPASS CAMERA RESULT ACCEPTED /
+> TARGET-SUPPRESSION PART SUPERSEDED (user headset,
+> 2026-09-02).** This is one Halo-2-only optional change above
+> C-H4-57. The official H2EK `aim_assist.cpp` calculation (kit RVA
+> `0xFE0D0`) was mapped through its distinctive player-control caller to
+> retail `halo2.dll+0x759260`: the callers match by cross-architecture BSim
+> with significance `121.04`, and the callee has the identical three-argument
+> ABI and exact neutral initializer. A 79-byte wildcarded signature matches
+> once in the pinned retail loaded image at that RVA. While Halo 2 VR owns
+> local user 0's controller sight, the optional detour returns the engine's
+> neutral assist/targeting outputs (three zero assist floats, three no-target
+> identifiers, zero flags/magnetism). Every other call runs stock. No melee
+> code, weapon/map tag, game file, or other title is patched. Identity/hook
+> failure is feature-local `StockFallback` and cannot disarm camera, stereo,
+> hands, HUD, reticle, weapons, or OpenXR. Acceptance requires a non-zero
+> suppressed count and the user's headset result. The exact Steam log,
+> SHA-256
+> `7F0AAE2A3641BF55EC970B9718E92D7B50698A64B1F2E6D9F130FE1CD8C81FF7`,
+> proves `26,285` suppressed calls with zero refusals. The user reports the
+> unwanted camera following stopped, accepting the camera-control result, but
+> melee still misses. E-H2-78 shows that clearing the independent target
+> identity cannot repair melee and supersedes only that portion in C-H2-91.
+> See `docs/C-H2-90-CENTRAL-AIM-ASSIST-OFF-NOTES.md` and E-H2-77.
+
+> **C-H2-89 HALO 2 DEBUG-GLOBAL AIM-ASSIST TEST REJECTED AND DISABLED
+> (user headset, 2026-09-02).** Source `03c7776f3118628c21f2faf0dfe3f9be3e3422e5`
+> logged `StockFallback` on both level attempts because retail's
+> `sim_disable_aim_assist` catalog record did not resolve to a readable value
+> slot. No disable write occurred, and the user reported aim assist and melee
+> unchanged. The calls are compiled dormant; do not retry this by-name path.
+
+> **C-H4-57 HALO 4 TARGET ACCEPTED; HALO 3 REGRESSION STILL REQUIRED
+> (user headset, 2026-09-01).** The user explicitly reported that source
+> `bccc14f2e2d6fcc38d69dde02f7dc538672277da` fixed the Forerunner
+> supercharged-Ghost boost black screen. Result: Steam edition,
+> SteamVR/OpenXR 2.17.7, Oculus headset, 120 Hz. The exact suppression cannot
+> remove the ordinary Ghost trail globally: it nulls only H4EK/retail shader
+> hash `0x47668A1953271934`; the separate mission speed-line/tint material and
+> ordinary Ghost effect path remain untouched. C-H4-56 stays the cumulative
+> accepted pointer until the required Halo 3 headset regression is reported.
+
+> **ACCEPTED CUMULATIVE SOURCE BASELINE (user headset, 2026-09-01):
+> C-H4-56, source commit `271f6dffb8cf2e13dc4feafd85b9b4c61440ff25`,
+> DLL SHA-256
+> `9a28247337eac1509048884c35517c43328ffcb97f2b0190c95e6cf67976e309`.
+> The user reported “fantastic. You nailed it” after confirming that the native
+> Halo 4 reticle remained correct and the authored Mjolnir helmet/visor framing
+> was restored. This advances the cumulative pointer from C-H2-88 and protects
+> the C-H4-55 native-reticle, pause, effects, adjustable-HUD and helmet-toggle
+> behavior. Headset result: Steam edition, SteamVR/OpenXR 2.17.7, Oculus
+> runtime headset, 120 Hz. The Microsoft Store edition was not tested in this
+> result. Open work above this pointer is the Halo 4 `m30_cryptum` boosted-Ghost
+> blackout; the accepted HUD/reticle/helmet paths must not change.**
+
+> **ACCEPTED CUMULATIVE SOURCE BASELINE (user headset, 2026-09-01):
+> C-H2-88, source commit `bda7ecb93cdfcc982469e8ba92f888e05490511a`,
+> DLL SHA-256
+> `0cbf3615ef90f72562f07a6c4b55b22a6ac76b8f7913931effc332b6816096dc`.
+> The user explicitly reported "Halo 2 is working as expected, working as
+> wanted" and directed that Halo 2 be left as-is. This advances the cumulative
+> source pointer from C-H4-52 while preserving every accepted C-H4-52 behavior.
+> Headset result: Steam edition, SteamVR/OpenXR 2.17.7, Oculus runtime headset,
+> 120 Hz. The Microsoft Store install root was absent on this machine during
+> C-H2-88 deployment, so this result does not claim a Store-edition runtime
+> test. Open work above this pointer is now Halo 4 only: semantic pause/resume,
+> first-person muzzle/Promethean effect suppression, the working native HUD
+> layout controls, and the optional helmet overlay toggle.**
+
 > **ACCEPTED BASELINE (user headset, 2026-09-01): C-H4-52, DLL SHA-256
 > `69b3938a6f657027e4507d8dee04ac92945e1e241ab7253288c2d4154f150973`,
 > installed on both editions (Steam + Microsoft Store), cumulative on
