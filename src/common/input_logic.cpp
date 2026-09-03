@@ -88,6 +88,14 @@ HapticPeakSample SampleHapticPeak(float peak, float latest)
     return sample;
 }
 
+float MergeHapticAmplitude(float game, float contact)
+{
+    const float g = game < 0.0f ? 0.0f : (game > 1.0f ? 1.0f : game);
+    const float c = contact < 0.0f ? 0.0f :
+        (contact > 1.0f ? 1.0f : contact);
+    return g > c ? g : c;
+}
+
 uint32_t NormalizeVirtualXInputSetStateResult(
     uint32_t originalResult, uint32_t userIndex, bool hasVibrationRequest)
 {

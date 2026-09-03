@@ -37,6 +37,7 @@
 #include "halo4_restoration_logic.h"
 #include "halo4_parity_trace_logic.h"
 #include "halo4_render_logic.h"
+#include "halo4_world_collision_logic.h"
 #include "reach_adapter.h"
 #include "reach_chud_logic.h"
 #include "reach_observer_logic.h"
@@ -13474,6 +13475,40 @@ int main()
     const HapticPeakSample clamped = SampleHapticPeak(1.5f, -0.5f);
     Check(clamped.apply == 1.0f && clamped.carry == 0.0f,
         "Peak-hold haptic samples clamp to the [0,1] amplitude range");
+    Check(std::fabs(MergeHapticAmplitude(0.7f, 0.2f) - 0.7f) < 1.0e-6f &&
+          std::fabs(MergeHapticAmplitude(0.1f, 0.4f) - 0.4f) < 1.0e-6f &&
+          std::fabs(MergeHapticAmplitude(-1.0f, 2.0f) - 1.0f) < 1.0e-6f,
+        "Per-hand contact haptics merge by clamped maximum without replacing game rumble");
+
+    // Halo 4 Stage-1 world contact: no hit accepts the controller target; a
+    // hit backs the wrist off by the configured skin in world-scaled units;
+    // malformed engine output fails closed for this optional feature only.
+    const float collisionStart[3]{0.0f, 0.0f, 0.0f};
+    const float collisionDesired[3]{1.0f, 0.0f, 0.0f};
+    const Halo4WorldCollisionResolution freeMovement =
+        Halo4ResolveWorldCollision(
+            collisionStart, collisionDesired, false, 1.0f, 1.0f, 0.1f);
+    Check(freeMovement.valid && !freeMovement.contact &&
+          std::fabs(freeMovement.accepted[0] - 1.0f) < 1.0e-6f &&
+          std::fabs(freeMovement.correction[0]) < 1.0e-6f,
+        "Halo 4 wrist sweep accepts an unobstructed tracked target");
+    const Halo4WorldCollisionResolution blockedMovement =
+        Halo4ResolveWorldCollision(
+            collisionStart, collisionDesired, true, 0.5f, 1.0f, 0.1f);
+    Check(blockedMovement.valid && blockedMovement.contact &&
+          std::fabs(blockedMovement.accepted[0] - 0.4f) < 1.0e-6f &&
+          std::fabs(blockedMovement.correction[0] + 0.6f) < 1.0e-6f,
+        "Halo 4 wrist sweep resolves before the impact by a world-scaled skin");
+    Check(!Halo4ResolveWorldCollision(
+              collisionStart, collisionDesired, true, 1.5f, 1.0f).valid,
+        "Halo 4 wrist sweep rejects an invalid engine hit fraction");
+    const float ordinaryMovement[3]{0.40f, 0.0f, 0.0f};
+    const float teleportMovement[3]{0.60f, 0.0f, 0.0f};
+    Check(!Halo4WorldCollisionMovementIsTeleport(
+              collisionStart, ordinaryMovement, 0.33f) &&
+          Halo4WorldCollisionMovementIsTeleport(
+              collisionStart, teleportMovement, 0.33f),
+        "Halo 4 collision reseeds across a 1.5 metre world-scaled tracking jump");
     Check(NormalizeVirtualXInputSetStateResult(
               ERROR_DEVICE_NOT_CONNECTED, 0, false) ==
               ERROR_DEVICE_NOT_CONNECTED,

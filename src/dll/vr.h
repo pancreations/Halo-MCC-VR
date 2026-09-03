@@ -779,6 +779,9 @@ void VR_RequestScopeToggle();
 // Receives Halo's blended XInput rumble level (0..1). The render thread maps
 // it to portable OpenXR feedback on both hands and owns all stop conditions.
 void VR_SetGameHaptics(float amplitude);
+// Adds a lock-free, one-shot collision pulse for one OpenXR hand. It is merged
+// with (and never replaces) the title's ordinary XInput rumble.
+void VR_PulseContactHaptics(bool left, float amplitude);
 
 // Position and rotation of one eye relative to the midpoint of both OpenXR
 // views. Position is in meters and both outputs use OpenXR view-local axes

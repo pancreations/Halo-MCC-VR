@@ -349,7 +349,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-92-controller-melee-h4-effects',
+        'h4-fixed-world-contact-stage1',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -396,7 +396,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 35
+        schema_version = 36
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -405,7 +405,7 @@ try {
         package_preset = $packagePreset
         titles = @(
             'Halo 3', 'Halo 3: ODST', 'Halo: Reach', 'Halo 4',
-            'Halo 2 Anniversary')
+            'Halo 2 Anniversary', 'Halo 2 Classic')
         embedded_build_identity = [ordered]@{
             source_commit = $commit
             odst = $true
@@ -426,9 +426,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-58'
+            id = 'H4-WORLD-CONTACT-STAGE1'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'accepted-c-h4-57-plus-symmetric-stage3ai-effect-cave-teardown'
+            behavior = 'c-h2-92-c-h4-58-plus-h4-fixed-structure-wrist-point-contact'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -519,6 +519,24 @@ try {
                 'official-left_hand-marker-frame-parity-no-c39-c40-c41-c42-layer'
             two_hand_left_pose =
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
+            world_contact = [ordered]@{
+                enabled = $true
+                scope = 'halo4-fixed-structure-only'
+                query = 'h4ek-physics-ray-cast'
+                retail_query_rva = '0x001C1D4C'
+                collision_flags = 'structure-bit-0-plus-fixed-only-bit-27'
+                execution_thread = 'existing-50ms-cold-title-worker'
+                render_thread_work = 'lock-free-target-and-correction-publication-only'
+                collision_shape = 'left-and-right-wrist-points'
+                held_weapon_behavior = 'rigidly-follows-corrected-right-wrist-no-barrel-volume-yet'
+                dynamic_objects = $false
+                ragdoll_impulses = $false
+                physical_melee = $false
+                haptic_amplitude = 0.18
+                haptic_policy = 'per-hand-peak-merged-by-max-with-stock-game-rumble'
+                failure_policy = 'stock-floating-targets-only-camera-openxr-and-all-restorations-remain-armed'
+                evidence = 'docs/HALO4-WORLD-COLLISION-EVIDENCE.md'
+            }
             failure_policy =
                 'pre-claim-stock-post-claim-frame-drop-core-remains-armed'
             vrik_failure_policy =
@@ -846,7 +864,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H2-92 carries three requested, source-isolated changes. Halo 4 Stage 3AI effect cleanup now restores its owned cave after every entry route, allowing exact muzzle/effect suppression to reinstall without changing reticle, helmet, HUD, pause, camera, motion-suck, or OpenXR behavior. Official H2EK proves C-H2-91 selected its retained melee target from player_control desired angles, not controller-owned unit aim; C-H2-92 substitutes the controller ray only inside the native central target calculation, preserves the native result, and still zeros camera-assist control. Failure retains C-H2-90 neutral/no-target behavior. New Halo 2 Classic configs seed yaw +1.0 and pitch -9.5; existing saved values remain authoritative and editable. This package does not install automatically.'
+        note = 'Experimental Halo 4 world-contact Stage 1 continues the C-H2-92/C-H4-58 handoff without changing its accepted camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST, or Halo 3 behavior. Official H4EK PhysicsRayCast is mapped and call-edge verified against the pinned retail module. A cold worker point-sweeps the final visible wrists against fixed structure; fresh bounded corrections clamp the hands, the held weapon follows the right wrist, and gentle per-hand contact peaks merge with existing game rumble. This does not yet provide weapon-barrel volume, dynamic-object or ragdoll impulses, or physical melee. Every proof/query failure restores only the existing unmodified floating targets. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
