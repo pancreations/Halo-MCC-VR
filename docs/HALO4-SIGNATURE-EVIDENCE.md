@@ -4074,3 +4074,26 @@ shader, but deliberately does not disable a broader class of effects. If the
 shader hooks or exact identity are unavailable, this feature alone stays
 stock; the camera core, HUD, reticle, helmet, stereo, and OpenXR remain armed.
 Headset-PENDING.
+
+## Stage 3AI effect ownership across level reinstall (C-H4-58, 2026-09-02)
+
+The Steam C-H2-91 run (source `34189bcef76ef49bd3c542af29e867a4c068ccd1`)
+proves the returned Halo 4 muzzle effects are an optional-feature lifecycle
+failure, not a lost binding. At `20:30:17.796` the exact Stage 3AI routes
+install and telemetry reports `effects=LIVE`. After that title generation is
+torn down and the Halo 4 level gate earns another install, the log reports
+`Halo 4 effects: StockFallback; exact C50 cave was not untouched/writable` and
+all subsequent restoration telemetry reports `effects=StockFallback`. The HUD,
+pause, helmet, reticle, camera, and screen-effect transactions remain live.
+
+Source audit found the asymmetric ownership operation: `InstallHalo4Effects`
+writes the exact 0xF0-byte Stage 3AI trampoline into the H4EK-derived C50 cave
+at retail `halo4+0xB79C10`, while `CleanupHalo4Effects` restored all four entry
+routes but never restored that owned cave to its verified all-zero stock bytes.
+The next install therefore correctly refused a non-stock cave. C-H4-58
+centralizes the exact cave payload and, after restoring every route that can
+enter it, restores the cave only when it still matches the owned payload and
+verifies the stock bytes. A foreign or partially changed cave remains a loud,
+feature-local cleanup failure. No effect classification, entry route, reticle,
+HUD, helmet, pause, camera, screen-effect, or OpenXR behavior changes.
+Headset-PENDING.

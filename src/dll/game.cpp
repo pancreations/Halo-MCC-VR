@@ -35300,6 +35300,31 @@ namespace
         return patch;
     }
 
+    std::array<uint8_t, 0xF0> Halo4EffectCavePatch()
+    {
+        std::array<uint8_t, 0xF0> cave{};
+        static constexpr uint8_t kNegPayload[] = {
+            0x66,0x83,0xFF,0xFE,0x7F,0x12,0x48,0x89,0xE9,0x48,0x89,0xDA,
+            0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x48,0x8B,0x5C,0x24,
+            0x48,0xE9,0x75,0xBD,0x58,0xFF};
+        static constexpr uint8_t kHelperPayload[] = {
+            0x48,0x83,0xEC,0x58,0x48,0x89,0x4C,0x24,0x20,0x48,0x89,0x54,
+            0x24,0x28,0x4C,0x89,0x44,0x24,0x30,0x4C,0x89,0x4C,0x24,0x38,
+            0xE8,0x1B,0xBD,0x58,0xFF,0x4C,0x8B,0x4C,0x24,0x38,0x45,0x84,
+            0xC9,0x74,0x30,0x48,0x8B,0x44,0x24,0x28,0x66,0x83,0xF8,0xFE,
+            0x7F,0x25,0x48,0x8B,0x4C,0x24,0x20,0xF6,0x41,0x4A,0x0F,0x74,
+            0x1A,0x8A,0x41,0x4A,0x24,0xF0,0x3C,0xF0,0x74,0x11,0x48,0x8B,
+            0x54,0x24,0x30,0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x48,
+            0x83,0xC4,0x58,0xC3};
+        std::memcpy(cave.data(), kNegPayload, sizeof(kNegPayload));
+        std::memcpy(cave.data() + 0x70, kHelperPayload, sizeof(kHelperPayload));
+        const uintptr_t bridge =
+            reinterpret_cast<uintptr_t>(&Halo4EffectHideBridge);
+        std::memcpy(cave.data() + 0x0E, &bridge, sizeof(bridge));
+        std::memcpy(cave.data() + 0xBD, &bridge, sizeof(bridge));
+        return cave;
+    }
+
     std::array<uint8_t, 26> Halo4CurvaturePatch()
     {
         std::array<uint8_t, 26> patch{};
@@ -35327,6 +35352,8 @@ namespace
         }
         bool clean = true;
         const auto transient = Halo4TransientPatch();
+        const auto cave = Halo4EffectCavePatch();
+        const std::array<uint8_t, 0xF0> caveStock{};
         const auto neg = Halo4RelativePatch(
             0xE9, base + kHalo4EffectNegRva,
             base + kHalo4EffectCaveRva);
@@ -35349,6 +35376,13 @@ namespace
             clean = Halo4RestoreOwnedPatch(
                 base + kHalo4EffectModeOneRva, kHalo4EffectModeOneHidden,
                 kHalo4EffectModeOneStock) && clean;
+        // Stage 3AI's four entry routes are stock again before the trampoline
+        // storage is cleared, so no thread can enter the cave while it is
+        // being restored. Previous candidates omitted this final ownership
+        // step: the first level worked, but the next install found the cave
+        // non-stock and fell back, bringing muzzle effects back after reload.
+        clean = Halo4RestoreOwnedPatch(
+            base + kHalo4EffectCaveRva, cave, caveStock) && clean;
         clean = Halo4PatchMatches(
                     base + kHalo4EffectTransientRva,
                     kHalo4EffectTransientStock) &&
@@ -35359,7 +35393,9 @@ namespace
                     base + kHalo4EffectNegRva, kHalo4EffectNegStock) &&
             Halo4PatchMatches(
                     base + kHalo4EffectModeOneRva,
-                    kHalo4EffectModeOneStock) && clean;
+                    kHalo4EffectModeOneStock) &&
+            Halo4PatchMatches(
+                    base + kHalo4EffectCaveRva, caveStock) && clean;
         if (!clean)
         {
             g_halo4Restoration.cleanupRequired = true;
@@ -35413,27 +35449,8 @@ namespace
             return false;
         }
 
-        std::array<uint8_t, 0xF0> cave{};
         std::array<uint8_t, 0xF0> caveStock{};
-        static constexpr uint8_t kNegPayload[] = {
-            0x66,0x83,0xFF,0xFE,0x7F,0x12,0x48,0x89,0xE9,0x48,0x89,0xDA,
-            0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x48,0x8B,0x5C,0x24,
-            0x48,0xE9,0x75,0xBD,0x58,0xFF};
-        static constexpr uint8_t kHelperPayload[] = {
-            0x48,0x83,0xEC,0x58,0x48,0x89,0x4C,0x24,0x20,0x48,0x89,0x54,
-            0x24,0x28,0x4C,0x89,0x44,0x24,0x30,0x4C,0x89,0x4C,0x24,0x38,
-            0xE8,0x1B,0xBD,0x58,0xFF,0x4C,0x8B,0x4C,0x24,0x38,0x45,0x84,
-            0xC9,0x74,0x30,0x48,0x8B,0x44,0x24,0x28,0x66,0x83,0xF8,0xFE,
-            0x7F,0x25,0x48,0x8B,0x4C,0x24,0x20,0xF6,0x41,0x4A,0x0F,0x74,
-            0x1A,0x8A,0x41,0x4A,0x24,0xF0,0x3C,0xF0,0x74,0x11,0x48,0x8B,
-            0x54,0x24,0x30,0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x48,
-            0x83,0xC4,0x58,0xC3};
-        std::memcpy(cave.data(), kNegPayload, sizeof(kNegPayload));
-        std::memcpy(cave.data() + 0x70, kHelperPayload, sizeof(kHelperPayload));
-        const uintptr_t bridge =
-            reinterpret_cast<uintptr_t>(&Halo4EffectHideBridge);
-        std::memcpy(cave.data() + 0x0E, &bridge, sizeof(bridge));
-        std::memcpy(cave.data() + 0xBD, &bridge, sizeof(bridge));
+        const auto cave = Halo4EffectCavePatch();
         if (!Halo4WriteExecutable(
                 reinterpret_cast<void*>(base + kHalo4EffectCaveRva),
                 caveStock.data(), cave.data(), cave.size()))
