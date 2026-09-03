@@ -823,6 +823,11 @@ struct Config
     // non-gun bones in the final visible palette so their geometry disappears.
     bool floating_hands = true;
 
+    // Opt-in physical contact between the tracked hands / held weapon and
+    // engine world geometry. The setting is shared so each title can adopt
+    // it without another config migration; Halo 4 is the first implementation.
+    bool world_collision = false;
+
     // Lower the RIGHT (weapon) shoulder so Master Chief's arm doesn't clip up
     // into your face — drops the shoulder anchor along your view-down axis.
     // 0 = the game's authored (high) shoulder; higher = lower shoulder. Tune

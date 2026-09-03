@@ -292,6 +292,10 @@ try {
         $gameSource -notmatch
             'kEnableHalo4WorldCollisionStage4\s*=\s*true' -or
         $gameSource -notmatch
+            'kEnableHalo4WeaponWorldCollisionStage4\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WeaponWorldCollisionStage5\s*=\s*true' -or
+        $gameSource -notmatch
             'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
         $gameSource -notmatch
             'kHalo4WorldLineFilterGlobalRva\s*=\s*0x2FFB0B8' -or
@@ -310,7 +314,7 @@ try {
             'kHalo4ObjectSetVelocitiesRva\s*=\s*0x5D1580' -or
         $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
         $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume') {
-        throw 'H4 world-contact Stage 4 gate failed: rejected stages, live raycast context, authored volume publication, or optional object-motion proof is missing.'
+        throw 'H4 world-contact Stage 5 gate failed: rejected stages, stable held-volume successor, live raycast context, authored volume publication, or optional object-motion proof is missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -379,7 +383,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-stage4-authored-volume',
+        'h4-world-contact-stage5-stable-held-volume',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -550,11 +554,14 @@ try {
             two_hand_left_pose =
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
             world_contact = [ordered]@{
-                enabled = $true
-                stage = 4
+                capability_enabled = $true
+                default_enabled = $false
+                config_key = 'world_collision'
+                stage = 5
                 rejected_stage1_enabled = $false
                 rejected_stage2_enabled = $false
                 rejected_stage3_enabled = $false
+                rejected_stage4_weapon_publication_enabled = $false
                 scope = 'halo4-authored-hand-and-held-model-volume'
                 query = 'h4ek-physics-ray-cast'
                 retail_query_rva = '0x001C1D4C'
@@ -570,7 +577,7 @@ try {
                 hit_fraction_resolution = 'native-result-fraction-with-world-scaled-skin'
                 render_thread_work = 'lock-free-target-and-correction-publication-only'
                 collision_shape = 'actual-storm-hand-and-held-model-node-root-plus-six-extrema'
-                held_weapon_behavior = 'authored-held-node-volume-shares-right-hand-correction'
+                held_weapon_behavior = 'one-stable-combined-hand-and-held-node-volume-per-held-record-shares-right-hand-correction'
                 object_motion_rva = '0x005D1580'
                 object_impulses = 'bounded-native-linear-velocity-no-angular-or-damage-write'
                 ragdoll_impulses = 'same-optional-native-object-motion-path-when-ray-result-has-object-index'
@@ -907,7 +914,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 world-contact Stage 4 test: rejected Stages 1 through 3 stay dormant. The live PhysicsRayCast hook preserves every original call, borrows only a just-proven dynamic-inclusive engine context, sweeps actual Storm-hand and held-model node extrema, applies one bounded common correction plus per-hand haptics, and optionally moves a hit object through the independently verified native velocity/wake helper. Physical melee and damage remain disabled. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Halo 4 world-contact Stage 5 test: Stage 4 hand collision, haptics and dynamic-object response are preserved. The rejected alternating weapon publication stays dormant; one stable combined right-hand/held-model volume now publishes per held record so the continuous sweep can constrain the gun. The shared F1 Body/Hands world_collision option ships off and currently affects Halo 4 only. Physical melee and damage remain disabled. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

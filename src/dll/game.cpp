@@ -30441,6 +30441,10 @@ namespace
     struct Halo4WorldCollisionFeature
     {
         std::atomic<bool> installed{false};
+        // Cold worker mirrors the shared config into this atomic so render /
+        // raycast hot paths never race directly with the F1 menu writer.
+        std::atomic<bool> configured{false};
+        std::atomic<bool> configurationResetPending{true};
         std::atomic<bool> objectPushInstalled{false};
         Halo4PhysicsRayCastFn originalRayCast = nullptr;
         Halo4ObjectSetVelocitiesFn objectSetVelocities = nullptr;
@@ -30496,11 +30500,16 @@ namespace
     // a successor must publish exactly one stable right-side volume per held
     // record while preserving the accepted hand/haptic/object path.
     constexpr bool kEnableHalo4WeaponWorldCollisionStage4 = false;
+    // Stage 5 publishes the cached right hand and held-model extrema once,
+    // together, from the held-record boundary. That preserves sample identity
+    // across raycast ticks instead of reseeding between two palette callbacks.
+    constexpr bool kEnableHalo4WeaponWorldCollisionStage5 = true;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
     static_assert(kEnableHalo4WorldCollisionStage4);
     static_assert(!kEnableHalo4WeaponWorldCollisionStage4);
+    static_assert(kEnableHalo4WeaponWorldCollisionStage5);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -30721,6 +30730,10 @@ namespace
 
     void RemoveHalo4WorldCollision()
     {
+        g_halo4WorldCollision.configured.store(
+            false, std::memory_order_release);
+        g_halo4WorldCollision.configurationResetPending.store(
+            true, std::memory_order_release);
         g_halo4WorldCollision.installed.store(
             false, std::memory_order_release);
         g_halo4WorldCollision.objectPushInstalled.store(
@@ -30871,6 +30884,8 @@ namespace
     {
         if (!g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ||
+            !g_halo4WorldCollision.configured.load(
+                std::memory_order_acquire) ||
             !g_halo4Camera.armed.load(std::memory_order_acquire) ||
             g_halo4Camera.teardownRequested.load(std::memory_order_acquire))
             return;
@@ -30888,6 +30903,18 @@ namespace
                 active.store(false, std::memory_order_release);
             }
         } lease{g_halo4WorldCollision.engineQueryActive};
+
+        if (g_halo4WorldCollision.configurationResetPending.exchange(
+                false, std::memory_order_acq_rel))
+        {
+            for (int hand = 0; hand < 2; ++hand)
+            {
+                g_halo4WorldCollision.worker[hand] =
+                    Halo4WorldCollisionWorkerHand{};
+                Halo4ClearCollisionCorrection(
+                    hand, g_halo4WorldCollision.generation);
+            }
+        }
 
         const uint64_t now = GetTickCount64();
         uint64_t due = g_halo4WorldCollision.nextEngineQueryAtMs.load(
@@ -31197,6 +31224,10 @@ namespace
             objectSetVelocitiesPinned, std::memory_order_release);
         g_halo4WorldCollision.generation = generation;
         Halo4ResetWorldCollisionState(generation);
+        g_halo4WorldCollision.configured.store(
+            g_config.world_collision, std::memory_order_release);
+        g_halo4WorldCollision.configurationResetPending.store(
+            true, std::memory_order_release);
         if (MH_EnableHook(rayCastTarget) != MH_OK)
         {
             MH_RemoveHook(rayCastTarget);
@@ -31212,14 +31243,16 @@ namespace
             return false;
         }
         g_halo4WorldCollision.installed.store(true, std::memory_order_release);
-        LOG("Halo 4 experimental world contact Stage 4 LIVE: official H4EK "
+        LOG("Halo 4 experimental world contact Stage 5 capability LIVE/config-%s: official H4EK "
             "PhysicsRayCast is uniquely verified at retail RVA 0x%X with "
             "all four internal call edges pinned; retail clear-line wrapper "
             "RVA 0x%X pins the engine-owned 0x%08X/0x%08X filter pair; "
             "the raycast itself is hooked and its original always runs first; "
             "authored Storm-hand/held-weapon extrema may query only after an "
             "engine dynamic-inclusive ray completes in that context; native "
-            "object motion RVA 0x%X is %s and physical melee remains off",
+            "object motion RVA 0x%X is %s; the stable combined right-side "
+            "hand/weapon volume is enabled and physical melee remains off",
+            g_config.world_collision ? "enabled" : "disabled",
             kHalo4PhysicsRayCastRva, kHalo4WorldLineTestRva,
             kHalo4WorldLineCollisionFlags,
             kHalo4WorldLineAdditionalFlags, kHalo4ObjectSetVelocitiesRva,
@@ -31229,16 +31262,24 @@ namespace
 
     void Halo4WorldCollisionWorkerTick()
     {
+        // This is a cold lifecycle tick. Mirror the menu/config setting for
+        // lock-free consumption by the render and engine raycast callbacks.
+        const bool requested = g_config.world_collision;
+        const bool previous = g_halo4WorldCollision.configured.exchange(
+            requested, std::memory_order_acq_rel);
+        if (previous != requested)
+            g_halo4WorldCollision.configurationResetPending.store(
+                true, std::memory_order_release);
         const uint32_t failure =
             g_halo4WorldCollision.hotFailureReason.exchange(
                 0, std::memory_order_acq_rel);
         if (!failure) return;
         if (failure == kHalo4CollisionFailureObjectPushException)
-            LOG("Halo 4 Stage 4 dynamic-object contact FAILED OPEN: native "
+            LOG("Halo 4 Stage 5 dynamic-object contact FAILED OPEN: native "
                 "object motion raised an exception; hand/weapon world "
                 "clamping, camera, HUD and OpenXR continue");
         else
-            LOG("Halo 4 Stage 4 world contact FAILED OPEN: engine raycast "
+            LOG("Halo 4 Stage 5 world contact FAILED OPEN: engine raycast "
                 "failed contract %u; only world clamping/object push is "
                 "disabled; camera, hands, weapon, HUD, reticle, effects and "
                 "OpenXR continue", failure);
@@ -31250,6 +31291,10 @@ namespace
     {
         if (hand < 0 || hand > 1 ||
             !g_halo4WorldCollision.installed.load(
+                std::memory_order_acquire) ||
+            !g_halo4WorldCollision.configured.load(
+                std::memory_order_acquire) ||
+            g_halo4WorldCollision.configurationResetPending.load(
                 std::memory_order_acquire) ||
             !Halo4FloatingTransformValid(target))
             return;
@@ -31320,7 +31365,9 @@ namespace
     void Halo4PublishAuthoredHandCollisionVolumes(
         const BoneMatrix* solved, int32_t ignoredObjectIndex)
     {
-        if (!solved || !g_halo4FloatingPair.targetsValid ||
+        if (!g_halo4WorldCollision.configured.load(
+                std::memory_order_acquire) ||
+            !solved || !g_halo4FloatingPair.targetsValid ||
             !g_halo4FloatingPair.generation)
             return;
         const uint32_t rightCount = Halo4BuildAuthoredCollisionExtrema(
@@ -31342,7 +31389,11 @@ namespace
                 sizeof(g_halo4FloatingPair.rightSolvedWrist));
             g_halo4FloatingPair.rightSolvedWristValid = true;
         }
-        if (rightCount)
+        // Stage 5 deliberately defers the right side until the immediately
+        // following held record can publish one stable hand+weapon volume.
+        // Publishing here as well caused Stage 4's 985 headset-observed
+        // reseeds and made the gun visually ineffective.
+        if (rightCount && !kEnableHalo4WeaponWorldCollisionStage5)
             Halo4PublishCollisionTarget(
                 1, g_halo4FloatingPair.generation,
                 g_halo4FloatingPair.handCollisionSamples[1], rightCount,
@@ -31357,16 +31408,20 @@ namespace
     void Halo4PublishAuthoredWeaponCollisionVolume(
         const BoneMatrix* moved, int nodeCount)
     {
+        if (!g_halo4WorldCollision.configured.load(
+                std::memory_order_acquire))
+            return;
         const uint32_t handCount =
             g_halo4FloatingPair.handCollisionSampleCount[1];
         if (!moved || nodeCount <= 0 ||
             nodeCount > kHalo4FirstPersonBankTransforms || !handCount ||
             !g_halo4FloatingPair.rightSolvedWristValid)
             return;
-        if (!kEnableHalo4WeaponWorldCollisionStage4)
+        if (!kEnableHalo4WeaponWorldCollisionStage5)
         {
-            // Preserve the headset-accepted right-hand volume without
-            // alternating its sample count with the rejected weapon volume.
+            // Preserve the headset-accepted right-hand volume when the Stage
+            // 5 successor is dormant, without reviving Stage 4's alternating
+            // combined publication.
             Halo4PublishCollisionTarget(
                 1, g_halo4FloatingPair.generation,
                 g_halo4FloatingPair.handCollisionSamples[1], handCount,
@@ -31394,8 +31449,8 @@ namespace
         uint32_t combinedCount = handCount;
         memcpy(combined, g_halo4FloatingPair.handCollisionSamples[1],
             sizeof(float) * handCount * 3);
-        // weapon[0] is the already-published common root. Append only the six
-        // title-authored held-model extrema.
+        // weapon[0] duplicates the common hand root. Append only the six
+        // title-authored held-model extrema, then publish the right side once.
         for (int sample = 1; sample < weaponCount &&
              combinedCount < kHalo4WorldCollisionMaxSamples; ++sample)
         {
@@ -37522,7 +37577,7 @@ namespace
         const uint64_t collisionPushFailures =
             g_halo4WorldCollision.objectPushFailures.load(
                 std::memory_order_relaxed);
-        LOG("Halo 4 experimental world contact Stage 4: %s; %llu engine "
+        LOG("Halo 4 experimental world contact Stage 5: capability-%s/config-%s; %llu engine "
             "raycasts (%llu dynamic-safe / %llu fixed-only), %llu authored-"
             "volume probes, %llu/%llu left/right hand contacts, %llu weapon "
             "contacts, %llu/%llu visible corrections, %llu seed/teleport "
@@ -37531,6 +37586,8 @@ namespace
             "melee and damage remain untouched",
             g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
+            g_halo4WorldCollision.configured.load(
+                std::memory_order_acquire) ? "enabled" : "disabled",
             static_cast<unsigned long long>(collisionEngineContextCalls),
             static_cast<unsigned long long>(collisionDynamicContexts),
             static_cast<unsigned long long>(collisionFixedContexts),

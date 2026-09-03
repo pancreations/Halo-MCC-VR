@@ -1,5 +1,17 @@
 # Current state
 
+> **HALO 4 WORLD CONTACT STAGE 5 READY FOR HEADSET TEST (2026-09-03).**
+> Stage 4's accepted hand collision, haptics, and dynamic-object response are
+> unchanged. The rejected weapon publication is replaced by one stable
+> right-hand-plus-held-model publication per held record, removing the
+> hand-only/combined alternation that caused 985 reseeds. A shared F1
+> Body/Hands `World collision (experimental)` checkbox now gates the entire
+> feature and ships off; Halo 4 is the only implementing title in this pass.
+> Physical melee/damage remains disabled. No ray cadence, collision skin,
+> camera, HUD, reticle, helmet, effects, pause, black-screen, Halo 2, Reach,
+> ODST, or Halo 3 behavior is changed. Headset acceptance is pending and the
+> cumulative accepted release pointer below does not move.
+
 > **HALO 4 WORLD CONTACT STAGE 4 PARTIALLY ACCEPTED / WEAPON RESPONSE
 > REJECTED (user headset, 2026-09-03).** Exact source
 > `7451e703eb78ddf381056e538a2a8388cf1d740a`, Steam edition,

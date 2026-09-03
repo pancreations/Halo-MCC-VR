@@ -961,8 +961,10 @@ void ConfigLoad(const wchar_t* path)
             g_config.body_wip = atoi(val) != 0;
         else if (!strcmp(key, "arm_ik"))
             g_config.arm_ik = atoi(val) != 0;
-        else if (!strcmp(key, "floating_hands"))
-            g_config.floating_hands = atoi(val) != 0;
+        else if (!strcmp(key, "floating_hands") ||
+                 !strcmp(key, "world_collision"))
+            (key[0] == 'f' ? g_config.floating_hands :
+                g_config.world_collision) = atoi(val) != 0;
         else if (!strcmp(key, "right_shoulder_drop"))
             g_config.right_shoulder_drop = (float)atof(val);
         else if (!strcmp(key, "shoulder_back_m"))
@@ -1685,6 +1687,12 @@ void ConfigSave()
     fprintf(f, "# (arms hidden); 0 = full arms. Pure render filter over VRIK.\n");
     fprintf(f, "# (default %d)\n", d.floating_hands ? 1 : 0);
     fprintf(f, "floating_hands = %d\n\n", g_config.floating_hands ? 1 : 0);
+    fprintf(f, "# World collision (experimental): hands and held weapons stop on\n");
+    fprintf(f, "# world geometry, provide gentle contact haptics, and can nudge live\n");
+    fprintf(f, "# physics objects. Shared option; currently implemented for Halo 4.\n");
+    fprintf(f, "# Physical melee/damage is not part of this option.\n");
+    fprintf(f, "# (default %d)\n", d.world_collision ? 1 : 0);
+    fprintf(f, "world_collision = %d\n\n", g_config.world_collision ? 1 : 0);
     fprintf(f, "# Lower the right (weapon) shoulder so the arm doesn't clip your face\n");
     fprintf(f, "# (0 = authored, higher = lower; ~world units).\n");
     fprintf(f, "# (default %.3f, range 0 to 0.3)\n", d.right_shoulder_drop);

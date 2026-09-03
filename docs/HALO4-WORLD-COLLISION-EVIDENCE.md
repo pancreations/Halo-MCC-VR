@@ -381,3 +381,25 @@ Weapon contact counts therefore prove that the authored volume reached the
 query, not that its continuous response was stable. The alternating combined
 publication is compiled dormant before a successor is attempted; the accepted
 hand, haptic, and dynamic-object transactions remain live.
+
+### Stage 5 stable held-volume candidate
+
+Halo 3 has no world-contact behavior to match, so this remains an explicitly
+Halo-4-native opt-in feature rather than a parity claim. Stage 5 changes only
+the rejected right-side publication boundary: the Storm record caches the
+authored right-hand extrema but publishes only the left hand immediately. The
+same-eye held record then publishes the cached hand extrema and the held-model
+extrema together, exactly once. Stable sample count and ordering let the
+existing engine-context sweep carry accepted positions between ticks, so a
+barrel contact produces the same bounded rigid carrier translation already
+proven on the right hand. It does not add a second weapon transform, detach the
+gun from the hand, increase ray cadence, change the 1.5 cm contact skin, or
+touch damage/melee.
+
+The shared `world_collision` setting ships off and appears in F1 under
+Body (VRIK). Halo 4 mirrors it into an atomic used by the palette and raycast
+hot paths. A live off/on transition invalidates prior worker state before any
+old correction can be consumed. Other titles ignore the option until they
+gain their own evidence-backed implementation. The Stage 4 hand-volume,
+haptic, exact raycast/filter binding, dynamic-object helper, bounds, cadence,
+and feature-local fail-open behavior are otherwise unchanged.

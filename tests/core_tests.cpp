@@ -12561,7 +12561,7 @@ int main()
         "hud_size", "hud_aspect", "hud_curvature",
         "hud_vertical_offset", "motion_blur", "auto_vr", "two_handed_aim",
         "two_hand_toggle", "left_hand_forward_m", "two_hand_zone_right_m",
-        "left_grip_forward_m", "arm_ik", "floating_hands",
+        "left_grip_forward_m", "arm_ik", "floating_hands", "world_collision",
         "right_shoulder_drop", "shoulder_level", "body_wip", "weapon_probe",
         "hud_probe", "fsr_probe", "bullet_probe", "right_eye_first"
     };
@@ -12600,8 +12600,23 @@ int main()
               g_config.cutscene_theater_width_m == 6.0f &&
               g_config.cutscene_theater_distance_m == 4.0f,
         "legacy configs inherit the enabled cutscene-theatre defaults");
+    Check(!g_config.world_collision,
+        "legacy configs inherit the opt-in world-collision default");
     Check(g_config.y_b_start_chord,
         "legacy configs inherit the enabled Y+B Start chord default");
+
+    {
+        std::ofstream file(primary);
+        file << "config_version = 5\n";
+        file << "world_collision = 1\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.world_collision,
+        "the shared world-collision option can be enabled from config");
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(g_config.world_collision,
+        "the shared world-collision option survives a save/load round trip");
 
     {
         std::ofstream file(primary);

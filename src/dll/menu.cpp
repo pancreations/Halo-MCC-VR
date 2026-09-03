@@ -1198,6 +1198,11 @@ namespace
         ImGui::TextDisabled("Shows only your hands and the guns they hold; the arms are hidden.\n"
                             "Hands still track your controllers exactly as with full arms.");
         ImGui::Spacing();
+        changed |= ImGui::Checkbox("World collision (experimental)",
+                                   &g_config.world_collision);
+        ImGui::TextDisabled("Hands and held weapons stop on the world, pulse gently on contact,\n"
+                            "and can nudge live physics objects. Currently Halo 4 only; no melee damage.");
+        ImGui::Spacing();
         changed |= ImGui::Checkbox("Show body (VRIK stage A1)", &g_config.body_wip);
         ImGui::TextDisabled("Shows Chief's game-animated body via the engine's own director switches.");
         ImGui::TextDisabled("Room-scale unit movement is gated until the player-biped boundary is headset-proven.");
