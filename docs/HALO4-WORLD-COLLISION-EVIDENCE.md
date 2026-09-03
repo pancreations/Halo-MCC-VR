@@ -493,3 +493,60 @@ Physical melee and damage remained disabled as intended. Stage 6 is therefore
 the protected accepted collision baseline; a physical-melee experiment must be
 an independently gated layer and must not change its geometry, filter, cadence,
 contact skin, correction, haptic, or object-motion behavior.
+
+## Stage 7 physical-melee evidence and candidate
+
+Halo 3 has no motion-threshold melee feature to copy, so Stage 7 is not a
+cross-title parity claim. The Halo 3 experience being preserved is narrower and
+important: after the virtual controller requests melee, Halo itself owns target
+selection, the weapon's authored melee damage, animation, sound, impulse, kill
+credit, and networking. Stage 7 preserves that boundary for Halo 4 and does not
+construct or write damage data.
+
+The official H4EK 1.890 `halo4_tag_test.exe` (SHA-256
+`B7468DB9FD160B035C329540EE0B0D47BCF609E1BA6E85AE4F204B70661113A6`)
+contains the console command `magic_melee_attack` at string RVA `0x197C3F8`
+with the description "causes player's unit to start a melee attack". Its
+registration at H4EK RVA `0x2A64A9` names callback RVA `0xF6B390`. That callback
+finds an active input user, resolves its player/unit, zero-initializes a 0x48
+request whose first dword is action type `0x31`, and submits it through the
+central unit request dispatcher at H4EK RVA `0xF3EF60`. Dispatcher table entry
+`0x31` resolves through the official image to handler RVA `0xF9CC00`. These are
+editing-kit facts explaining that melee is a native unit action, not evidence
+for calling those kit addresses in retail.
+
+Calling that dispatcher from the borrowed physics-ray callback would introduce
+an unproved re-entrant simulation mutation, and calling it from XInput polling
+would introduce an unproved thread contract. Stage 7 therefore uses no new
+retail binding or engine call. The accepted headset configuration already
+requests ordinary melee through the virtual pad's B route; the supplied Stage
+6 log records the corresponding manual `controller edge: B` inputs during the
+user's melee/ragdoll test. A qualified physical swing emits a 120 ms B pulse
+through that same existing XInput merge, after which Halo 4 performs its normal
+native melee transaction. This intentionally follows the user's tested control
+mapping; it does not guess another button or bypass MCC's mapping.
+
+Qualification reuses the accepted Stage 6 authored hand and exact weapon-bound
+samples without changing their ray filter, cadence, skin, correction, haptics,
+or object push. Speed is computed in metres per second from the prior raw
+authored target to the current raw target, never from the collision-corrected
+accepted point. Consequently holding a hand or barrel against a wall cannot
+create repeated artificial swing velocity. A contact qualifies only when the
+engine ray result carries a non-sentinel object index other than the ignored
+player and its raw sample speed meets the default 1.20 m/s threshold. Static
+world contact therefore never attacks; living units, active ragdolls, and
+dynamic body fragments remain eligible through the same engine-owned object
+identity already used by the accepted object-motion path. One 600 ms cooldown
+prevents a single impact from retriggering every collision tick.
+
+The shared `physical_melee` option defaults off, is displayed only when World
+collision is enabled, and reveals a 0.30-3.00 m/s threshold slider only when it
+is itself enabled. Halo 4 mirrors both settings into atomics on the cold title
+worker. Disabling either option clears pending pulses; title teardown clears
+them too. Input consumption additionally requires the current Halo 4 camera
+generation to remain armed and the accepted collision transaction to remain
+installed. Failure or non-qualification leaves native controls and Stage 6
+collision untouched. Telemetry separately reports qualifying dynamic contacts,
+emitted native-input pulses, cooldown suppressions, and peak qualifying speed,
+so a headset result can distinguish threshold/filter failure from a downstream
+control-mapping problem.

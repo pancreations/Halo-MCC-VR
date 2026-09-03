@@ -12562,6 +12562,7 @@ int main()
         "hud_vertical_offset", "motion_blur", "auto_vr", "two_handed_aim",
         "two_hand_toggle", "left_hand_forward_m", "two_hand_zone_right_m",
         "left_grip_forward_m", "arm_ik", "floating_hands", "world_collision",
+        "physical_melee", "physical_melee_swing_speed",
         "right_shoulder_drop", "shoulder_level", "body_wip", "weapon_probe",
         "hud_probe", "fsr_probe", "bullet_probe", "right_eye_first"
     };
@@ -12602,6 +12603,9 @@ int main()
         "legacy configs inherit the enabled cutscene-theatre defaults");
     Check(!g_config.world_collision,
         "legacy configs inherit the opt-in world-collision default");
+    Check(!g_config.physical_melee &&
+              g_config.physical_melee_swing_speed == 1.2f,
+        "legacy configs inherit the opt-in physical-melee defaults");
     Check(g_config.y_b_start_chord,
         "legacy configs inherit the enabled Y+B Start chord default");
 
@@ -12609,14 +12613,22 @@ int main()
         std::ofstream file(primary);
         file << "config_version = 5\n";
         file << "world_collision = 1\n";
+        file << "physical_melee = 1\n";
+        file << "physical_melee_swing_speed = 0.10\n";
     }
     ConfigLoad(primary.c_str());
     Check(g_config.world_collision,
         "the shared world-collision option can be enabled from config");
+    Check(g_config.physical_melee &&
+              g_config.physical_melee_swing_speed == 0.3f,
+        "physical melee loads independently and clamps its swing threshold");
     ConfigSave();
     ConfigLoad(primary.c_str());
     Check(g_config.world_collision,
         "the shared world-collision option survives a save/load round trip");
+    Check(g_config.physical_melee &&
+              g_config.physical_melee_swing_speed == 0.3f,
+        "physical-melee enable and swing threshold survive a save/load round trip");
 
     {
         std::ofstream file(primary);
@@ -13579,6 +13591,22 @@ int main()
     Check(!Halo4BuildWorldCollisionPushVelocity(
               pushPrevious, pushDesired, 0, 0.5f, pushVelocity),
         "Halo 4 dynamic contact refuses a zero-time velocity sample");
+    const float meleePreviousDesired[3]{0.0f, 0.0f, 0.0f};
+    const float meleeDesired[3]{0.06f, 0.0f, 0.0f};
+    const float meleeSpeed = Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+        meleePreviousDesired, meleeDesired, 100, 0.5f);
+    Check(std::fabs(meleeSpeed - 1.2f) < 1.0e-6f &&
+          Halo4PhysicalMeleeContactQualifies(42, 7, meleeSpeed, 1.2f),
+        "Halo 4 physical melee converts raw authored sample travel to metres per second");
+    Check(!Halo4PhysicalMeleeContactQualifies(-1, 7, meleeSpeed, 1.2f) &&
+          !Halo4PhysicalMeleeContactQualifies(7, 7, meleeSpeed, 1.2f) &&
+          !Halo4PhysicalMeleeContactQualifies(42, 7, meleeSpeed, 1.21f),
+        "Halo 4 physical melee requires a non-player dynamic contact above threshold");
+    Check(Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+              meleeDesired, meleeDesired, 100, 0.5f) == 0.0f &&
+          Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+              meleePreviousDesired, meleeDesired, 0, 0.5f) < 0.0f,
+        "Halo 4 physical melee ignores stationary wall pressure and invalid timing");
     const float ordinaryMovement[3]{0.40f, 0.0f, 0.0f};
     const float teleportMovement[3]{0.60f, 0.0f, 0.0f};
     Check(!Halo4WorldCollisionMovementIsTeleport(

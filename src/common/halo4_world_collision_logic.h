@@ -256,6 +256,34 @@ inline bool Halo4BuildWorldCollisionPushVelocity(
     return Halo4WorldCollisionFiniteVector(output);
 }
 
+inline float Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+    const float previousDesired[3], const float desired[3],
+    uint64_t elapsedMs, float worldScale) noexcept
+{
+    if (!Halo4WorldCollisionFiniteVector(previousDesired) ||
+        !Halo4WorldCollisionFiniteVector(desired) || elapsedMs == 0 ||
+        elapsedMs > 250 || !std::isfinite(worldScale) || worldScale <= 0.0f)
+        return -1.0f;
+    const float distanceSquared = Halo4WorldCollisionDistanceSquared(
+        previousDesired, desired);
+    if (distanceSquared < 0.0f) return -1.0f;
+    const float speed = std::sqrt(distanceSquared) * 1000.0f /
+        (static_cast<float>(elapsedMs) * worldScale);
+    return std::isfinite(speed) ? speed : -1.0f;
+}
+
+inline bool Halo4PhysicalMeleeContactQualifies(
+    int32_t objectIndex, int32_t ignoredObjectIndex,
+    float swingSpeedMetresPerSecond, float requiredSpeedMetresPerSecond) noexcept
+{
+    return objectIndex != -1 && objectIndex != ignoredObjectIndex &&
+        std::isfinite(swingSpeedMetresPerSecond) &&
+        std::isfinite(requiredSpeedMetresPerSecond) &&
+        requiredSpeedMetresPerSecond >= 0.3f &&
+        requiredSpeedMetresPerSecond <= 3.0f &&
+        swingSpeedMetresPerSecond >= requiredSpeedMetresPerSecond;
+}
+
 inline bool Halo4WorldCollisionMovementIsTeleport(
     const float accepted[3], const float desired[3], float worldScale,
     float maximumMetres = 1.5f) noexcept

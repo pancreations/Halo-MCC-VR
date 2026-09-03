@@ -215,6 +215,10 @@ bool Game_Halo4OwnsLookPitch();
 // Advances Halo 4's own VR turn (snap or smooth, per config) from one shared
 // pad sample. Inert unless Halo 4's motion aim is active.
 void Game_Halo4UpdateVrTurn(const VrPadState& pad);
+// Stage 7 physical melee: true only during a short collision-qualified native
+// melee-input pulse. The XInput hook merges this with the user's existing B
+// melee route so Halo 4 retains ownership of the complete melee action.
+bool Game_Halo4PhysicalMeleePulseActive(uint64_t nowMs);
 // 3CR/3CX fold-in: the live Halo 4 CUI canvas values the visible-pass hide
 // last recorded - the positive base half-height (baseY) and the hide shift
 // 4*|baseX|. Returns false until a hide has run (callers then keep the

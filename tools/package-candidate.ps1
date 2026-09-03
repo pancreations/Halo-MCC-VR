@@ -299,6 +299,8 @@ try {
             'kEnableHalo4WeaponWorldCollisionStage5\s*=\s*false' -or
         $gameSource -notmatch
             'kEnableHalo4WeaponWorldCollisionStage6\s*=\s*true' -or
+        $gameSource -notmatch
+            'kEnableHalo4PhysicalMeleeStage7\s*=\s*true' -or
         $halo4WorldCollisionSource -notmatch
             'kHalo4WeaponCollisionBoundsCount\s*==\s*39' -or
         $halo4WorldCollisionSource -notmatch
@@ -323,8 +325,13 @@ try {
         $gameSource -notmatch
             'kHalo4ObjectSetVelocitiesRva\s*=\s*0x5D1580' -or
         $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
-        $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume') {
-        throw 'H4 world-contact Stage 6 gate failed: rejected stages, H4EK-bounds successor, live raycast context, authored volume publication, or optional object-motion proof is missing.'
+        $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume' -or
+        $gameSource -notmatch 'Game_Halo4PhysicalMeleePulseActive' -or
+        $halo4WorldCollisionSource -notmatch
+            'Halo4PhysicalMeleeSwingSpeedMetresPerSecond' -or
+        $coreTestsSource -notmatch
+            'Halo 4 physical melee ignores stationary wall pressure') {
+        throw 'H4 world-contact Stage 7 gate failed: accepted Stage 6 geometry, rejected predecessors, native-input melee transaction, or its safety proofs are missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -567,7 +574,7 @@ try {
                 capability_enabled = $true
                 default_enabled = $false
                 config_key = 'world_collision'
-                stage = 6
+                stage = 7
                 rejected_stage1_enabled = $false
                 rejected_stage2_enabled = $false
                 rejected_stage3_enabled = $false
@@ -594,7 +601,19 @@ try {
                 object_motion_rva = '0x005D1580'
                 object_impulses = 'bounded-native-linear-velocity-no-angular-or-damage-write'
                 ragdoll_impulses = 'same-optional-native-object-motion-path-when-ray-result-has-object-index'
-                physical_melee = $false
+                physical_melee = [ordered]@{
+                    available = $true
+                    default_enabled = $false
+                    config_key = 'physical_melee'
+                    threshold_config_key = 'physical_melee_swing_speed'
+                    default_threshold_metres_per_second = 1.2
+                    trigger = 'non-player-dynamic-authored-hand-or-weapon-contact-above-raw-sample-speed-threshold'
+                    action = 'short-native-b-input-pulse-matching-accepted-manual-melee-route'
+                    pulse_ms = 120
+                    cooldown_ms = 600
+                    engine_ownership = 'native-halo4-melee-damage-animation-audio-ragdoll-networking'
+                    failure_isolation = 'no-camera-render-openxr-or-stage6-collision-dependency'
+                }
                 haptic_amplitude = 0.18
                 haptic_policy = 'per-hand-peak-merged-by-max-with-stock-game-rumble'
                 failure_policy = 'stock-floating-targets-only-camera-openxr-and-all-restorations-remain-armed'
