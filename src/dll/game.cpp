@@ -30349,8 +30349,9 @@ namespace
     // Halo 3 has no existing world-contact implementation to copy. This is a
     // deliberately Halo-4-native experiment based on H4EK PhysicsRayCast.
     // The render thread only publishes final wrist targets and consumes a
-    // bounded translation. The existing 20 Hz cold worker performs every
-    // engine query; an unavailable or failed query clears only this feature.
+    // bounded translation. Stage 3 can query only when Halo 4's own verified
+    // clear-line wrapper has just completed on an engine-owned context; the
+    // cold worker never calls physics. Failure clears only this feature.
     // =======================================================================
 #pragma pack(push, 1)
     struct Halo4PhysicsRayCastInput
@@ -30394,6 +30395,8 @@ namespace
 
     using Halo4PhysicsRayCastFn = bool(__fastcall*)(
         Halo4PhysicsRayCastInput*, Halo4PhysicsRayCastResult*);
+    using Halo4WorldLineTestFn = bool(__fastcall*)(
+        const float*, const float*, int32_t);
 
     struct Halo4WorldCollisionTargetPublication
     {
@@ -30436,6 +30439,15 @@ namespace
         std::atomic<uint64_t> calibrationQueries{0};
         std::atomic<uint64_t> calibrationHits{0};
         std::atomic<bool> environmentValidated{false};
+        // Stage 3 never calls PhysicsRayCast from the mod worker. It hooks the
+        // official clear-line wrapper and performs a bounded extra query only
+        // after Halo 4 has just completed its own query in that same context.
+        void* worldLineTarget = nullptr;
+        Halo4WorldLineTestFn originalWorldLineTest = nullptr;
+        std::atomic<uint64_t> engineContextCalls{0};
+        std::atomic<uint64_t> nextEngineQueryAtMs{0};
+        std::atomic<bool> engineQueryActive{false};
+        std::atomic<uint32_t> hotFailureReason{0};
     };
 
     Halo4WorldCollisionFeature g_halo4WorldCollision;
@@ -30449,6 +30461,7 @@ namespace
     // to loading. SEH isolated the mod callback but could not roll back engine
     // physics state. Never invoke this path from the arbitrary cold worker.
     constexpr bool kEnableHalo4WorldCollisionStage2 = false;
+    constexpr bool kEnableHalo4WorldCollisionStage3 = true;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
@@ -30472,6 +30485,9 @@ namespace
     constexpr uint32_t kHalo4CollisionProfile = 0x1A;
     constexpr uint64_t kHalo4CollisionPublicationMaxAgeMs = 150;
     constexpr float kHalo4CollisionHapticAmplitude = 0.18f;
+    constexpr uint64_t kHalo4CollisionEngineQueryIntervalMs = 50;
+    constexpr int kHalo4CollisionBinarySearchSteps = 6;
+    constexpr uint32_t kHalo4CollisionFailureWrapperException = 1;
 
     void Halo4PublishCollisionTarget(
         int hand, uint32_t generation, const float position[3])
@@ -30605,6 +30621,14 @@ namespace
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.environmentValidated.store(
             false, std::memory_order_relaxed);
+        g_halo4WorldCollision.engineContextCalls.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.nextEngineQueryAtMs.store(
+            0, std::memory_order_relaxed);
+        g_halo4WorldCollision.engineQueryActive.store(
+            false, std::memory_order_relaxed);
+        g_halo4WorldCollision.hotFailureReason.store(
+            0, std::memory_order_relaxed);
     }
 
     void RemoveHalo4WorldCollision()
@@ -30612,9 +30636,10 @@ namespace
         g_halo4WorldCollision.installed.store(
             false, std::memory_order_release);
         const uint32_t generation = g_halo4WorldCollision.generation;
-        Halo4ResetWorldCollisionState(generation);
-        g_halo4WorldCollision.rayCast = nullptr;
-        g_halo4WorldCollision.generation = 0;
+        // Hook disable/removal and non-atomic worker-state reset happen in the
+        // parent camera teardown after activeCallbacks proves quiescence.
+        Halo4ClearCollisionCorrection(0, generation);
+        Halo4ClearCollisionCorrection(1, generation);
     }
 
     uintptr_t Halo4DecodeRel32Call(uintptr_t instruction)
@@ -30647,16 +30672,259 @@ namespace
             static_cast<intptr_t>(displacement);
     }
 
+    void Halo4RejectWorldCollisionFromEngineContext(uint32_t reason)
+    {
+        g_halo4WorldCollision.failures.fetch_add(
+            1, std::memory_order_relaxed);
+        uint32_t empty = 0;
+        g_halo4WorldCollision.hotFailureReason.compare_exchange_strong(
+            empty, reason, std::memory_order_acq_rel,
+            std::memory_order_relaxed);
+        g_halo4WorldCollision.installed.store(
+            false, std::memory_order_release);
+        const uint32_t generation = g_halo4WorldCollision.generation;
+        Halo4ClearCollisionCorrection(0, generation);
+        Halo4ClearCollisionCorrection(1, generation);
+    }
+
+    bool Halo4RunWorldLineFromEngineContext(
+        const float start[3], const float end[3], bool& clear)
+    {
+        clear = true;
+        if (!Halo4WorldCollisionFiniteVector(start) ||
+            !Halo4WorldCollisionFiniteVector(end) ||
+            !g_halo4WorldCollision.originalWorldLineTest)
+        {
+            Halo4RejectWorldCollisionFromEngineContext(
+                kHalo4CollisionFailureWrapperException);
+            return false;
+        }
+
+        bool completed = false;
+        __try
+        {
+            // -1 is the exact sentinel the official wrapper tests before
+            // deciding whether to append an ignored object to its input.
+            clear = g_halo4WorldCollision.originalWorldLineTest(
+                start, end, -1);
+            completed = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            completed = false;
+        }
+        g_halo4WorldCollision.queries.fetch_add(
+            1, std::memory_order_relaxed);
+        if (!completed)
+        {
+            Halo4RejectWorldCollisionFromEngineContext(
+                kHalo4CollisionFailureWrapperException);
+            return false;
+        }
+        return true;
+    }
+
+    void Halo4WorldCollisionEngineContextTick()
+    {
+        if (!g_halo4WorldCollision.installed.load(
+                std::memory_order_acquire) ||
+            !g_halo4Camera.armed.load(std::memory_order_acquire) ||
+            g_halo4Camera.teardownRequested.load(std::memory_order_acquire))
+            return;
+
+        bool idle = false;
+        if (!g_halo4WorldCollision.engineQueryActive.compare_exchange_strong(
+                idle, true, std::memory_order_acq_rel,
+                std::memory_order_relaxed))
+            return;
+        struct EngineQueryLease
+        {
+            std::atomic<bool>& active;
+            ~EngineQueryLease()
+            {
+                active.store(false, std::memory_order_release);
+            }
+        } lease{g_halo4WorldCollision.engineQueryActive};
+
+        const uint64_t now = GetTickCount64();
+        uint64_t due = g_halo4WorldCollision.nextEngineQueryAtMs.load(
+            std::memory_order_relaxed);
+        if (now < due ||
+            !g_halo4WorldCollision.nextEngineQueryAtMs.compare_exchange_strong(
+                due, now + kHalo4CollisionEngineQueryIntervalMs,
+                std::memory_order_acq_rel, std::memory_order_relaxed))
+            return;
+
+        const uint32_t generation = g_halo4Camera.generation.load(
+            std::memory_order_acquire);
+        if (!generation || generation != g_halo4WorldCollision.generation)
+            return;
+
+        const float worldScale =
+            g_worldScale.load(std::memory_order_acquire);
+        if (!std::isfinite(worldScale) || worldScale <= 0.0f)
+            return;
+
+        for (int hand = 0; hand < 2; ++hand)
+        {
+            uint32_t targetGeneration = 0;
+            uint64_t targetAtMs = 0;
+            float desired[3]{};
+            auto& state = g_halo4WorldCollision.worker[hand];
+            if (!Halo4ReadCollisionTarget(
+                    hand, targetGeneration, targetAtMs, desired) ||
+                targetGeneration != generation || targetAtMs > now ||
+                now - targetAtMs > kHalo4CollisionPublicationMaxAgeMs)
+            {
+                state.seeded = false;
+                Halo4ClearCollisionCorrection(hand, generation);
+                continue;
+            }
+            if (!state.seeded || state.generation != generation ||
+                Halo4WorldCollisionMovementIsTeleport(
+                    state.accepted, desired, worldScale))
+            {
+                state.seeded = true;
+                state.generation = generation;
+                memcpy(state.accepted, desired, sizeof(state.accepted));
+                Halo4ClearCollisionCorrection(hand, generation);
+                g_halo4WorldCollision.resets.fetch_add(
+                    1, std::memory_order_relaxed);
+                continue;
+            }
+
+            if (!g_halo4WorldCollision.environmentValidated.load(
+                    std::memory_order_acquire))
+            {
+                float calibrationStart[3]{
+                    desired[0], desired[1],
+                    desired[2] + 0.25f * worldScale};
+                float calibrationEnd[3]{
+                    desired[0], desired[1],
+                    desired[2] - 20.0f * worldScale};
+                bool calibrationClear = true;
+                g_halo4WorldCollision.calibrationQueries.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (!Halo4RunWorldLineFromEngineContext(
+                        calibrationStart, calibrationEnd,
+                        calibrationClear))
+                    return;
+                if (calibrationClear)
+                {
+                    memcpy(state.accepted, desired, sizeof(state.accepted));
+                    Halo4ClearCollisionCorrection(hand, generation);
+                    continue;
+                }
+                g_halo4WorldCollision.calibrationHits.fetch_add(
+                    1, std::memory_order_relaxed);
+                g_halo4WorldCollision.environmentValidated.store(
+                    true, std::memory_order_release);
+            }
+
+            bool clear = true;
+            if (!Halo4RunWorldLineFromEngineContext(
+                    state.accepted, desired, clear))
+                return;
+
+            float hitFraction = 1.0f;
+            if (!clear)
+            {
+                float low = 0.0f;
+                float high = 1.0f;
+                for (int step = 0;
+                     step < kHalo4CollisionBinarySearchSteps; ++step)
+                {
+                    const float middle = (low + high) * 0.5f;
+                    float probe[3]{};
+                    for (int axis = 0; axis < 3; ++axis)
+                        probe[axis] = state.accepted[axis] +
+                            (desired[axis] - state.accepted[axis]) * middle;
+                    bool prefixClear = true;
+                    if (!Halo4RunWorldLineFromEngineContext(
+                            state.accepted, probe, prefixClear))
+                        return;
+                    if (prefixClear)
+                        low = middle;
+                    else
+                        high = middle;
+                }
+                hitFraction = high;
+            }
+
+            const Halo4WorldCollisionResolution resolution =
+                Halo4ResolveWorldCollision(
+                    state.accepted, desired, !clear, hitFraction,
+                    worldScale);
+            if (!resolution.valid)
+            {
+                Halo4RejectWorldCollisionFromEngineContext(
+                    kHalo4CollisionFailureWrapperException);
+                return;
+            }
+            memcpy(state.accepted, resolution.accepted,
+                   sizeof(state.accepted));
+            Halo4PublishCollisionCorrection(
+                hand, generation, desired, resolution.correction,
+                resolution.contact);
+            if (resolution.contact)
+            {
+                g_halo4WorldCollision.contacts[hand].fetch_add(
+                    1, std::memory_order_relaxed);
+                VR_PulseContactHaptics(
+                    hand == 0, kHalo4CollisionHapticAmplitude);
+            }
+        }
+    }
+
+    bool Halo4WorldLineTestDetourBody(
+        const float* start, const float* end, int32_t ignoredObject)
+    {
+        Halo4WorldLineTestFn original =
+            g_halo4WorldCollision.originalWorldLineTest;
+        if (!original)
+            return true;
+        const bool result = original(start, end, ignoredObject);
+        g_halo4WorldCollision.engineContextCalls.fetch_add(
+            1, std::memory_order_relaxed);
+        Halo4WorldCollisionEngineContextTick();
+        return result;
+    }
+
+    __declspec(noinline) bool __fastcall Halo4WorldLineTestDetour(
+        const float* start, const float* end, int32_t ignoredObject)
+    {
+        bool result = true;
+        g_halo4Camera.activeCallbacks.fetch_add(
+            1, std::memory_order_acq_rel);
+        __try
+        {
+            result = Halo4WorldLineTestDetourBody(
+                start, end, ignoredObject);
+        }
+        __finally
+        {
+            g_halo4Camera.activeCallbacks.fetch_sub(
+                1, std::memory_order_acq_rel);
+        }
+        return result;
+    }
+
     bool InstallHalo4WorldCollision(
         uintptr_t base, size_t size, uint32_t generation)
     {
         RemoveHalo4WorldCollision();
-        if (!kEnableHalo4WorldCollisionStage2)
+        if (!kEnableHalo4WorldCollisionStage3)
         {
             LOG("Halo 4 experimental world contact: StockFallback; the "
-                "replacement transaction is disabled; rejected Stage 1 "
-                "remains dormant and camera, hands, weapon, HUD, reticle, "
+                "replacement transaction is disabled; rejected Stages 1/2 "
+                "remain dormant and camera, hands, weapon, HUD, reticle, "
                 "effects and OpenXR remain unchanged");
+            return false;
+        }
+        if (g_halo4WorldCollision.worldLineTarget)
+        {
+            LOG("Halo 4 experimental world contact: StockFallback; a prior "
+                "clear-line hook has not completed teardown");
             return false;
         }
         if (!base || !generation || size != kHalo4RetailImageSize ||
@@ -30720,17 +30988,44 @@ namespace
             return false;
         }
 
+        Halo4WorldLineTestFn originalWorldLineTest = nullptr;
+        void* const worldLineTarget = reinterpret_cast<void*>(worldLineTest);
+        if (MH_CreateHook(
+                worldLineTarget,
+                reinterpret_cast<void*>(&Halo4WorldLineTestDetour),
+                reinterpret_cast<void**>(&originalWorldLineTest)) != MH_OK)
+        {
+            LOG("Halo 4 experimental world contact: StockFallback; MinHook "
+                "rejected the optional official clear-line wrapper hook");
+            return false;
+        }
+
         g_halo4WorldCollision.rayCast =
             reinterpret_cast<Halo4PhysicsRayCastFn>(hit);
+        g_halo4WorldCollision.worldLineTarget = worldLineTarget;
+        g_halo4WorldCollision.originalWorldLineTest = originalWorldLineTest;
         g_halo4WorldCollision.generation = generation;
         Halo4ResetWorldCollisionState(generation);
+        if (MH_EnableHook(worldLineTarget) != MH_OK)
+        {
+            MH_RemoveHook(worldLineTarget);
+            g_halo4WorldCollision.rayCast = nullptr;
+            g_halo4WorldCollision.worldLineTarget = nullptr;
+            g_halo4WorldCollision.originalWorldLineTest = nullptr;
+            g_halo4WorldCollision.generation = 0;
+            LOG("Halo 4 experimental world contact: StockFallback; the "
+                "optional official clear-line wrapper hook could not be "
+                "enabled");
+            return false;
+        }
         g_halo4WorldCollision.installed.store(true, std::memory_order_release);
-        LOG("Halo 4 experimental world contact Stage 2 LIVE: official H4EK "
+        LOG("Halo 4 experimental world contact Stage 3 LIVE: official H4EK "
             "PhysicsRayCast is uniquely verified at retail RVA 0x%X with "
             "all four internal call edges pinned; retail clear-line wrapper "
             "RVA 0x%X pins the engine-owned 0x%08X/0x%08X filter pair; "
-            "rejected Stage 1's fixed-only mask remains dormant; render "
-            "hooks only exchange lock-free wrist corrections",
+            "the rejected arbitrary-worker call is dormant; a bounded wrist "
+            "query can run only immediately after Halo 4 completes its own "
+            "clear-line call in that same engine context",
             kHalo4PhysicsRayCastRva, kHalo4WorldLineTestRva,
             kHalo4WorldLineCollisionFlags,
             kHalo4WorldLineAdditionalFlags);
@@ -30786,6 +31081,20 @@ namespace
 
     void Halo4WorldCollisionWorkerTick()
     {
+        if (kEnableHalo4WorldCollisionStage3)
+        {
+            const uint32_t failure =
+                g_halo4WorldCollision.hotFailureReason.exchange(
+                    0, std::memory_order_acq_rel);
+            if (failure == kHalo4CollisionFailureWrapperException)
+            {
+                LOG("Halo 4 experimental world contact Stage 3 FAILED OPEN: "
+                    "an engine-context clear-line call raised an exception; "
+                    "only world contact is disabled and the camera, hands, "
+                    "weapon, HUD, reticle, effects and OpenXR continue");
+            }
+            return;
+        }
         if (!g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ||
             !g_halo4WorldCollision.rayCast)
@@ -36393,6 +36702,8 @@ namespace
             MH_DisableHook(g_halo4Camera.wrapperTarget);
         if (g_halo4Camera.modelSkinningTarget)
             MH_DisableHook(g_halo4Camera.modelSkinningTarget);
+        if (g_halo4WorldCollision.worldLineTarget)
+            MH_DisableHook(g_halo4WorldCollision.worldLineTarget);
         // Both detours must have returned before a trampoline is freed or the
         // module reference is released.
         if (g_halo4Camera.activeCallbacks.load(std::memory_order_acquire) != 0)
@@ -36409,6 +36720,8 @@ namespace
             MH_RemoveHook(g_halo4Camera.wrapperTarget);
         if (g_halo4Camera.modelSkinningTarget)
             MH_RemoveHook(g_halo4Camera.modelSkinningTarget);
+        if (g_halo4WorldCollision.worldLineTarget)
+            MH_RemoveHook(g_halo4WorldCollision.worldLineTarget);
         const MH_STATUS dispatcherRemoved = g_halo4Camera.cuiReticleTarget
             ? MH_RemoveHook(g_halo4Camera.cuiReticleTarget)
             : MH_ERROR_NOT_CREATED;
@@ -36461,6 +36774,11 @@ namespace
         g_halo4OrigModelSkinning = nullptr;
         g_halo4OrigCuiRenderCommand = nullptr;
         g_halo4OrigCuiGameplayRender = nullptr;
+        g_halo4WorldCollision.worldLineTarget = nullptr;
+        g_halo4WorldCollision.originalWorldLineTest = nullptr;
+        g_halo4WorldCollision.rayCast = nullptr;
+        g_halo4WorldCollision.generation = 0;
+        Halo4ResetWorldCollisionState(0);
         g_halo4RenderModelTagIndexPointerSlot=0;
         g_halo4RenderModelGroupBaseTable=0;
         g_halo4EngineTlsIndex = nullptr;
@@ -37044,7 +37362,11 @@ namespace
         const uint64_t collisionCalibrationHits =
             g_halo4WorldCollision.calibrationHits.exchange(
                 0, std::memory_order_relaxed);
-        LOG("Halo 4 experimental world contact Stage 2: %s; %llu queries, "
+        const uint64_t collisionEngineContextCalls =
+            g_halo4WorldCollision.engineContextCalls.exchange(
+                0, std::memory_order_relaxed);
+        LOG("Halo 4 experimental world contact Stage 3: %s; %llu engine-owned "
+            "clear-line callbacks, %llu mod wrapper queries, "
             "%llu/%llu left/right contacts, %llu/%llu visible corrections, "
             "%llu seed/teleport resets, %llu/%llu environment calibration "
             "hits/queries, environment %s, %llu failures in 2s; wrist-point "
@@ -37053,6 +37375,7 @@ namespace
             "remain untouched",
             g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
+            static_cast<unsigned long long>(collisionEngineContextCalls),
             static_cast<unsigned long long>(collisionQueries),
             static_cast<unsigned long long>(collisionLeft),
             static_cast<unsigned long long>(collisionRight),

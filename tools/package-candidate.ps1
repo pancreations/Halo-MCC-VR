@@ -288,6 +288,8 @@ try {
         $gameSource -notmatch
             'kEnableHalo4WorldCollisionStage2\s*=\s*false' -or
         $gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage3\s*=\s*true' -or
+        $gameSource -notmatch
             'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
         $gameSource -notmatch
             'kHalo4WorldLineFilterGlobalRva\s*=\s*0x2FFB0B8' -or
@@ -298,8 +300,14 @@ try {
         $gameSource -notmatch
             'liveWorldLineFilter\s*==\s*kHalo4WorldLineFilterPair' -or
         $gameSource -notmatch
-            'environmentValidated') {
-        throw 'H4 world-contact rejection gate failed: rejected Stage 1/2 execution is not dormant or the retained official filter evidence is missing.'
+            'Halo4WorldLineTestDetour' -or
+        $gameSource -notmatch
+            'originalWorldLineTest\s*\(\s*start\s*,\s*end\s*,\s*-1\s*\)' -or
+        $gameSource -notmatch
+            'kHalo4CollisionBinarySearchSteps\s*=\s*6' -or
+        $gameSource -notmatch
+            'if\s*\(kEnableHalo4WorldCollisionStage3\)') {
+        throw 'H4 world-contact Stage 3 gate failed: rejected Stage 1/2 execution is not dormant or the engine-owned wrapper transaction is missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -368,7 +376,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-rejected-stockfallback',
+        'h4-world-contact-stage3-engine-context',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -415,7 +423,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 38
+        schema_version = 39
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -445,9 +453,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'H4-WORLD-CONTACT-STAGES1-2-REJECTED'
-            status = 'REJECTED_COMPILED_DORMANT'
-            behavior = 'c-h2-92-c-h4-58-plus-stock-world-contact'
+            id = 'H4-WORLD-CONTACT-STAGE3-ENGINE-CONTEXT'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            behavior = 'c-h2-92-c-h4-58-plus-h4-engine-context-clear-line-wrist-contact'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -539,8 +547,8 @@ try {
             two_hand_left_pose =
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
             world_contact = [ordered]@{
-                enabled = $false
-                stage = 2
+                enabled = $true
+                stage = 3
                 rejected_stage1_enabled = $false
                 rejected_stage2_enabled = $false
                 scope = 'halo4-official-clear-line-filter'
@@ -552,7 +560,10 @@ try {
                 additional_flags = '0x00005185'
                 filter_identity = 'h4ek-and-retail-clear-line-wrapper-plus-live-global-value'
                 environment_calibration = 'diagnostic-20m-downward-ray-required-before-corrections'
-                execution_thread = 'existing-50ms-cold-title-worker'
+                execution_context = 'immediately-after-halo4-own-clear-line-wrapper-completes'
+                arbitrary_worker_physics_calls = $false
+                query_interval_ms = 50
+                hit_fraction_resolution = 'six-step-clear-prefix-binary-search'
                 render_thread_work = 'lock-free-target-and-correction-publication-only'
                 collision_shape = 'left-and-right-wrist-points'
                 held_weapon_behavior = 'rigidly-follows-corrected-right-wrist-no-barrel-volume-yet'
@@ -891,7 +902,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 world-contact Stages 1 and 2 are headset-rejected and compiled dormant. Stage 1 completed 1,794 ineffective fixed-only queries with no contact. Stage 2 proved the official clear-line filter pair but its first environment query from the arbitrary cold worker raised an engine exception, returned the game to loading and stopped presentation. The retained source/evidence is not executed. Any replacement must use a separately proven engine-owned safe update context. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Experimental Halo 4 world-contact Stage 3 keeps rejected Stages 1 and 2 compiled dormant. It never calls raw PhysicsRayCast or any physics function from the mod worker. The uniquely pinned official clear-line wrapper first completes Halo 4 own stock query; only then, in that same engine-owned context and no more than once per 50 ms, its original trampoline performs bounded wrist tests. The wrapper boolean is the only result contract; a six-step clear-prefix search estimates the contact fraction without using the rejected raw result ABI. A diagnostic downward wrapper query must validate the environment before corrections activate. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior is unchanged. Object/ragdoll impulses and physical melee remain outside this candidate. Every local failure disables only world contact. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

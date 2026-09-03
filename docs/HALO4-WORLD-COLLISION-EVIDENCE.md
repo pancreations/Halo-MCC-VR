@@ -11,7 +11,7 @@ to the corrected right hand, and provide gentle per-hand OpenXR feedback.
 Object impulses, ragdoll pushing, and physical melee remain explicitly outside
 this candidate.
 
-The feature is optional. Missing proof or any runtime query-contract failure
+The feature is optional. Missing proof or any runtime query failure
 returns only the wrist-contact feature to the existing floating-hand behavior.
 It does not disarm the Halo 4 camera, hands, HUD, reticle, effects, or OpenXR.
 
@@ -123,6 +123,21 @@ the exact value `0x000051850002D009`. A missing/multiple/moved wrapper, changed
 call or load target, or different live qword returns only world contact to
 `StockFallback`.
 
+The wrapper is demonstrably live engine code, not an unreferenced helper. Its
+three direct H4EK call sites and retail homologs are:
+
+| H4EK caller function / call | Retail caller function / call |
+|---|---|
+| `0x17B2C0` / `0x17B4F6` | `0x0F42C0` / `0x0F4403` |
+| `0x17B5D9` / `0x17B68C` | `0x0F4428` / `0x0F4540` |
+| `0x17B5D9` / `0x17B6B3` | `0x0F4428` / `0x0F456B` |
+
+Stage 3 hooks only this uniquely verified wrapper. Every admitted callback
+invokes Halo 4's original trampoline first with the game's untouched arguments.
+An experimental wrist query is eligible only after that original returns, so
+the same engine-owned thread/TLS and collision-safe phase have just successfully
+executed the exact wrapper/filter being reused.
+
 The runtime does not trust that address alone. This loaded-image signature must
 match exactly once and at the pinned RVA:
 
@@ -145,32 +160,39 @@ Zero/multiple signature matches, a moved RVA, a changed call edge, an unstable
 module mapping, or an unavailable floating-hand palette produces
 `StockFallback` for world contact only.
 
-## Runtime transaction
+## Stage 3 runtime transaction
 
 - The render thread publishes the pair-frozen final left/right target
   positions through bounded atomic sequence records. It never calls physics,
   logs, allocates, locks, or performs file I/O.
-- The existing 50 ms title worker sweeps from the last accepted wrist point to
-  the newest target. The first sample and any movement over 1.5 metres reseed
-  rather than sweeping across a teleport/recenter.
-- Before wrist corrections are trusted, the worker casts a diagnostic-only
-  ray 20 metres downward from a tracked wrist with the same official filter.
+- The cold title worker never invokes collision. It only reports a failure
+  atomically published by the wrapper detour.
+- The detour first completes the engine's original clear-line request. A
+  single atomic lease then permits at most one experimental batch per 50 ms,
+  even if multiple engine threads enter the wrapper concurrently.
+- The first wrist sample and any movement over 1.5 metres reseed rather than
+  sweeping across a teleport/recenter.
+- Before wrist corrections are trusted, the original wrapper trampoline casts
+  a diagnostic-only line 20 metres downward from a tracked wrist.
   Until a hit validates that the live environment and published coordinate
   frame agree, hands stay on their unmodified floating targets. The calibration
   ray never produces correction or haptics. Telemetry reports its hit/query
   counts and `environment VALIDATED` versus `unproven`.
-- A hit stops 1.5 cm before the reported fraction. The worker publishes only a
+- The wrapper returns only clear/blocked. For a blocked wrist segment, six
+  bounded clear-prefix tests locate the first blocked interval. The existing
+  resolution math stops 1.5 cm before that interval and publishes only a
   finite, bounded translation correction. No orientation or engine state is
-  written.
+  written, and the rejected raw `PhysicsRayCast` result ABI is never consumed.
 - Render accepts only a same-generation correction no older than 150 ms whose
   source target remains within 15 cm and whose magnitude is at most 75 cm.
   Otherwise it uses the unmodified existing target.
 - A contact raises a `0.18` per-hand peak. The OpenXR frame path merges that
   peak with existing game rumble by maximum and applies the configured global
   haptic intensity. No engine worker calls OpenXR.
-- Engine-query exceptions or invalid result contracts disable this optional
-  feature and emit one explicit fail-open log. Two-second telemetry reports
-  query, contact, visible-correction, reset, and failure counts.
+- An experimental wrapper exception atomically disables this optional feature;
+  the cold worker emits one explicit fail-open log. Two-second telemetry
+  separately reports engine wrapper callbacks, mod wrapper queries, contacts,
+  visible corrections, resets, calibration, and failures.
 
 ## Acceptance and limitations
 
@@ -230,13 +252,13 @@ Stage 2 execution are now compiled dormant. A successor must first prove an
 engine-owned update/physics context from H4EK and its retail homolog. Moving
 the call into a render or palette hot hook is not an acceptable substitute.
 
-### Successor acceptance
+### Stage 3 pending headset validation
 
 Build/tests validate math, layout, and integration but not headset behavior.
-No current world-contact stage is eligible for headset acceptance. A future
-candidate requires a Halo 4 headset run with a proven engine-owned execution
-context, non-zero contact/correction counts when touching level geometry,
-correct left/right gentle feedback, and no regression
+Stage 3 requires a Halo 4 headset run that reports non-zero engine-owned
+clear-line callbacks, `environment VALIDATED`, non-zero contact/correction
+counts when touching level geometry, correct left/right gentle feedback, and
+no regression
 to existing Halo 4 camera, hand/weapon alignment, HUD, native reticle, helmet,
 effects, pause, or black-screen fixes. `docs/CURRENT-STATE.md` must not advance
 until the user reports that result.
