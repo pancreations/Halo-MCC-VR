@@ -29,3 +29,13 @@ Build/tests prove only static integrity. Headset acceptance requires Halo 4
 muzzle flashes and the previously targeted Promethean first-person effects to
 remain hidden after ordinary title/level lifecycle transitions, with all prior
 Halo 4 behavior unchanged.
+
+## Supplied-log performance check
+
+At the user's 4368x3150 backbuffer and 120 Hz panel, the log's low-rate Halo 4
+windows are dominated by `renderWindow` (roughly 24-36 ms p95). Measured
+two-eye publication remains about 0.60-0.73 ms/frame, DXGI Present about
+0.2-0.34 ms, and frame-wait handoff about 0.01 ms. Similar low frame rates are
+reported with stereo off. Nothing in the log identifies a runaway Halo 4 hook
+or VR publication bottleneck; resolution and scene rendering are the supported
+causes. This candidate therefore makes no unrelated performance change.

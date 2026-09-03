@@ -1,5 +1,31 @@
 # Current state
 
+> **C-H2-92 / C-H4-58 CUMULATIVE HANDOFF READY FOR HEADSET TEST
+> (2026-09-02).** This unaccepted candidate contains three requested changes,
+> each isolated in source history. (1) Halo 4 Stage 3AI effect teardown now
+> restores its owned cave after restoring every entry route, so the exact
+> first-person muzzle/effect suppression can reinstall instead of reporting
+> `StockFallback`; no accepted Halo 4 reticle, helmet, HUD, pause, camera,
+> screen-effect, or OpenXR path changes. (2) Official H2EK shows that C-H2-91
+> retained a target selected from `player_control->desired_angles`, explaining
+> the wrong-way stock lunge. C-H2-92 substitutes the stable controller ray only
+> inside the original central target calculation, retains Halo 2's native
+> result, and still zeros camera-assist control; failure falls back to C-H2-90
+> neutral/no-target behavior. (3) New configs seed Halo 2 Classic yaw `+1.0`
+> and pitch `-9.5`; saved values remain authoritative and F1-editable.
+> Build/tests and package gates must pass, but headset acceptance is pending.
+> See E-H2-80, the C-H2-92 notes, the C-H4-58 notes, and the Halo 4 evidence.
+
+> **HALO 4 PERFORMANCE AUDIT (supplied Steam log, 2026-09-02).** The log uses
+> a 4368x3150 backbuffer at a 120 Hz panel and records roughly 24-48 FPS in the
+> reported dense sequence. `renderWindow` dominates at about 24-36 ms p95,
+> while the mod's measured two-eye publish is only about 0.60-0.73 ms/frame,
+> DXGI Present about 0.2-0.34 ms, and wait handoff about 0.01 ms. Low rates also
+> occur with stereo off (about 25-33 FPS). There is no log evidence of a
+> runaway Halo 4 VR hook or compositor-copy bottleneck; the unusually high
+> render resolution and scene cost are consistent with the observed slowdown.
+> No speculative performance behavior is added to this fix candidate.
+
 > **C-H2-91 HALO 2 MELEE TARGET RETENTION REJECTED AND DISABLED (user
 > headset, 2026-09-02).** Source
 > `34189bcef76ef49bd3c542af29e867a4c068ccd1`, Steam edition,

@@ -153,7 +153,7 @@ $repoStatus = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=norma
 if ($LASTEXITCODE -ne 0 -or $repoStatus.Count -ne 0) {
     throw 'Repository is dirty; refusing automatic deployment.'
 }
-if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
+if (-not (Test-ExactInt32 $manifest.schema_version 35) -or
         [string]$manifest.status -cne 'UNTESTED_LOCAL_CANDIDATE' -or
         $manifest.accepted -ne $false -or
         [string]$manifest.base_release -cne 'MCC_VR_ALPHA_0.3.3' -or
@@ -164,7 +164,7 @@ if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
         [string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$' -or
         [string]$manifest.source_commit -cne $head -or
         -not $packageId.StartsWith(
-            $head.Substring(0, 7) + '-c-h2-91-melee-target-retention-',
+            $head.Substring(0, 7) + '-c-h2-92-controller-melee-h4-effects-',
             [StringComparison]::Ordinal) -or
         @($manifest.titles).Count -ne 5 -or
         [string]$manifest.titles[0] -cne 'Halo 3' -or
@@ -186,9 +186,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
         # Producer and installer advance together. This prevents a package for
         # the new source from silently carrying the preceding Halo 4 candidate's
         # behavior block, which happened repeatedly during bring-up.
-        [string]$manifest.halo4_candidate.id -cne 'C-H4-57' -or
+        [string]$manifest.halo4_candidate.id -cne 'C-H4-58' -or
         [string]$manifest.halo4_candidate.status -cne
-            'TARGET_HEADSET_ACCEPTED_HALO3_REGRESSION_PENDING' -or
+            'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo4_candidate.behavior -notmatch '\S' -or
         $manifest.halo4_candidate.parity_diagnostic.player_visible_behavior_changed -ne
             $true -or
@@ -244,6 +244,9 @@ if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
             '0x001012D5' -or
         [string]$manifest.halo4_candidate.effect_mode_one_gate_rva -cne
             '0x0027BD36' -or
+        [string]$manifest.halo4_candidate.effect_cave_rva -cne
+            '0x00B79C10' -or
+        $manifest.halo4_candidate.effect_cave_restored_on_cleanup -ne $true -or
         [string]$manifest.halo4_candidate.effect_policy -cne
             'stage3ai-selected-local-first-person-finite-far' -or
         $manifest.halo4_candidate.helmet_default_visible -ne $true -or
@@ -272,14 +275,14 @@ if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
             'h4ek-screen-material-shader-bank-full-dxbc-byte-identical-retail-m30-cryptum-map' -or
         [string]$manifest.halo4_candidate.screen_effect_failure_policy -cne
             'stock-screen-effect-camera-hud-reticle-helmet-stereo-and-openxr-remain-armed' -or
-        [string]$manifest.halo2_candidate.id -cne 'C-H2-91' -or
+        [string]$manifest.halo2_candidate.id -cne 'C-H2-92' -or
         [string]$manifest.halo2_candidate.status -cne
             'READY_FOR_HEADSET_TEST_UNACCEPTED' -or
         [string]$manifest.halo2_candidate.module -cne 'halo2.dll' -or
         [string]$manifest.halo2_candidate.scope -cne
             'campaign-both-renderers-groundhog-excluded' -or
         [string]$manifest.halo2_candidate.behavior -cne
-            'c-h2-90-camera-assist-off-plus-controller-sight-melee-target-retention' -or
+            'c-h2-90-camera-assist-off-plus-controller-scoped-native-melee-target-selection' -or
         $manifest.halo2_candidate.classic_muzzle_suppression -ne $true -or
         [string]$manifest.halo2_candidate.classic_muzzle_particle_renderer_rva -cne
             '0x0076DC90' -or
@@ -294,6 +297,18 @@ if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
             'halo2_classic_gun_yaw_deg' -or
         [string]$manifest.halo2_candidate.classic_alignment_controls[1] -cne
             'halo2_classic_gun_pitch_deg' -or
+        [double]$manifest.halo2_candidate.classic_alignment_default_yaw_deg -ne
+            1.0 -or
+        [double]$manifest.halo2_candidate.classic_alignment_default_pitch_deg -ne
+            -9.5 -or
+        [string]$manifest.halo2_candidate.aim_assist_calculation_rva -cne
+            '0x00759260' -or
+        [string]$manifest.halo2_candidate.aim_assist_view_direction_rva -cne
+            '0x006C0DF0' -or
+        [string]$manifest.halo2_candidate.melee_targeting_scope -cne
+            'vr-owned-user0-central-calculation-only-controller-ray' -or
+        [string]$manifest.halo2_candidate.melee_targeting_failure_policy -cne
+            'c-h2-90-neutral-camera-and-no-target-other-features-remain-armed' -or
         [string]$manifest.halo2_candidate.heavy_eye_validation -cne
             'bounded-source-discovery-only' -or
         $manifest.halo2_candidate.render_topology_probe -ne $false -or
@@ -342,20 +357,20 @@ if (-not (Test-ExactInt32 $manifest.schema_version 34) -or
             'desired-and-current-unit-aiming-vectors' -or
         $manifest.halo2_candidate.aim_assist_disabled -ne $true -or
         [string]$manifest.halo2_candidate.aim_assist_method -cne
-            'central-camera-assist-control-suppression' -or
+            'central-camera-control-suppression-plus-scoped-controller-view-targeting' -or
         [string]$manifest.halo2_candidate.aim_assist_calculation_rva -cne
             '0x00759260' -or
         [string]$manifest.halo2_candidate.aim_assist_scope -cne
             'vr-owned-halo2-local-user-0-both-renderers' -or
         [string]$manifest.halo2_candidate.aim_assist_effect -cne
-            'neutral-camera-assist-control-retained-controller-sight-target-acquisition-no-tag-patching' -or
+            'neutral-camera-assist-control-native-target-acquisition-along-controller-ray-no-tag-patching' -or
         [string]$manifest.halo2_candidate.aim_assist_identity -cne
-            'official-h2ek-caller-bsim-match-plus-identical-abi-initializer-and-unique-retail-loaded-image-signature' -or
+            'official-h2ek-central-caller-and-player-control-view-helper-plus-unique-retail-loaded-image-signatures' -or
         [string]$manifest.halo2_candidate.aim_assist_restore -cne
-            'hook-disabled-drained-and-removed-on-core-teardown' -or
+            'central-and-view-hooks-disabled-drained-and-removed-on-core-teardown' -or
         $manifest.halo2_candidate.aim_assist_melee_patch -ne $false -or
         [string]$manifest.halo2_candidate.melee_target_policy -cne
-            'engine-selected-target-retained-from-controller-owned-unit-sight' -or
+            'engine-selected-target-from-controller-ray-only-inside-owned-central-calculation' -or
         [string]$manifest.halo2_candidate.melee_execution_path -cne
             'stock-unit-action-system-and-character-physics-mode-melee' -or
         [string]$manifest.halo2_candidate.aim_assist_failure_policy -cne

@@ -215,22 +215,47 @@ try {
             'Halo 4 motion-suck suppression is exact, feature-local, title-local, and stereo-only') {
         throw 'C-H4-57 gate failed: exact H4EK/retail motion-suck identity, Halo-4/stereo isolation, telemetry, or unit coverage is missing.'
     }
+    if ($gameSource -notmatch 'Halo4EffectCavePatch' -or
+        $gameSource -notmatch
+            'Halo4RestoreOwnedPatch\s*\(\s*base \+ kHalo4EffectCaveRva,\s*cave,\s*caveStock\)' -or
+        $gameSource -notmatch
+            'Halo4PatchMatches\s*\(\s*base \+ kHalo4EffectCaveRva,\s*caveStock\)') {
+        throw 'C-H4-58 gate failed: Stage 3AI entry routes and their owned cave do not have symmetric teardown verification.'
+    }
     if ($halo2LogicSource -notmatch
             'kHalo2DebugGlobalAimAssistOverrideEnabled\s*=\s*false' -or
         $halo2LogicSource -notmatch
             'kHalo2AimAssistCalculateRva\s*=\s*0x00759260' -or
+        $halo2LogicSource -notmatch
+            'kHalo2AimAssistViewDirectionRva\s*=\s*0x006C0DF0' -or
+        $halo2LogicSource -notmatch
+            'kHalo2ControllerAimAssistTargetingEnabled\s*=\s*true' -or
         $halo2LogicSource -notmatch 'Halo2WriteNeutralAimAssistResults' -or
         $halo2LogicSource -notmatch 'Halo2SuppressCameraAimAssist' -or
+        $halo2LogicSource -notmatch 'Halo2OverrideAimAssistViewDirection' -or
         $halo2ObserverSource -notmatch 'kAimAssistCalculatePattern' -or
+        $halo2ObserverSource -notmatch 'kAimAssistViewDirectionPattern' -or
         $halo2ObserverSource -notmatch 'Halo2AimAssistCalculateDetour' -or
         $halo2ObserverSource -notmatch
-            'Halo 2 aim-assist suppression Installed \(C-H2-91\)' -or
+            'Halo2AimAssistViewDirectionDetour' -or
+        $halo2ObserverSource -notmatch
+            'Halo 2 controller melee targeting Installed' -or
         $halo2ObserverSource -notmatch 'g_aimAssistTargetSelected' -or
         $halo2ObserverSource -notmatch
             'camera/stereo/aim/hands/HUD/OpenXR remain' -or
         $coreTestsSource -notmatch
-            'preserves the complete engine-selected targeting result') {
-        throw 'C-H2-91 gate failed: the rejected debug global is not dormant or the verified camera-only suppression, retained targeting, fail-open isolation, telemetry, or unit coverage is missing.'
+            'scoped aim-assist view helper accepts the normalized') {
+        throw 'C-H2-92 gate failed: the rejected debug global is not dormant or controller-scoped native target selection, accepted camera suppression, fail-open isolation, telemetry, or unit coverage is missing.'
+    }
+    if ($configHeaderSource -notmatch
+            'halo2_classic_gun_pitch_deg\s*=\s*-9\.5f' -or
+        $configHeaderSource -notmatch
+            'halo2_classic_gun_yaw_deg\s*=\s*1\.0f' -or
+        $coreTestsSource -notmatch
+            'fresh\.halo2_classic_gun_yaw_deg\s*==\s*1\.0f' -or
+        $coreTestsSource -notmatch
+            'fresh\.halo2_classic_gun_pitch_deg\s*==\s*-9\.5f') {
+        throw 'Halo 2 Classic default-alignment gate failed: yaw +1.0 / pitch -9.5 or unit coverage is missing.'
     }
     $halo2StereoSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_stereo_core.cpp'))
@@ -324,7 +349,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-91-melee-target-retention',
+        'c-h2-92-controller-melee-h4-effects',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -371,7 +396,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 34
+        schema_version = 35
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -401,9 +426,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-57'
-            status = 'TARGET_HEADSET_ACCEPTED_HALO3_REGRESSION_PENDING'
-            behavior = 'accepted-c-h4-56-plus-exact-h4ek-retail-motion-suck-screen-effect-suppression'
+            id = 'C-H4-58'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            behavior = 'accepted-c-h4-57-plus-symmetric-stage3ai-effect-cave-teardown'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -429,6 +454,8 @@ try {
             effect_helper_route_rva = '0x00100EE8'
             effect_transient_route_rva = '0x001012D5'
             effect_mode_one_gate_rva = '0x0027BD36'
+            effect_cave_rva = '0x00B79C10'
+            effect_cave_restored_on_cleanup = $true
             effect_policy = 'stage3ai-selected-local-first-person-finite-far'
             effect_failure_policy = 'stock-effects-camera-hud-and-openxr-remain-armed'
             helmet_default_visible = $true
@@ -498,12 +525,12 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-91'
+            id = 'C-H2-92'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'c-h2-90-camera-assist-off-plus-controller-sight-melee-target-retention'
+                'c-h2-90-camera-assist-off-plus-controller-scoped-native-melee-target-selection'
             classic_muzzle_suppression = $true
             classic_muzzle_particle_renderer_rva = '0x0076DC90'
             classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
@@ -513,6 +540,13 @@ try {
             classic_alignment_controls = @(
                 'halo2_classic_gun_yaw_deg',
                 'halo2_classic_gun_pitch_deg')
+            classic_alignment_default_yaw_deg = 1.0
+            classic_alignment_default_pitch_deg = -9.5
+            aim_assist_view_direction_rva = '0x006C0DF0'
+            melee_targeting_scope =
+                'vr-owned-user0-central-calculation-only-controller-ray'
+            melee_targeting_failure_policy =
+                'c-h2-90-neutral-camera-and-no-target-other-features-remain-armed'
             heavy_eye_validation = 'bounded-source-discovery-only'
             # C-H2-7, E-H2-3: halo2.dll ships two renderers. The live one is
             # resolved read-only from a unique signature and reported, and the
@@ -549,17 +583,19 @@ try {
             native_aim_update_rva = '0x008FDF50'
             native_aim_ownership = 'desired-and-current-unit-aiming-vectors'
             aim_assist_disabled = $true
-            aim_assist_method = 'central-camera-assist-control-suppression'
+            aim_assist_method =
+                'central-camera-control-suppression-plus-scoped-controller-view-targeting'
             aim_assist_calculation_rva = '0x00759260'
             aim_assist_scope = 'vr-owned-halo2-local-user-0-both-renderers'
             aim_assist_effect =
-                'neutral-camera-assist-control-retained-controller-sight-target-acquisition-no-tag-patching'
+                'neutral-camera-assist-control-native-target-acquisition-along-controller-ray-no-tag-patching'
             aim_assist_identity =
-                'official-h2ek-caller-bsim-match-plus-identical-abi-initializer-and-unique-retail-loaded-image-signature'
-            aim_assist_restore = 'hook-disabled-drained-and-removed-on-core-teardown'
+                'official-h2ek-central-caller-and-player-control-view-helper-plus-unique-retail-loaded-image-signatures'
+            aim_assist_restore =
+                'central-and-view-hooks-disabled-drained-and-removed-on-core-teardown'
             aim_assist_melee_patch = $false
             melee_target_policy =
-                'engine-selected-target-retained-from-controller-owned-unit-sight'
+                'engine-selected-target-from-controller-ray-only-inside-owned-central-calculation'
             melee_execution_path =
                 'stock-unit-action-system-and-character-physics-mode-melee'
             aim_assist_failure_policy =
@@ -810,7 +846,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H2-91 carries forward C-H4-57 and C-H2-90 unchanged except for one Halo-2-only result split. The C-H2-90 Steam headset run proved the central hook active (26,285 suppressed, zero refused) and the user reports the unwanted camera-follow behavior stopped, but melee still missed. Official H2EK player_control.cpp writes the calculation control block into look adjustment while its independent targeting block supplies player_action melee-target-unit; unit_action_system.cpp forwards that target into the stock bipeds.cpp and character_physics_mode_melee.cpp lunge. C-H2-91 therefore runs the verified calculation against the already controller-owned native unit sight, preserves its complete target result, and zeros only the three camera-assist control floats. No melee range, damage, animation, game file, map, weapon tag, or other title is patched. Failure is feature-local StockFallback. This package does not install automatically.'
+        note = 'C-H2-92 carries three requested, source-isolated changes. Halo 4 Stage 3AI effect cleanup now restores its owned cave after every entry route, allowing exact muzzle/effect suppression to reinstall without changing reticle, helmet, HUD, pause, camera, motion-suck, or OpenXR behavior. Official H2EK proves C-H2-91 selected its retained melee target from player_control desired angles, not controller-owned unit aim; C-H2-92 substitutes the controller ray only inside the native central target calculation, preserves the native result, and still zeros camera-assist control. Failure retains C-H2-90 neutral/no-target behavior. New Halo 2 Classic configs seed yaw +1.0 and pitch -9.5; existing saved values remain authoritative and editable. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'
