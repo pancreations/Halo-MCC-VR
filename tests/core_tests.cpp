@@ -12420,9 +12420,12 @@ int main()
         const Config fresh;
         Check(fresh.show_welcome && fresh.fit_desktop_window &&
                   fresh.hud_size == 0.43f &&
-                  fresh.base_tunables.hud_size == 0.43f,
+                  fresh.base_tunables.hud_size == 0.43f &&
+                  fresh.halo2_classic_gun_yaw_deg == 1.0f &&
+                  fresh.halo2_classic_gun_pitch_deg == -9.5f,
             "The V5 seed defaults keep the welcome visible, fit the desktop "
-            "window, and use the V5 HUD size");
+            "window, use the V5 HUD size, and seed the accepted Halo 2 "
+            "Classic yaw/pitch alignment");
     }
 
     wchar_t tempPath[MAX_PATH]{};

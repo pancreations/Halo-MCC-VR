@@ -602,12 +602,13 @@ struct Config
     // Halo 2 CLASSIC ONLY: extra rotation and offset applied to the visible
     // gun AND hands together, so Classic can be lined up with what
     // Anniversary shows. Anniversary is never touched by these; every other
-    // title ignores them. 0 = identical to before. Tune LIVE in the F1 menu
-    // while standing in Classic, then switch to Anniversary to compare.
+    // title ignores them. The Halo 2 Classic baseline is yaw +1.0 and pitch
+    // -9.5; saved config values still win and remain LIVE-editable in F1.
+    // Switch to Anniversary to compare without applying this extra trim.
     // Degrees, about the held weapon's own axes (pitch raises/lowers the
     // muzzle), then meters along its own forward/right/up.
-    float halo2_classic_gun_pitch_deg = 0.0f;
-    float halo2_classic_gun_yaw_deg = 0.0f;
+    float halo2_classic_gun_pitch_deg = -9.5f;
+    float halo2_classic_gun_yaw_deg = 1.0f;
     float halo2_classic_gun_roll_deg = 0.0f;
     float halo2_classic_gun_forward_m = 0.0f;
     float halo2_classic_gun_right_m = 0.0f;
