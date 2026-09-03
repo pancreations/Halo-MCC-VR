@@ -30444,8 +30444,13 @@ namespace
     // input/filter contract is re-established; do not stack another behavior
     // onto the failed experiment.
     constexpr bool kEnableHalo4WorldCollisionStage1 = false;
-    constexpr bool kEnableHalo4WorldCollisionStage2 = true;
+    // Headset-rejected on 2026-09-03: the first query that reached the real
+    // environment path raised an engine exception and bounced the level back
+    // to loading. SEH isolated the mod callback but could not roll back engine
+    // physics state. Never invoke this path from the arbitrary cold worker.
+    constexpr bool kEnableHalo4WorldCollisionStage2 = false;
     static_assert(!kEnableHalo4WorldCollisionStage1);
+    static_assert(!kEnableHalo4WorldCollisionStage2);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;

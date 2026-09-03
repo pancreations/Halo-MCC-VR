@@ -286,7 +286,7 @@ try {
     if ($gameSource -notmatch
             'kEnableHalo4WorldCollisionStage1\s*=\s*false' -or
         $gameSource -notmatch
-            'kEnableHalo4WorldCollisionStage2\s*=\s*true' -or
+            'kEnableHalo4WorldCollisionStage2\s*=\s*false' -or
         $gameSource -notmatch
             'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
         $gameSource -notmatch
@@ -299,7 +299,7 @@ try {
             'liveWorldLineFilter\s*==\s*kHalo4WorldLineFilterPair' -or
         $gameSource -notmatch
             'environmentValidated') {
-        throw 'H4 world-contact Stage 2 gate failed: rejected Stage 1 is not dormant or the official clear-line filter/calibration proof is missing.'
+        throw 'H4 world-contact rejection gate failed: rejected Stage 1/2 execution is not dormant or the retained official filter evidence is missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -368,7 +368,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-stage2',
+        'h4-world-contact-rejected-stockfallback',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -415,7 +415,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 37
+        schema_version = 38
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -445,9 +445,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'H4-WORLD-CONTACT-STAGE2'
-            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'c-h2-92-c-h4-58-plus-h4-official-clear-line-filter-wrist-point-contact'
+            id = 'H4-WORLD-CONTACT-STAGES1-2-REJECTED'
+            status = 'REJECTED_COMPILED_DORMANT'
+            behavior = 'c-h2-92-c-h4-58-plus-stock-world-contact'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -539,9 +539,10 @@ try {
             two_hand_left_pose =
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
             world_contact = [ordered]@{
-                enabled = $true
+                enabled = $false
                 stage = 2
                 rejected_stage1_enabled = $false
+                rejected_stage2_enabled = $false
                 scope = 'halo4-official-clear-line-filter'
                 query = 'h4ek-physics-ray-cast'
                 retail_query_rva = '0x001C1D4C'
@@ -890,7 +891,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Experimental Halo 4 world-contact Stage 2 continues the C-H2-92/C-H4-58 handoff without changing its camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST, or Halo 3 behavior. The rejected Stage 1 fixed-only filter remains dormant. Stage 2 uses the exact filter pair copied by an official H4EK clear-line wrapper and independently verified in its pinned retail homolog and live engine global. Before corrections activate, a diagnostic downward ray must validate the environment/coordinate frame and reports that state in telemetry. A cold worker then point-sweeps the final visible wrists; fresh bounded corrections clamp the hands, the held weapon follows the right wrist, and gentle per-hand contact peaks merge with existing game rumble. This does not provide weapon-barrel volume, object or ragdoll impulses, or physical melee. Every proof/query failure restores only the existing unmodified floating targets. This package does not install automatically.'
+        note = 'Halo 4 world-contact Stages 1 and 2 are headset-rejected and compiled dormant. Stage 1 completed 1,794 ineffective fixed-only queries with no contact. Stage 2 proved the official clear-line filter pair but its first environment query from the arbitrary cold worker raised an engine exception, returned the game to loading and stopped presentation. The retained source/evidence is not executed. Any replacement must use a separately proven engine-owned safe update context. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

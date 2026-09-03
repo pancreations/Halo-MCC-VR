@@ -201,13 +201,42 @@ was zero even though the official function's public contract is its boolean
 return plus fraction. Stage 2 replaces both disproven assumptions; it does not
 stack on the rejected Stage 1 behavior.
 
-### Stage 2 pending headset validation
+### Stage 2 headset rejection (2026-09-03)
+
+The user's Steam / SteamVR-Oculus / 120 Hz run loaded exact source
+`6488f06d40dbc686af71adc8472382ebcd86160d`. The supplied 395-line log has
+SHA-256 `0CA809D4B4CEF65E171D007C80BB98AC2C7D78E1556DC31D30E0B142DE50AA2E`.
+It establishes this sequence:
+
+- `10:31:05.048`: Stage 2 installed with the raycast, wrapper and live filter
+  qword all pinned;
+- `10:31:05.770`: its first calibration call raised an engine exception and
+  world contact logged `FAILED OPEN`;
+- `10:31:06.225`: runtime mode changed from gameplay back to loading;
+- `10:31:06.834`: the game had stopped presenting for one second;
+- `10:31:08.396`: the Halo 4 core observed no camera heartbeat for 2,532 ms and
+  retired after the level closed.
+
+Telemetry confirms exactly one query, zero calibration hits, zero contacts and
+one failure. The exception handler successfully stopped further collision
+calls, but could not undo state already disturbed inside the engine function.
+That violates feature isolation from the working Halo 4 path.
+
+The exact filter pair remains valid evidence; the rejected fact is the call
+context. A query that reaches Halo 4's real collision path is not safe from the
+mod's arbitrary 50 ms worker thread. Stage 1 did not reveal that because its
+ineffective flags returned without reaching the same path. Both Stage 1 and
+Stage 2 execution are now compiled dormant. A successor must first prove an
+engine-owned update/physics context from H4EK and its retail homolog. Moving
+the call into a render or palette hot hook is not an acceptable substitute.
+
+### Successor acceptance
 
 Build/tests validate math, layout, and integration but not headset behavior.
-Acceptance requires a Halo 4 headset run with the log line
-`experimental world contact Stage 2 LIVE`, followed by telemetry reporting
-`environment VALIDATED`, non-zero contact/correction counts when touching level
-geometry, correct left/right gentle feedback, and no regression
+No current world-contact stage is eligible for headset acceptance. A future
+candidate requires a Halo 4 headset run with a proven engine-owned execution
+context, non-zero contact/correction counts when touching level geometry,
+correct left/right gentle feedback, and no regression
 to existing Halo 4 camera, hand/weapon alignment, HUD, native reticle, helmet,
 effects, pause, or black-screen fixes. `docs/CURRENT-STATE.md` must not advance
 until the user reports that result.
