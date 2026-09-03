@@ -108,6 +108,12 @@ inline bool Halo2SuppressCameraAimAssist(float* control) noexcept
     return true;
 }
 
+// C-H2-91 headset rejection: retaining the engine-selected target restored
+// Halo 2's stock melee/lunge snap and made the player's camera turn/miss feel
+// worse. Keep the proven implementation available as evidence, but never run
+// it in a candidate descended from that result.
+inline constexpr bool kHalo2RetainAimAssistTargetForMelee = false;
+
 // Halo 2 does not yet own a title-native pause signal. A stale head-locked
 // presentation can be inherited while switching in from another MCC engine,
 // so clear that FOREIGN state exactly when H2 first enters its stereo claim

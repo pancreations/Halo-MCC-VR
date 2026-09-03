@@ -2178,24 +2178,27 @@ namespace
         {
             __try
             {
-                // C-H2-91: run the verified engine calculation so Halo 2 can
-                // populate player_action's melee-target-unit from the same
-                // native unit sight that the controller already owns. Then
-                // neutralize only the three camera-assist outputs. C-H2-90's
-                // all-neutral result fixed camera pull but also discarded the
-                // target identity needed by the stock melee/lunge path.
-                original(userIndex, control, targeting);
-                originalCompleted = true;
-                completed = Halo2SuppressCameraAimAssist(control);
-                if (completed)
+                if constexpr (kHalo2RetainAimAssistTargetForMelee)
                 {
-                    if (targeting->identifiers[0] != UINT32_MAX)
-                        g_aimAssistTargetSelected.fetch_add(
-                            1, std::memory_order_relaxed);
-                    else
-                        g_aimAssistNoTarget.fetch_add(
-                            1, std::memory_order_relaxed);
+                    // Rejected C-H2-91 behavior, intentionally dormant: the
+                    // retained target fed stock melee/lunge snap and worsened
+                    // the headset result.
+                    original(userIndex, control, targeting);
+                    originalCompleted = true;
+                    completed = Halo2SuppressCameraAimAssist(control);
+                    if (completed)
+                    {
+                        if (targeting->identifiers[0] != UINT32_MAX)
+                            g_aimAssistTargetSelected.fetch_add(
+                                1, std::memory_order_relaxed);
+                        else
+                            g_aimAssistNoTarget.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
                 }
+                else
+                    completed = Halo2WriteNeutralAimAssistResults(
+                        control, targeting);
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
@@ -3786,12 +3789,12 @@ namespace
                 }
                 else
                 {
-                    LOG("Halo 2 aim-assist suppression Installed (C-H2-91): "
-                        "central aim_assist.cpp calculation +0x%X retains "
-                        "controller-sight target acquisition for stock "
-                        "melee/lunge while returning neutral camera-assist "
-                        "control for VR-owned local user 0 only; every other "
-                        "call is stock", static_cast<unsigned>(
+                    LOG("Halo 2 aim-assist suppression Installed (C-H2-90 "
+                        "restored after C-H2-91 rejection): central "
+                        "aim_assist.cpp calculation +0x%X returns neutral "
+                        "camera-assist and target-acquisition results for "
+                        "VR-owned local user 0 only; every other call is "
+                        "stock", static_cast<unsigned>(
                             kHalo2AimAssistCalculateRva));
                 }
             }

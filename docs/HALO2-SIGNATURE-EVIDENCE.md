@@ -4445,3 +4445,22 @@ the engine selects a target from the controller-owned unit sight, preserves
 the entire target result, then zeros only the three camera-assist control
 floats. Non-owned calls remain stock. The same unique signature, feature-local
 failure policy, and drained teardown from E-H2-77 remain in force.
+
+## E-H2-79 (C-H2-91 rejection): retained target restores stock lunge snap
+
+The C-H2-91 Steam headset log has SHA-256
+`B154EB5BA323A5FC6E2974FAC1F8635AFAFFF91049FA892515E1545A83384DC8`
+and identifies source `34189bcef76ef49bd3c542af29e867a4c068ccd1`,
+SteamVR/OpenXR 2.17.8, an Oculus headset, and 120 Hz. The exact installed hook
+ran `4,723` owned calculations, retained `435` engine-selected targets, and
+reported zero refusals. The user reports that melee still missed and its
+lock-on, camera turn, and wrong-way movement felt worse than C-H2-90.
+
+This is a direct behavioral result for E-H2-78's dataflow. Preserving the
+target does not merely retain an inert hit-test identity: it feeds the stock
+`character_physics_mode_melee` lunge, whose target-directed movement and
+facing are unsuitable for a VR weapon that can point independently of the
+body/head camera. C-H2-91 target retention is therefore rejected and compiled
+dormant. The successful C-H2-90 neutral camera-control/no-target behavior is
+restored while the non-lunge melee direction is investigated. Do not retry
+target retention as a melee fix.

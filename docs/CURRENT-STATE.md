@@ -1,20 +1,17 @@
 # Current state
 
-> **C-H2-91 HALO 2 CAMERA-ASSIST OFF / CONTROLLER-SIGHT MELEE TARGET
-> RETENTION READY FOR HEADSET TEST, UNACCEPTED (2026-09-02).** C-H2-90's
-> Steam / SteamVR 2.17.8 / Oculus / 120 Hz log proves the verified central
-> hook ran (`26,285` suppressed, `0` refused), and the user reports the
-> unwanted enemy-following camera behavior stopped. Melee still misses.
-> Official H2EK separates the calculation outputs: `player_control.cpp`
-> consumes its three control floats as camera/look adjustment, while the
-> targeting block supplies `player_action.melee-target-unit` to
-> `unit_action_system.cpp`, which forwards it into the stock `bipeds.cpp` and
-> `character_physics_mode_melee.cpp` lunge. C-H2-91 makes one change: run the
-> verified calculation against the already controller-owned native unit sight,
-> retain its complete targeting result, and zero only the three camera-assist
-> control floats. The stock melee range, damage, animation, target execution,
-> game files, maps, weapon tags, renderers and every other title remain
-> unchanged. See E-H2-78 and
+> **C-H2-91 HALO 2 MELEE TARGET RETENTION REJECTED AND DISABLED (user
+> headset, 2026-09-02).** Source
+> `34189bcef76ef49bd3c542af29e867a4c068ccd1`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. Exact log SHA-256
+> `B154EB5BA323A5FC6E2974FAC1F8635AFAFFF91049FA892515E1545A83384DC8`.
+> The hook ran `4,723` owned calculations with zero refusals and retained
+> `435` targets. The user reports that melee still missed and the lock-on,
+> camera turn, and wrong-way motion felt worse. That matches E-H2-78's stock
+> flow: a retained target enters `character_physics_mode_melee` lunge. Target
+> retention is now compiled dormant, and the active path is restored to
+> C-H2-90's neutral camera-assist/no-target result. Do not retry target
+> retention as a melee fix. See E-H2-79 and
 > `docs/C-H2-91-MELEE-TARGET-RETENTION-NOTES.md`.
 
 > **C-H2-90 HALO 2 CENTRAL AIM-ASSIST BYPASS CAMERA RESULT ACCEPTED /

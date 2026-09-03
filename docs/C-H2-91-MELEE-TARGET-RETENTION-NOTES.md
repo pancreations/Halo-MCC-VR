@@ -1,8 +1,21 @@
-# C-H2-91 Halo 2 controller-sight melee target retention test
+# C-H2-91 Halo 2 controller-sight melee target retention - rejected
+
+## Headset result - 2026-09-02
+
+Rejected and disabled. Source
+`34189bcef76ef49bd3c542af29e867a4c068ccd1`, Steam edition,
+SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. Log SHA-256:
+`B154EB5BA323A5FC6E2974FAC1F8635AFAFFF91049FA892515E1545A83384DC8`.
+The final combat telemetry reached `4,723` camera-suppressed owned calls,
+`435` retained targets, and zero refusals. The user reports that melee still
+missed and its lock-on/camera turn felt worse. Retaining the engine target
+therefore restored the unwanted stock lunge behavior rather than making melee
+follow the VR weapon. The behavior remains in source as dormant evidence and
+must not be retried.
 
 ## Scope
 
-This candidate preserves the headset-confirmed C-H2-90 camera-assist fix and
+This rejected candidate preserved the headset-confirmed C-H2-90 camera-assist fix and
 makes one Halo-2-only change: retain the stock engine targeting result produced
 from the already controller-owned unit sight. Halo 2 carries that identity into
 `player_action.melee-target-unit` and its normal melee/lunge state.
