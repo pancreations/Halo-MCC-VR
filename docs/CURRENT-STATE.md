@@ -1,5 +1,23 @@
 # Current state
 
+> **HALO 4 PHYSICAL MELEE STAGE 7 READY FOR HEADSET TEST
+> (2026-09-03).** Behavior commit
+> `a4f5e927535a053524574f94c95687ff5e7b74b4`. The accepted Stage 6 authored
+> hand/weapon collision, filter, cadence, skin, haptics and object-motion path
+> are unchanged. A nested default-off `Physical melee` toggle and adjustable
+> 0.30-3.00 m/s swing threshold (default 1.20) now qualify fast hand or weapon
+> contacts carrying a non-player dynamic object identity. Qualified contact
+> emits a short pulse through the same native B route recorded during the
+> user's manual Halo 4 melee tests, leaving Halo 4 in charge of target choice,
+> authored weapon damage, animation, sound, ragdoll impulse, kill credit and
+> networking. Raw authored movement, not wall correction, drives speed; a 600
+> ms cooldown prevents contact chatter. Teardown or either toggle turning off
+> clears pending pulses. Feature failure cannot disarm Stage 6 collision,
+> camera, HUD, reticle, helmet, effects, pause, or OpenXR. H4EK evidence, unit
+> tests, cold telemetry, and failure boundaries are recorded in
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`. Headset acceptance is pending and
+> the cumulative accepted release pointer below does not move.
+
 > **HALO 4 WORLD CONTACT STAGE 6 AUTHORED WEAPON BOUNDS ACCEPTED
 > (user headset, 2026-09-03).** Exact source
 > `58eaed451b86f870ece67be76423ba48f78f0862`, Steam edition,
