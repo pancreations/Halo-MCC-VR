@@ -30461,9 +30461,14 @@ namespace
     // to loading. SEH isolated the mod callback but could not roll back engine
     // physics state. Never invoke this path from the arbitrary cold worker.
     constexpr bool kEnableHalo4WorldCollisionStage2 = false;
-    constexpr bool kEnableHalo4WorldCollisionStage3 = true;
+    // Headset-rejected on 2026-09-03: the uniquely verified wrapper installed,
+    // but ordinary Halo 4 gameplay never called it (zero callbacks for the
+    // entire supplied session).  Keep the hook and query implementation
+    // dormant; a successor must use a separately proven live gameplay path.
+    constexpr bool kEnableHalo4WorldCollisionStage3 = false;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
+    static_assert(!kEnableHalo4WorldCollisionStage3);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;

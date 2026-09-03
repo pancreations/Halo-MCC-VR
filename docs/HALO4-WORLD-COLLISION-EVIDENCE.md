@@ -252,18 +252,25 @@ Stage 2 execution are now compiled dormant. A successor must first prove an
 engine-owned update/physics context from H4EK and its retail homolog. Moving
 the call into a render or palette hot hook is not an acceptable substitute.
 
-### Stage 3 pending headset validation
+### Stage 3 headset rejection (2026-09-03)
 
-Build/tests validate math, layout, and integration but not headset behavior.
-Stage 3 requires a Halo 4 headset run that reports non-zero engine-owned
-clear-line callbacks, `environment VALIDATED`, non-zero contact/correction
-counts when touching level geometry, correct left/right gentle feedback, and
-no regression
-to existing Halo 4 camera, hand/weapon alignment, HUD, native reticle, helmet,
-effects, pause, or black-screen fixes. `docs/CURRENT-STATE.md` must not advance
-until the user reports that result.
+The user's Steam / SteamVR-Oculus / 120 Hz headset run loaded exact source
+`0a37cd47d69242ea9d0a6af74ec9c2ad7cd338a0`. The supplied log has SHA-256
+`CF11AE88CCFB50131C7FE506B0F202861B219157A9E16268B49AE05A55E1B0E1`; the
+matching video has SHA-256
+`BCB03393D23AF5E6B3A9173C25759103F98BC7A9D56105936997E0905C23807C`.
 
-This is a wrist-point sweep, not hand-volume collision. It cannot yet push a
-ragdoll and cannot deal melee damage. Those require separately proven Halo 4
-dynamic-object/impulse and damage transactions on an engine-safe thread; they
-must not be inferred from the fixed-structure query established here.
+The hook installed, Halo 4 remained stable, and the normal floating-hand paths
+continued publishing. Every telemetry window nevertheless reported exactly
+zero engine-owned clear-line callbacks, zero mod wrapper queries, an unproven
+environment, zero contacts and zero visible corrections. The video and user
+report confirm both hands passed through tested geometry with no haptics.
+
+This rejects Stage 3's activation premise. Static call references prove only
+that the wrapper exists; they do not prove that retail campaign gameplay uses
+it. Stage 3 is compiled dormant. A replacement needs a function proven live in
+ordinary Halo 4 campaign gameplay, not another merely referenced helper.
+
+Stages 1-3 were wrist-point sweeps, not hand-volume collision, and could not
+push a ragdoll. The requested successor must separately prove both world-volume
+response and dynamic-object interaction while leaving physical melee disabled.
