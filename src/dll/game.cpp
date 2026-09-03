@@ -30435,6 +30435,11 @@ namespace
     };
 
     Halo4WorldCollisionFeature g_halo4WorldCollision;
+    // Headset-rejected on 2026-09-03: the query ran continuously but produced
+    // no contacts. Keep the evidence-backed binding dormant while the H4EK
+    // input/filter contract is re-established; do not stack another behavior
+    // onto the failed experiment.
+    constexpr bool kEnableHalo4WorldCollisionStage1 = false;
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -30604,6 +30609,14 @@ namespace
         uintptr_t base, size_t size, uint32_t generation)
     {
         RemoveHalo4WorldCollision();
+        if (!kEnableHalo4WorldCollisionStage1)
+        {
+            LOG("Halo 4 experimental world contact: StockFallback; rejected "
+                "Stage 1 wrist ray is deliberately dormant after the "
+                "headset run returned zero contacts; camera, hands, weapon, "
+                "HUD, reticle, effects and OpenXR remain unchanged");
+            return false;
+        }
         if (!base || !generation || size != kHalo4RetailImageSize ||
             !g_halo4Camera.modelSkinningTarget)
         {

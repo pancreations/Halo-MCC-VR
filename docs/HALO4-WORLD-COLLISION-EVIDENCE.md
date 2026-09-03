@@ -124,6 +124,24 @@ module mapping, or an unavailable floating-hand palette produces
 
 ## Acceptance and limitations
 
+### Stage 1 headset rejection (2026-09-03)
+
+The user's Steam / SteamVR-Oculus / 120 Hz headset run loaded exact source
+`6b301ad681f35765568cdbcb86743de49840327f`. The binding installed and the
+worker completed approximately 1,300 queries while both floating-hand paths
+continued publishing normally. Every two-second interval reported zero left
+and right contacts, zero visible corrections, zero failures, and therefore no
+contact haptics. The user confirmed that hands still passed through tested
+objects with no visible or tactile response.
+
+This rejects the Stage 1 behavior. It proves that deployment, target
+publication, worker scheduling, and the non-throwing retail call edge were
+live; it does **not** prove that the selected flag set described a useful
+world-geometry query. The claim above that structure bit 0 plus fixed-only bit
+27 was sufficient is now only a disproven lead. The Stage 1 install is compiled
+dormant until the official H4EK input/filter contract is re-established. Do
+not use this candidate as a base for another behavioral collision experiment.
+
 Build/tests validate math, layout, and integration but not headset behavior.
 Acceptance requires a Halo 4 headset run with the log line
 `experimental fixed-world contact: LIVE`, non-zero query/correction counts when
