@@ -30471,9 +30471,11 @@ namespace
         std::atomic<uint64_t> physicalMeleeCandidates{0};
         std::atomic<uint64_t> physicalMeleePulses{0};
         std::atomic<uint64_t> physicalMeleeCooldowns{0};
+        std::atomic<uint64_t> physicalMeleeVelocitySamples{0};
         std::atomic<uint32_t> physicalMeleePeakCentimetresPerSecond{0};
         std::atomic<uint64_t> physicalMeleePulseUntilMs{0};
         std::atomic<uint64_t> physicalMeleeCooldownUntilMs{0};
+        std::atomic<bool> physicalMeleeVelocityLatched[2]{};
         std::atomic<uint64_t> resets{0};
         std::atomic<uint64_t> failures{0};
         std::atomic<uint64_t> calibrationQueries{0};
@@ -30529,6 +30531,10 @@ namespace
     // sample speed emits the same native B melee input used in the accepted
     // headset configuration (the supplied logs record those manual B edges).
     constexpr bool kEnableHalo4PhysicalMeleeStage7 = false;
+    // Stage 8 follows LivingFray's proven motion-melee shape: OpenXR supplies
+    // controller velocity in tracking space and a threshold crossing requests
+    // Halo's normal melee control. Halo itself owns proximity and damage.
+    constexpr bool kEnableHalo4PhysicalMeleeStage8 = true;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
@@ -30537,6 +30543,7 @@ namespace
     static_assert(!kEnableHalo4WeaponWorldCollisionStage5);
     static_assert(kEnableHalo4WeaponWorldCollisionStage6);
     static_assert(!kEnableHalo4PhysicalMeleeStage7);
+    static_assert(kEnableHalo4PhysicalMeleeStage8);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -30748,12 +30755,18 @@ namespace
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.physicalMeleeCooldowns.store(
             0, std::memory_order_relaxed);
+        g_halo4WorldCollision.physicalMeleeVelocitySamples.store(
+            0, std::memory_order_relaxed);
         g_halo4WorldCollision.physicalMeleePeakCentimetresPerSecond.store(
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.physicalMeleePulseUntilMs.store(
             0, std::memory_order_relaxed);
         g_halo4WorldCollision.physicalMeleeCooldownUntilMs.store(
             0, std::memory_order_relaxed);
+        g_halo4WorldCollision.physicalMeleeVelocityLatched[0].store(
+            false, std::memory_order_relaxed);
+        g_halo4WorldCollision.physicalMeleeVelocityLatched[1].store(
+            false, std::memory_order_relaxed);
         g_halo4WorldCollision.resets.store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.failures.store(0, std::memory_order_relaxed);
         g_halo4WorldCollision.calibrationQueries.store(
@@ -30786,6 +30799,10 @@ namespace
             0, std::memory_order_release);
         g_halo4WorldCollision.physicalMeleeCooldownUntilMs.store(
             0, std::memory_order_release);
+        g_halo4WorldCollision.physicalMeleeVelocityLatched[0].store(
+            false, std::memory_order_release);
+        g_halo4WorldCollision.physicalMeleeVelocityLatched[1].store(
+            false, std::memory_order_release);
         g_halo4WorldCollision.configurationResetPending.store(
             true, std::memory_order_release);
         g_halo4WorldCollision.installed.store(
@@ -31079,7 +31096,8 @@ namespace
                 const float requiredSpeed =
                     g_halo4WorldCollision.physicalMeleeRequiredSpeed.load(
                         std::memory_order_relaxed);
-                if (g_halo4WorldCollision.physicalMeleeConfigured.load(
+                if (kEnableHalo4PhysicalMeleeStage7 &&
+                    g_halo4WorldCollision.physicalMeleeConfigured.load(
                         std::memory_order_acquire) &&
                     Halo4PhysicalMeleeContactQualifies(
                         output.objectIndex, ignoredObjectIndex, swingSpeed,
@@ -31378,9 +31396,9 @@ namespace
             "may query only after an "
             "engine dynamic-inclusive ray completes in that context; native "
             "object motion RVA 0x%X is %s; the stable combined right-side "
-            "hand plus 14-sample weapon bounds are enabled; Stage 7 physical "
-            "melee is available as an independently default-off native-input "
-            "transaction",
+            "hand plus 14-sample weapon bounds are enabled; Stage 8 physical "
+            "melee is available as an independently default-off OpenXR-"
+            "velocity/native-input transaction",
             g_config.world_collision ? "enabled" : "disabled",
             kHalo4PhysicsRayCastRva, kHalo4WorldLineTestRva,
             kHalo4WorldLineCollisionFlags,
@@ -31411,6 +31429,10 @@ namespace
                 0, std::memory_order_release);
             g_halo4WorldCollision.physicalMeleeCooldownUntilMs.store(
                 0, std::memory_order_release);
+            g_halo4WorldCollision.physicalMeleeVelocityLatched[0].store(
+                false, std::memory_order_release);
+            g_halo4WorldCollision.physicalMeleeVelocityLatched[1].store(
+                false, std::memory_order_release);
         }
         const uint32_t failure =
             g_halo4WorldCollision.hotFailureReason.exchange(
@@ -37783,18 +37805,22 @@ namespace
         const uint64_t meleeCooldowns =
             g_halo4WorldCollision.physicalMeleeCooldowns.exchange(
                 0, std::memory_order_relaxed);
+        const uint64_t meleeVelocitySamples =
+            g_halo4WorldCollision.physicalMeleeVelocitySamples.exchange(
+                0, std::memory_order_relaxed);
         const uint32_t meleePeakCmPerSecond =
             g_halo4WorldCollision.physicalMeleePeakCentimetresPerSecond
                 .exchange(0, std::memory_order_relaxed);
-        LOG("Halo 4 experimental world contact Stage 6 + physical melee Stage 7: capability-%s/config-%s; %llu engine "
+        LOG("Halo 4 experimental world contact Stage 6 + physical melee Stage 8: capability-%s/config-%s; %llu engine "
             "raycasts (%llu dynamic-safe / %llu fixed-only), %llu authored-"
             "volume probes, %llu/%llu left/right hand contacts, %llu weapon "
             "contacts, bounds %llu published / %llu hand-only fallback, "
             "%llu/%llu visible corrections, %llu seed/teleport/model "
             "resets, environment %s, %llu ray failures in 2s; object push=%s "
             "(%llu attempts / %llu completed / %llu failures); physical "
-            "melee=%s/config-%s/threshold %.2f m/s (%llu qualifying contacts / "
-            "%llu native-input pulses / %llu cooldown suppressions / %.2f m/s peak)",
+            "melee=%s/config-%s/threshold %.2f m/s (%llu valid OpenXR "
+            "velocity samples / %llu swing crossings / %llu native-input "
+            "pulses / %llu cooldown suppressions / %.2f m/s peak)",
             g_halo4WorldCollision.installed.load(
                 std::memory_order_acquire) ? "LIVE" : "StockFallback",
             g_halo4WorldCollision.configured.load(
@@ -37819,11 +37845,12 @@ namespace
             static_cast<unsigned long long>(collisionPushAttempts),
             static_cast<unsigned long long>(collisionPushes),
             static_cast<unsigned long long>(collisionPushFailures),
-            kEnableHalo4PhysicalMeleeStage7 ? "available" : "StockFallback",
+            kEnableHalo4PhysicalMeleeStage8 ? "available" : "StockFallback",
             g_halo4WorldCollision.physicalMeleeConfigured.load(
                 std::memory_order_acquire) ? "enabled" : "disabled",
             g_halo4WorldCollision.physicalMeleeRequiredSpeed.load(
                 std::memory_order_relaxed),
+            static_cast<unsigned long long>(meleeVelocitySamples),
             static_cast<unsigned long long>(meleeCandidates),
             static_cast<unsigned long long>(meleePulses),
             static_cast<unsigned long long>(meleeCooldowns),
@@ -39336,15 +39363,86 @@ void Game_Halo4UpdateVrTurn(const VrPadState& pad)
 bool Game_Halo4PhysicalMeleePulseActive(uint64_t nowMs)
 {
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
-    if (!kEnableHalo4PhysicalMeleeStage7 ||
+    if (!kEnableHalo4PhysicalMeleeStage8 ||
         TitleAdapter_GetActiveTitle() != GameTitle::Halo4 ||
         !g_halo4Camera.armed.load(std::memory_order_acquire) ||
         g_halo4Camera.teardownRequested.load(std::memory_order_acquire) ||
-        !g_halo4WorldCollision.installed.load(std::memory_order_acquire) ||
         !g_halo4WorldCollision.configured.load(std::memory_order_acquire) ||
         !g_halo4WorldCollision.physicalMeleeConfigured.load(
             std::memory_order_acquire))
         return false;
+
+    const float requiredSpeed =
+        g_halo4WorldCollision.physicalMeleeRequiredSpeed.load(
+            std::memory_order_relaxed);
+    for (int hand = 0; hand < 2; ++hand)
+    {
+        float velocity[3]{};
+        const bool velocityValid =
+            VR_GetControllerLinearVelocity(hand == 0, velocity);
+        const float speed = velocityValid
+            ? Halo4PhysicalMeleeVelocityMagnitude(velocity) : -1.0f;
+        if (velocityValid && speed >= 0.0f)
+        {
+            g_halo4WorldCollision.physicalMeleeVelocitySamples.fetch_add(
+                1, std::memory_order_relaxed);
+            const uint32_t speedCmPerSecond = static_cast<uint32_t>(
+                std::fmin(speed * 100.0f, 100000.0f));
+            uint32_t priorPeak =
+                g_halo4WorldCollision.physicalMeleePeakCentimetresPerSecond
+                    .load(std::memory_order_relaxed);
+            while (priorPeak < speedCmPerSecond &&
+                !g_halo4WorldCollision
+                     .physicalMeleePeakCentimetresPerSecond
+                     .compare_exchange_weak(
+                         priorPeak, speedCmPerSecond,
+                         std::memory_order_relaxed,
+                         std::memory_order_relaxed))
+            {
+            }
+        }
+
+        std::atomic<bool>& latch =
+            g_halo4WorldCollision.physicalMeleeVelocityLatched[hand];
+        const bool wasLatched = latch.load(std::memory_order_acquire);
+        const Halo4PhysicalMeleeVelocityDecision decision =
+            Halo4UpdatePhysicalMeleeVelocityLatch(
+                velocityValid, speed, requiredSpeed, wasLatched);
+        if (!decision.latched)
+        {
+            latch.store(false, std::memory_order_release);
+            continue;
+        }
+        if (!decision.trigger)
+            continue;
+        bool expected = false;
+        if (!latch.compare_exchange_strong(
+                expected, true, std::memory_order_acq_rel,
+                std::memory_order_relaxed))
+            continue;
+
+        g_halo4WorldCollision.physicalMeleeCandidates.fetch_add(
+            1, std::memory_order_relaxed);
+        const uint64_t cooldownUntil =
+            g_halo4WorldCollision.physicalMeleeCooldownUntilMs.load(
+                std::memory_order_relaxed);
+        if (nowMs >= cooldownUntil)
+        {
+            g_halo4WorldCollision.physicalMeleePulseUntilMs.store(
+                nowMs + kHalo4PhysicalMeleePulseMs,
+                std::memory_order_release);
+            g_halo4WorldCollision.physicalMeleeCooldownUntilMs.store(
+                nowMs + kHalo4PhysicalMeleeCooldownMs,
+                std::memory_order_release);
+            g_halo4WorldCollision.physicalMeleePulses.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        else
+        {
+            g_halo4WorldCollision.physicalMeleeCooldowns.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     const uint64_t pulseUntil =
         g_halo4WorldCollision.physicalMeleePulseUntilMs.load(
             std::memory_order_acquire);

@@ -1701,7 +1701,7 @@ void ConfigSave()
     fprintf(f, "# physics objects. Shared option; currently implemented for Halo 4.\n");
     fprintf(f, "# (default %d)\n", d.world_collision ? 1 : 0);
     fprintf(f, "world_collision = %d\n\n", g_config.world_collision ? 1 : 0);
-    fprintf(f, "# Physical melee (experimental): a fast hand or held-weapon contact\n");
+    fprintf(f, "# Physical melee (experimental): a fast tracked hand/weapon swing\n");
     fprintf(f, "# asks Halo 4 for its native melee action. Requires world_collision.\n");
     fprintf(f, "# Shared settings; currently implemented for Halo 4 only.\n");
     fprintf(f, "# (default %d)\n", d.physical_melee ? 1 : 0);

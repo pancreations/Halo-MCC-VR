@@ -646,8 +646,14 @@ namespace
     bool g_headPoseValid = false;
     XrPosef g_rightAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_rightAimPoseValid = false;
+    XrVector3f g_rightAimLinearVelocity{};
+    bool g_rightAimLinearVelocityValid = false;
+    uint64_t g_rightAimLinearVelocityAtMs = 0;
     XrPosef g_leftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_leftAimPoseValid = false;
+    XrVector3f g_leftAimLinearVelocity{};
+    bool g_leftAimLinearVelocityValid = false;
+    uint64_t g_leftAimLinearVelocityAtMs = 0;
     // Render-thread-only filtered copy for the compositor crosshair. Keeping it
     // separate is intentional: weapon steering and bullets stay on raw aim.
     XrPosef g_reticleAimPose{{0, 0, 0, 1}, {0, 0, 0}};
@@ -7499,7 +7505,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         get.subactionPath = g_rightHandPath;
         XrActionStatePose state{XR_TYPE_ACTION_STATE_POSE};
         bool valid = false;
-        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+        XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
+        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION, &velocity};
         if (XR_SUCCEEDED(xrGetActionStatePose(g_session, &get, &state)) && state.isActive &&
             XR_SUCCEEDED(xrLocateSpace(g_rightAimSpace, g_localSpace, time, &location)))
         {
@@ -7510,7 +7517,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         }
         // Left hand: position only matters (D-pad gesture), same locate path.
         bool leftValid = false;
-        XrSpaceLocation leftLocation{XR_TYPE_SPACE_LOCATION};
+        XrSpaceVelocity leftVelocity{XR_TYPE_SPACE_VELOCITY};
+        XrSpaceLocation leftLocation{
+            XR_TYPE_SPACE_LOCATION, &leftVelocity};
         if (g_leftAimAction != XR_NULL_HANDLE && g_leftAimSpace != XR_NULL_HANDLE)
         {
             get.action = g_leftAimAction;
@@ -7531,9 +7540,27 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_rightAimPoseValid = valid;
         if (valid)
             g_rightAimPose = location.pose;
+        g_rightAimLinearVelocityValid = valid &&
+            (velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0 &&
+            std::isfinite(velocity.linearVelocity.x) &&
+            std::isfinite(velocity.linearVelocity.y) &&
+            std::isfinite(velocity.linearVelocity.z);
+        if (g_rightAimLinearVelocityValid)
+            g_rightAimLinearVelocity = velocity.linearVelocity;
+        g_rightAimLinearVelocityAtMs = g_rightAimLinearVelocityValid
+            ? GetTickCount64() : 0;
         g_leftAimPoseValid = leftValid;
         if (leftValid)
             g_leftAimPose = leftLocation.pose;
+        g_leftAimLinearVelocityValid = leftValid &&
+            (leftVelocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0 &&
+            std::isfinite(leftVelocity.linearVelocity.x) &&
+            std::isfinite(leftVelocity.linearVelocity.y) &&
+            std::isfinite(leftVelocity.linearVelocity.z);
+        if (g_leftAimLinearVelocityValid)
+            g_leftAimLinearVelocity = leftVelocity.linearVelocity;
+        g_leftAimLinearVelocityAtMs = g_leftAimLinearVelocityValid
+            ? GetTickCount64() : 0;
         LeaveCriticalSection(&g_headCs);
         static bool logged = false;
         if (valid && !logged)
@@ -14405,6 +14432,29 @@ bool VR_GetRightControllerPose(float outQuat[4], float outPos[3])
         outPos[0] = g_rightAimPose.position.x;
         outPos[1] = g_rightAimPose.position.y;
         outPos[2] = g_rightAimPose.position.z;
+    }
+    LeaveCriticalSection(&g_headCs);
+    return ok;
+}
+
+bool VR_GetControllerLinearVelocity(bool left, float outVelocity[3])
+{
+    if (!g_headCsInit || !outVelocity)
+        return false;
+    EnterCriticalSection(&g_headCs);
+    const uint64_t capturedAtMs = left ? g_leftAimLinearVelocityAtMs :
+        g_rightAimLinearVelocityAtMs;
+    const uint64_t nowMs = GetTickCount64();
+    const bool ok = (left ? g_leftAimLinearVelocityValid :
+        g_rightAimLinearVelocityValid) && capturedAtMs != 0 &&
+        nowMs >= capturedAtMs && nowMs - capturedAtMs <= 100;
+    if (ok)
+    {
+        const XrVector3f& velocity = left ? g_leftAimLinearVelocity :
+            g_rightAimLinearVelocity;
+        outVelocity[0] = velocity.x;
+        outVelocity[1] = velocity.y;
+        outVelocity[2] = velocity.z;
     }
     LeaveCriticalSection(&g_headCs);
     return ok;

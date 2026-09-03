@@ -663,6 +663,9 @@ bool VR_GetHeadPose(float outQuat[4], float outPos[3]);
 bool VR_GetRightControllerPose(float outQuat[4], float outPos[3]);
 // Left controller pose (used by the D-pad gesture; false until tracked).
 bool VR_GetLeftControllerPose(float outQuat[4], float outPos[3]);
+// Runtime-reported tracking-space linear velocity in metres per second.
+// Unlike a world-space hand delta, this excludes artificial locomotion.
+bool VR_GetControllerLinearVelocity(bool left, float outVelocity[3]);
 // Called only from Halo's already-validated class-2 CHUD path. The active
 // weapon reticle is redirected into the controller-ray quad texture instead
 // of being drawn at the center of either VR eye.

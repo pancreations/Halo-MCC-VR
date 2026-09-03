@@ -829,8 +829,8 @@ struct Config
     bool world_collision = false;
 
     // Optional physical melee layered over world collision. A sufficiently
-    // fast authored hand/weapon contact asks Halo 4 for its normal melee input
-    // so the engine retains ownership of damage, animation and networking.
+    // fast tracking-space controller swing asks Halo 4 for its normal melee
+    // input so the engine retains ownership of range, damage and animation.
     bool physical_melee = false;
     float physical_melee_swing_speed = 1.2f;
 

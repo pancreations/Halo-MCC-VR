@@ -13607,6 +13607,23 @@ int main()
           Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
               meleePreviousDesired, meleeDesired, 0, 0.5f) < 0.0f,
         "Halo 4 physical melee ignores stationary wall pressure and invalid timing");
+    const float runtimeVelocity[3]{0.0f, 3.0f, 4.0f};
+    Check(std::fabs(Halo4PhysicalMeleeVelocityMagnitude(runtimeVelocity) -
+              5.0f) < 1.0e-6f,
+        "Halo 4 physical melee consumes OpenXR tracking-space velocity in metres per second");
+    const Halo4PhysicalMeleeVelocityDecision firstSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 1.2f, 1.2f, false);
+    const Halo4PhysicalMeleeVelocityDecision heldSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 2.0f, 1.2f, true);
+    const Halo4PhysicalMeleeVelocityDecision releasedSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 0.60f, 1.2f, true);
+    const Halo4PhysicalMeleeVelocityDecision invalidSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(false, 9.0f, 1.2f, true);
+    Check(firstSwing.trigger && firstSwing.latched &&
+          !heldSwing.trigger && heldSwing.latched &&
+          !releasedSwing.trigger && !releasedSwing.latched &&
+          !invalidSwing.trigger && !invalidSwing.latched,
+        "Halo 4 physical melee fires once per tracked swing and rearms below hysteresis");
     const float ordinaryMovement[3]{0.40f, 0.0f, 0.0f};
     const float teleportMovement[3]{0.60f, 0.0f, 0.0f};
     Check(!Halo4WorldCollisionMovementIsTeleport(

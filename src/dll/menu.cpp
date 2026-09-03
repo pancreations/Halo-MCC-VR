@@ -1207,7 +1207,7 @@ namespace
             ImGui::Indent();
             changed |= ImGui::Checkbox("Physical melee (experimental)",
                                        &g_config.physical_melee);
-            ImGui::TextDisabled("Fast hand or weapon contact requests Halo 4's native melee action.");
+            ImGui::TextDisabled("A fast tracked hand/weapon swing requests native melee; Halo decides range and target.");
             if (g_config.physical_melee)
             {
                 changed |= ImGui::SliderFloat(

@@ -284,6 +284,53 @@ inline bool Halo4PhysicalMeleeContactQualifies(
         swingSpeedMetresPerSecond >= requiredSpeedMetresPerSecond;
 }
 
+inline float Halo4PhysicalMeleeVelocityMagnitude(
+    const float velocityMetresPerSecond[3]) noexcept
+{
+    if (!Halo4WorldCollisionFiniteVector(velocityMetresPerSecond))
+        return -1.0f;
+    const float squared = velocityMetresPerSecond[0] *
+            velocityMetresPerSecond[0] +
+        velocityMetresPerSecond[1] * velocityMetresPerSecond[1] +
+        velocityMetresPerSecond[2] * velocityMetresPerSecond[2];
+    if (!std::isfinite(squared) || squared < 0.0f) return -1.0f;
+    const float speed = std::sqrt(squared);
+    return std::isfinite(speed) ? speed : -1.0f;
+}
+
+struct Halo4PhysicalMeleeVelocityDecision
+{
+    bool trigger = false;
+    bool latched = false;
+};
+
+inline Halo4PhysicalMeleeVelocityDecision
+Halo4UpdatePhysicalMeleeVelocityLatch(
+    bool velocityValid, float speedMetresPerSecond,
+    float requiredSpeedMetresPerSecond, bool wasLatched,
+    float releaseRatio = 0.55f) noexcept
+{
+    Halo4PhysicalMeleeVelocityDecision result{};
+    if (!velocityValid || !std::isfinite(speedMetresPerSecond) ||
+        speedMetresPerSecond < 0.0f ||
+        !std::isfinite(requiredSpeedMetresPerSecond) ||
+        requiredSpeedMetresPerSecond < 0.3f ||
+        requiredSpeedMetresPerSecond > 3.0f ||
+        !std::isfinite(releaseRatio) || releaseRatio <= 0.0f ||
+        releaseRatio >= 1.0f)
+        return result;
+    result.latched = wasLatched;
+    if (speedMetresPerSecond <= requiredSpeedMetresPerSecond * releaseRatio)
+        result.latched = false;
+    if (!result.latched &&
+        speedMetresPerSecond >= requiredSpeedMetresPerSecond)
+    {
+        result.trigger = true;
+        result.latched = true;
+    }
+    return result;
+}
+
 inline bool Halo4WorldCollisionMovementIsTeleport(
     const float accepted[3], const float desired[3], float worldScale,
     float maximumMetres = 1.5f) noexcept

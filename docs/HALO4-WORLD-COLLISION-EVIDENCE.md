@@ -576,3 +576,53 @@ collision transaction stays live. A successor must obtain a unit through Halo
 4's own melee target/acquisition path or another official H4EK-proven unit
 query; it must not guess collision-filter bits or write damage directly from
 the scenery ray callback.
+
+## Stage 8 OpenXR-velocity native-melee candidate
+
+Stage 8 keeps Stage 7 disabled and removes the false requirement that the
+scenery clear-line ray identify an enemy. It follows the source-level pattern
+in LivingFray's HaloCEVR repository at commit
+`66b511c0eb7ced20882de76aeab3e514df05bb1d`: `UpdateMelee()` reads the VR
+runtime's controller velocity for each hand, converts it to metres per second,
+and writes the game's ordinary `Controls.Melee` field when the configured
+threshold is exceeded. Its shipped threshold is 2.5 m/s and its README states
+that either controller can initiate melee by swinging. HaloCEVR is a different
+engine and none of its addresses, structures, axes, or constants are copied;
+the transferable design fact is that motion selects the native melee control,
+while the game remains responsible for target proximity and impact.
+
+The Khronos OpenXR 1.0 contract supplies the equivalent runtime measurement.
+An `XrSpaceVelocity` chained to `XrSpaceLocation` during `xrLocateSpace`
+returns `linearVelocity` in metres per second, relative to and expressed in the
+chosen base space, only when `XR_SPACE_VELOCITY_LINEAR_VALID_BIT` is set. Stage
+8 chains one structure to each already-existing controller locate and retains
+the value only when the pose, velocity flag, and all three components are
+valid and finite. No extra locate, action sync, allocation, file access, or
+engine call is introduced. The published velocity lives under the same short
+controller-state critical section as the corresponding pose and expires after
+100 ms, so a retained tracking sample cannot fire across a pause or level
+transition.
+
+The input merge reads each valid tracking-space velocity and uses its 3D
+magnitude, allowing natural horizontal, vertical, or diagonal swings. Because
+the runtime measurement is relative to OpenXR local space, artificial Halo
+locomotion cannot masquerade as a hand swing. A rising crossing of the shared
+threshold emits the existing 120 ms B pulse; a latch rearms only below 55% of
+the threshold and the retained 600 ms cooldown prevents two hands or runtime
+jitter from duplicating one attack. Unlike Stage 7, no collision result or
+object identity is required. Halo 4's native melee action determines whether a
+living enemy or ragdoll is within its authored range and then owns damage,
+stagger, animation, impact effects, sound, impulse, attribution, and network
+behavior. Swinging in empty space may play the ordinary miss animation, which
+is the same native behavior as pressing melee.
+
+The feature remains nested under the default-off World collision and Physical
+melee controls and retains the adjustable 0.30-3.00 m/s range with a 1.20 m/s
+default. It does not require the optional world-ray hook to remain installed;
+world collision and physical melee now fail independently. Teardown or either
+toggle turning off clears the pulse and both velocity latches. Cold telemetry
+reports valid OpenXR velocity samples, threshold crossings, native-input
+pulses, cooldown suppressions, and peak runtime speed. A successful headset
+test therefore requires nonzero velocity samples and crossings, the visible
+native melee animation, and normal Halo 4 damage/stagger when an enemy is in
+range.
