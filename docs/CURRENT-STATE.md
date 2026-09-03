@@ -1,5 +1,21 @@
 # Current state
 
+> **HALO 4 WORLD CONTACT STAGE 6 AUTHORED WEAPON BOUNDS READY FOR
+> HEADSET TEST (2026-09-03).** Behavior commit
+> `c7da985355c673b0fe41df631c799e0751622538`. The rejected Stage 5
+> animated-node proxy stays dormant. Runtime model checksum now selects one of
+> 39 exact first-person render-model bounds exhaustively read from the official
+> H4EK 1.890 weapon catalog. Eight oriented corners plus six face centers cover
+> the barrel, stock, sides, top and bottom; seven fixed-semantic hand samples
+> precede them, and model changes safely reseed by checksum. Unknown or invalid
+> models fail open to the accepted right-hand-only volume. The shared toggle
+> remains default-off, and accepted hands, haptics, object interaction, camera,
+> native HUD/reticle/helmet, effects, pause and black-screen behavior are not
+> changed. Physical melee/damage remains disabled. Release build, core tests,
+> and the Reach consistency gate pass; headset acceptance is pending and the
+> cumulative accepted release pointer below does not move. See
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 WORLD CONTACT STAGE 5 HAND PATH ACCEPTED / WEAPON PROXY
 > REJECTED (user headset, 2026-09-03).** Exact source
 > `ae96c406dae08301579490be8f9042911de38b1a`, Steam edition,
