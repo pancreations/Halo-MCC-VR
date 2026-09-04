@@ -340,7 +340,7 @@ try {
         $vrSource -notmatch 'XrSpaceVelocity' -or
         $vrSource -notmatch 'VR_GetControllerLinearVelocity' -or
         $coreTestsSource -notmatch
-            'Halo 4 physical melee fires once per tracked swing') {
+            'physical melee fires once per tracked swing, supports the five metre ceiling') {
         throw 'H4 world-contact Stage 9 gate failed: accepted Stage 6 geometry, rejected Stage 7/8 routes, OpenXR velocity sampling, right-shoulder melee transaction, or its safety proofs are missing.'
     }
 
@@ -961,7 +961,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 physical-melee Stage 9 test: accepted Stage 6 hand/weapon world collision and Stage 8 OpenXR motion qualification remain unchanged; rejected Stage 7 contact qualification and Stage 8 B/crouch output stay dormant. Either controller threshold crossing (default 1.20 m/s, adjustable 0.30-3.00) now emits a 120 ms virtual right-shoulder pulse, exactly matching the existing Quest lower-right-grip melee route, with hysteresis and a 600 ms cooldown. Halo 4 owns proximity, target selection, authored damage, animation, sound, ragdoll response and networking. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Halo 4 physical-melee Stage 9 accepted baseline: accepted Stage 6 hand/weapon world collision and Stage 8 OpenXR motion qualification remain unchanged; rejected Stage 7 contact qualification and Stage 8 B/crouch output stay dormant. Either controller threshold crossing (default 1.20 m/s, adjustable 0.30-5.00) emits a 120 ms virtual right-shoulder pulse, exactly matching the existing Quest lower-right-grip melee route, with hysteresis and a 600 ms cooldown. Halo 4 owns proximity, target selection, authored damage, animation, sound, ragdoll response and networking. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

@@ -1212,7 +1212,7 @@ namespace
             {
                 changed |= ImGui::SliderFloat(
                     "Required swing speed", &g_config.physical_melee_swing_speed,
-                    0.3f, 3.0f, "%.2f m/s");
+                    0.3f, 5.0f, "%.2f m/s");
                 ImGui::TextDisabled("Lower is more sensitive; 1.20 m/s is the default.");
             }
             ImGui::Unindent();

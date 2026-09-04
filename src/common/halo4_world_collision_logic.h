@@ -315,7 +315,7 @@ Halo4UpdatePhysicalMeleeVelocityLatch(
         speedMetresPerSecond < 0.0f ||
         !std::isfinite(requiredSpeedMetresPerSecond) ||
         requiredSpeedMetresPerSecond < 0.3f ||
-        requiredSpeedMetresPerSecond > 3.0f ||
+        requiredSpeedMetresPerSecond > 5.0f ||
         !std::isfinite(releaseRatio) || releaseRatio <= 0.0f ||
         releaseRatio >= 1.0f)
         return result;

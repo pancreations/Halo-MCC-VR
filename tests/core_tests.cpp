@@ -12632,6 +12632,14 @@ int main()
 
     {
         std::ofstream file(primary);
+        file << "physical_melee_swing_speed = 9.0\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.physical_melee_swing_speed == 5.0f,
+        "physical melee configuration exposes and clamps the five metre ceiling");
+
+    {
+        std::ofstream file(primary);
         file << "y_b_start_chord = 0\n";
     }
     ConfigLoad(primary.c_str());
@@ -13619,11 +13627,17 @@ int main()
         Halo4UpdatePhysicalMeleeVelocityLatch(true, 0.60f, 1.2f, true);
     const Halo4PhysicalMeleeVelocityDecision invalidSwing =
         Halo4UpdatePhysicalMeleeVelocityLatch(false, 9.0f, 1.2f, true);
+    const Halo4PhysicalMeleeVelocityDecision fiveMetreSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 5.0f, 5.0f, false);
+    const Halo4PhysicalMeleeVelocityDecision overMaximumThreshold =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 5.1f, 5.1f, false);
     Check(firstSwing.trigger && firstSwing.latched &&
           !heldSwing.trigger && heldSwing.latched &&
           !releasedSwing.trigger && !releasedSwing.latched &&
-          !invalidSwing.trigger && !invalidSwing.latched,
-        "Halo 4 physical melee fires once per tracked swing and rearms below hysteresis");
+          !invalidSwing.trigger && !invalidSwing.latched &&
+          fiveMetreSwing.trigger && fiveMetreSwing.latched &&
+          !overMaximumThreshold.trigger && !overMaximumThreshold.latched,
+        "physical melee fires once per tracked swing, supports the five metre ceiling, and rearms below hysteresis");
     const float ordinaryMovement[3]{0.40f, 0.0f, 0.0f};
     const float teleportMovement[3]{0.60f, 0.0f, 0.0f};
     Check(!Halo4WorldCollisionMovementIsTeleport(

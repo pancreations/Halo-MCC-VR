@@ -380,7 +380,7 @@ static void Clamp()
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
     g_config.left_grip_forward_m = std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
     g_config.physical_melee_swing_speed = std::clamp(
-        g_config.physical_melee_swing_speed, 0.3f, 3.0f);
+        g_config.physical_melee_swing_speed, 0.3f, 5.0f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
     g_config.shoulder_back_m = std::clamp(g_config.shoulder_back_m, -0.3f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);

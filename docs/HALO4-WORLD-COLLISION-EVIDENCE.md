@@ -683,3 +683,12 @@ lowering the weapon and requests a selectable maximum of 5.00 m/s. Raising
 only the validation/menu ceiling is a follow-up refinement; it must not change
 the saved or default threshold automatically. Exact log SHA-256:
 `0EAA9CFF1316ABC33C643048AA63F153B4C72815778B760E09EB1A9132B664DA`.
+
+### Accepted threshold-ceiling refinement
+
+The selectable `physical_melee_swing_speed` ceiling is raised from 3.00 to
+5.00 m/s. The 0.30 m/s minimum, 1.20 m/s default, saved-value authority,
+Stage 9 motion/action route, latch, and cooldown do not change. Configuration
+loading and runtime qualification apply the same ceiling, and the F1 slider
+exposes the complete range. A focused unit test admits exactly 5.00 m/s and
+rejects an out-of-range threshold above it.
