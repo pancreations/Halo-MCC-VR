@@ -1,5 +1,21 @@
 # Current state
 
+> **HALO 2 WORLD CONTACT + PHYSICAL MELEE READY FOR HEADSET TEST
+> (2026-09-03).** Behavior commit
+> `c46d94fe793a53c8629831269571931ed70d906a`. The default-off shared controls
+> now reach an independently H2EK-proven native collision transaction in both
+> Halo 2 Classic and Anniversary. Final visible hand/weapon packet root and
+> extrema samples drive bounded world clamping, gentle per-hand haptics, and
+> optional native physics-object velocity. Physical swings reuse the verified
+> Quest lower-right-grip/right-shoulder route and retain Halo 2's native melee
+> target, damage, lunge, animation, sound, and networking. The selectable
+> threshold now spans 0.30-5.00 m/s (default remains 1.20). Halo 4's accepted
+> Stage 6/9 path is unchanged. H3, ODST, Reach, and CE remain stock for world
+> collision pending independent editing-kit proof; this deliberately avoids a
+> guessed cross-engine port. Release build, core tests, and Reach consistency
+> gate pass. Headset acceptance is pending and the accepted pointer below does
+> not move. See `docs/HALO2-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 PHYSICAL MELEE STAGE 9 QUEST-GRIP ROUTE ACCEPTED
 > (user headset, 2026-09-03).** Exact source
 > `abab02c6068bafcc0d0f49d3deca3175348ff429`, Steam edition,
