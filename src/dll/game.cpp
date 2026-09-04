@@ -1000,11 +1000,12 @@ namespace
         // the theatre discriminator for player-controllable cinematic shots.
         uint32_t cinematicCameraTlsMemberOffset = 0;
         // 10 camera/weapon/CHUD core hooks + optional HUD height + two
-        // all-or-nothing crosshair hooks + optional brightness. Trampolines are
+        // all-or-nothing crosshair hooks + optional brightness + the optional
+        // native world-collision resolver. Trampolines are
         // recorded alongside targets so optional-hook absence can never shift
         // lifecycle mapping.
-        void* hookTargets[14]{};
-        void* hookTrampolines[14]{};
+        void* hookTargets[15]{};
+        void* hookTrampolines[15]{};
         size_t hookTargetCount = 0;
         void* renderHookTarget = nullptr;
     };
@@ -1135,6 +1136,89 @@ namespace
     thread_local BoneMatrix g_fpUnmodifiedInterpolations[2][64];
     thread_local BoneMatrix g_fpPaletteScratch[kReachFpMaxSourceNodeCount];
     thread_local BoneMatrix g_scopeHiddenPalette[64];
+
+    // Halo 3, ODST and Reach each keep an independent optional world-contact
+    // transaction.  Their visible-palette code is shared, but installation is
+    // title-native and a failed signature disables only this feature.
+    using LegacyCollisionResolveFn = bool(__fastcall*)(
+        const float* start, const float* desired, float* accepted,
+        int32_t ignoredObjectA, int32_t ignoredObjectB);
+    using ReachCollisionResolveFn = uint8_t(__fastcall*)(
+        const float* start, const float* desired, float* accepted,
+        int32_t ignoredObject);
+    inline constexpr int kLegacyCollisionHandSamples = 7;
+    inline constexpr int kLegacyCollisionWeaponSamples = 14;
+    inline constexpr int kLegacyCollisionMaxSamples = 21;
+    struct LegacyCollisionPublication
+    {
+        std::atomic<uint32_t> version{0};
+        uint32_t generation = 0;
+        uint64_t publishedAtMs = 0;
+        uint32_t sampleCount = 0;
+        uint32_t handSampleCount = 0;
+        int32_t ignoredObject = -1;
+        float samples[kLegacyCollisionMaxSamples][3]{};
+    };
+    struct LegacyCollisionCorrection
+    {
+        std::atomic<uint32_t> version{0};
+        uint32_t generation = 0;
+        uint64_t publishedAtMs = 0;
+        bool contact = false;
+        float source[3]{};
+        float correction[3]{};
+    };
+    struct LegacyCollisionWorkerHand
+    {
+        bool seeded = false;
+        uint32_t generation = 0;
+        uint64_t publishedAtMs = 0;
+        uint32_t sampleCount = 0;
+        float accepted[kLegacyCollisionMaxSamples][3]{};
+    };
+    struct LegacyWorldCollisionFeature
+    {
+        GameTitle title = GameTitle::None;
+        void* target = nullptr;
+        void* original = nullptr;
+        bool fourArgumentResolver = false;
+        uint32_t generation = 0;
+        std::atomic<bool> installed{false};
+        std::atomic<uint32_t> callbacks{0};
+        std::atomic<uint64_t> nextQueryAtMs{0};
+        LegacyCollisionPublication targetPublication[2]{};
+        LegacyCollisionCorrection correction[2]{};
+        LegacyCollisionWorkerHand worker[2]{};
+        std::atomic<uint64_t> queries{0};
+        std::atomic<uint64_t> contacts[2]{};
+        std::atomic<uint64_t> weaponContacts{0};
+        std::atomic<uint64_t> boundsPublished{0};
+        std::atomic<uint64_t> boundsFallbacks{0};
+        std::atomic<uint64_t> applied[2]{};
+        std::atomic<uint64_t> failures{0};
+    };
+    LegacyWorldCollisionFeature g_halo3WorldCollision;
+    LegacyWorldCollisionFeature g_odstWorldCollision;
+    LegacyWorldCollisionFeature g_reachWorldCollision;
+
+    LegacyWorldCollisionFeature* LegacyCollisionForTitle(GameTitle title);
+    bool LegacyApplyWorldCollision(
+        GameTitle title, int hand, BoneMatrix& target);
+    void LegacyPublishWorldCollisionVolumes(
+        GameTitle title, uint16_t renderModelTag,
+        const FpInterpolationContext& context, const BoneMatrix& root,
+        const BoneMatrix* solved, int32_t ignoredObject,
+        uint32_t generation);
+    bool LegacyBuildAuthoredWeaponBounds(
+        GameTitle title, uint16_t renderModelTag, const BoneMatrix& modelRoot,
+        const float collisionRoot[3], const float wrist[3],
+        float output[][3]);
+    int32_t LegacyCollisionIgnoredObject(GameTitle title);
+    bool InstallLegacyWorldCollision(
+        LegacyWorldCollisionFeature& feature, GameTitle title,
+        uintptr_t base, size_t size, uint32_t generation,
+        void* detour, uint32_t expectedRva,
+        const char* signature = nullptr, bool fourArgumentResolver = false);
     // The render-thread IK path publishes only pointer-sized diagnostics.
     // Present consumes them and owns all logging, keeping file I/O and log
     // locks out of the palette hot path.
@@ -1574,6 +1658,15 @@ namespace
         // Called only after the Halo camera has stopped and before a reloaded
         // Halo renderer starts. Remove in reverse installation order so no
         // outer render detour can enter a dependency while it is being reset.
+        g_halo3WorldCollision.installed.store(
+            false, std::memory_order_release);
+        if (g_halo3WorldCollision.target)
+            MH_DisableHook(g_halo3WorldCollision.target);
+        for (unsigned waited = 0;
+             waited < 2000 && g_halo3WorldCollision.callbacks.load(
+                 std::memory_order_acquire) != 0;
+             ++waited)
+            Sleep(1);
         for (size_t i = g_installedGameHookCount; i > 0; --i)
         {
             void* target = g_installedGameHooks[i - 1];
@@ -1584,6 +1677,8 @@ namespace
         g_installedGameHookCount = 0;
         g_renderHooked = false;
         g_fpInterpolatorHooked = false;
+        g_halo3WorldCollision.target = nullptr;
+        g_halo3WorldCollision.original = nullptr;
     }
     void __fastcall FpDriverHook(void* view, unsigned char flag)
     {
@@ -4388,6 +4483,337 @@ namespace
             root,bones,count,wrist,leftWrist,dual);
     }
 
+    LegacyWorldCollisionFeature* LegacyCollisionForTitle(GameTitle title)
+    {
+        switch (title)
+        {
+        case GameTitle::Halo3: return &g_halo3WorldCollision;
+        case GameTitle::Halo3ODST: return &g_odstWorldCollision;
+        case GameTitle::HaloReach: return &g_reachWorldCollision;
+        default: return nullptr;
+        }
+    }
+
+    void LegacyPublishCorrection(
+        LegacyWorldCollisionFeature& feature, int hand, uint32_t generation,
+        const float source[3], const float correction[3], bool contact)
+    {
+        auto& publication=feature.correction[hand];
+        publication.version.fetch_add(1,std::memory_order_acq_rel);
+        publication.generation=generation;
+        publication.publishedAtMs=GetTickCount64();
+        publication.contact=contact;
+        memcpy(publication.source,source,sizeof(publication.source));
+        memcpy(publication.correction,correction,sizeof(publication.correction));
+        publication.version.fetch_add(1,std::memory_order_release);
+    }
+
+    bool LegacyReadCorrection(
+        LegacyWorldCollisionFeature& feature, int hand, uint32_t& generation,
+        uint64_t& publishedAtMs, bool& contact, float source[3],
+        float correction[3])
+    {
+        const auto& publication=feature.correction[hand];
+        for(int attempt=0;attempt<4;++attempt)
+        {
+            const uint32_t before=publication.version.load(
+                std::memory_order_acquire);
+            if(before&1u) continue;
+            generation=publication.generation;
+            publishedAtMs=publication.publishedAtMs;
+            contact=publication.contact;
+            memcpy(source,publication.source,sizeof(publication.source));
+            memcpy(correction,publication.correction,
+                   sizeof(publication.correction));
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if(publication.version.load(std::memory_order_acquire)==before)
+                return Halo4WorldCollisionFiniteVector(source) &&
+                    Halo4WorldCollisionFiniteVector(correction);
+        }
+        return false;
+    }
+
+    bool LegacyApplyWorldCollision(
+        GameTitle title, int hand, BoneMatrix& target)
+    {
+        LegacyWorldCollisionFeature* feature=LegacyCollisionForTitle(title);
+        if(!feature || hand<0 || hand>1 || !g_config.world_collision ||
+            !feature->installed.load(std::memory_order_acquire) ||
+            TitleAdapter_GetActiveTitle()!=title ||
+            !Halo4WorldCollisionFiniteVector(target.translation))
+            return false;
+        uint32_t generation=0;
+        uint64_t publishedAtMs=0;
+        bool contact=false;
+        float source[3]{},correction[3]{};
+        if(!LegacyReadCorrection(*feature,hand,generation,publishedAtMs,
+                contact,source,correction) || !contact ||
+            generation!=feature->generation)
+            return false;
+        const uint64_t now=GetTickCount64();
+        const float worldScale=g_worldScale.load(std::memory_order_relaxed);
+        const float drift=Halo4WorldCollisionDistanceSquared(
+            source,target.translation);
+        const float limit=0.15f*worldScale;
+        float correctionSquared=0.0f;
+        for(float value:correction) correctionSquared+=value*value;
+        if(publishedAtMs>now || now-publishedAtMs>150 || drift<0.0f ||
+            drift>limit*limit || !std::isfinite(correctionSquared) ||
+            correctionSquared>0.75f*worldScale*0.75f*worldScale)
+            return false;
+        for(int axis=0;axis<3;++axis)
+            target.translation[axis]+=correction[axis];
+        feature->applied[hand].fetch_add(1,std::memory_order_relaxed);
+        return true;
+    }
+
+    void LegacyPublishTarget(
+        LegacyWorldCollisionFeature& feature, int hand, uint32_t generation,
+        const float samples[][3], uint32_t sampleCount,
+        uint32_t handSampleCount, int32_t ignoredObject)
+    {
+        if(hand<0 || hand>1 || !samples || !generation || !sampleCount ||
+            sampleCount>kLegacyCollisionMaxSamples ||
+            handSampleCount>sampleCount)
+            return;
+        for(uint32_t sample=0;sample<sampleCount;++sample)
+            if(!Halo4WorldCollisionFiniteVector(samples[sample])) return;
+        auto& publication=feature.targetPublication[hand];
+        publication.version.fetch_add(1,std::memory_order_acq_rel);
+        publication.generation=generation;
+        publication.publishedAtMs=GetTickCount64();
+        publication.sampleCount=sampleCount;
+        publication.handSampleCount=handSampleCount;
+        publication.ignoredObject=ignoredObject;
+        memcpy(publication.samples,samples,sizeof(float)*sampleCount*3);
+        publication.version.fetch_add(1,std::memory_order_release);
+    }
+
+    bool LegacyReadTarget(
+        LegacyWorldCollisionFeature& feature, int hand, uint32_t& generation,
+        uint64_t& publishedAtMs, uint32_t& sampleCount,
+        uint32_t& handSampleCount, int32_t& ignoredObject,
+        float samples[][3])
+    {
+        const auto& publication=feature.targetPublication[hand];
+        for(int attempt=0;attempt<4;++attempt)
+        {
+            const uint32_t before=publication.version.load(
+                std::memory_order_acquire);
+            if(before&1u) continue;
+            generation=publication.generation;
+            publishedAtMs=publication.publishedAtMs;
+            sampleCount=publication.sampleCount;
+            handSampleCount=publication.handSampleCount;
+            ignoredObject=publication.ignoredObject;
+            if(!generation || !sampleCount ||
+                sampleCount>kLegacyCollisionMaxSamples ||
+                handSampleCount>sampleCount)
+                return false;
+            memcpy(samples,publication.samples,sizeof(float)*sampleCount*3);
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if(publication.version.load(std::memory_order_acquire)!=before)
+                continue;
+            for(uint32_t sample=0;sample<sampleCount;++sample)
+                if(!Halo4WorldCollisionFiniteVector(samples[sample]))
+                    return false;
+            return true;
+        }
+        return false;
+    }
+
+    void LegacyWorldCollisionTick(LegacyWorldCollisionFeature& feature)
+    {
+        if(!feature.installed.load(std::memory_order_acquire) ||
+            !feature.original || !g_config.world_collision ||
+            TitleAdapter_GetActiveTitle()!=feature.title ||
+            !g_enabled.load(std::memory_order_acquire) ||
+            !VR_IsStereoEnabled())
+            return;
+        const uint64_t now=GetTickCount64();
+        uint64_t due=feature.nextQueryAtMs.load(std::memory_order_relaxed);
+        if(now<due || !feature.nextQueryAtMs.compare_exchange_strong(
+                due,now+33,std::memory_order_acq_rel,
+                std::memory_order_relaxed))
+            return;
+        const float worldScale=g_worldScale.load(std::memory_order_relaxed);
+        if(!std::isfinite(worldScale) || worldScale<=0.0f) return;
+        for(int hand=0;hand<2;++hand)
+        {
+            uint32_t generation=0,sampleCount=0,handSampleCount=0;
+            uint64_t targetAtMs=0;
+            int32_t ignoredObject=-1;
+            float desired[kLegacyCollisionMaxSamples][3]{};
+            auto& worker=feature.worker[hand];
+            if(!LegacyReadTarget(feature,hand,generation,targetAtMs,
+                    sampleCount,handSampleCount,ignoredObject,desired) ||
+                generation!=feature.generation || targetAtMs>now ||
+                now-targetAtMs>150)
+            {
+                worker.seeded=false;
+                const float zero[3]{};
+                LegacyPublishCorrection(
+                    feature,hand,feature.generation,zero,zero,false);
+                continue;
+            }
+            if(!worker.seeded || worker.generation!=generation ||
+                worker.sampleCount!=sampleCount ||
+                Halo4WorldCollisionMovementIsTeleport(
+                    worker.accepted[0],desired[0],worldScale))
+            {
+                worker.seeded=true;
+                worker.generation=generation;
+                worker.publishedAtMs=targetAtMs;
+                worker.sampleCount=sampleCount;
+                memcpy(worker.accepted,desired,sizeof(float)*sampleCount*3);
+                const float zero[3]{};
+                LegacyPublishCorrection(
+                    feature,hand,generation,desired[0],zero,false);
+                continue;
+            }
+            bool contact=false;
+            uint32_t contactSample=0;
+            float strongest[3]{};
+            float strongestSquared=0.0f;
+            for(uint32_t sample=0;sample<sampleCount;++sample)
+            {
+                if(Halo4WorldCollisionDistanceSquared(
+                        worker.accepted[sample],desired[sample])<1.0e-10f)
+                    continue;
+                float accepted[3]{desired[sample][0],desired[sample][1],
+                                  desired[sample][2]};
+                bool resolved=false;
+                __try
+                {
+                    if(feature.fourArgumentResolver)
+                        resolved=reinterpret_cast<ReachCollisionResolveFn>(
+                            feature.original)(worker.accepted[sample],
+                                desired[sample],accepted,ignoredObject)!=0;
+                    else
+                        resolved=reinterpret_cast<LegacyCollisionResolveFn>(
+                            feature.original)(worker.accepted[sample],
+                                desired[sample],accepted,ignoredObject,-1);
+                }
+                __except(EXCEPTION_EXECUTE_HANDLER)
+                {
+                    feature.failures.fetch_add(1,std::memory_order_relaxed);
+                    feature.installed.store(false,std::memory_order_release);
+                    return;
+                }
+                feature.queries.fetch_add(1,std::memory_order_relaxed);
+                if(!Halo4WorldCollisionFiniteVector(accepted))
+                {
+                    feature.failures.fetch_add(1,std::memory_order_relaxed);
+                    feature.installed.store(false,std::memory_order_release);
+                    return;
+                }
+                (void)resolved;
+                float correction[3]{};
+                float correctionSquared=0.0f;
+                for(int axis=0;axis<3;++axis)
+                {
+                    correction[axis]=accepted[axis]-desired[sample][axis];
+                    correctionSquared+=correction[axis]*correction[axis];
+                }
+                if(correctionSquared>1.0e-10f &&
+                    (!contact || correctionSquared>strongestSquared))
+                {
+                    contact=true;
+                    contactSample=sample;
+                    strongestSquared=correctionSquared;
+                    memcpy(strongest,correction,sizeof(strongest));
+                }
+            }
+            for(uint32_t sample=0;sample<sampleCount;++sample)
+                for(int axis=0;axis<3;++axis)
+                    worker.accepted[sample][axis]=desired[sample][axis]+
+                        (contact?strongest[axis]:0.0f);
+            worker.publishedAtMs=targetAtMs;
+            LegacyPublishCorrection(
+                feature,hand,generation,desired[0],strongest,contact);
+            if(contact)
+            {
+                if(contactSample<handSampleCount)
+                    feature.contacts[hand].fetch_add(
+                        1,std::memory_order_relaxed);
+                else
+                    feature.weaponContacts.fetch_add(
+                        1,std::memory_order_relaxed);
+                VR_PulseContactHaptics(hand==0,0.18f);
+            }
+        }
+    }
+
+    bool LegacyCollisionDetourBody(
+        LegacyWorldCollisionFeature& feature, const float* start,
+        const float* desired, float* accepted, int32_t ignoredObjectA,
+        int32_t ignoredObjectB)
+    {
+        LegacyCollisionResolveFn original=
+            reinterpret_cast<LegacyCollisionResolveFn>(feature.original);
+        if(!original) return false;
+        const bool result=original(
+            start,desired,accepted,ignoredObjectA,ignoredObjectB);
+        LegacyWorldCollisionTick(feature);
+        return result;
+    }
+
+    __declspec(noinline) bool __fastcall Halo3CollisionResolveDetour(
+        const float* start,const float* desired,float* accepted,
+        int32_t ignoredObjectA,int32_t ignoredObjectB)
+    {
+        g_halo3WorldCollision.callbacks.fetch_add(
+            1,std::memory_order_acq_rel);
+        bool result=false;
+        __try { result=LegacyCollisionDetourBody(
+            g_halo3WorldCollision,start,desired,accepted,
+            ignoredObjectA,ignoredObjectB); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+        g_halo3WorldCollision.callbacks.fetch_sub(
+            1,std::memory_order_acq_rel);
+        return result;
+    }
+
+    __declspec(noinline) bool __fastcall OdstCollisionResolveDetour(
+        const float* start,const float* desired,float* accepted,
+        int32_t ignoredObjectA,int32_t ignoredObjectB)
+    {
+        g_odstWorldCollision.callbacks.fetch_add(
+            1,std::memory_order_acq_rel);
+        bool result=false;
+        __try { result=LegacyCollisionDetourBody(
+            g_odstWorldCollision,start,desired,accepted,
+            ignoredObjectA,ignoredObjectB); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+        g_odstWorldCollision.callbacks.fetch_sub(
+            1,std::memory_order_acq_rel);
+        return result;
+    }
+
+    __declspec(noinline) uint8_t __fastcall ReachCollisionResolveDetour(
+        const float* start,const float* desired,float* accepted,
+        int32_t ignoredObject)
+    {
+        g_reachWorldCollision.callbacks.fetch_add(
+            1,std::memory_order_acq_rel);
+        uint8_t result=0;
+        __try
+        {
+            ReachCollisionResolveFn original=
+                reinterpret_cast<ReachCollisionResolveFn>(
+                    g_reachWorldCollision.original);
+            if(original)
+            {
+                result=original(start,desired,accepted,ignoredObject);
+                LegacyWorldCollisionTick(g_reachWorldCollision);
+            }
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+        g_reachWorldCollision.callbacks.fetch_sub(
+            1,std::memory_order_acq_rel);
+        return result;
+    }
+
     bool __fastcall FpInterpolateHook(int view,int id,int slot,
                                       BoneMatrix** outBones,int* outCount)
     {
@@ -4567,6 +4993,8 @@ namespace
         out.scale = 1.0f;
         memcpy(out.rotation, mounted, sizeof(mounted));
         memcpy(out.translation, posC, sizeof(posC));
+        (void)LegacyApplyWorldCollision(
+            TitleAdapter_GetActiveTitle(), left ? 0 : 1, out);
         return true;
     }
 
@@ -5282,6 +5710,97 @@ namespace
         return true;
     }
 
+    void LegacyPublishWorldCollisionVolumes(
+        GameTitle title, uint16_t renderModelTag,
+        const FpInterpolationContext& context, const BoneMatrix& root,
+        const BoneMatrix* solved, int32_t ignoredObject,
+        uint32_t generation)
+    {
+        LegacyWorldCollisionFeature* feature=LegacyCollisionForTitle(title);
+        if(!feature || !solved || !context.valid || !generation ||
+            !g_config.world_collision ||
+            !feature->installed.load(std::memory_order_acquire) ||
+            context.count<=0 || context.count>64)
+            return;
+        float rightPoints[64][3]{},leftPoints[64][3]{};
+        int rightCount=0,leftCount=0;
+        BoneMatrix rightWristWorld{},leftWristWorld{};
+        bool rightWristValid=false,leftWristValid=false;
+        for(int node=0;node<context.count;++node)
+        {
+            BoneMatrix world{};
+            if(!ComposeBoneMatrices(root,solved[node],world) ||
+                !Halo4WorldCollisionFiniteVector(world.translation))
+                return;
+            const uint64_t bit=uint64_t{1}<<node;
+            if(context.wristDescendants&bit)
+            {
+                memcpy(rightPoints[rightCount++],world.translation,
+                       sizeof(world.translation));
+            }
+            if(context.lWristDescendants&bit)
+            {
+                memcpy(leftPoints[leftCount++],world.translation,
+                       sizeof(world.translation));
+            }
+            if(node==context.wrist)
+            {
+                rightWristWorld=world;
+                rightWristValid=true;
+            }
+            if(node==context.lWrist)
+            {
+                leftWristWorld=world;
+                leftWristValid=true;
+            }
+        }
+        if(rightWristValid && !rightCount)
+            memcpy(rightPoints[rightCount++],rightWristWorld.translation,
+                   sizeof(rightWristWorld.translation));
+        if(leftWristValid && !leftCount)
+            memcpy(leftPoints[leftCount++],leftWristWorld.translation,
+                   sizeof(leftWristWorld.translation));
+
+        if(rightWristValid && rightCount)
+        {
+            float samples[kLegacyCollisionMaxSamples][3]{};
+            const int handCount=Halo4SelectWorldCollisionExtrema(
+                rightWristWorld.translation,&rightPoints[0][0],rightCount,
+                samples,kLegacyCollisionMaxSamples);
+            int total=handCount;
+            BoneMatrix modelRoot{};
+            if(handCount==kLegacyCollisionHandSamples &&
+                ComposeBoneMatrices(root,solved[0],modelRoot) &&
+                LegacyBuildAuthoredWeaponBounds(
+                    title,renderModelTag,modelRoot,
+                    rightWristWorld.translation,rightWristWorld.translation,
+                    samples+handCount))
+            {
+                total+=kLegacyCollisionWeaponSamples;
+                feature->boundsPublished.fetch_add(
+                    1,std::memory_order_relaxed);
+            }
+            else if(handCount==kLegacyCollisionHandSamples)
+            {
+                feature->boundsFallbacks.fetch_add(
+                    1,std::memory_order_relaxed);
+            }
+            if(handCount==kLegacyCollisionHandSamples)
+                LegacyPublishTarget(*feature,1,generation,samples,total,
+                                    handCount,ignoredObject);
+        }
+        if(leftWristValid && leftCount)
+        {
+            float samples[kLegacyCollisionHandSamples][3]{};
+            const int handCount=Halo4SelectWorldCollisionExtrema(
+                leftWristWorld.translation,&leftPoints[0][0],leftCount,
+                samples,kLegacyCollisionHandSamples);
+            if(handCount==kLegacyCollisionHandSamples)
+                LegacyPublishTarget(*feature,0,generation,samples,handCount,
+                                    handCount,ignoredObject);
+        }
+    }
+
     void __fastcall FpVisiblePaletteHook(uint16_t tag, const BoneMatrix* root,
                                          BoneMatrix* destination, uintptr_t unused,
                                          const BoneMatrix* source, const int32_t* boneMap)
@@ -5308,6 +5827,11 @@ namespace
         if (root && source)
             reconstructed=ReconstructVisiblePaletteSource(
                 tag,context,*root,source,selectedSource);
+        if(reconstructed && root && selectedSource==g_fpPaletteScratch)
+            LegacyPublishWorldCollisionVolumes(
+                GameTitle::Halo3,tag,context,*root,selectedSource,
+                LegacyCollisionIgnoredObject(GameTitle::Halo3),
+                g_halo3RuntimeGeneration.load(std::memory_order_acquire));
 
         // FLOATING HANDS (optional, OFF by default): a pure presentation filter
         // over the already-solved palette. The VRIK solve above still tracks the
@@ -12132,6 +12656,11 @@ namespace
             reconstructed = ReconstructVisiblePaletteSource(
                 tag, context, *root, source, selectedSource);
         }
+        if(reconstructed && root && selectedSource==g_fpPaletteScratch)
+            LegacyPublishWorldCollisionVolumes(
+                GameTitle::Halo3ODST,tag,context,*root,selectedSource,
+                LegacyCollisionIgnoredObject(GameTitle::Halo3ODST),
+                g_odstRuntimeGeneration.load(std::memory_order_acquire));
         if (g_config.floating_hands && reconstructed && context.valid &&
             selectedSource == g_fpPaletteScratch &&
             context.count > 0 && context.count <= 64)
@@ -14227,6 +14756,13 @@ namespace
             LOG("M2: gun-camera signature missing/ambiguous; weapon/HUD will stay oversized in stereo");
         }
 
+        if (InstallLegacyWorldCollision(
+                g_halo3WorldCollision, GameTitle::Halo3, base, size,
+                runtimeGeneration,
+                reinterpret_cast<void*>(&Halo3CollisionResolveDetour),
+                0x001FFD18))
+            RememberInstalledGameHook(g_halo3WorldCollision.target);
+
         uintptr_t renderHit = sig::Find(base, size, kRenderViewSig);
         uintptr_t prepareHit = sig::Find(base, size, kPrepareViewSig);
         uintptr_t viewportHit = sig::Find(base, size, kBuildViewportSig);
@@ -14810,6 +15346,10 @@ namespace
             trampoline = nullptr;
         g_odstCamera.hookTargetCount = 0;
         g_odstCamera.renderHookTarget = nullptr;
+        g_odstWorldCollision.installed.store(
+            false, std::memory_order_release);
+        g_odstWorldCollision.target = nullptr;
+        g_odstWorldCollision.original = nullptr;
         g_odstCamera.installedAtMs.store(0, std::memory_order_release);
         g_odstCamera.cameraArrayReady.store(
             false, std::memory_order_release);
@@ -15800,7 +16340,7 @@ namespace
                                   bool renderOnly, bool& busy)
     {
         static bool rangesResolved = false;
-        static OdstCodeRange ranges[14]{};
+        static OdstCodeRange ranges[15]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -15818,6 +16358,7 @@ namespace
                 reinterpret_cast<const void*>(&OdstHudCrosshairVisibleHook),
                 reinterpret_cast<const void*>(&OdstHudDrawWidgetHook),
                 reinterpret_cast<const void*>(&OdstHudXformHook),
+                reinterpret_cast<const void*>(&OdstCollisionResolveDetour),
             };
             static_assert(_countof(functions) == _countof(ranges));
             bool resolved = true;
@@ -15885,6 +16426,9 @@ namespace
         }
         if (counter.load(std::memory_order_acquire) != 0)
             busy = true;
+        if (!renderOnly && g_odstWorldCollision.callbacks.load(
+                std::memory_order_acquire) != 0)
+            busy = true;
 
         // All observed threads remain suspended through the RIP and counter
         // checks. Once hooks are disabled, an all-clear snapshot is stable:
@@ -15898,7 +16442,9 @@ namespace
     {
         for (unsigned waited = 0; waited < 2000; ++waited)
         {
-            if (counter.load(std::memory_order_acquire) == 0)
+            if (counter.load(std::memory_order_acquire) == 0 &&
+                (renderOnly || g_odstWorldCollision.callbacks.load(
+                    std::memory_order_acquire) == 0))
             {
                 bool ingressBusy = false;
                 if (!ScanForOdstDetourIngress(counter, renderOnly, ingressBusy))
@@ -15907,7 +16453,9 @@ namespace
                     return false;
                 }
                 if (!ingressBusy &&
-                    counter.load(std::memory_order_acquire) == 0)
+                    counter.load(std::memory_order_acquire) == 0 &&
+                    (renderOnly || g_odstWorldCollision.callbacks.load(
+                        std::memory_order_acquire) == 0))
                     return true;
             }
             Sleep(1);
@@ -15937,6 +16485,8 @@ namespace
             return false;
 
         g_odstCamera.armed.store(false, std::memory_order_release);
+        g_odstWorldCollision.installed.store(
+            false, std::memory_order_release);
         PublishOdstLifecycle();
         g_odstCamera.eyeView.store(nullptr, std::memory_order_release);
         g_stereoEye.store(-1, std::memory_order_release);
@@ -16274,6 +16824,19 @@ namespace
             return DiscardCreatedOdstHooks()
                 ? OdstInstallResult::Failed
                 : OdstInstallResult::CleanupPending;
+        }
+        if (g_odstCamera.hookTargetCount <
+                _countof(g_odstCamera.hookTargets) &&
+            InstallLegacyWorldCollision(
+                g_odstWorldCollision, GameTitle::Halo3ODST, base, size,
+                runtimeGeneration,
+                reinterpret_cast<void*>(&OdstCollisionResolveDetour),
+                0x00231EC4))
+        {
+            const size_t slot = g_odstCamera.hookTargetCount++;
+            g_odstCamera.hookTargets[slot] = g_odstWorldCollision.target;
+            g_odstCamera.hookTrampolines[slot] =
+                reinterpret_cast<void*>(g_odstWorldCollision.original);
         }
 
         // The ownership block that used to sit here now runs the moment the
@@ -21656,6 +22219,224 @@ namespace
         return true;
     }
 
+    int32_t LegacyCollisionIgnoredObject(GameTitle title)
+    {
+        int32_t object=-1;
+        __try
+        {
+            if(title==GameTitle::Halo3 && g_halo3PlayerUnitGetter)
+                object=g_halo3PlayerUnitGetter(0);
+            else if(title==GameTitle::Halo3ODST && g_odstPlayerUnitGetter)
+                object=g_odstPlayerUnitGetter(0);
+            else if(title==GameTitle::HaloReach &&
+                    g_reachCamera.playerUnitByOutputUser)
+                object=g_reachCamera.playerUnitByOutputUser(0);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            object=-1;
+        }
+        return object;
+    }
+
+    bool LegacyReadCompressionBounds(
+        const uint8_t* definition, const uint8_t* tagBase,
+        float minimum[3], float maximum[3])
+    {
+        if(!definition || !tagBase) return false;
+        __try
+        {
+            // Official H3EK/H3ODSTEK/HREK render_model_definition embeds
+            // global_render_geometry at +0x48. Its compression-info tag block
+            // is at geometry +0x0C: count +0x54, word-address +0x58. The
+            // compression element begins with three real_bounds.
+            const int32_t count=*reinterpret_cast<const int32_t*>(
+                definition+0x54);
+            const uint32_t wordAddress=*reinterpret_cast<const uint32_t*>(
+                definition+0x58);
+            if(count!=1 || !wordAddress) return false;
+            const float* values=reinterpret_cast<const float*>(
+                tagBase+static_cast<size_t>(wordAddress)*4u);
+            minimum[0]=values[0]; maximum[0]=values[1];
+            minimum[1]=values[2]; maximum[1]=values[3];
+            minimum[2]=values[4]; maximum[2]=values[5];
+            for(int axis=0;axis<3;++axis)
+                if(!std::isfinite(minimum[axis]) ||
+                   !std::isfinite(maximum[axis]) ||
+                   minimum[axis]>maximum[axis] ||
+                   maximum[axis]-minimum[axis]>2.0f)
+                    return false;
+            return true;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool LegacyBuildAuthoredWeaponBounds(
+        GameTitle title, uint16_t renderModelTag, const BoneMatrix& modelRoot,
+        const float collisionRoot[3], const float wrist[3],
+        float output[][3])
+    {
+        const uint8_t* definition=nullptr;
+        const uint8_t* tagBase=nullptr;
+        if(title==GameTitle::Halo3)
+        {
+            definition=Halo3LoadedTagDefinition(renderModelTag);
+            tagBase=g_halo3TagDataBase && *g_halo3TagDataBase
+                ? static_cast<const uint8_t*>(*g_halo3TagDataBase):nullptr;
+        }
+        else if(title==GameTitle::Halo3ODST)
+        {
+            definition=OdstLoadedTagDefinition(renderModelTag);
+            tagBase=g_odstTagDataBase && *g_odstTagDataBase
+                ? static_cast<const uint8_t*>(*g_odstTagDataBase):nullptr;
+        }
+        else if(title==GameTitle::HaloReach)
+        {
+            if(!ReachResolveRenderModelDescriptor(renderModelTag,definition))
+                return false;
+            // Reach's loaded tag-block word addresses use the same block-base
+            // table as the descriptor itself.
+            uint32_t wordAddress=0;
+            if(!SafeReadBytes(definition+0x58,&wordAddress,
+                              sizeof(wordAddress)) || !wordAddress)
+                return false;
+            const uint8_t* blockBase=nullptr;
+            if(!SafeReadBytes(reinterpret_cast<const uint8_t*>(
+                    g_reachCamera.base+kReachNodeRecordBlockTableRva)+
+                    static_cast<size_t>(wordAddress>>28)*8u,
+                    &blockBase,sizeof(blockBase)) || !blockBase)
+                return false;
+            tagBase=blockBase;
+        }
+        float minimum[3]{},maximum[3]{};
+        if(!LegacyReadCompressionBounds(
+                definition,tagBase,minimum,maximum))
+            return false;
+        float basis[9]{};
+        if(!NormalizedBasis(modelRoot,basis)) return false;
+        Halo4WeaponCollisionBounds bounds{};
+        memcpy(bounds.minimum,minimum,sizeof(minimum));
+        memcpy(bounds.maximum,maximum,sizeof(maximum));
+        return Halo4BuildWeaponCollisionBoundsSamples(
+            bounds,modelRoot.scale,basis,modelRoot.translation,
+            collisionRoot,wrist,output,kLegacyCollisionWeaponSamples)==
+            kLegacyCollisionWeaponSamples;
+    }
+
+    bool InstallLegacyWorldCollision(
+        LegacyWorldCollisionFeature& feature, GameTitle title,
+        uintptr_t base, size_t size, uint32_t generation,
+        void* detour, uint32_t expectedRva,
+        const char* signature, bool fourArgumentResolver)
+    {
+        const char* const titleName=title==GameTitle::Halo3?"Halo 3":
+            title==GameTitle::Halo3ODST?"ODST":
+            title==GameTitle::HaloReach?"Reach":"Unknown title";
+        static constexpr char kFiveArgumentResolveSignature[]=
+            "48 8B C4 48 89 58 08 48 89 70 10 48 89 78 18 55 41 56 41 57 "
+            "48 8D 68 A9 48 81 EC C0 00 00 00 48 8B 05 ?? ?? ?? ?? 41 83 CF "
+            "FF 48 89 45 BF 49 8B F8 0F BA 6D BF 09";
+        const char* const resolveSignature=
+            signature?signature:kFiveArgumentResolveSignature;
+        feature.title=title;
+        feature.generation=generation;
+        feature.fourArgumentResolver=fourArgumentResolver;
+        feature.installed.store(false,std::memory_order_release);
+        feature.nextQueryAtMs.store(0,std::memory_order_release);
+        feature.worker[0]=LegacyCollisionWorkerHand{};
+        feature.worker[1]=LegacyCollisionWorkerHand{};
+        feature.callbacks.store(0,std::memory_order_release);
+        feature.queries.store(0,std::memory_order_release);
+        feature.contacts[0].store(0,std::memory_order_release);
+        feature.contacts[1].store(0,std::memory_order_release);
+        feature.weaponContacts.store(0,std::memory_order_release);
+        feature.boundsPublished.store(0,std::memory_order_release);
+        feature.boundsFallbacks.store(0,std::memory_order_release);
+        feature.applied[0].store(0,std::memory_order_release);
+        feature.applied[1].store(0,std::memory_order_release);
+        feature.failures.store(0,std::memory_order_release);
+        const uintptr_t hit=sig::Find(base,size,resolveSignature);
+        const bool unique=hit && !sig::Find(
+            hit+1,base+size-hit-1,resolveSignature);
+        if(!unique || hit!=base+expectedRva)
+        {
+            LOG("%s world collision StockFallback: editing-kit-mapped "
+                "collision resolver was %s%s; camera, hands, input and "
+                "OpenXR remain live",titleName,
+                unique?"unique":"missing/ambiguous",
+                unique&&hit!=base+expectedRva?" but moved":"");
+            return false;
+        }
+        void* trampoline=nullptr;
+        void* const target=reinterpret_cast<void*>(hit);
+        if(MH_CreateHook(target,detour,&trampoline)!=MH_OK || !trampoline)
+        {
+            LOG("%s world collision StockFallback: optional resolver hook "
+                "creation failed",titleName);
+            return false;
+        }
+        feature.target=target;
+        feature.original=trampoline;
+        if(MH_EnableHook(target)!=MH_OK)
+        {
+            MH_RemoveHook(target);
+            feature.target=nullptr;
+            feature.original=nullptr;
+            LOG("%s world collision StockFallback: optional resolver hook "
+                "enable failed",titleName);
+            return false;
+        }
+        feature.installed.store(true,std::memory_order_release);
+        LOG("%s world collision Installed: native resolve wrapper +0x%X; "
+            "final visible hand extrema and render-model compression bounds; "
+            "33 ms bounded sweeps, contact haptics, fail-open isolation",
+            titleName,expectedRva);
+        return true;
+    }
+
+    void LegacyWorldCollisionLogTick()
+    {
+        const GameTitle title=TitleAdapter_GetActiveTitle();
+        LegacyWorldCollisionFeature* feature=LegacyCollisionForTitle(title);
+        if(!feature) return;
+        static uint64_t lastLogMs=0;
+        const uint64_t now=GetTickCount64();
+        if(now-lastLogMs<2000) return;
+        lastLogMs=now;
+        const char* const name=title==GameTitle::Halo3?"Halo 3":
+            title==GameTitle::Halo3ODST?"ODST":"Reach";
+        LOG("%s world collision: installed=%d requested=%d, %llu native "
+            "queries, left/right contacts %llu/%llu, weapon contacts %llu, "
+            "authored bounds %llu published / %llu hand-only fallback, "
+            "visible corrections %llu/%llu, callbacks %u, isolated "
+            "failures %llu",
+            name,
+            feature->installed.load(std::memory_order_acquire)?1:0,
+            g_config.world_collision?1:0,
+            static_cast<unsigned long long>(feature->queries.exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->contacts[0].exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->contacts[1].exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->weaponContacts.exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->boundsPublished.exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->boundsFallbacks.exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->applied[0].exchange(
+                0,std::memory_order_relaxed)),
+            static_cast<unsigned long long>(feature->applied[1].exchange(
+                0,std::memory_order_relaxed)),
+            feature->callbacks.load(std::memory_order_acquire),
+            static_cast<unsigned long long>(feature->failures.load(
+                std::memory_order_relaxed)));
+    }
+
     const ReachFpLayoutCacheEntry* ReachFindFrozenLayout(
         int liveCount, int view, int id, int slot)
     {
@@ -22499,6 +23280,12 @@ namespace
                 }
                 else
                 {
+                    LegacyPublishWorldCollisionVolumes(
+                        GameTitle::HaloReach,tag,fp,*root,
+                        g_fpPaletteScratch,
+                        LegacyCollisionIgnoredObject(GameTitle::HaloReach),
+                        g_reachCamera.generation.load(
+                            std::memory_order_acquire));
                     // Reach temporarily forces the accepted floating-hands
                     // presentation independent of the universal config. The
                     // exact hand masks and held-object boundary come from the
@@ -24909,7 +25696,7 @@ namespace
     bool ScanForReachDetourIngress(bool& busy)
     {
         static bool rangesResolved = false;
-        static ReachDetourCodeRange ranges[14]{};
+        static ReachDetourCodeRange ranges[15]{};
         if (!rangesResolved)
         {
             const void* functions[] = {
@@ -24927,6 +25714,7 @@ namespace
                 reinterpret_cast<const void*>(&ReachUnitAdjustHook),
                 reinterpret_cast<const void*>(&ReachFirstPersonRenderGateHook),
                 reinterpret_cast<const void*>(&ReachHudXformDetour),
+                reinterpret_cast<const void*>(&ReachCollisionResolveDetour),
             };
             static_assert(_countof(functions) == _countof(ranges));
             bool resolved = true;
@@ -24954,6 +25742,7 @@ namespace
             g_reachUnitAdjustTarget,
             g_reachFirstPersonRenderGateTarget,
             g_reachHudXformTarget,
+            g_reachWorldCollision.target,
         };
         void* const trampolines[] = {
             reinterpret_cast<void*>(g_reachOrigMainRenderView),
@@ -24970,6 +25759,7 @@ namespace
             reinterpret_cast<void*>(g_origReachUnitAdjust),
             reinterpret_cast<void*>(g_origReachFirstPersonRenderGate),
             reinterpret_cast<void*>(g_origReachHudXform),
+            g_reachWorldCollision.original,
         };
         static_assert(_countof(targets) == _countof(ranges));
         static_assert(_countof(trampolines) == _countof(ranges));
@@ -25023,6 +25813,9 @@ namespace
         }
         if (g_reachCamera.activeCallbacks.load(std::memory_order_acquire) != 0)
             busy = true;
+        if (g_reachWorldCollision.callbacks.load(
+                std::memory_order_acquire) != 0)
+            busy = true;
 
         // Hooks are disabled and every other live thread remains suspended
         // through this RIP/counter snapshot, so an all-clear survives resume.
@@ -25035,6 +25828,8 @@ namespace
         for (unsigned waited = 0; waited < 2000; ++waited)
         {
             if (g_reachCamera.activeCallbacks.load(
+                    std::memory_order_acquire) == 0 &&
+                g_reachWorldCollision.callbacks.load(
                     std::memory_order_acquire) == 0)
             {
                 bool ingressBusy = false;
@@ -25045,6 +25840,8 @@ namespace
                 }
                 if (!ingressBusy &&
                     g_reachCamera.activeCallbacks.load(
+                        std::memory_order_acquire) == 0 &&
+                    g_reachWorldCollision.callbacks.load(
                         std::memory_order_acquire) == 0)
                     return true;
             }
@@ -25069,9 +25866,12 @@ namespace
             false, std::memory_order_release);
         g_reachFirstPersonRenderGateReturn.store(
             0, std::memory_order_release);
+        g_reachWorldCollision.installed.store(
+            false, std::memory_order_release);
         RevokeReachFiringOriginFeature();
         bool disabledAll = true;
         void* const targets[] = {
+            g_reachWorldCollision.target,
             g_reachHudXformTarget,
             g_reachFirstPersonRenderGateTarget,
             g_reachUnitAdjustTarget,
@@ -25103,6 +25903,23 @@ namespace
             return false;
 
         bool removedAll = true;
+        if (g_reachWorldCollision.target)
+        {
+            const MH_STATUS status =
+                MH_RemoveHook(g_reachWorldCollision.target);
+            if (status == MH_OK || status == MH_ERROR_NOT_CREATED)
+            {
+                g_reachWorldCollision.target = nullptr;
+                g_reachWorldCollision.original = nullptr;
+            }
+            else
+            {
+                removedAll = false;
+                LOG("Reach world collision cleanup: hook remove failed for "
+                    "%p (%d)", g_reachWorldCollision.target,
+                    static_cast<int>(status));
+            }
+        }
         if (g_reachHudXformTarget)
         {
             const MH_STATUS status = MH_RemoveHook(g_reachHudXformTarget);
@@ -25546,6 +26363,13 @@ namespace
         g_reachCamera.base = 0;
         g_reachCamera.size = 0;
         g_reachCamera.generation = 0;
+        g_reachWorldCollision.title = GameTitle::None;
+        g_reachWorldCollision.generation = 0;
+        g_reachWorldCollision.fourArgumentResolver = false;
+        g_reachWorldCollision.nextQueryAtMs.store(
+            0, std::memory_order_release);
+        g_reachWorldCollision.worker[0] = LegacyCollisionWorkerHand{};
+        g_reachWorldCollision.worker[1] = LegacyCollisionWorkerHand{};
         g_reachCamera.installedAtMs = 0;
         g_reachCamera.motionBlurVars[0] = {};
         g_reachCamera.motionBlurVars[1] = {};
@@ -27814,6 +28638,20 @@ namespace
             RemoveReachCameraCore();
             return false;
         }
+        // HREK reach_tag_test.exe+0x4166A0 proves the same swept-point
+        // collision behavior as Halo 3, but the optimized retail wrapper
+        // specializes the second ignored object to NONE and exposes four
+        // arguments. Keep that engine-specific ABI in its own detour; a
+        // missing/moved signature leaves only this optional feature stock.
+        static constexpr char kReachCollisionResolveSignature[]=
+            "48 89 5C 24 20 55 56 57 41 56 41 57 48 8D 6C 24 D1 48 81 EC "
+            "D0 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 45 1F 41 83 "
+            "CF FF 48 8D 45 AF 48 89 44 24 38 49 8B F8";
+        InstallLegacyWorldCollision(
+            g_reachWorldCollision, GameTitle::HaloReach, base, size,
+            generation,
+            reinterpret_cast<void*>(&ReachCollisionResolveDetour),
+            0x0012C5D4, kReachCollisionResolveSignature, true);
         LOG("Reach camera core installed: outer/inner stereo + FP "
             "interpolation/palette + per-eye world-projection camera "
             "transactions hooked; waiting one-second fresh-camera interval "
@@ -38616,6 +39454,7 @@ namespace
             }
 #endif
             {
+                LegacyWorldCollisionLogTick();
                 const bool halo4Active = activeTitle &&
                     activeTitle->title == GameTitle::Halo4;
                 // Gate lifecycle first, independent of the observation below
@@ -39461,10 +40300,11 @@ bool Game_PhysicalMeleePulseActive(uint64_t nowMs)
 
     // The normal VR input path maps the Quest right squeeze/grip to
     // XINPUT_GAMEPAD_RIGHT_SHOULDER for every title. That is the only verified
-    // VR melee transport in this build, so H2 uses it too; do not invent a
-    // face-button mapping. H3, ODST and Reach remain disabled until their own
-    // collision transactions have editing-kit proof.
-    if (title != GameTitle::Halo2)
+    // VR melee transport in this build, so every independently admitted title
+    // uses it too; do not invent a per-game face-button mapping. The native
+    // game still owns range, target selection, animation, damage and effects.
+    if (title != GameTitle::Halo2 && title != GameTitle::Halo3 &&
+        title != GameTitle::Halo3ODST && title != GameTitle::HaloReach)
         return false;
     if (!g_config.world_collision || !g_config.physical_melee ||
         !g_enabled.load(std::memory_order_acquire) ||
@@ -39480,6 +40320,25 @@ bool Game_PhysicalMeleePulseActive(uint64_t nowMs)
             Halo2Observer6Dof_FinalPaletteArmed() &&
             Halo2Observer6Dof_WorldCollisionActive();
 #endif
+        break;
+    case GameTitle::Halo3:
+        titleArmed = g_renderHooked.load(std::memory_order_acquire) &&
+            g_halo3WorldCollision.installed.load(
+                std::memory_order_acquire) &&
+            g_halo3WorldCollision.generation ==
+                TitleAdapter_GetGeneration(GameTitle::Halo3);
+        break;
+    case GameTitle::Halo3ODST:
+        titleArmed = g_odstCamera.armed.load(std::memory_order_acquire) &&
+            g_odstWorldCollision.installed.load(std::memory_order_acquire) &&
+            g_odstWorldCollision.generation ==
+                TitleAdapter_GetGeneration(GameTitle::Halo3ODST);
+        break;
+    case GameTitle::HaloReach:
+        titleArmed = g_reachCamera.armed.load(std::memory_order_acquire) &&
+            g_reachWorldCollision.installed.load(std::memory_order_acquire) &&
+            g_reachWorldCollision.generation ==
+                TitleAdapter_GetGeneration(GameTitle::HaloReach);
         break;
     default:
         break;

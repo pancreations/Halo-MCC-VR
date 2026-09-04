@@ -1697,13 +1697,13 @@ void ConfigSave()
     fprintf(f, "# (default %d)\n", d.floating_hands ? 1 : 0);
     fprintf(f, "floating_hands = %d\n\n", g_config.floating_hands ? 1 : 0);
     fprintf(f, "# World collision (experimental): hands and held weapons stop on\n");
-    fprintf(f, "# world geometry, provide gentle contact haptics, and can nudge live\n");
-    fprintf(f, "# physics objects. Implemented for Halo 2 and Halo 4.\n");
+    fprintf(f, "# world geometry and provide gentle contact haptics. Implemented for\n");
+    fprintf(f, "# Halo 2, Halo 3, ODST, Reach, and Halo 4.\n");
     fprintf(f, "# (default %d)\n", d.world_collision ? 1 : 0);
     fprintf(f, "world_collision = %d\n\n", g_config.world_collision ? 1 : 0);
     fprintf(f, "# Physical melee (experimental): a fast tracked hand/weapon swing\n");
     fprintf(f, "# asks the active title for its native melee action. Requires world_collision.\n");
-    fprintf(f, "# Implemented for Halo 2 and Halo 4; other titles stay stock.\n");
+    fprintf(f, "# Implemented for Halo 2, Halo 3, ODST, Reach, and Halo 4.\n");
     fprintf(f, "# (default %d)\n", d.physical_melee ? 1 : 0);
     fprintf(f, "physical_melee = %d\n", g_config.physical_melee ? 1 : 0);
     fprintf(f, "# Required controller/weapon sample speed in metres per second.\n");

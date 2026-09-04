@@ -388,6 +388,9 @@ namespace
     void* g_nativeAimTarget = nullptr;
     std::atomic<uintptr_t> g_nativeAimOriginal{0};
     std::atomic<uintptr_t> g_objectDatumAccessor{0};
+    // Decoded from the independently verified generic loaded-tag resolver.
+    // H2's tag blocks store word-addresses relative to this base.
+    std::atomic<uintptr_t> g_halo2TagDataBaseSlot{0};
 
     // Official H2EK collisions.cpp `collision_test_vector` and
     // object_set_velocity(object, real, real, real), mapped independently to
@@ -418,7 +421,7 @@ namespace
         uint32_t sampleCount = 0;
         int32_t ignoredUnit = -1;
         int32_t ignoredWeapon = -1;
-        float samples[kHalo2WorldCollisionSampleCount][3]{};
+        float samples[kHalo2WorldCollisionMaxSamples][3]{};
     };
     struct Halo2CollisionCorrectionPublication
     {
@@ -435,7 +438,7 @@ namespace
         uint32_t generation = 0;
         uint64_t publishedAtMs = 0;
         uint32_t sampleCount = 0;
-        float accepted[kHalo2WorldCollisionSampleCount][3]{};
+        float accepted[kHalo2WorldCollisionMaxSamples][3]{};
     };
     struct Halo2WorldCollisionFeature
     {
@@ -453,6 +456,8 @@ namespace
         std::atomic<uint64_t> queries{0};
         std::atomic<uint64_t> contacts[2]{};
         std::atomic<uint64_t> weaponContacts{0};
+        std::atomic<uint64_t> weaponBoundsPublished{0};
+        std::atomic<uint64_t> weaponBoundsFallbacks{0};
         std::atomic<uint64_t> applied[2]{};
         std::atomic<uint64_t> pushes{0};
         std::atomic<uint64_t> failures{0};
@@ -1230,7 +1235,7 @@ namespace
     {
         if (hand < 0 || hand > 1 || !generation || !samples ||
             sampleCount == 0 ||
-            sampleCount > kHalo2WorldCollisionSampleCount)
+            sampleCount > kHalo2WorldCollisionMaxSamples)
             return;
         for (uint32_t sample = 0; sample < sampleCount; ++sample)
             if (!Halo2WorldCollisionFinite(samples[sample])) return;
@@ -1266,7 +1271,7 @@ namespace
             ignoredWeapon = publication.ignoredWeapon;
             sampleCount = publication.sampleCount;
             if (!generation || sampleCount == 0 ||
-                sampleCount > kHalo2WorldCollisionSampleCount)
+                sampleCount > kHalo2WorldCollisionMaxSamples)
                 return false;
             std::memcpy(samples, publication.samples,
                 sizeof(float) * sampleCount * 3);
@@ -1280,9 +1285,100 @@ namespace
         return false;
     }
 
+    bool Halo2BuildAuthoredWeaponCollisionSamples(
+        uint32_t renderModelTag, const float* gunMatrices,
+        const float correction[3], float output[][3]) noexcept
+    {
+        if (renderModelTag == UINT32_MAX || !gunMatrices || !correction ||
+            !output)
+            return false;
+        const auto graphGet = reinterpret_cast<Halo2GraphDefinitionGetFn>(
+            g_graphDefinitionGet.load(std::memory_order_acquire));
+        const auto tagBaseSlot = reinterpret_cast<unsigned char**>(
+            g_halo2TagDataBaseSlot.load(std::memory_order_acquire));
+        if (!graphGet || !tagBaseSlot)
+            return false;
+
+        Halo2FirstPersonTransform root{};
+        if (!Halo2ReadFirstPersonTransform(gunMatrices, root))
+            return false;
+
+        __try
+        {
+            const auto* definition = static_cast<const uint8_t*>(
+                graphGet(renderModelTag));
+            unsigned char* const tagBase = *tagBaseSlot;
+            if (!definition || !tagBase)
+                return false;
+            // Official H2EK render_model layout: name/flags occupy +0..+7,
+            // import-info is the first tag block at +8, and compression-info
+            // is the second at +0x10. Its element begins with the exact six
+            // position-bound floats (min/max X, Y, Z).
+            const int32_t count = *reinterpret_cast<const int32_t*>(
+                definition + 0x10);
+            const uint32_t wordAddress = *reinterpret_cast<const uint32_t*>(
+                definition + 0x14);
+            if (count != 1 || !wordAddress)
+                return false;
+            const float* bounds = reinterpret_cast<const float*>(
+                tagBase + static_cast<size_t>(wordAddress) * 4u);
+            float minimum[3]{bounds[0], bounds[2], bounds[4]};
+            float maximum[3]{bounds[1], bounds[3], bounds[5]};
+            for (int axis = 0; axis < 3; ++axis)
+                if (!std::isfinite(minimum[axis]) ||
+                    !std::isfinite(maximum[axis]) ||
+                    minimum[axis] > maximum[axis] ||
+                    maximum[axis] - minimum[axis] > 2.0f)
+                    return false;
+
+            float local[kHalo2WeaponCollisionBoundsSampleCount][3]{};
+            int sample = 0;
+            for (int x = 0; x < 2; ++x)
+                for (int y = 0; y < 2; ++y)
+                    for (int z = 0; z < 2; ++z)
+                    {
+                        local[sample][0] = x ? maximum[0] : minimum[0];
+                        local[sample][1] = y ? maximum[1] : minimum[1];
+                        local[sample][2] = z ? maximum[2] : minimum[2];
+                        ++sample;
+                    }
+            const float centre[3]{
+                (minimum[0] + maximum[0]) * 0.5f,
+                (minimum[1] + maximum[1]) * 0.5f,
+                (minimum[2] + maximum[2]) * 0.5f};
+            for (int axis = 0; axis < 3; ++axis)
+                for (int side = 0; side < 2; ++side)
+                {
+                    std::memcpy(local[sample], centre, sizeof(centre));
+                    local[sample][axis] = side ? maximum[axis] : minimum[axis];
+                    ++sample;
+                }
+            for (sample = 0;
+                 sample < kHalo2WeaponCollisionBoundsSampleCount; ++sample)
+            {
+                for (int row = 0; row < 3; ++row)
+                {
+                    float rotated = 0.0f;
+                    for (int column = 0; column < 3; ++column)
+                        rotated += root.rotation[column * 3 + row] *
+                            local[sample][column];
+                    output[sample][row] = root.translation[row] -
+                        correction[row] + root.scale * rotated;
+                }
+                if (!Halo2WorldCollisionFinite(output[sample]))
+                    return false;
+            }
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     void Halo2PublishFinalPacketCollisionVolumes(
         const Halo2VisibleConsumerContext& context, float* handsMatrices,
-        float* gunMatrices) noexcept
+        float* gunMatrices, uint32_t gunRenderModelTag) noexcept
     {
         if (!g_config.world_collision || !handsMatrices || !gunMatrices ||
             !context.valid || context.handsCount == 0 ||
@@ -1335,11 +1431,11 @@ namespace
         if (!leftCount)
             std::memcpy(leftPoints[leftCount++],
                 context.collisionLeftCarrier.position, sizeof(float) * 3);
-        float rightSamples[kHalo2WorldCollisionSampleCount][3]{};
+        float rightHandSamples[kHalo2WorldCollisionSampleCount][3]{};
         float leftSamples[kHalo2WorldCollisionSampleCount][3]{};
         if (Halo2SelectWorldCollisionExtrema(
                 context.collisionRightCarrier.position, &rightPoints[0][0],
-                rightCount, rightSamples,
+                rightCount, rightHandSamples,
                 kHalo2WorldCollisionSampleCount) !=
                 kHalo2WorldCollisionSampleCount ||
             Halo2SelectWorldCollisionExtrema(
@@ -1348,6 +1444,26 @@ namespace
                 kHalo2WorldCollisionSampleCount) !=
                 kHalo2WorldCollisionSampleCount)
             return;
+        float rightSamples[kHalo2WorldCollisionMaxSamples][3]{};
+        std::memcpy(rightSamples, rightHandSamples,
+            sizeof(rightHandSamples));
+        uint32_t rightSampleCount = kHalo2WorldCollisionSampleCount;
+        float weaponSamples[kHalo2WeaponCollisionBoundsSampleCount][3]{};
+        if (Halo2BuildAuthoredWeaponCollisionSamples(
+                gunRenderModelTag, gunMatrices,
+                context.rightCollisionCorrection, weaponSamples))
+        {
+            std::memcpy(rightSamples + rightSampleCount, weaponSamples,
+                sizeof(weaponSamples));
+            rightSampleCount += kHalo2WeaponCollisionBoundsSampleCount;
+            g_halo2WorldCollision.weaponBoundsPublished.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        else
+        {
+            g_halo2WorldCollision.weaponBoundsFallbacks.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         const uint32_t generation =
             g_generation.load(std::memory_order_acquire);
         Halo2PublishCollisionTarget(
@@ -1357,7 +1473,7 @@ namespace
         Halo2PublishCollisionTarget(
             1, generation, static_cast<int32_t>(context.unitObject),
             static_cast<int32_t>(context.weaponObject), rightSamples,
-            kHalo2WorldCollisionSampleCount);
+            rightSampleCount);
     }
 
     void* Halo2ObjectFromIndex(uint32_t objectIndex) noexcept
@@ -1466,7 +1582,7 @@ namespace
             uint32_t targetGeneration = 0, sampleCount = 0;
             uint64_t targetAtMs = 0;
             int32_t ignoredUnit = -1, ignoredWeapon = -1;
-            float desired[kHalo2WorldCollisionSampleCount][3]{};
+            float desired[kHalo2WorldCollisionMaxSamples][3]{};
             auto& worker = g_halo2WorldCollision.worker[hand];
             if (!Halo2ReadCollisionTarget(
                     hand, targetGeneration, targetAtMs, ignoredUnit,
@@ -1790,7 +1906,8 @@ namespace
                             context.leftScale, context.worldScale, result))
                     {
                         Halo2PublishFinalPacketCollisionVolumes(
-                            context, context.handsMatrices, matrices);
+                            context, context.handsMatrices, matrices,
+                            modelObject);
                         context.handsApplied = true;
                         context.gunApplied = true;
                         g_visibleConsumerHandsApplied.fetch_add(
@@ -2186,6 +2303,7 @@ namespace
             {
                 float* handsMatrices = nullptr;
                 float* gunMatrices = nullptr;
+                uint32_t gunRenderModelTag = UINT32_MAX;
                 for (int packetIndex = 0; packetIndex < packetCount;
                      ++packetIndex)
                 {
@@ -2203,6 +2321,8 @@ namespace
                     else if (!gunMatrices &&
                              packetObject == candidate.weaponObject)
                     {
+                        gunRenderModelTag =
+                            *reinterpret_cast<const uint32_t*>(packet);
                         gunMatrices = reinterpret_cast<float*>(
                             packet + kHalo2FirstPersonRenderPacketHeaderBytes);
                     }
@@ -2242,7 +2362,8 @@ namespace
                         candidate.leftScale, candidate.worldScale, packetResult))
                 {
                     Halo2PublishFinalPacketCollisionVolumes(
-                        candidate, handsMatrices, gunMatrices);
+                        candidate, handsMatrices, gunMatrices,
+                        gunRenderModelTag);
                     auto& classic = g_classicPacketContext;
                     classic.hands = handsMatrices;
                     classic.gun = gunMatrices;
@@ -3923,6 +4044,7 @@ namespace
     {
         if (g_rejectedGeneration == generation)
             return false;
+        g_halo2TagDataBaseSlot.store(0, std::memory_order_release);
 
         HMODULE module = nullptr;
         if (!GetModuleHandleExW(
@@ -4259,12 +4381,22 @@ namespace
                 findMatch == base + kHalo2AnimationGraphFindNodeByFlagsRva;
             if (graphGetOk && nodeGetOk)
             {
+                const uintptr_t graphGetAddress =
+                    base + kHalo2AnimationGraphDefinitionGetRva;
+                const uintptr_t tagBaseSlot = graphGetAddress + 24 +
+                    *reinterpret_cast<const int32_t*>(graphGetAddress + 20);
                 g_graphDefinitionGet.store(
-                    base + kHalo2AnimationGraphDefinitionGetRva,
+                    graphGetAddress,
                     std::memory_order_release);
                 g_graphGetSkeletonNode.store(
                     base + kHalo2AnimationGraphGetSkeletonNodeRva,
                     std::memory_order_release);
+                if (tagBaseSlot >= base &&
+                    tagBaseSlot + sizeof(void*) <= base + size)
+                {
+                    g_halo2TagDataBaseSlot.store(
+                        tagBaseSlot, std::memory_order_release);
+                }
                 if (findOk)
                 {
                     g_graphFindNodeByFlags.store(
@@ -5047,8 +5179,9 @@ namespace
                     std::memory_order_relaxed)));
         LOG("Halo 2 world collision: installed=%d active=%d requested=%d, "
             "%llu native queries, left/right contacts %llu/%llu, weapon "
-            "contacts %llu, corrections applied %llu/%llu, dynamic pushes "
-            "%llu, isolated failures %llu",
+            "contacts %llu, authored weapon bounds %llu published / %llu "
+            "hand-node fallback, corrections applied %llu/%llu, dynamic "
+            "pushes %llu, isolated failures %llu",
             g_halo2WorldCollision.installed.load(std::memory_order_relaxed)
                 ? 1 : 0,
             g_halo2WorldCollision.active.load(std::memory_order_relaxed)
@@ -5064,6 +5197,12 @@ namespace
                     std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_halo2WorldCollision.weaponContacts.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_halo2WorldCollision.weaponBoundsPublished.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_halo2WorldCollision.weaponBoundsFallbacks.load(
                     std::memory_order_relaxed)),
             static_cast<unsigned long long>(
                 g_halo2WorldCollision.applied[0].load(

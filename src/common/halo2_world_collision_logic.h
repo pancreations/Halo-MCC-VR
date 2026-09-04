@@ -7,6 +7,10 @@
 // the engine's own visible geometry in both Classic and Anniversary, so this
 // does not invent a weapon length or copy Halo 4's render-model layout.
 inline constexpr int kHalo2WorldCollisionSampleCount = 7;
+inline constexpr int kHalo2WeaponCollisionBoundsSampleCount = 14;
+inline constexpr int kHalo2WorldCollisionMaxSamples =
+    kHalo2WorldCollisionSampleCount +
+    kHalo2WeaponCollisionBoundsSampleCount;
 
 struct Halo2WorldCollisionResolution
 {

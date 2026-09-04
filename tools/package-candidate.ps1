@@ -368,6 +368,34 @@ try {
             'physical melee fires once per tracked swing, supports the five metre ceiling') {
         throw 'H4 world-contact Stage 9 gate failed: accepted Stage 6 geometry, rejected Stage 7/8 routes, OpenXR velocity sampling, right-shoulder melee transaction, or its safety proofs are missing.'
     }
+    if ($halo2WorldCollisionLogicSource -notmatch
+            'kHalo2WeaponCollisionBoundsSampleCount\s*=\s*14' -or
+        $halo2WorldCollisionLogicSource -notmatch
+            'kHalo2WorldCollisionMaxSamples' -or
+        $halo2ObserverSource -notmatch
+            'Halo2BuildAuthoredWeaponCollisionSamples' -or
+        $halo2ObserverSource -notmatch
+            'g_halo2TagDataBaseSlot' -or
+        $gameSource -notmatch
+            'kLegacyCollisionMaxSamples\s*=\s*21' -or
+        $gameSource -notmatch 'LegacyBuildAuthoredWeaponBounds' -or
+        $gameSource -notmatch
+            '0x001FFD18' -or
+        $gameSource -notmatch
+            '0x00231EC4' -or
+        $gameSource -notmatch
+            '0x0012C5D4' -or
+        $gameSource -notmatch 'ReachCollisionResolveDetour' -or
+        $gameSource -notmatch
+            'kReachCollisionResolveSignature' -or
+        $gameSource -notmatch
+            'feature\.fourArgumentResolver' -or
+        $gameSource -notmatch
+            'GameTitle::Halo3ODST' -or
+        $gameSource -notmatch
+            'GameTitle::HaloReach') {
+        throw 'All-title world-contact gate failed: H2 authored weapon bounds, title-native H3/ODST/Reach collision wrappers, Reach ABI isolation, or shared melee admission is missing.'
+    }
 
     Invoke-Tool { & cmake --preset $packagePreset }
     if ($LASTEXITCODE -ne 0) {
@@ -435,7 +463,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h2-world-contact-and-physical-melee-test',
+        'all-title-world-contact-and-physical-melee-test',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -482,7 +510,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 40
+        schema_version = 41
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -680,7 +708,7 @@ try {
                 collision_flags = '0x2480000F'
                 query_interval_ms = 33
                 publication_max_age_ms = 150
-                shape = 'final-visible-packet-root-plus-six-extrema'
+                shape = 'fixed-seven-hand-samples-plus-loaded-h2ek-render-model-bounds-eight-corners-six-face-centres'
                 object_local_velocity_rva = '0x0090A000'
                 haptic_amplitude = 0.18
                 physical_melee = [ordered]@{
@@ -930,6 +958,27 @@ try {
                 'floaty-or-aim-failure-leaves-that-feature-stock-camera-stereo-and-openxr-remain-armed'
             evidence = 'docs/HALO2-SIGNATURE-EVIDENCE.md'
         }
+        gen3_world_contact_candidate = [ordered]@{
+            id = 'GEN3-WC-1'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            titles = @('Halo 3', 'Halo 3: ODST', 'Halo: Reach')
+            default_enabled = $false
+            config_key = 'world_collision'
+            physical_melee_config_key = 'physical_melee'
+            threshold_range_metres_per_second = '0.30-5.00'
+            collision_shape = 'fixed-seven-visible-hand-samples-plus-loaded-render-model-compression-bounds-eight-corners-six-face-centres'
+            query_interval_ms = 33
+            publication_max_age_ms = 150
+            halo3_wrapper_rva = '0x001FFD18'
+            odst_wrapper_rva = '0x00231EC4'
+            reach_wrapper_rva = '0x0012C5D4'
+            halo3_odst_abi = 'five-argument-start-desired-accepted-ignore-a-ignore-b'
+            reach_abi = 'four-argument-retail-specialization-ignore-b-none'
+            action = 'short-native-right-shoulder-pulse-matching-quest-right-grip-route'
+            haptic_amplitude = 0.18
+            failure_policy = 'feature-local-stock-fallback-camera-render-input-and-openxr-remain-armed'
+            evidence = 'docs/ALL-TITLE-WORLD-COLLISION-EVIDENCE.md'
+        }
         # Reach support is permanent, while player-visible optional features
         # fail open independently and never disarm the working camera core.
         reach_permanent = $true
@@ -1007,7 +1056,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'UNTESTED Halo 2 world-contact candidate: Classic and Anniversary final visible hand/weapon packets publish authored root/extrema volumes to the independently H2EK-mapped native collision vector test. Contacts clamp the applicable carrier, pulse haptics, and optionally nudge native physics objects. Physical swings use the same virtual right-shoulder action as the existing Quest lower-right-grip route, with threshold 0.30-5.00 m/s. Halo 4 Stage 6/9 remains byte-for-byte behaviorally unchanged. H3, ODST, Reach, and CE world collision remain stock pending independent editing-kit proof. Package-only; no MCC installation was performed.'
+        note = 'UNTESTED cumulative all-title world-contact candidate: Halo 2 Classic/Anniversary retain accepted hand collision and physical melee while replacing the weak weapon-node proxy with loaded H2EK render-model compression bounds. Halo 3, ODST, and Reach add independently editing-kit-mapped native collision wrappers, final-visible hand plus authored weapon-bound volumes, gentle haptics, and the verified Quest lower-right-grip/right-shoulder physical-melee route with threshold 0.30-5.00 m/s. Reach uses its retail-specific four-argument wrapper. Halo 4 Stage 6/9 remains unchanged. CE remains excluded. Every new feature fails open independently. Package-only; no MCC installation was performed.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

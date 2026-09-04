@@ -2,16 +2,17 @@
 
 ## Candidate scope
 
-This is an unaccepted, default-off Halo 2 Classic/Anniversary port of Halo 4's
-headset-accepted player experience: tracked hands and the full visible weapon
-stop at engine world contacts, contact produces gentle haptics, live physics
-objects can be nudged, and a sufficiently fast controller swing requests the
-title's native melee action. Halo 4's accepted implementation is unchanged.
+Halo 2 Classic/Anniversary hand collision, haptics, and physical melee were
+accepted in the user's headset on 2026-09-03 from source `d35d078`. The
+node-extrema weapon proxy was not: the gun still passed through geometry. This
+successor keeps the accepted hand/melee transaction and replaces only that weak
+weapon proxy with authored render-model compression bounds. Halo 4's accepted
+implementation is unchanged.
 
 The implementation is deliberately title-native. It does not copy a Halo 4
 address, object layout, collision mask, render-model bound, or world scale.
-Halo 3, ODST, Reach, and CE remain stock for this option until their own editing
-kits and retail modules prove equivalent transactions.
+Halo 3, ODST, and Reach are handled by their independently proven Gen3 paths in
+`docs/ALL-TITLE-WORLD-COLLISION-EVIDENCE.md`. CE remains excluded.
 
 ## Pinned inputs
 
@@ -57,15 +58,20 @@ engine has composed the actual visible matrices, the collision publisher uses:
 
 - one carrier root;
 - minimum and maximum visible translations on X, Y, and Z;
-- the complete gun packet on the weapon hand; and
-- the engine-proven left/right hand subtrees.
+- the engine-proven left/right hand subtrees; and
+- the loaded weapon render model's one official compression record: eight
+  oriented corners and six face centres, transformed by the visible gun root.
 
-That seven-sample volume follows the authored gun actually in hand. It avoids
-inventing a weapon length and avoids importing Halo 4's 39-model catalog. A
-lock-free publication crosses to the native collision callback. Results older
-than 150 ms, non-finite values, generation mismatches, teleports, and excessive
-corrections are rejected. A valid correction is applied only to the relevant
-controller carrier on a later packet; stock packet production never waits.
+H2EK proves the render-model compression block at definition `+0x10/+0x14`;
+its first record begins with the X/Y/Z real bounds. The retail path resolves
+the active definition through the already signature-proven generic tag getter
+and its decoded tag-data base. It requires exactly one sane finite record and
+otherwise falls back to the accepted seven hand samples. It never copies a
+Halo 4 model catalog or invents a weapon length. A lock-free publication crosses
+to the native collision callback. Results older than 150 ms, non-finite values,
+generation mismatches, teleports, and excessive corrections are rejected. A
+valid correction is applied only to the relevant controller carrier on a later
+packet; stock packet production never waits.
 
 ## Dynamic objects
 
@@ -106,6 +112,7 @@ ownership, or suppresses stock collision.
 - Core tests: passed, including fraction/skin, finite-value, and visible-extrema
   behavior.
 - Signature gates: required at runtime and at packaging.
-- Headset acceptance: pending for both Halo 2 Classic and Anniversary.
+- Headset acceptance: hands, haptics, and physical melee accepted; authored
+  weapon bounds pending for both Halo 2 Classic and Anniversary.
 - Required regression: Halo 4 world collision and physical melee must remain
   unchanged in a headset test before this can advance the accepted pointer.

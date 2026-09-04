@@ -221,10 +221,10 @@ void Game_Halo4UpdateVrTurn(const VrPadState& pad);
 // so Halo 4 retains proximity, target selection and the complete melee action.
 bool Game_Halo4PhysicalMeleePulseActive(uint64_t nowMs);
 // Motion-to-native-melee dispatcher. Halo 4 delegates to its accepted Stage 9
-// implementation unchanged; Halo 2 is admitted only with its H2EK-native
-// collision transaction. Other engines remain stock until independently
-// proven. Both implemented titles use the verified Quest right-grip virtual
-// right-shoulder route and retain title-native animation, targeting and damage.
+// implementation unchanged; every other title is admitted only while its
+// editing-kit-mapped collision transaction is live. All titles use the verified
+// Quest right-grip virtual right-shoulder route and retain title-native
+// animation, targeting and damage.
 bool Game_PhysicalMeleePulseActive(uint64_t nowMs);
 // 3CR/3CX fold-in: the live Halo 4 CUI canvas values the visible-pass hide
 // last recorded - the positive base half-height (baseY) and the hide shift
