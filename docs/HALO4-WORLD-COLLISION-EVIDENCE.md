@@ -647,3 +647,20 @@ the right-shoulder bit. It must not alter the physical grip mapping or any
 accepted world-collision behavior. Stage 8 is disabled before that successor.
 Exact log SHA-256:
 `854A93E98760535A0609EDE636A473D7731ED22605431A196454CC4BCAB15607`.
+
+## Stage 9 Quest-grip melee-route candidate
+
+Stage 9 changes one behavior above the rejected Stage 8 package: a qualified
+OpenXR swing sets `XINPUT_GAMEPAD_RIGHT_SHOULDER` instead of
+`XINPUT_GAMEPAD_B`. This is not a new controller remap. The existing input
+merge already sets the identical right-shoulder bit when the Quest lower right
+grip crosses 0.6, and the user's headset result identifies that grip as the
+working Halo 4 melee action. Stage 8's verified velocity measurement,
+threshold, latch, 120 ms pulse, and 600 ms cooldown are retained exactly.
+
+The rejected B route is compiled dormant and the package gate requires both
+that state and the explicit right-shoulder merge. No physical grip binding,
+world-collision code, damage path, camera, rendering, HUD, or other title is
+changed. A headset pass requires a qualifying swing to show the native Halo 4
+melee animation rather than crouch, and an enemy inside Halo's ordinary melee
+range to receive the authored hit.

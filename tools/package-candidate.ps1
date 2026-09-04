@@ -93,6 +93,8 @@ try {
     }
     $gameSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\game.cpp'))
+    $inputSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\input.cpp'))
     $titleRuntimeSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\title_runtime_state.h'))
     $coreTestsSource = [IO.File]::ReadAllText(
@@ -302,7 +304,9 @@ try {
         $gameSource -notmatch
             'kEnableHalo4PhysicalMeleeStage7\s*=\s*false' -or
         $gameSource -notmatch
-            'kEnableHalo4PhysicalMeleeStage8\s*=\s*true' -or
+            'kEnableHalo4PhysicalMeleeStage8\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4PhysicalMeleeStage9\s*=\s*true' -or
         $halo4WorldCollisionSource -notmatch
             'kHalo4WeaponCollisionBoundsCount\s*==\s*39' -or
         $halo4WorldCollisionSource -notmatch
@@ -329,13 +333,15 @@ try {
         $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
         $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume' -or
         $gameSource -notmatch 'Game_Halo4PhysicalMeleePulseActive' -or
+        $inputSource -notmatch
+            'Game_Halo4PhysicalMeleePulseActive\s*\(\s*inputNow\s*\)\s*\)\s*\r?\n\s*btn\s*\|=\s*XINPUT_GAMEPAD_RIGHT_SHOULDER' -or
         $halo4WorldCollisionSource -notmatch
             'Halo4UpdatePhysicalMeleeVelocityLatch' -or
         $vrSource -notmatch 'XrSpaceVelocity' -or
         $vrSource -notmatch 'VR_GetControllerLinearVelocity' -or
         $coreTestsSource -notmatch
             'Halo 4 physical melee fires once per tracked swing') {
-        throw 'H4 world-contact Stage 8 gate failed: accepted Stage 6 geometry, rejected Stage 7, OpenXR velocity sampling, native-input melee transaction, or its safety proofs are missing.'
+        throw 'H4 world-contact Stage 9 gate failed: accepted Stage 6 geometry, rejected Stage 7/8 routes, OpenXR velocity sampling, right-shoulder melee transaction, or its safety proofs are missing.'
     }
 
     Invoke-Tool { & cmake --preset $packagePreset }
@@ -404,7 +410,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-stage8-openxr-velocity-melee',
+        'h4-world-contact-stage9-right-grip-melee',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -481,7 +487,7 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'H4-WORLD-CONTACT-STAGE8-OPENXR-VELOCITY-MELEE'
+            id = 'H4-WORLD-CONTACT-STAGE9-RIGHT-GRIP-MELEE'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             behavior = 'accepted-stage6-world-contact-plus-opt-in-openxr-velocity-native-melee'
             head_tracking = $true
@@ -578,7 +584,7 @@ try {
                 capability_enabled = $true
                 default_enabled = $false
                 config_key = 'world_collision'
-                stage = 8
+                stage = 9
                 rejected_stage1_enabled = $false
                 rejected_stage2_enabled = $false
                 rejected_stage3_enabled = $false
@@ -612,11 +618,12 @@ try {
                     threshold_config_key = 'physical_melee_swing_speed'
                     default_threshold_metres_per_second = 1.2
                     rejected_stage7_contact_identity_trigger_enabled = $false
+                    rejected_stage8_b_crouch_route_enabled = $false
                     trigger = 'either-controller-openxr-tracking-space-linear-velocity-threshold-crossing'
                     proximity_and_target = 'native-halo4-melee-action'
                     locomotion_false_trigger_policy = 'runtime-tracking-space-velocity-excludes-game-world-motion'
                     hysteresis_release_ratio = 0.55
-                    action = 'short-native-b-input-pulse-matching-accepted-manual-melee-route'
+                    action = 'short-native-right-shoulder-input-pulse-matching-quest-right-grip-melee-route'
                     pulse_ms = 120
                     cooldown_ms = 600
                     engine_ownership = 'native-halo4-melee-damage-animation-audio-ragdoll-networking'
@@ -954,7 +961,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 physical-melee Stage 8 test: accepted Stage 6 hand/weapon world collision remains unchanged and rejected Stage 7 targetless contact qualification stays dormant. Either controller now uses OpenXR runtime linear velocity in tracking-space metres per second, matching LivingFray HaloCEVR motion melee without inheriting world locomotion. A threshold crossing (default 1.20 m/s, adjustable 0.30-3.00) emits a 120 ms native B-input pulse with hysteresis and a 600 ms cooldown; Halo 4 owns proximity, target selection, authored damage, animation, sound, ragdoll response and networking. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'Halo 4 physical-melee Stage 9 test: accepted Stage 6 hand/weapon world collision and Stage 8 OpenXR motion qualification remain unchanged; rejected Stage 7 contact qualification and Stage 8 B/crouch output stay dormant. Either controller threshold crossing (default 1.20 m/s, adjustable 0.30-3.00) now emits a 120 ms virtual right-shoulder pulse, exactly matching the existing Quest lower-right-grip melee route, with hysteresis and a 600 ms cooldown. Halo 4 owns proximity, target selection, authored damage, animation, sound, ragdoll response and networking. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

@@ -215,10 +215,10 @@ bool Game_Halo4OwnsLookPitch();
 // Advances Halo 4's own VR turn (snap or smooth, per config) from one shared
 // pad sample. Inert unless Halo 4's motion aim is active.
 void Game_Halo4UpdateVrTurn(const VrPadState& pad);
-// Stage 8 physical melee: samples OpenXR tracking-space hand velocity and is
+// Stage 9 physical melee: samples OpenXR tracking-space hand velocity and is
 // true during a short threshold-qualified native melee-input pulse. The XInput
-// hook merges this with the user's existing B melee route so Halo 4 retains
-// ownership of proximity, target selection and the complete melee action.
+// hook merges this with the same right-shoulder route as the Quest right grip,
+// so Halo 4 retains proximity, target selection and the complete melee action.
 bool Game_Halo4PhysicalMeleePulseActive(uint64_t nowMs);
 // 3CR/3CX fold-in: the live Halo 4 CUI canvas values the visible-pass hide
 // last recorded - the positive base half-height (baseY) and the hide shift

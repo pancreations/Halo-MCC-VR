@@ -30526,15 +30526,14 @@ namespace
     // compression bounds authored in H4EK. Runtime checksum selects the exact
     // model; unknown identities fail open to the accepted right-hand volume.
     constexpr bool kEnableHalo4WeaponWorldCollisionStage6 = true;
-    // Stage 7 is a separate opt-in transaction over the accepted Stage 6
-    // geometry. A dynamic-object contact above the configured raw authored
-    // sample speed emits the same native B melee input used in the accepted
-    // headset configuration (the supplied logs record those manual B edges).
+    // Stage 7's dynamic-object contact qualifier never reached a living enemy
+    // and is retained dormant only as rejection evidence.
     constexpr bool kEnableHalo4PhysicalMeleeStage7 = false;
-    // Stage 8 follows LivingFray's proven motion-melee shape: OpenXR supplies
-    // controller velocity in tracking space and a threshold crossing requests
-    // Halo's normal melee control. Halo itself owns proximity and damage.
+    // Stage 8 proved the OpenXR motion path, but its B output crouched in the
+    // user's Halo 4 layout. Stage 9 preserves that motion qualification and
+    // uses the same right-shoulder route as the working Quest right grip.
     constexpr bool kEnableHalo4PhysicalMeleeStage8 = false;
+    constexpr bool kEnableHalo4PhysicalMeleeStage9 = true;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
@@ -30544,6 +30543,7 @@ namespace
     static_assert(kEnableHalo4WeaponWorldCollisionStage6);
     static_assert(!kEnableHalo4PhysicalMeleeStage7);
     static_assert(!kEnableHalo4PhysicalMeleeStage8);
+    static_assert(kEnableHalo4PhysicalMeleeStage9);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
@@ -31396,7 +31396,7 @@ namespace
             "may query only after an "
             "engine dynamic-inclusive ray completes in that context; native "
             "object motion RVA 0x%X is %s; the stable combined right-side "
-            "hand plus 14-sample weapon bounds are enabled; Stage 8 physical "
+            "hand plus 14-sample weapon bounds are enabled; Stage 9 physical "
             "melee is available as an independently default-off OpenXR-"
             "velocity/native-input transaction",
             g_config.world_collision ? "enabled" : "disabled",
@@ -37811,7 +37811,7 @@ namespace
         const uint32_t meleePeakCmPerSecond =
             g_halo4WorldCollision.physicalMeleePeakCentimetresPerSecond
                 .exchange(0, std::memory_order_relaxed);
-        LOG("Halo 4 experimental world contact Stage 6 + physical melee Stage 8: capability-%s/config-%s; %llu engine "
+        LOG("Halo 4 experimental world contact Stage 6 + physical melee Stage 9: capability-%s/config-%s; %llu engine "
             "raycasts (%llu dynamic-safe / %llu fixed-only), %llu authored-"
             "volume probes, %llu/%llu left/right hand contacts, %llu weapon "
             "contacts, bounds %llu published / %llu hand-only fallback, "
@@ -37845,7 +37845,7 @@ namespace
             static_cast<unsigned long long>(collisionPushAttempts),
             static_cast<unsigned long long>(collisionPushes),
             static_cast<unsigned long long>(collisionPushFailures),
-            kEnableHalo4PhysicalMeleeStage8 ? "available" : "StockFallback",
+            kEnableHalo4PhysicalMeleeStage9 ? "available" : "StockFallback",
             g_halo4WorldCollision.physicalMeleeConfigured.load(
                 std::memory_order_acquire) ? "enabled" : "disabled",
             g_halo4WorldCollision.physicalMeleeRequiredSpeed.load(
@@ -39363,7 +39363,7 @@ void Game_Halo4UpdateVrTurn(const VrPadState& pad)
 bool Game_Halo4PhysicalMeleePulseActive(uint64_t nowMs)
 {
 #if HALOMCCVR_EXPERIMENTAL_HALO4_CAMERA
-    if (!kEnableHalo4PhysicalMeleeStage8 ||
+    if (!kEnableHalo4PhysicalMeleeStage9 ||
         TitleAdapter_GetActiveTitle() != GameTitle::Halo4 ||
         !g_halo4Camera.armed.load(std::memory_order_acquire) ||
         g_halo4Camera.teardownRequested.load(std::memory_order_acquire) ||
