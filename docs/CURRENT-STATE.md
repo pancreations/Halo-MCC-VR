@@ -1,22 +1,19 @@
 # Current state
 
-> **HALO 4 PHYSICAL MELEE STAGE 8 READY FOR HEADSET TEST
-> (2026-09-03).** Behavior commit
-> `0ab70d4f0916f0b570d5d30d4f8c97bf110bfc3e`. Stage 7's disproven
-> collision-object prerequisite remains compiled dormant. Stage 8 instead
-> consumes each controller's finite, current OpenXR tracking-space linear
-> velocity and emits the existing short native B-input pulse on a configurable
-> threshold crossing. A 55% release latch and the retained 600 ms cooldown
-> yield one request per physical swing; artificial Halo locomotion cannot
-> supply tracking-space hand velocity. Halo 4 retains ownership of native
-> melee proximity, target choice, damage, stagger, animation, sound, impulse,
-> attribution, and networking. The accepted Stage 6 hand/weapon collision path
-> is unchanged, and physical melee remains nested and default-off. Feature
-> failure cannot disarm world collision, camera, HUD, reticle, helmet, effects,
-> pause, or OpenXR. Release build, core tests, and the Reach consistency gate
-> pass; headset acceptance is pending and the cumulative accepted release
-> pointer below does not move. See
-> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+> **HALO 4 PHYSICAL MELEE STAGE 8 MOTION ACCEPTED / INPUT ROUTE REJECTED
+> AND DISABLED (user headset, 2026-09-03).** Exact source
+> `3331efa697510e5d869f7a53fb4cef042f13dab5`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Quest 3 through the Oculus runtime, 120 Hz. Across 27
+> enabled telemetry windows, the log records 33,640 valid OpenXR velocity
+> samples, 23 swing crossings, 17 emitted pulses, six cooldown suppressions,
+> and a 7.90 m/s peak. This proves controller motion and threshold qualification
+> work. Each swing crouched instead of performing melee because Stage 8 emitted
+> XInput B; in the tested VR mapping B is crouch, while the Quest lower right
+> grip already reaches Halo 4 melee through the virtual right-shoulder bit.
+> Stage 8 is compiled dormant before correcting that route. Accepted Stage 6
+> collision remains live. Log SHA-256:
+> `854A93E98760535A0609EDE636A473D7731ED22605431A196454CC4BCAB15607`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
 
 > **HALO 4 PHYSICAL MELEE STAGE 7 REJECTED AND DISABLED
 > (user headset, 2026-09-03).** Exact source

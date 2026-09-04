@@ -626,3 +626,24 @@ pulses, cooldown suppressions, and peak runtime speed. A successful headset
 test therefore requires nonzero velocity samples and crossings, the visible
 native melee animation, and normal Halo 4 damage/stagger when an enemy is in
 range.
+
+### Stage 8 headset result: motion accepted, B route rejected
+
+The user tested exact source
+`3331efa697510e5d869f7a53fb4cef042f13dab5` on the Steam edition with
+SteamVR/OpenXR 2.17.8, a Quest 3 through the Oculus runtime, and a 120 Hz panel.
+Across 27 enabled telemetry windows the log records 33,640 valid OpenXR
+velocity samples, 23 swing crossings, 17 native-input pulses, six cooldown
+suppressions, and a 7.90 m/s peak. Physical arm swings repeatedly caused the
+player to crouch. This accepts the OpenXR velocity, threshold, latch, cooldown,
+and input-pulse timing, while rejecting only the XInput B action route.
+
+The existing VR controller merge independently proves the correct mapping for
+this configuration: `pad.gripR > 0.6f` sets
+`XINPUT_GAMEPAD_RIGHT_SHOULDER`, and the user confirms that this lower right
+Quest grip performs Halo 4 melee. `XINPUT_GAMEPAD_B` is crouch. A successor may
+therefore retain Stage 8's accepted motion qualification and substitute only
+the right-shoulder bit. It must not alter the physical grip mapping or any
+accepted world-collision behavior. Stage 8 is disabled before that successor.
+Exact log SHA-256:
+`854A93E98760535A0609EDE636A473D7731ED22605431A196454CC4BCAB15607`.

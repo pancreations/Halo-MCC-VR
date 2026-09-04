@@ -30534,7 +30534,7 @@ namespace
     // Stage 8 follows LivingFray's proven motion-melee shape: OpenXR supplies
     // controller velocity in tracking space and a threshold crossing requests
     // Halo's normal melee control. Halo itself owns proximity and damage.
-    constexpr bool kEnableHalo4PhysicalMeleeStage8 = true;
+    constexpr bool kEnableHalo4PhysicalMeleeStage8 = false;
     static_assert(!kEnableHalo4WorldCollisionStage1);
     static_assert(!kEnableHalo4WorldCollisionStage2);
     static_assert(!kEnableHalo4WorldCollisionStage3);
@@ -30543,7 +30543,7 @@ namespace
     static_assert(!kEnableHalo4WeaponWorldCollisionStage5);
     static_assert(kEnableHalo4WeaponWorldCollisionStage6);
     static_assert(!kEnableHalo4PhysicalMeleeStage7);
-    static_assert(kEnableHalo4PhysicalMeleeStage8);
+    static_assert(!kEnableHalo4PhysicalMeleeStage8);
     constexpr uint32_t kHalo4PhysicsRayCastRva = 0x1C1D4C;
     constexpr uint32_t kHalo4PhysicsOutputInitRva = 0x1C12A8;
     constexpr uint32_t kHalo4PhysicsFilterCtorRva = 0x1C0D94;
