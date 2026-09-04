@@ -55,6 +55,11 @@ struct HapticPeakSample
 
 HapticPeakSample SampleHapticPeak(float peak, float latest);
 
+// Contact feedback is hand-specific while Halo's ordinary XInput rumble is
+// shared. Each hand receives the stronger request, clamped to OpenXR's legal
+// amplitude range, so collision feedback cannot suppress weapon/vehicle rumble.
+float MergeHapticAmplitude(float game, float contact);
+
 // The mod owns virtual slot 0 when no physical pad is present. A valid
 // XInputSetState request must therefore observe a connected controller even
 // when title capability policy suppresses the actual haptic effect.

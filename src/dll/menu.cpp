@@ -1198,6 +1198,26 @@ namespace
         ImGui::TextDisabled("Shows only your hands and the guns they hold; the arms are hidden.\n"
                             "Hands still track your controllers exactly as with full arms.");
         ImGui::Spacing();
+        changed |= ImGui::Checkbox("World collision (experimental)",
+                                   &g_config.world_collision);
+        ImGui::TextDisabled("Hands and held weapons stop on the world and pulse gently on contact.\n"
+                            "Available in Halo 2, Halo 3, ODST, Reach, and Halo 4.");
+        if (g_config.world_collision)
+        {
+            ImGui::Indent();
+            changed |= ImGui::Checkbox("Physical melee (experimental)",
+                                       &g_config.physical_melee);
+            ImGui::TextDisabled("A fast tracked hand/weapon swing requests native melee; Halo decides range and target.");
+            if (g_config.physical_melee)
+            {
+                changed |= ImGui::SliderFloat(
+                    "Required swing speed", &g_config.physical_melee_swing_speed,
+                    0.3f, 5.0f, "%.2f m/s");
+                ImGui::TextDisabled("Lower is more sensitive; 1.20 m/s is the default.");
+            }
+            ImGui::Unindent();
+        }
+        ImGui::Spacing();
         changed |= ImGui::Checkbox("Show body (VRIK stage A1)", &g_config.body_wip);
         ImGui::TextDisabled("Shows Chief's game-animated body via the engine's own director switches.");
         ImGui::TextDisabled("Room-scale unit movement is gated until the player-biped boundary is headset-proven.");

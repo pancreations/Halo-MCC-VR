@@ -1,5 +1,191 @@
 # Current state
 
+> **ALL SUPPORTED TITLES WORLD CONTACT + PHYSICAL MELEE READY FOR
+> HEADSET TEST (2026-09-04).** Behavior commit
+> `7178081b0ea745ccbf4b826022c18aa7afc1a408`. Halo 2 Classic/Anniversary
+> retain the headset-confirmed hand collision, haptics, and Quest-grip physical
+> melee while replacing the visually insufficient weapon-node proxy with
+> loaded H2EK render-model compression bounds (eight corners plus six face
+> centres). Halo 3 and ODST use independently H3EK/H3ODSTEK-proven
+> five-argument native collision wrappers; Reach uses its independently
+> HREK-proven, retail-specialized four-argument wrapper. Each consumes the
+> title's final visible hand/weapon palette, runs bounded native probes at most
+> once per 33 ms, and fails open independently without disarming camera,
+> rendering, input, or OpenXR. The shared physical-melee route remains Quest
+> lower grip/right shoulder at 0.30-5.00 m/s (default 1.20). Halo 4 Stage 6/9
+> is unchanged and CE remains excluded. Release build, core tests, and Reach
+> consistency gate pass. Headset acceptance is pending for H2 weapon bounds,
+> H3, ODST, and Reach, plus an H4 regression; the accepted pointer below does
+> not move. See `docs/ALL-TITLE-WORLD-COLLISION-EVIDENCE.md` and
+> `docs/HALO2-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 2 WORLD CONTACT + PHYSICAL MELEE READY FOR HEADSET TEST
+> (2026-09-03).** Behavior commit
+> `c46d94fe793a53c8629831269571931ed70d906a`. The default-off shared controls
+> now reach an independently H2EK-proven native collision transaction in both
+> Halo 2 Classic and Anniversary. Final visible hand/weapon packet root and
+> extrema samples drive bounded world clamping, gentle per-hand haptics, and
+> optional native physics-object velocity. Physical swings reuse the verified
+> Quest lower-right-grip/right-shoulder route and retain Halo 2's native melee
+> target, damage, lunge, animation, sound, and networking. The selectable
+> threshold now spans 0.30-5.00 m/s (default remains 1.20). Halo 4's accepted
+> Stage 6/9 path is unchanged. H3, ODST, Reach, and CE remain stock for world
+> collision pending independent editing-kit proof; this deliberately avoids a
+> guessed cross-engine port. Release build, core tests, and Reach consistency
+> gate pass. Headset acceptance is pending and the accepted pointer below does
+> not move. See `docs/HALO2-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 PHYSICAL MELEE STAGE 9 QUEST-GRIP ROUTE ACCEPTED
+> (user headset, 2026-09-03).** Exact source
+> `abab02c6068bafcc0d0f49d3deca3175348ff429`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Quest 3 through the Oculus runtime, 120 Hz. The user
+> confirms that physical swings now invoke native Halo 4 melee rather than
+> crouch and declares the Halo 4 world-collision/physical-melee baseline
+> complete. Across 31 enabled telemetry windows the log records 37,180 valid
+> OpenXR velocity samples, 43 swing crossings, 25 right-shoulder pulses, 18
+> cooldown suppressions, and an 8.81 m/s peak. Stage 6 hand/weapon world
+> collision, haptics, and object interaction remain accepted. The user requests
+> a less-sensitive selectable threshold above the current 3.00 m/s ceiling;
+> that is a separate refinement. Log SHA-256:
+> `0EAA9CFF1316ABC33C643048AA63F153B4C72815778B760E09EB1A9132B664DA`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 PHYSICAL MELEE STAGE 9 QUEST-GRIP ROUTE READY FOR HEADSET
+> TEST (2026-09-03).** Behavior commit
+> `709fccbdf064088b7b2724b140bef7fd4e984438`. The headset-proven Stage 8
+> OpenXR velocity, threshold, latch, pulse duration, and cooldown are retained.
+> A qualified swing now sets `XINPUT_GAMEPAD_RIGHT_SHOULDER`, the same virtual
+> action already produced by the user's working Quest lower-right-grip melee,
+> instead of Stage 8's rejected B/crouch route. This does not remap either
+> physical grip. Halo 4 continues to own melee range, target selection, damage,
+> stagger, animation, sound, impulse, attribution, and networking. Accepted
+> Stage 6 world collision and all camera/render/HUD behavior are unchanged.
+> Release build, core tests, and the Reach consistency gate pass; headset
+> acceptance is pending and the cumulative accepted release pointer below does
+> not move. See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 PHYSICAL MELEE STAGE 8 MOTION ACCEPTED / INPUT ROUTE REJECTED
+> AND DISABLED (user headset, 2026-09-03).** Exact source
+> `3331efa697510e5d869f7a53fb4cef042f13dab5`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Quest 3 through the Oculus runtime, 120 Hz. Across 27
+> enabled telemetry windows, the log records 33,640 valid OpenXR velocity
+> samples, 23 swing crossings, 17 emitted pulses, six cooldown suppressions,
+> and a 7.90 m/s peak. This proves controller motion and threshold qualification
+> work. Each swing crouched instead of performing melee because Stage 8 emitted
+> XInput B; in the tested VR mapping B is crouch, while the Quest lower right
+> grip already reaches Halo 4 melee through the virtual right-shoulder bit.
+> Stage 8 is compiled dormant before correcting that route. Accepted Stage 6
+> collision remains live. Log SHA-256:
+> `854A93E98760535A0609EDE636A473D7731ED22605431A196454CC4BCAB15607`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 PHYSICAL MELEE STAGE 7 REJECTED AND DISABLED
+> (user headset, 2026-09-03).** Exact source
+> `7cd745338cdbe0f0b9268250cee0f721bd3e9567`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The nested controls appeared,
+> but physical swings passed through enemies and caused no melee. Across 37
+> telemetry windows (35 enabled), including the minimum 0.30 m/s threshold,
+> the log records 37,294 authored probes, 57 weapon/world contacts, zero hand
+> contacts, zero dynamic-object identities/push attempts, zero qualifying melee
+> contacts, and zero pulses. The Stage 7 dependency was wrong: Halo 4's
+> clear-line filter never admitted the enemy body, so neither speed nor input
+> mapping was reached. The behavior is compiled dormant before a successor;
+> accepted Stage 6 world collision remains live. Log SHA-256:
+> `907E772D27897846B65A9C472E8CC279AFDBCB64F2BAE0192FEBB4A68945F466`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 PHYSICAL MELEE STAGE 7 READY FOR HEADSET TEST
+> (2026-09-03).** Behavior commit
+> `a4f5e927535a053524574f94c95687ff5e7b74b4`. The accepted Stage 6 authored
+> hand/weapon collision, filter, cadence, skin, haptics and object-motion path
+> are unchanged. A nested default-off `Physical melee` toggle and adjustable
+> 0.30-3.00 m/s swing threshold (default 1.20) now qualify fast hand or weapon
+> contacts carrying a non-player dynamic object identity. Qualified contact
+> emits a short pulse through the same native B route recorded during the
+> user's manual Halo 4 melee tests, leaving Halo 4 in charge of target choice,
+> authored weapon damage, animation, sound, ragdoll impulse, kill credit and
+> networking. Raw authored movement, not wall correction, drives speed; a 600
+> ms cooldown prevents contact chatter. Teardown or either toggle turning off
+> clears pending pulses. Feature failure cannot disarm Stage 6 collision,
+> camera, HUD, reticle, helmet, effects, pause, or OpenXR. H4EK evidence, unit
+> tests, cold telemetry, and failure boundaries are recorded in
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`. Headset acceptance is pending and
+> the cumulative accepted release pointer below does not move.
+
+> **HALO 4 WORLD CONTACT STAGE 6 AUTHORED WEAPON BOUNDS ACCEPTED
+> (user headset, 2026-09-03).** Exact source
+> `58eaed451b86f870ece67be76423ba48f78f0862`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The user confirms that held
+> guns now react to the environment and that hand/weapon collision, the shared
+> toggle, contact haptics and dynamic-object interaction form a good baseline.
+> Across 84 telemetry windows the exact log records 88,142 authored probes,
+> 139/2 hand contacts, 304 weapon contacts, 322/649 applied left/right
+> corrections, 67,696 authored-bounds publications, 68/68 completed object
+> pushes with zero failures, and zero hand-only fallbacks. Log SHA-256:
+> `29A71E488FE2299812AC19147729536305728D379022809210B383C403E1DBF9`.
+> Physical melee/damage was disabled as intended. The cumulative accepted
+> release pointer below does not move without the required title regressions.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 WORLD CONTACT STAGE 6 AUTHORED WEAPON BOUNDS READY FOR
+> HEADSET TEST (2026-09-03).** Behavior commit
+> `c7da985355c673b0fe41df631c799e0751622538`. The rejected Stage 5
+> animated-node proxy stays dormant. Runtime model checksum now selects one of
+> 39 exact first-person render-model bounds exhaustively read from the official
+> H4EK 1.890 weapon catalog. Eight oriented corners plus six face centers cover
+> the barrel, stock, sides, top and bottom; seven fixed-semantic hand samples
+> precede them, and model changes safely reseed by checksum. Unknown or invalid
+> models fail open to the accepted right-hand-only volume. The shared toggle
+> remains default-off, and accepted hands, haptics, object interaction, camera,
+> native HUD/reticle/helmet, effects, pause and black-screen behavior are not
+> changed. Physical melee/damage remains disabled. Release build, core tests,
+> and the Reach consistency gate pass; headset acceptance is pending and the
+> cumulative accepted release pointer below does not move. See
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 WORLD CONTACT STAGE 5 HAND PATH ACCEPTED / WEAPON PROXY
+> REJECTED (user headset, 2026-09-03).** Exact source
+> `ae96c406dae08301579490be8f9042911de38b1a`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The user confirmed the shared
+> toggle works, hand collision is materially more solid, and the previously
+> accepted hand/haptic/object behavior remains good. The assault-rifle barrel
+> still passed through a rock. Across 20 enabled telemetry windows the exact
+> log records 329,193 engine callbacks, 10,664 authored probes, 20/24 hand
+> contacts, 66 nominal weapon-node contacts, 43/200 applied corrections, 231
+> reseeds and zero failures. Runtime identity reports only five nodes for the
+> assault rifle (`0x1814181C`); those animated origins cannot represent its
+> visible barrel and stock. Stage 5's weapon proxy is disabled separately while
+> the accepted Stage 4 hand transaction stays live. Physical melee remains off.
+> Log SHA-256:
+> `0E61F973DA010D0BB95FCB49467A97CAD24129A344446825F9923EB1308019CF`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
+> **HALO 4 WORLD CONTACT STAGE 5 READY FOR HEADSET TEST (2026-09-03).**
+> Stage 4's accepted hand collision, haptics, and dynamic-object response are
+> unchanged. The rejected weapon publication is replaced by one stable
+> right-hand-plus-held-model publication per held record, removing the
+> hand-only/combined alternation that caused 985 reseeds. A shared F1
+> Body/Hands `World collision (experimental)` checkbox now gates the entire
+> feature and ships off; Halo 4 is the only implementing title in this pass.
+> Physical melee/damage remains disabled. No ray cadence, collision skin,
+> camera, HUD, reticle, helmet, effects, pause, black-screen, Halo 2, Reach,
+> ODST, or Halo 3 behavior is changed. Headset acceptance is pending and the
+> cumulative accepted release pointer below does not move.
+
+> **HALO 4 WORLD CONTACT STAGE 4 PARTIALLY ACCEPTED / WEAPON RESPONSE
+> REJECTED (user headset, 2026-09-03).** Exact source
+> `7451e703eb78ddf381056e538a2a8388cf1d740a`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Oculus headset, 120 Hz. The user confirmed both hand
+> models collide with world geometry, gentle contact haptics work, and fresh
+> ragdolls/body parts react. The held gun did not visibly react. The log proves
+> 36 weapon contacts but also 985 state reseeds; the right-side publisher
+> alternated hand-only and hand-plus-weapon sample counts, invalidating most
+> continuous sweeps. Hand/haptic/object behavior is protected. The failed
+> weapon publication shape is disabled before replacement, physical melee
+> remains off, and the cumulative accepted release pointer below does not move
+> until the required title/headset regression results exist. See
+> `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **C-H2-92 / C-H4-58 CUMULATIVE HANDOFF READY FOR HEADSET TEST
 > (2026-09-02).** This unaccepted candidate contains three requested changes,
 > each isolated in source history. (1) Halo 4 Stage 3AI effect teardown now

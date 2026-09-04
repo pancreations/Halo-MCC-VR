@@ -29,6 +29,7 @@
 #include "halo2_hud_logic.h"
 #include "halo2_hud_shader_logic.h"
 #include "halo2_render_logic.h"
+#include "halo2_world_collision_logic.h"
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
 #include "halo4_helmet_shader_logic.h"
@@ -37,6 +38,7 @@
 #include "halo4_restoration_logic.h"
 #include "halo4_parity_trace_logic.h"
 #include "halo4_render_logic.h"
+#include "halo4_world_collision_logic.h"
 #include "reach_adapter.h"
 #include "reach_chud_logic.h"
 #include "reach_observer_logic.h"
@@ -12560,7 +12562,8 @@ int main()
         "hud_size", "hud_aspect", "hud_curvature",
         "hud_vertical_offset", "motion_blur", "auto_vr", "two_handed_aim",
         "two_hand_toggle", "left_hand_forward_m", "two_hand_zone_right_m",
-        "left_grip_forward_m", "arm_ik", "floating_hands",
+        "left_grip_forward_m", "arm_ik", "floating_hands", "world_collision",
+        "physical_melee", "physical_melee_swing_speed",
         "right_shoulder_drop", "shoulder_level", "body_wip", "weapon_probe",
         "hud_probe", "fsr_probe", "bullet_probe", "right_eye_first"
     };
@@ -12599,8 +12602,42 @@ int main()
               g_config.cutscene_theater_width_m == 6.0f &&
               g_config.cutscene_theater_distance_m == 4.0f,
         "legacy configs inherit the enabled cutscene-theatre defaults");
+    Check(!g_config.world_collision,
+        "legacy configs inherit the opt-in world-collision default");
+    Check(!g_config.physical_melee &&
+              g_config.physical_melee_swing_speed == 1.2f,
+        "legacy configs inherit the opt-in physical-melee defaults");
     Check(g_config.y_b_start_chord,
         "legacy configs inherit the enabled Y+B Start chord default");
+
+    {
+        std::ofstream file(primary);
+        file << "config_version = 5\n";
+        file << "world_collision = 1\n";
+        file << "physical_melee = 1\n";
+        file << "physical_melee_swing_speed = 0.10\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.world_collision,
+        "the shared world-collision option can be enabled from config");
+    Check(g_config.physical_melee &&
+              g_config.physical_melee_swing_speed == 0.3f,
+        "physical melee loads independently and clamps its swing threshold");
+    ConfigSave();
+    ConfigLoad(primary.c_str());
+    Check(g_config.world_collision,
+        "the shared world-collision option survives a save/load round trip");
+    Check(g_config.physical_melee &&
+              g_config.physical_melee_swing_speed == 0.3f,
+        "physical-melee enable and swing threshold survive a save/load round trip");
+
+    {
+        std::ofstream file(primary);
+        file << "physical_melee_swing_speed = 9.0\n";
+    }
+    ConfigLoad(primary.c_str());
+    Check(g_config.physical_melee_swing_speed == 5.0f,
+        "physical melee configuration exposes and clamps the five metre ceiling");
 
     {
         std::ofstream file(primary);
@@ -13474,6 +13511,157 @@ int main()
     const HapticPeakSample clamped = SampleHapticPeak(1.5f, -0.5f);
     Check(clamped.apply == 1.0f && clamped.carry == 0.0f,
         "Peak-hold haptic samples clamp to the [0,1] amplitude range");
+    Check(std::fabs(MergeHapticAmplitude(0.7f, 0.2f) - 0.7f) < 1.0e-6f &&
+          std::fabs(MergeHapticAmplitude(0.1f, 0.4f) - 0.4f) < 1.0e-6f &&
+          std::fabs(MergeHapticAmplitude(-1.0f, 2.0f) - 1.0f) < 1.0e-6f,
+        "Per-hand contact haptics merge by clamped maximum without replacing game rumble");
+
+    // Halo 4 world-contact resolution: no hit accepts the controller target; a
+    // hit backs the wrist off by the configured skin in world-scaled units;
+    // malformed engine output fails closed for this optional feature only.
+    const float collisionStart[3]{0.0f, 0.0f, 0.0f};
+    const float collisionDesired[3]{1.0f, 0.0f, 0.0f};
+    const Halo4WorldCollisionResolution freeMovement =
+        Halo4ResolveWorldCollision(
+            collisionStart, collisionDesired, false, 1.0f, 1.0f, 0.1f);
+    Check(freeMovement.valid && !freeMovement.contact &&
+          std::fabs(freeMovement.accepted[0] - 1.0f) < 1.0e-6f &&
+          std::fabs(freeMovement.correction[0]) < 1.0e-6f,
+        "Halo 4 wrist sweep accepts an unobstructed tracked target");
+    const Halo4WorldCollisionResolution blockedMovement =
+        Halo4ResolveWorldCollision(
+            collisionStart, collisionDesired, true, 0.5f, 1.0f, 0.1f);
+    Check(blockedMovement.valid && blockedMovement.contact &&
+          std::fabs(blockedMovement.accepted[0] - 0.4f) < 1.0e-6f &&
+          std::fabs(blockedMovement.correction[0] + 0.6f) < 1.0e-6f,
+        "Halo 4 wrist sweep resolves before the impact by a world-scaled skin");
+    Check(!Halo4ResolveWorldCollision(
+              collisionStart, collisionDesired, true, 1.5f, 1.0f).valid,
+        "Halo 4 wrist sweep rejects an invalid engine hit fraction");
+    const Halo2WorldCollisionResolution halo2Blocked =
+        Halo2ResolveWorldCollision(
+            collisionStart, collisionDesired, true, 0.5f, 1.0f, 0.1f);
+    Check(halo2Blocked.valid && halo2Blocked.contact &&
+          std::fabs(halo2Blocked.accepted[0] - 0.4f) < 1.0e-6f &&
+          std::fabs(halo2Blocked.correction[0] + 0.6f) < 1.0e-6f,
+        "Halo 2 final-packet sweep resolves before native contact by a scaled skin");
+    const float authoredVolumePoints[][3]{
+        {-0.2f, 0.0f, 0.0f}, {0.3f, 0.0f, 0.0f},
+        {0.0f, -0.4f, 0.0f}, {0.0f, 0.5f, 0.0f},
+        {0.0f, 0.0f, -0.6f}, {0.0f, 0.0f, 0.7f}};
+    float selectedVolume[kHalo4WorldCollisionExtremaCount][3]{};
+    const int selectedVolumeCount = Halo4SelectWorldCollisionExtrema(
+        collisionStart, &authoredVolumePoints[0][0],
+        static_cast<int>(std::size(authoredVolumePoints)), selectedVolume,
+        static_cast<int>(std::size(selectedVolume)));
+    Check(selectedVolumeCount == kHalo4WorldCollisionExtremaCount &&
+          std::fabs(selectedVolume[1][0] + 0.2f) < 1.0e-6f &&
+          std::fabs(selectedVolume[6][2] - 0.7f) < 1.0e-6f,
+        "Halo 4 contact volume selects the authored root and six model extrema");
+    float halo2Selected[kHalo2WorldCollisionSampleCount][3]{};
+    Check(Halo2SelectWorldCollisionExtrema(
+              collisionStart, &authoredVolumePoints[0][0],
+              static_cast<int>(std::size(authoredVolumePoints)),
+              halo2Selected, static_cast<int>(std::size(halo2Selected))) ==
+              kHalo2WorldCollisionSampleCount &&
+          std::fabs(halo2Selected[1][0] + 0.2f) < 1.0e-6f &&
+          std::fabs(halo2Selected[6][2] - 0.7f) < 1.0e-6f,
+        "Halo 2 visible packets select stable root and model extrema without invented weapon dimensions");
+    const float degenerateVolumePoint[3]{0.1f, 0.2f, 0.3f};
+    float stableVolume[kHalo4WorldCollisionExtremaCount][3]{};
+    Check(Halo4SelectWorldCollisionExtrema(
+              collisionStart, degenerateVolumePoint, 1, stableVolume,
+              static_cast<int>(std::size(stableVolume))) ==
+              kHalo4WorldCollisionExtremaCount &&
+          std::fabs(stableVolume[1][0] - stableVolume[6][0]) < 1.0e-6f,
+        "Halo 4 authored extrema retain fixed semantic slots when extrema coincide");
+    const Halo4WeaponCollisionBounds* assaultRifleBounds =
+        Halo4FindWeaponCollisionBounds(0x1814181Cu);
+    Check(kHalo4WeaponCollisionBoundsCount == 39 && assaultRifleBounds &&
+          std::fabs(assaultRifleBounds->minimum[0] + 0.0935352f) < 1.0e-6f &&
+          std::fabs(assaultRifleBounds->maximum[0] - 0.23352f) < 1.0e-6f &&
+          !Halo4FindWeaponCollisionBounds(0xFFFFFFFFu),
+        "Halo 4 weapon bounds resolve the exact H4EK model checksum and fail open when unknown");
+    if (assaultRifleBounds)
+    {
+        const float identityBasis[9]{
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f};
+        const float modelTranslation[3]{10.0f, 20.0f, 30.0f};
+        const float volumeRoot[3]{1.0f, 2.0f, 3.0f};
+        const float volumeWrist[3]{0.5f, 1.5f, 2.5f};
+        float weaponSamples[kHalo4WeaponCollisionBoundsSampleCount][3]{};
+        const int weaponSampleCount = Halo4BuildWeaponCollisionBoundsSamples(
+            *assaultRifleBounds, 2.0f, identityBasis, modelTranslation,
+            volumeRoot, volumeWrist, weaponSamples,
+            static_cast<int>(std::size(weaponSamples)));
+        Check(weaponSampleCount == kHalo4WeaponCollisionBoundsSampleCount &&
+              std::fabs(weaponSamples[0][0] -
+                  (10.5f + 2.0f * assaultRifleBounds->minimum[0])) < 1.0e-6f &&
+              std::fabs(weaponSamples[7][0] -
+                  (10.5f + 2.0f * assaultRifleBounds->maximum[0])) < 1.0e-6f &&
+              std::fabs(weaponSamples[8][1] -
+                  (20.5f + assaultRifleBounds->minimum[1] +
+                   assaultRifleBounds->maximum[1])) < 1.0e-6f,
+            "Halo 4 weapon bounds publish eight corners and six face centres in the carried root frame");
+    }
+    const float pushPrevious[3]{0.0f, 0.0f, 0.0f};
+    const float pushDesired[3]{1.0f, 0.0f, 0.0f};
+    float pushVelocity[3]{};
+    Check(Halo4BuildWorldCollisionPushVelocity(
+              pushPrevious, pushDesired, 10, 0.5f, pushVelocity) &&
+          std::fabs(pushVelocity[0] - 1.0f) < 1.0e-6f,
+        "Halo 4 dynamic contact derives and world-scale clamps a finite push velocity");
+    Check(!Halo4BuildWorldCollisionPushVelocity(
+              pushPrevious, pushDesired, 0, 0.5f, pushVelocity),
+        "Halo 4 dynamic contact refuses a zero-time velocity sample");
+    const float meleePreviousDesired[3]{0.0f, 0.0f, 0.0f};
+    const float meleeDesired[3]{0.06f, 0.0f, 0.0f};
+    const float meleeSpeed = Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+        meleePreviousDesired, meleeDesired, 100, 0.5f);
+    Check(std::fabs(meleeSpeed - 1.2f) < 1.0e-6f &&
+          Halo4PhysicalMeleeContactQualifies(42, 7, meleeSpeed, 1.2f),
+        "Halo 4 physical melee converts raw authored sample travel to metres per second");
+    Check(!Halo4PhysicalMeleeContactQualifies(-1, 7, meleeSpeed, 1.2f) &&
+          !Halo4PhysicalMeleeContactQualifies(7, 7, meleeSpeed, 1.2f) &&
+          !Halo4PhysicalMeleeContactQualifies(42, 7, meleeSpeed, 1.21f),
+        "Halo 4 physical melee requires a non-player dynamic contact above threshold");
+    Check(Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+              meleeDesired, meleeDesired, 100, 0.5f) == 0.0f &&
+          Halo4PhysicalMeleeSwingSpeedMetresPerSecond(
+              meleePreviousDesired, meleeDesired, 0, 0.5f) < 0.0f,
+        "Halo 4 physical melee ignores stationary wall pressure and invalid timing");
+    const float runtimeVelocity[3]{0.0f, 3.0f, 4.0f};
+    Check(std::fabs(Halo4PhysicalMeleeVelocityMagnitude(runtimeVelocity) -
+              5.0f) < 1.0e-6f,
+        "Halo 4 physical melee consumes OpenXR tracking-space velocity in metres per second");
+    const Halo4PhysicalMeleeVelocityDecision firstSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 1.2f, 1.2f, false);
+    const Halo4PhysicalMeleeVelocityDecision heldSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 2.0f, 1.2f, true);
+    const Halo4PhysicalMeleeVelocityDecision releasedSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 0.60f, 1.2f, true);
+    const Halo4PhysicalMeleeVelocityDecision invalidSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(false, 9.0f, 1.2f, true);
+    const Halo4PhysicalMeleeVelocityDecision fiveMetreSwing =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 5.0f, 5.0f, false);
+    const Halo4PhysicalMeleeVelocityDecision overMaximumThreshold =
+        Halo4UpdatePhysicalMeleeVelocityLatch(true, 5.1f, 5.1f, false);
+    Check(firstSwing.trigger && firstSwing.latched &&
+          !heldSwing.trigger && heldSwing.latched &&
+          !releasedSwing.trigger && !releasedSwing.latched &&
+          !invalidSwing.trigger && !invalidSwing.latched &&
+          fiveMetreSwing.trigger && fiveMetreSwing.latched &&
+          !overMaximumThreshold.trigger && !overMaximumThreshold.latched,
+        "physical melee fires once per tracked swing, supports the five metre ceiling, and rearms below hysteresis");
+    const float ordinaryMovement[3]{0.40f, 0.0f, 0.0f};
+    const float teleportMovement[3]{0.60f, 0.0f, 0.0f};
+    Check(!Halo4WorldCollisionMovementIsTeleport(
+              collisionStart, ordinaryMovement, 0.33f) &&
+          Halo4WorldCollisionMovementIsTeleport(
+              collisionStart, teleportMovement, 0.33f),
+        "Halo 4 collision reseeds across a 1.5 metre world-scaled tracking jump");
     Check(NormalizeVirtualXInputSetStateResult(
               ERROR_DEVICE_NOT_CONNECTED, 0, false) ==
               ERROR_DEVICE_NOT_CONNECTED,

@@ -114,6 +114,10 @@ namespace
     // since the last applied VR frame, so a short gunfire pulse that arrives and
     // clears between two frame samples is not aliased to zero. See SampleHapticPeak.
     std::atomic<float> g_peakHaptics{0.0f};
+    // Optional world-contact feedback is hand-specific. These are one-shot
+    // peak latches raised by a title's cold collision worker and consumed by
+    // the existing OpenXR frame path; no engine thread calls OpenXR directly.
+    std::atomic<float> g_contactHaptics[2]{};
     void StopControllerHaptics();
     void LogHeadsetPanelRate();
     bool StartFrameWaitThread();
@@ -642,8 +646,14 @@ namespace
     bool g_headPoseValid = false;
     XrPosef g_rightAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_rightAimPoseValid = false;
+    XrVector3f g_rightAimLinearVelocity{};
+    bool g_rightAimLinearVelocityValid = false;
+    uint64_t g_rightAimLinearVelocityAtMs = 0;
     XrPosef g_leftAimPose{{0, 0, 0, 1}, {0, 0, 0}};
     bool g_leftAimPoseValid = false;
+    XrVector3f g_leftAimLinearVelocity{};
+    bool g_leftAimLinearVelocityValid = false;
+    uint64_t g_leftAimLinearVelocityAtMs = 0;
     // Render-thread-only filtered copy for the compositor crosshair. Keeping it
     // separate is intentional: weapon steering and bullets stay on raw aim.
     XrPosef g_reticleAimPose{{0, 0, 0, 1}, {0, 0, 0}};
@@ -6623,6 +6633,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             phaseStartMs = now;
             g_requestedHaptics = 0.0f;
             g_peakHaptics = 0.0f;
+            g_contactHaptics[0] = 0.0f;
+            g_contactHaptics[1] = 0.0f;
             LOG("pause transition: fade out -> %s",
                 targetPaused ? "head-locked 2D" : "stereo 3D");
         }
@@ -7370,7 +7382,7 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
 
     void ApplyControllerHaptics(bool trackingValid)
     {
-        static bool active = false;
+        static bool active[2]{false, false};
         static uint64_t lastApplyMs = 0;
         static RuntimeMode previousMode = RuntimeMode::Shell;
         const RuntimeMode mode = TitleAdapter_GetRuntimeMode();
@@ -7386,6 +7398,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
             // accumulated peak is dropped for the same reason.
             g_requestedHaptics.store(0.0f, std::memory_order_release);
             g_peakHaptics.store(0.0f, std::memory_order_release);
+            g_contactHaptics[0].store(0.0f, std::memory_order_release);
+            g_contactHaptics[1].store(0.0f, std::memory_order_release);
         }
         const float intensity =
             std::clamp(g_config.haptic_intensity, 0.0f, 1.0f);
@@ -7400,42 +7414,78 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         const float peekPeak = capabilityAllows
             ? g_peakHaptics.load(std::memory_order_acquire)
             : 0.0f;
-        float amplitude = SampleHapticPeak(peekPeak, latest).apply * intensity;
-        const bool mustStop = amplitude <= 0.0f || !trackingValid || !modeAllows ||
-            !capabilityAllows ||
-            Menu_IsOpen() || g_sessionState != XR_SESSION_STATE_FOCUSED;
+        const float contactPeek[2]{
+            g_contactHaptics[0].load(std::memory_order_acquire),
+            g_contactHaptics[1].load(std::memory_order_acquire)};
+        const float gamePeek = SampleHapticPeak(peekPeak, latest).apply;
+        const float peekAmplitude[2]{
+            MergeHapticAmplitude(gamePeek, contactPeek[0]) * intensity,
+            MergeHapticAmplitude(gamePeek, contactPeek[1]) * intensity};
+        const bool anyAmplitude =
+            peekAmplitude[0] > 0.0f || peekAmplitude[1] > 0.0f;
+        const bool feedbackUnavailable = !trackingValid || !modeAllows ||
+            !capabilityAllows || Menu_IsOpen() ||
+            g_sessionState != XR_SESSION_STATE_FOCUSED;
+        const bool mustStop = !anyAmplitude || feedbackUnavailable;
         if (mustStop)
         {
-            if (active || mode != previousMode)
+            // Collision pulses are momentary contact evidence. Never replay a
+            // pulse that arrived while tracking, focus, or gameplay was absent.
+            // Do not clear on the ordinary zero-amplitude path: a collision
+            // worker may race the peek above and its newly raised peak must be
+            // preserved for the next VR frame.
+            if (feedbackUnavailable)
+            {
+                g_contactHaptics[0].store(0.0f, std::memory_order_release);
+                g_contactHaptics[1].store(0.0f, std::memory_order_release);
+            }
+            if (active[0] || active[1] || mode != previousMode)
                 StopControllerHaptics();
-            active = false;
+            active[0] = false;
+            active[1] = false;
             previousMode = mode;
             return;
         }
         previousMode = mode;
 
         const uint64_t now = GetTickCount64();
-        if (active && now - lastApplyMs < 40)
+        if ((active[0] || active[1]) && now - lastApplyMs < 40)
             return; // keep accumulating the peak; apply on the next unthrottled frame
         // Applying now: consume the peak and carry the latest sustained value
         // forward, so a one-shot pulse fires exactly once and a held rumble
         // persists across the 40 ms re-apply throttle.
         const float appliedPeak =
             g_peakHaptics.exchange(latest, std::memory_order_acq_rel);
-        amplitude = SampleHapticPeak(appliedPeak, latest).apply * intensity;
-        XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
-        vibration.amplitude = amplitude;
-        vibration.duration = 50000000;
-        vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
-        XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
-        info.action = g_hapticAction;
-        info.subactionPath = g_leftHandPath;
-        xrApplyHapticFeedback(g_session, &info,
-            reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
-        info.subactionPath = g_rightHandPath;
-        xrApplyHapticFeedback(g_session, &info,
-            reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
-        active = true;
+        const float gameAmplitude =
+            SampleHapticPeak(appliedPeak, latest).apply;
+        const float contactAmplitude[2]{
+            g_contactHaptics[0].exchange(0.0f, std::memory_order_acq_rel),
+            g_contactHaptics[1].exchange(0.0f, std::memory_order_acq_rel)};
+        const float amplitude[2]{
+            MergeHapticAmplitude(gameAmplitude, contactAmplitude[0]) * intensity,
+            MergeHapticAmplitude(gameAmplitude, contactAmplitude[1]) * intensity};
+        const XrPath paths[2]{g_leftHandPath, g_rightHandPath};
+        for (int hand = 0; hand < 2; ++hand)
+        {
+            XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+            info.action = g_hapticAction;
+            info.subactionPath = paths[hand];
+            if (amplitude[hand] > 0.0f)
+            {
+                XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+                vibration.amplitude = amplitude[hand];
+                vibration.duration = 50000000;
+                vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+                xrApplyHapticFeedback(g_session, &info,
+                    reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+                active[hand] = true;
+            }
+            else if (active[hand])
+            {
+                xrStopHapticFeedback(g_session, &info);
+                active[hand] = false;
+            }
+        }
         lastApplyMs = now;
     }
 
@@ -7455,7 +7505,8 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         get.subactionPath = g_rightHandPath;
         XrActionStatePose state{XR_TYPE_ACTION_STATE_POSE};
         bool valid = false;
-        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+        XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
+        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION, &velocity};
         if (XR_SUCCEEDED(xrGetActionStatePose(g_session, &get, &state)) && state.isActive &&
             XR_SUCCEEDED(xrLocateSpace(g_rightAimSpace, g_localSpace, time, &location)))
         {
@@ -7466,7 +7517,9 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         }
         // Left hand: position only matters (D-pad gesture), same locate path.
         bool leftValid = false;
-        XrSpaceLocation leftLocation{XR_TYPE_SPACE_LOCATION};
+        XrSpaceVelocity leftVelocity{XR_TYPE_SPACE_VELOCITY};
+        XrSpaceLocation leftLocation{
+            XR_TYPE_SPACE_LOCATION, &leftVelocity};
         if (g_leftAimAction != XR_NULL_HANDLE && g_leftAimSpace != XR_NULL_HANDLE)
         {
             get.action = g_leftAimAction;
@@ -7487,9 +7540,27 @@ float4 ps_scope_linearize(VSOut i):SV_Target { return paint(i.uv,true); }
         g_rightAimPoseValid = valid;
         if (valid)
             g_rightAimPose = location.pose;
+        g_rightAimLinearVelocityValid = valid &&
+            (velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0 &&
+            std::isfinite(velocity.linearVelocity.x) &&
+            std::isfinite(velocity.linearVelocity.y) &&
+            std::isfinite(velocity.linearVelocity.z);
+        if (g_rightAimLinearVelocityValid)
+            g_rightAimLinearVelocity = velocity.linearVelocity;
+        g_rightAimLinearVelocityAtMs = g_rightAimLinearVelocityValid
+            ? GetTickCount64() : 0;
         g_leftAimPoseValid = leftValid;
         if (leftValid)
             g_leftAimPose = leftLocation.pose;
+        g_leftAimLinearVelocityValid = leftValid &&
+            (leftVelocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0 &&
+            std::isfinite(leftVelocity.linearVelocity.x) &&
+            std::isfinite(leftVelocity.linearVelocity.y) &&
+            std::isfinite(leftVelocity.linearVelocity.z);
+        if (g_leftAimLinearVelocityValid)
+            g_leftAimLinearVelocity = leftVelocity.linearVelocity;
+        g_leftAimLinearVelocityAtMs = g_leftAimLinearVelocityValid
+            ? GetTickCount64() : 0;
         LeaveCriticalSection(&g_headCs);
         static bool logged = false;
         if (valid && !logged)
@@ -14335,6 +14406,17 @@ void VR_SetGameHaptics(float amplitude)
     }
 }
 
+void VR_PulseContactHaptics(bool left, float amplitude)
+{
+    const float v = std::clamp(amplitude, 0.0f, 1.0f);
+    std::atomic<float>& peak = g_contactHaptics[left ? 0 : 1];
+    float current = peak.load(std::memory_order_relaxed);
+    while (v > current && !peak.compare_exchange_weak(
+        current, v, std::memory_order_release, std::memory_order_relaxed))
+    {
+    }
+}
+
 bool VR_GetRightControllerPose(float outQuat[4], float outPos[3])
 {
     if (!g_headCsInit)
@@ -14350,6 +14432,29 @@ bool VR_GetRightControllerPose(float outQuat[4], float outPos[3])
         outPos[0] = g_rightAimPose.position.x;
         outPos[1] = g_rightAimPose.position.y;
         outPos[2] = g_rightAimPose.position.z;
+    }
+    LeaveCriticalSection(&g_headCs);
+    return ok;
+}
+
+bool VR_GetControllerLinearVelocity(bool left, float outVelocity[3])
+{
+    if (!g_headCsInit || !outVelocity)
+        return false;
+    EnterCriticalSection(&g_headCs);
+    const uint64_t capturedAtMs = left ? g_leftAimLinearVelocityAtMs :
+        g_rightAimLinearVelocityAtMs;
+    const uint64_t nowMs = GetTickCount64();
+    const bool ok = (left ? g_leftAimLinearVelocityValid :
+        g_rightAimLinearVelocityValid) && capturedAtMs != 0 &&
+        nowMs >= capturedAtMs && nowMs - capturedAtMs <= 100;
+    if (ok)
+    {
+        const XrVector3f& velocity = left ? g_leftAimLinearVelocity :
+            g_rightAimLinearVelocity;
+        outVelocity[0] = velocity.x;
+        outVelocity[1] = velocity.y;
+        outVelocity[2] = velocity.z;
     }
     LeaveCriticalSection(&g_headCs);
     return ok;

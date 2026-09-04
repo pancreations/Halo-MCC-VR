@@ -93,6 +93,8 @@ try {
     }
     $gameSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\game.cpp'))
+    $inputSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\dll\input.cpp'))
     $titleRuntimeSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\title_runtime_state.h'))
     $coreTestsSource = [IO.File]::ReadAllText(
@@ -118,6 +120,29 @@ try {
         $guardSource -notmatch
             'activeAndRange\s*&&\s*\r?\n\s*levelRunning\s*&&\s*coldPassed') {
         throw 'C-H2-55 gate failed: a required title hook epoch is not level-liveness scoped.'
+    }
+    $halo2WorldCollisionLogicSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo2_world_collision_logic.h'))
+    if ($halo2ObserverSource -notmatch
+            'kHalo2CollisionVectorRva\s*=\s*0x0075B850' -or
+        $halo2ObserverSource -notmatch
+            'kHalo2ObjectSetLocalVelocityRva\s*=\s*0x0090A000' -or
+        $halo2ObserverSource -notmatch
+            'kHalo2CollisionFlags\s*=\s*0x2480000F' -or
+        $halo2ObserverSource -notmatch 'InstallHalo2WorldCollision' -or
+        $halo2ObserverSource -notmatch
+            'Halo2PublishFinalPacketCollisionVolumes' -or
+        $halo2ObserverSource -notmatch
+            'Halo2Observer6Dof_WorldCollisionActive' -or
+        $halo2WorldCollisionLogicSource -notmatch
+            'Halo2SelectWorldCollisionExtrema' -or
+        $halo2WorldCollisionLogicSource -notmatch
+            'Halo2ResolveWorldCollision' -or
+        $gameSource -notmatch
+            'Halo2Observer6Dof_WorldCollisionActive\s*\(\s*\)' -or
+        $coreTestsSource -notmatch
+            'Halo 2 visible packets select stable root and model extrema') {
+        throw 'Halo 2 world-contact gate failed: H2EK collision/object identities, final-packet volume, fail-open admission, or pure-logic coverage is missing.'
     }
     $halo2ColdSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_cold_observation.cpp'))
@@ -165,6 +190,8 @@ try {
     }
     $halo4RestoreLogicSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\common\halo4_restoration_logic.h'))
+    $halo4WorldCollisionSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo4_world_collision_logic.h'))
     $halo4RestoreAsmSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo4_restoration.asm'))
     $halo4CuiSource = [IO.File]::ReadAllText(
@@ -283,6 +310,93 @@ try {
         throw 'C-H2-77 gate failed: the proven shader identities, D3D raster transform, native-crosshair capture, shared replay, or zero-callback anchor rejection is missing.'
     }
 
+    if ($gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage1\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage2\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage3\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WorldCollisionStage4\s*=\s*true' -or
+        $gameSource -notmatch
+            'kEnableHalo4WeaponWorldCollisionStage4\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WeaponWorldCollisionStage5\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4WeaponWorldCollisionStage6\s*=\s*true' -or
+        $gameSource -notmatch
+            'kEnableHalo4PhysicalMeleeStage7\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4PhysicalMeleeStage8\s*=\s*false' -or
+        $gameSource -notmatch
+            'kEnableHalo4PhysicalMeleeStage9\s*=\s*true' -or
+        $halo4WorldCollisionSource -notmatch
+            'kHalo4WeaponCollisionBoundsCount\s*==\s*39' -or
+        $halo4WorldCollisionSource -notmatch
+            'Halo4BuildWeaponCollisionBoundsSamples' -or
+        $coreTestsSource -notmatch
+            'Halo 4 weapon bounds publish eight corners and six face centres' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineTestRva\s*=\s*0x0F4218' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineFilterGlobalRva\s*=\s*0x2FFB0B8' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineCollisionFlags\s*=\s*0x0002D009' -or
+        $gameSource -notmatch
+            'kHalo4WorldLineAdditionalFlags\s*=\s*0x00005185' -or
+        $gameSource -notmatch
+            'liveWorldLineFilter\s*==\s*kHalo4WorldLineFilterPair' -or
+        $gameSource -notmatch 'Halo4PhysicsRayCastDetour' -or
+        $gameSource -notmatch
+            'originalRayCast\s*\(\s*&input\s*,\s*&output\s*\)' -or
+        $gameSource -notmatch
+            'originalFlags\s*&\s*kHalo4CollisionFixedObjectsOnly' -or
+        $gameSource -notmatch
+            'kHalo4ObjectSetVelocitiesRva\s*=\s*0x5D1580' -or
+        $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
+        $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume' -or
+        $gameSource -notmatch 'Game_Halo4PhysicalMeleePulseActive' -or
+        $gameSource -notmatch
+            'return\s+Game_Halo4PhysicalMeleePulseActive\s*\(\s*nowMs\s*\)' -or
+        $inputSource -notmatch
+            'Game_PhysicalMeleePulseActive\s*\(\s*inputNow\s*\)\s*\)\s*\r?\n\s*btn\s*\|=\s*XINPUT_GAMEPAD_RIGHT_SHOULDER' -or
+        $halo4WorldCollisionSource -notmatch
+            'Halo4UpdatePhysicalMeleeVelocityLatch' -or
+        $vrSource -notmatch 'XrSpaceVelocity' -or
+        $vrSource -notmatch 'VR_GetControllerLinearVelocity' -or
+        $coreTestsSource -notmatch
+            'physical melee fires once per tracked swing, supports the five metre ceiling') {
+        throw 'H4 world-contact Stage 9 gate failed: accepted Stage 6 geometry, rejected Stage 7/8 routes, OpenXR velocity sampling, right-shoulder melee transaction, or its safety proofs are missing.'
+    }
+    if ($halo2WorldCollisionLogicSource -notmatch
+            'kHalo2WeaponCollisionBoundsSampleCount\s*=\s*14' -or
+        $halo2WorldCollisionLogicSource -notmatch
+            'kHalo2WorldCollisionMaxSamples' -or
+        $halo2ObserverSource -notmatch
+            'Halo2BuildAuthoredWeaponCollisionSamples' -or
+        $halo2ObserverSource -notmatch
+            'g_halo2TagDataBaseSlot' -or
+        $gameSource -notmatch
+            'kLegacyCollisionMaxSamples\s*=\s*21' -or
+        $gameSource -notmatch 'LegacyBuildAuthoredWeaponBounds' -or
+        $gameSource -notmatch
+            '0x001FFD18' -or
+        $gameSource -notmatch
+            '0x00231EC4' -or
+        $gameSource -notmatch
+            '0x0012C5D4' -or
+        $gameSource -notmatch 'ReachCollisionResolveDetour' -or
+        $gameSource -notmatch
+            'kReachCollisionResolveSignature' -or
+        $gameSource -notmatch
+            'feature\.fourArgumentResolver' -or
+        $gameSource -notmatch
+            'GameTitle::Halo3ODST' -or
+        $gameSource -notmatch
+            'GameTitle::HaloReach') {
+        throw 'All-title world-contact gate failed: H2 authored weapon bounds, title-native H3/ODST/Reach collision wrappers, Reach ABI isolation, or shared melee admission is missing.'
+    }
+
     Invoke-Tool { & cmake --preset $packagePreset }
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed for preset $packagePreset."
@@ -349,7 +463,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'c-h2-92-controller-melee-h4-effects',
+        'all-title-world-contact-and-physical-melee-test',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -396,7 +510,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 35
+        schema_version = 41
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -405,7 +519,7 @@ try {
         package_preset = $packagePreset
         titles = @(
             'Halo 3', 'Halo 3: ODST', 'Halo: Reach', 'Halo 4',
-            'Halo 2 Anniversary')
+            'Halo 2 Anniversary', 'Halo 2 Classic')
         embedded_build_identity = [ordered]@{
             source_commit = $commit
             odst = $true
@@ -426,9 +540,9 @@ try {
                 '271f6dffb8cf2e13dc4feafd85b9b4c61440ff25'
         }
         halo4_candidate = [ordered]@{
-            id = 'C-H4-58'
+            id = 'H4-WORLD-CONTACT-STAGE9-RIGHT-GRIP-MELEE'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
-            behavior = 'accepted-c-h4-57-plus-symmetric-stage3ai-effect-cave-teardown'
+            behavior = 'accepted-stage6-world-contact-plus-opt-in-openxr-velocity-native-melee'
             head_tracking = $true
             six_dof = $true
             headset_owned_pitch = $true
@@ -519,18 +633,93 @@ try {
                 'official-left_hand-marker-frame-parity-no-c39-c40-c41-c42-layer'
             two_hand_left_pose =
                 'byte-identical-c38-right-aim-shared-rotational-parent-with-live-left-wrist-relation-left-translation-unchanged'
+            world_contact = [ordered]@{
+                capability_enabled = $true
+                default_enabled = $false
+                config_key = 'world_collision'
+                stage = 9
+                rejected_stage1_enabled = $false
+                rejected_stage2_enabled = $false
+                rejected_stage3_enabled = $false
+                rejected_stage4_weapon_publication_enabled = $false
+                rejected_stage5_weapon_node_proxy_enabled = $false
+                scope = 'halo4-authored-hand-and-h4ek-render-model-bounds'
+                query = 'h4ek-physics-ray-cast'
+                retail_query_rva = '0x001C1D4C'
+                clear_line_wrapper_rva = '0x000F4218'
+                clear_line_filter_global_rva = '0x02FFB0B8'
+                collision_flags = '0x0002D009'
+                additional_flags = '0x00005185'
+                filter_identity = 'h4ek-and-retail-clear-line-wrapper-plus-live-global-value'
+                environment_calibration = 'first-real-authored-volume-hit-is-reported'
+                execution_context = 'post-original-live-physics-raycast-dynamic-inclusive-only'
+                arbitrary_worker_physics_calls = $false
+                query_interval_ms = 33
+                hit_fraction_resolution = 'native-result-fraction-with-world-scaled-skin'
+                render_thread_work = 'lock-free-target-and-correction-publication-only'
+                collision_shape = 'fixed-seven-storm-hand-samples-plus-checksum-selected-h4ek-bounds-eight-corners-six-face-centres'
+                held_weapon_behavior = 'one-stable-combined-hand-and-authored-bounds-volume-per-held-record-shares-right-hand-correction'
+                h4ek_weapon_model_bounds = 39
+                unknown_weapon_policy = 'hand-only-stock-weapon-fail-open'
+                object_motion_rva = '0x005D1580'
+                object_impulses = 'bounded-native-linear-velocity-no-angular-or-damage-write'
+                ragdoll_impulses = 'same-optional-native-object-motion-path-when-ray-result-has-object-index'
+                physical_melee = [ordered]@{
+                    available = $true
+                    default_enabled = $false
+                    config_key = 'physical_melee'
+                    threshold_config_key = 'physical_melee_swing_speed'
+                    default_threshold_metres_per_second = 1.2
+                    rejected_stage7_contact_identity_trigger_enabled = $false
+                    rejected_stage8_b_crouch_route_enabled = $false
+                    trigger = 'either-controller-openxr-tracking-space-linear-velocity-threshold-crossing'
+                    proximity_and_target = 'native-halo4-melee-action'
+                    locomotion_false_trigger_policy = 'runtime-tracking-space-velocity-excludes-game-world-motion'
+                    hysteresis_release_ratio = 0.55
+                    action = 'short-native-right-shoulder-input-pulse-matching-quest-right-grip-melee-route'
+                    pulse_ms = 120
+                    cooldown_ms = 600
+                    engine_ownership = 'native-halo4-melee-damage-animation-audio-ragdoll-networking'
+                    failure_isolation = 'no-camera-render-openxr-or-stage6-collision-dependency'
+                }
+                haptic_amplitude = 0.18
+                haptic_policy = 'per-hand-peak-merged-by-max-with-stock-game-rumble'
+                failure_policy = 'stock-floating-targets-only-camera-openxr-and-all-restorations-remain-armed'
+                evidence = 'docs/HALO4-WORLD-COLLISION-EVIDENCE.md'
+            }
             failure_policy =
                 'pre-claim-stock-post-claim-frame-drop-core-remains-armed'
             vrik_failure_policy =
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-92'
+            id = 'H2-WC-1'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'c-h2-90-camera-assist-off-plus-controller-scoped-native-melee-target-selection'
+                'h2ek-native-final-packet-hand-weapon-world-contact-plus-right-grip-route-physical-melee'
+            world_contact = [ordered]@{
+                available = $true
+                default_enabled = $false
+                config_key = 'world_collision'
+                renderers = @('Classic', 'Anniversary')
+                collision_test_vector_rva = '0x0075B850'
+                collision_flags = '0x2480000F'
+                query_interval_ms = 33
+                publication_max_age_ms = 150
+                shape = 'fixed-seven-hand-samples-plus-loaded-h2ek-render-model-bounds-eight-corners-six-face-centres'
+                object_local_velocity_rva = '0x0090A000'
+                haptic_amplitude = 0.18
+                physical_melee = [ordered]@{
+                    available = $true
+                    default_enabled = $false
+                    threshold_range_metres_per_second = '0.30-5.00'
+                    action = 'short-native-right-shoulder-pulse-matching-quest-right-grip-route'
+                }
+                failure_policy = 'stock-halo2-collision-camera-stereo-packets-aim-hud-and-openxr-remain-armed'
+                evidence = 'docs/HALO2-WORLD-COLLISION-EVIDENCE.md'
+            }
             classic_muzzle_suppression = $true
             classic_muzzle_particle_renderer_rva = '0x0076DC90'
             classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
@@ -769,6 +958,27 @@ try {
                 'floaty-or-aim-failure-leaves-that-feature-stock-camera-stereo-and-openxr-remain-armed'
             evidence = 'docs/HALO2-SIGNATURE-EVIDENCE.md'
         }
+        gen3_world_contact_candidate = [ordered]@{
+            id = 'GEN3-WC-1'
+            status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
+            titles = @('Halo 3', 'Halo 3: ODST', 'Halo: Reach')
+            default_enabled = $false
+            config_key = 'world_collision'
+            physical_melee_config_key = 'physical_melee'
+            threshold_range_metres_per_second = '0.30-5.00'
+            collision_shape = 'fixed-seven-visible-hand-samples-plus-loaded-render-model-compression-bounds-eight-corners-six-face-centres'
+            query_interval_ms = 33
+            publication_max_age_ms = 150
+            halo3_wrapper_rva = '0x001FFD18'
+            odst_wrapper_rva = '0x00231EC4'
+            reach_wrapper_rva = '0x0012C5D4'
+            halo3_odst_abi = 'five-argument-start-desired-accepted-ignore-a-ignore-b'
+            reach_abi = 'four-argument-retail-specialization-ignore-b-none'
+            action = 'short-native-right-shoulder-pulse-matching-quest-right-grip-route'
+            haptic_amplitude = 0.18
+            failure_policy = 'feature-local-stock-fallback-camera-render-input-and-openxr-remain-armed'
+            evidence = 'docs/ALL-TITLE-WORLD-COLLISION-EVIDENCE.md'
+        }
         # Reach support is permanent, while player-visible optional features
         # fail open independently and never disarm the working camera core.
         reach_permanent = $true
@@ -846,7 +1056,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'C-H2-92 carries three requested, source-isolated changes. Halo 4 Stage 3AI effect cleanup now restores its owned cave after every entry route, allowing exact muzzle/effect suppression to reinstall without changing reticle, helmet, HUD, pause, camera, motion-suck, or OpenXR behavior. Official H2EK proves C-H2-91 selected its retained melee target from player_control desired angles, not controller-owned unit aim; C-H2-92 substitutes the controller ray only inside the native central target calculation, preserves the native result, and still zeros camera-assist control. Failure retains C-H2-90 neutral/no-target behavior. New Halo 2 Classic configs seed yaw +1.0 and pitch -9.5; existing saved values remain authoritative and editable. This package does not install automatically.'
+        note = 'UNTESTED cumulative all-title world-contact candidate: Halo 2 Classic/Anniversary retain accepted hand collision and physical melee while replacing the weak weapon-node proxy with loaded H2EK render-model compression bounds. Halo 3, ODST, and Reach add independently editing-kit-mapped native collision wrappers, final-visible hand plus authored weapon-bound volumes, gentle haptics, and the verified Quest lower-right-grip/right-shoulder physical-melee route with threshold 0.30-5.00 m/s. Reach uses its retail-specific four-argument wrapper. Halo 4 Stage 6/9 remains unchanged. CE remains excluded. Every new feature fails open independently. Package-only; no MCC installation was performed.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

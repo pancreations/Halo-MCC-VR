@@ -379,6 +379,8 @@ static void Clamp()
     g_config.left_hand_forward_m = std::clamp(g_config.left_hand_forward_m, -0.15f, 0.30f);
     g_config.two_hand_zone_right_m = std::clamp(g_config.two_hand_zone_right_m, -0.10f, 0.10f);
     g_config.left_grip_forward_m = std::clamp(g_config.left_grip_forward_m, -0.05f, 0.25f);
+    g_config.physical_melee_swing_speed = std::clamp(
+        g_config.physical_melee_swing_speed, 0.3f, 5.0f);
     g_config.right_shoulder_drop = std::clamp(g_config.right_shoulder_drop, 0.0f, 0.3f);
     g_config.shoulder_back_m = std::clamp(g_config.shoulder_back_m, -0.3f, 0.3f);
     g_config.gun_pitch_deg = std::clamp(g_config.gun_pitch_deg, -180.0f, 180.0f);
@@ -961,10 +963,19 @@ void ConfigLoad(const wchar_t* path)
             g_config.body_wip = atoi(val) != 0;
         else if (!strcmp(key, "arm_ik"))
             g_config.arm_ik = atoi(val) != 0;
-        else if (!strcmp(key, "floating_hands"))
-            g_config.floating_hands = atoi(val) != 0;
-        else if (!strcmp(key, "right_shoulder_drop"))
-            g_config.right_shoulder_drop = (float)atof(val);
+        else if (!strcmp(key, "floating_hands") ||
+                 !strcmp(key, "world_collision") ||
+                 !strcmp(key, "physical_melee"))
+        {
+            bool* destination = key[0] == 'f' ? &g_config.floating_hands :
+                (key[0] == 'w' ? &g_config.world_collision :
+                    &g_config.physical_melee);
+            *destination = atoi(val) != 0;
+        }
+        else if (!strcmp(key, "physical_melee_swing_speed") ||
+                 !strcmp(key, "right_shoulder_drop"))
+            (key[0] == 'p' ? g_config.physical_melee_swing_speed :
+                g_config.right_shoulder_drop) = (float)atof(val);
         else if (!strcmp(key, "shoulder_back_m"))
             g_config.shoulder_back_m = (float)atof(val);
         else if (!strcmp(key, "shoulder_level"))
@@ -1685,6 +1696,21 @@ void ConfigSave()
     fprintf(f, "# (arms hidden); 0 = full arms. Pure render filter over VRIK.\n");
     fprintf(f, "# (default %d)\n", d.floating_hands ? 1 : 0);
     fprintf(f, "floating_hands = %d\n\n", g_config.floating_hands ? 1 : 0);
+    fprintf(f, "# World collision (experimental): hands and held weapons stop on\n");
+    fprintf(f, "# world geometry and provide gentle contact haptics. Implemented for\n");
+    fprintf(f, "# Halo 2, Halo 3, ODST, Reach, and Halo 4.\n");
+    fprintf(f, "# (default %d)\n", d.world_collision ? 1 : 0);
+    fprintf(f, "world_collision = %d\n\n", g_config.world_collision ? 1 : 0);
+    fprintf(f, "# Physical melee (experimental): a fast tracked hand/weapon swing\n");
+    fprintf(f, "# asks the active title for its native melee action. Requires world_collision.\n");
+    fprintf(f, "# Implemented for Halo 2, Halo 3, ODST, Reach, and Halo 4.\n");
+    fprintf(f, "# (default %d)\n", d.physical_melee ? 1 : 0);
+    fprintf(f, "physical_melee = %d\n", g_config.physical_melee ? 1 : 0);
+    fprintf(f, "# Required controller/weapon sample speed in metres per second.\n");
+    fprintf(f, "# (default %.2f, range 0.3 to 5.0)\n",
+            d.physical_melee_swing_speed);
+    fprintf(f, "physical_melee_swing_speed = %.2f\n\n",
+            g_config.physical_melee_swing_speed);
     fprintf(f, "# Lower the right (weapon) shoulder so the arm doesn't clip your face\n");
     fprintf(f, "# (0 = authored, higher = lower; ~world units).\n");
     fprintf(f, "# (default %.3f, range 0 to 0.3)\n", d.right_shoulder_drop);

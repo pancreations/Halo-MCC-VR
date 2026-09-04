@@ -34,6 +34,9 @@ bool Halo2Observer6Dof_DirectWeaponAimArmed() noexcept;
 // C-H2-50: optional final visible-palette transaction. The controller-owned
 // shot path is admitted only while this exact visual boundary is installed.
 bool Halo2Observer6Dof_FinalPaletteArmed() noexcept;
+// Optional H2EK-native hand/weapon contact transaction.  Physical melee may
+// only synthesize input while this title-specific collision path is live.
+bool Halo2Observer6Dof_WorldCollisionActive() noexcept;
 
 // The pose the observer core applied on its most recent successful frame
 // (E-H2-6 publication). Lock-free seqlock read, bounded; false when nothing
