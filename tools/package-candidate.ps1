@@ -121,6 +121,29 @@ try {
             'activeAndRange\s*&&\s*\r?\n\s*levelRunning\s*&&\s*coldPassed') {
         throw 'C-H2-55 gate failed: a required title hook epoch is not level-liveness scoped.'
     }
+    $halo2WorldCollisionLogicSource = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'src\common\halo2_world_collision_logic.h'))
+    if ($halo2ObserverSource -notmatch
+            'kHalo2CollisionVectorRva\s*=\s*0x0075B850' -or
+        $halo2ObserverSource -notmatch
+            'kHalo2ObjectSetLocalVelocityRva\s*=\s*0x0090A000' -or
+        $halo2ObserverSource -notmatch
+            'kHalo2CollisionFlags\s*=\s*0x2480000F' -or
+        $halo2ObserverSource -notmatch 'InstallHalo2WorldCollision' -or
+        $halo2ObserverSource -notmatch
+            'Halo2PublishFinalPacketCollisionVolumes' -or
+        $halo2ObserverSource -notmatch
+            'Halo2Observer6Dof_WorldCollisionActive' -or
+        $halo2WorldCollisionLogicSource -notmatch
+            'Halo2SelectWorldCollisionExtrema' -or
+        $halo2WorldCollisionLogicSource -notmatch
+            'Halo2ResolveWorldCollision' -or
+        $gameSource -notmatch
+            'Halo2Observer6Dof_WorldCollisionActive\s*\(\s*\)' -or
+        $coreTestsSource -notmatch
+            'Halo 2 visible packets select stable root and model extrema') {
+        throw 'Halo 2 world-contact gate failed: H2EK collision/object identities, final-packet volume, fail-open admission, or pure-logic coverage is missing.'
+    }
     $halo2ColdSource = [IO.File]::ReadAllText(
         (Join-Path $repoRoot 'src\dll\halo2_cold_observation.cpp'))
     $halo2LogicSource = [IO.File]::ReadAllText(
@@ -333,8 +356,10 @@ try {
         $gameSource -notmatch 'Halo4PublishAuthoredHandCollisionVolumes' -or
         $gameSource -notmatch 'Halo4PublishAuthoredWeaponCollisionVolume' -or
         $gameSource -notmatch 'Game_Halo4PhysicalMeleePulseActive' -or
+        $gameSource -notmatch
+            'return\s+Game_Halo4PhysicalMeleePulseActive\s*\(\s*nowMs\s*\)' -or
         $inputSource -notmatch
-            'Game_Halo4PhysicalMeleePulseActive\s*\(\s*inputNow\s*\)\s*\)\s*\r?\n\s*btn\s*\|=\s*XINPUT_GAMEPAD_RIGHT_SHOULDER' -or
+            'Game_PhysicalMeleePulseActive\s*\(\s*inputNow\s*\)\s*\)\s*\r?\n\s*btn\s*\|=\s*XINPUT_GAMEPAD_RIGHT_SHOULDER' -or
         $halo4WorldCollisionSource -notmatch
             'Halo4UpdatePhysicalMeleeVelocityLatch' -or
         $vrSource -notmatch 'XrSpaceVelocity' -or
@@ -410,7 +435,7 @@ try {
 
     $createdUtc = [DateTime]::UtcNow
     $packageId = '{0}-{1}-{2}' -f $commit.Substring(0, 7),
-        'h4-world-contact-stage9-right-grip-melee',
+        'h2-world-contact-and-physical-melee-test',
         $createdUtc.ToString("yyyyMMdd-HHmmssfff'Z'")
     $packageDir = Join-Path $candidateRoot $packageId
     if (Test-Path -LiteralPath $packageDir) {
@@ -457,7 +482,7 @@ try {
         (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
     $manifest = [ordered]@{
-        schema_version = 39
+        schema_version = 40
         status = 'UNTESTED_LOCAL_CANDIDATE'
         accepted = $false
         package_id = $packageId
@@ -640,12 +665,33 @@ try {
                 'base-rigid-or-state-parent-invalid-input-leaves-that-palette-stock-while-optional-marker-parity-invalid-input-keeps-the-valid-c38-free-reroot-and-continues-right-hand-held-model-and-camera-core'
         }
         halo2_candidate = [ordered]@{
-            id = 'C-H2-92'
+            id = 'H2-WC-1'
             status = 'READY_FOR_HEADSET_TEST_UNACCEPTED'
             module = 'halo2.dll'
             scope = 'campaign-both-renderers-groundhog-excluded'
             behavior =
-                'c-h2-90-camera-assist-off-plus-controller-scoped-native-melee-target-selection'
+                'h2ek-native-final-packet-hand-weapon-world-contact-plus-right-grip-route-physical-melee'
+            world_contact = [ordered]@{
+                available = $true
+                default_enabled = $false
+                config_key = 'world_collision'
+                renderers = @('Classic', 'Anniversary')
+                collision_test_vector_rva = '0x0075B850'
+                collision_flags = '0x2480000F'
+                query_interval_ms = 33
+                publication_max_age_ms = 150
+                shape = 'final-visible-packet-root-plus-six-extrema'
+                object_local_velocity_rva = '0x0090A000'
+                haptic_amplitude = 0.18
+                physical_melee = [ordered]@{
+                    available = $true
+                    default_enabled = $false
+                    threshold_range_metres_per_second = '0.30-5.00'
+                    action = 'short-native-right-shoulder-pulse-matching-quest-right-grip-route'
+                }
+                failure_policy = 'stock-halo2-collision-camera-stereo-packets-aim-hud-and-openxr-remain-armed'
+                evidence = 'docs/HALO2-WORLD-COLLISION-EVIDENCE.md'
+            }
             classic_muzzle_suppression = $true
             classic_muzzle_particle_renderer_rva = '0x0076DC90'
             classic_muzzle_live_renderer_gate_rva = '0x00E70CF8'
@@ -961,7 +1007,7 @@ try {
                 sha256 = $configHash
             }
         }
-        note = 'Halo 4 physical-melee Stage 9 accepted baseline: accepted Stage 6 hand/weapon world collision and Stage 8 OpenXR motion qualification remain unchanged; rejected Stage 7 contact qualification and Stage 8 B/crouch output stay dormant. Either controller threshold crossing (default 1.20 m/s, adjustable 0.30-5.00) emits a 120 ms virtual right-shoulder pulse, exactly matching the existing Quest lower-right-grip melee route, with hysteresis and a 600 ms cooldown. Halo 4 owns proximity, target selection, authored damage, animation, sound, ragdoll response and networking. Existing camera, HUD, native reticle, helmet, effects, pause, black-screen, Halo 2, Reach, ODST and Halo 3 behavior remains unchanged. This package does not install automatically.'
+        note = 'UNTESTED Halo 2 world-contact candidate: Classic and Anniversary final visible hand/weapon packets publish authored root/extrema volumes to the independently H2EK-mapped native collision vector test. Contacts clamp the applicable carrier, pulse haptics, and optionally nudge native physics objects. Physical swings use the same virtual right-shoulder action as the existing Quest lower-right-grip route, with threshold 0.30-5.00 m/s. Halo 4 Stage 6/9 remains byte-for-byte behaviorally unchanged. H3, ODST, Reach, and CE world collision remain stock pending independent editing-kit proof. Package-only; no MCC installation was performed.'
     }
 
     $manifestPath = Join-Path $packageDir 'CANDIDATE-MANIFEST.json'

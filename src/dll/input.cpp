@@ -239,7 +239,7 @@ namespace
             if (pad.gripL > 0.6f) btn |= XINPUT_GAMEPAD_LEFT_SHOULDER;
             if (pad.gripR > 0.6f) btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
         }
-        if (Game_Halo4PhysicalMeleePulseActive(inputNow))
+        if (Game_PhysicalMeleePulseActive(inputNow))
             btn |= XINPUT_GAMEPAD_RIGHT_SHOULDER;
         state->Gamepad.wButtons = btn;
         NoteFedButtons(btn);

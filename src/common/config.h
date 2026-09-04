@@ -825,12 +825,12 @@ struct Config
 
     // Opt-in physical contact between the tracked hands / held weapon and
     // engine world geometry. The setting is shared so each title can adopt
-    // it without another config migration; Halo 4 is the first implementation.
+    // it without another config migration; Halo 4 and Halo 2 implement it.
     bool world_collision = false;
 
     // Optional physical melee layered over world collision. A sufficiently
-    // fast tracking-space controller swing asks Halo 4 for its normal melee
-    // input so the engine retains ownership of range, damage and animation.
+    // fast tracking-space controller swing asks the active proven title for
+    // its normal melee input so the engine retains range, damage and animation.
     bool physical_melee = false;
     float physical_melee_swing_speed = 1.2f;
 

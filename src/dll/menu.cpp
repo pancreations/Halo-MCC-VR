@@ -1201,7 +1201,7 @@ namespace
         changed |= ImGui::Checkbox("World collision (experimental)",
                                    &g_config.world_collision);
         ImGui::TextDisabled("Hands and held weapons stop on the world, pulse gently on contact,\n"
-                            "and can nudge live physics objects. Currently Halo 4 only.");
+                            "and can nudge live physics objects. Halo 2 and Halo 4.");
         if (g_config.world_collision)
         {
             ImGui::Indent();

@@ -29,6 +29,7 @@
 #include "halo2_hud_logic.h"
 #include "halo2_hud_shader_logic.h"
 #include "halo2_render_logic.h"
+#include "halo2_world_collision_logic.h"
 #include "halo4_adapter.h"
 #include "halo4_cui_reticle_logic.h"
 #include "halo4_helmet_shader_logic.h"
@@ -13537,6 +13538,13 @@ int main()
     Check(!Halo4ResolveWorldCollision(
               collisionStart, collisionDesired, true, 1.5f, 1.0f).valid,
         "Halo 4 wrist sweep rejects an invalid engine hit fraction");
+    const Halo2WorldCollisionResolution halo2Blocked =
+        Halo2ResolveWorldCollision(
+            collisionStart, collisionDesired, true, 0.5f, 1.0f, 0.1f);
+    Check(halo2Blocked.valid && halo2Blocked.contact &&
+          std::fabs(halo2Blocked.accepted[0] - 0.4f) < 1.0e-6f &&
+          std::fabs(halo2Blocked.correction[0] + 0.6f) < 1.0e-6f,
+        "Halo 2 final-packet sweep resolves before native contact by a scaled skin");
     const float authoredVolumePoints[][3]{
         {-0.2f, 0.0f, 0.0f}, {0.3f, 0.0f, 0.0f},
         {0.0f, -0.4f, 0.0f}, {0.0f, 0.5f, 0.0f},
@@ -13550,6 +13558,15 @@ int main()
           std::fabs(selectedVolume[1][0] + 0.2f) < 1.0e-6f &&
           std::fabs(selectedVolume[6][2] - 0.7f) < 1.0e-6f,
         "Halo 4 contact volume selects the authored root and six model extrema");
+    float halo2Selected[kHalo2WorldCollisionSampleCount][3]{};
+    Check(Halo2SelectWorldCollisionExtrema(
+              collisionStart, &authoredVolumePoints[0][0],
+              static_cast<int>(std::size(authoredVolumePoints)),
+              halo2Selected, static_cast<int>(std::size(halo2Selected))) ==
+              kHalo2WorldCollisionSampleCount &&
+          std::fabs(halo2Selected[1][0] + 0.2f) < 1.0e-6f &&
+          std::fabs(halo2Selected[6][2] - 0.7f) < 1.0e-6f,
+        "Halo 2 visible packets select stable root and model extrema without invented weapon dimensions");
     const float degenerateVolumePoint[3]{0.1f, 0.2f, 0.3f};
     float stableVolume[kHalo4WorldCollisionExtremaCount][3]{};
     Check(Halo4SelectWorldCollisionExtrema(

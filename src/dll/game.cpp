@@ -39453,6 +39453,99 @@ bool Game_Halo4PhysicalMeleePulseActive(uint64_t nowMs)
 #endif
 }
 
+bool Game_PhysicalMeleePulseActive(uint64_t nowMs)
+{
+    const GameTitle title = TitleAdapter_GetActiveTitle();
+    if (title == GameTitle::Halo4)
+        return Game_Halo4PhysicalMeleePulseActive(nowMs);
+
+    // The normal VR input path maps the Quest right squeeze/grip to
+    // XINPUT_GAMEPAD_RIGHT_SHOULDER for every title. That is the only verified
+    // VR melee transport in this build, so H2 uses it too; do not invent a
+    // face-button mapping. H3, ODST and Reach remain disabled until their own
+    // collision transactions have editing-kit proof.
+    if (title != GameTitle::Halo2)
+        return false;
+    if (!g_config.world_collision || !g_config.physical_melee ||
+        !g_enabled.load(std::memory_order_acquire) ||
+        !VR_IsStereoEnabled())
+        return false;
+
+    bool titleArmed = false;
+    switch (title)
+    {
+    case GameTitle::Halo2:
+#if HALOMCCVR_HALO2_STEREO6DOF
+        titleArmed = Halo2Observer6Dof_Armed() &&
+            Halo2Observer6Dof_FinalPaletteArmed() &&
+            Halo2Observer6Dof_WorldCollisionActive();
+#endif
+        break;
+    default:
+        break;
+    }
+    if (!titleArmed)
+        return false;
+
+    struct SharedPhysicalMeleeState
+    {
+        std::atomic<uint8_t> title{static_cast<uint8_t>(GameTitle::None)};
+        std::atomic<uint64_t> pulseUntilMs{0};
+        std::atomic<uint64_t> cooldownUntilMs{0};
+        std::atomic<bool> velocityLatched[2]{};
+    };
+    static SharedPhysicalMeleeState state;
+    const uint8_t titleValue = static_cast<uint8_t>(title);
+    const uint8_t previousTitle =
+        state.title.exchange(titleValue, std::memory_order_acq_rel);
+    if (previousTitle != titleValue)
+    {
+        state.pulseUntilMs.store(0, std::memory_order_release);
+        state.cooldownUntilMs.store(0, std::memory_order_release);
+        state.velocityLatched[0].store(false, std::memory_order_release);
+        state.velocityLatched[1].store(false, std::memory_order_release);
+    }
+
+    const float requiredSpeed = std::clamp(
+        g_config.physical_melee_swing_speed, 0.3f, 5.0f);
+    for (int hand = 0; hand < 2; ++hand)
+    {
+        float velocity[3]{};
+        const bool velocityValid =
+            VR_GetControllerLinearVelocity(hand == 0, velocity);
+        const float speed = velocityValid
+            ? Halo4PhysicalMeleeVelocityMagnitude(velocity) : -1.0f;
+        std::atomic<bool>& latch = state.velocityLatched[hand];
+        const bool wasLatched = latch.load(std::memory_order_acquire);
+        const Halo4PhysicalMeleeVelocityDecision decision =
+            Halo4UpdatePhysicalMeleeVelocityLatch(
+                velocityValid, speed, requiredSpeed, wasLatched);
+        if (!decision.latched)
+        {
+            latch.store(false, std::memory_order_release);
+            continue;
+        }
+        if (!decision.trigger)
+            continue;
+        bool expected = false;
+        if (!latch.compare_exchange_strong(
+                expected, true, std::memory_order_acq_rel,
+                std::memory_order_relaxed))
+            continue;
+        if (nowMs >= state.cooldownUntilMs.load(std::memory_order_acquire))
+        {
+            state.pulseUntilMs.store(
+                nowMs + kHalo4PhysicalMeleePulseMs,
+                std::memory_order_release);
+            state.cooldownUntilMs.store(
+                nowMs + kHalo4PhysicalMeleeCooldownMs,
+                std::memory_order_release);
+        }
+    }
+    return nowMs != 0 &&
+        nowMs < state.pulseUntilMs.load(std::memory_order_acquire);
+}
+
 // C-H4-9. Halo 4's answer to "the HMD owns pitch", reached the way AGENTS.md
 // permits: a different implementation for the same player experience, because
 // this engine's look ownership sits at a different rung than Halo 3's.
