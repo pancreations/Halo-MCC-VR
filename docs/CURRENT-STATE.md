@@ -1,5 +1,24 @@
 # Current state
 
+> **ALL SUPPORTED TITLES WORLD CONTACT + PHYSICAL MELEE READY FOR
+> HEADSET TEST (2026-09-04).** Behavior commit
+> `7178081b0ea745ccbf4b826022c18aa7afc1a408`. Halo 2 Classic/Anniversary
+> retain the headset-confirmed hand collision, haptics, and Quest-grip physical
+> melee while replacing the visually insufficient weapon-node proxy with
+> loaded H2EK render-model compression bounds (eight corners plus six face
+> centres). Halo 3 and ODST use independently H3EK/H3ODSTEK-proven
+> five-argument native collision wrappers; Reach uses its independently
+> HREK-proven, retail-specialized four-argument wrapper. Each consumes the
+> title's final visible hand/weapon palette, runs bounded native probes at most
+> once per 33 ms, and fails open independently without disarming camera,
+> rendering, input, or OpenXR. The shared physical-melee route remains Quest
+> lower grip/right shoulder at 0.30-5.00 m/s (default 1.20). Halo 4 Stage 6/9
+> is unchanged and CE remains excluded. Release build, core tests, and Reach
+> consistency gate pass. Headset acceptance is pending for H2 weapon bounds,
+> H3, ODST, and Reach, plus an H4 regression; the accepted pointer below does
+> not move. See `docs/ALL-TITLE-WORLD-COLLISION-EVIDENCE.md` and
+> `docs/HALO2-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 2 WORLD CONTACT + PHYSICAL MELEE READY FOR HEADSET TEST
 > (2026-09-03).** Behavior commit
 > `c46d94fe793a53c8629831269571931ed70d906a`. The default-off shared controls
