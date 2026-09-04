@@ -664,3 +664,22 @@ world-collision code, damage path, camera, rendering, HUD, or other title is
 changed. A headset pass requires a qualifying swing to show the native Halo 4
 melee animation rather than crouch, and an enemy inside Halo's ordinary melee
 range to receive the authored hit.
+
+### Stage 9 headset acceptance
+
+The user accepted exact source
+`abab02c6068bafcc0d0f49d3deca3175348ff429` on the Steam edition with
+SteamVR/OpenXR 2.17.8, a Quest 3 through the Oculus runtime, and a 120 Hz
+panel. Physical swings invoked Halo 4's normal melee rather than crouch, and
+the user declared the world-collision and physical-melee baseline complete.
+Across 31 enabled telemetry windows the log records 37,180 valid OpenXR
+velocity samples, 43 swing crossings, 25 right-shoulder pulses, 18 cooldown
+suppressions, and an 8.81 m/s peak. This accepts the complete Stage 9 route
+while retaining Stage 6 hand/weapon collision, haptics, and object motion.
+
+The headset run also demonstrates useful deliberate swings well above the
+current 3.00 m/s ceiling. The user reports occasional unwanted melee while
+lowering the weapon and requests a selectable maximum of 5.00 m/s. Raising
+only the validation/menu ceiling is a follow-up refinement; it must not change
+the saved or default threshold automatically. Exact log SHA-256:
+`0EAA9CFF1316ABC33C643048AA63F153B4C72815778B760E09EB1A9132B664DA`.

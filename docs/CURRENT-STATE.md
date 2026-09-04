@@ -1,5 +1,20 @@
 # Current state
 
+> **HALO 4 PHYSICAL MELEE STAGE 9 QUEST-GRIP ROUTE ACCEPTED
+> (user headset, 2026-09-03).** Exact source
+> `abab02c6068bafcc0d0f49d3deca3175348ff429`, Steam edition,
+> SteamVR/OpenXR 2.17.8, Quest 3 through the Oculus runtime, 120 Hz. The user
+> confirms that physical swings now invoke native Halo 4 melee rather than
+> crouch and declares the Halo 4 world-collision/physical-melee baseline
+> complete. Across 31 enabled telemetry windows the log records 37,180 valid
+> OpenXR velocity samples, 43 swing crossings, 25 right-shoulder pulses, 18
+> cooldown suppressions, and an 8.81 m/s peak. Stage 6 hand/weapon world
+> collision, haptics, and object interaction remain accepted. The user requests
+> a less-sensitive selectable threshold above the current 3.00 m/s ceiling;
+> that is a separate refinement. Log SHA-256:
+> `0EAA9CFF1316ABC33C643048AA63F153B4C72815778B760E09EB1A9132B664DA`.
+> See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 PHYSICAL MELEE STAGE 9 QUEST-GRIP ROUTE READY FOR HEADSET
 > TEST (2026-09-03).** Behavior commit
 > `709fccbdf064088b7b2724b140bef7fd4e984438`. The headset-proven Stage 8
