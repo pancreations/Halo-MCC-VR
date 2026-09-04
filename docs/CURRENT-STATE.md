@@ -1,5 +1,19 @@
 # Current state
 
+> **HALO 4 PHYSICAL MELEE STAGE 9 QUEST-GRIP ROUTE READY FOR HEADSET
+> TEST (2026-09-03).** Behavior commit
+> `709fccbdf064088b7b2724b140bef7fd4e984438`. The headset-proven Stage 8
+> OpenXR velocity, threshold, latch, pulse duration, and cooldown are retained.
+> A qualified swing now sets `XINPUT_GAMEPAD_RIGHT_SHOULDER`, the same virtual
+> action already produced by the user's working Quest lower-right-grip melee,
+> instead of Stage 8's rejected B/crouch route. This does not remap either
+> physical grip. Halo 4 continues to own melee range, target selection, damage,
+> stagger, animation, sound, impulse, attribution, and networking. Accepted
+> Stage 6 world collision and all camera/render/HUD behavior are unchanged.
+> Release build, core tests, and the Reach consistency gate pass; headset
+> acceptance is pending and the cumulative accepted release pointer below does
+> not move. See `docs/HALO4-WORLD-COLLISION-EVIDENCE.md`.
+
 > **HALO 4 PHYSICAL MELEE STAGE 8 MOTION ACCEPTED / INPUT ROUTE REJECTED
 > AND DISABLED (user headset, 2026-09-03).** Exact source
 > `3331efa697510e5d869f7a53fb4cef042f13dab5`, Steam edition,
